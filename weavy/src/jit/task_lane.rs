@@ -69,6 +69,136 @@ struct Ctx {
         i64,
         *mut i64,
     ) -> i64,
+    ordered_begin_probe:
+        unsafe extern "C" fn(*mut core::ffi::c_void, i64, i64, *mut i64, *mut i64) -> i64,
+    ordered_probe_key: unsafe extern "C" fn(
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        i64,
+        usize,
+        *mut i64,
+        *mut i64,
+        *mut i64,
+        *mut u8,
+    ) -> i64,
+    ordered_probe_value: unsafe extern "C" fn(
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        i64,
+        usize,
+        *mut i64,
+        *mut u8,
+    ) -> i64,
+    ordered_begin_insert:
+        unsafe extern "C" fn(*mut core::ffi::c_void, i64, i64, *mut i64, *mut i64) -> i64,
+    ordered_insert_inspect: unsafe extern "C" fn(
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        i64,
+        usize,
+        *mut i64,
+        *mut u8,
+    ) -> i64,
+    ordered_insert_advance:
+        unsafe extern "C" fn(*mut core::ffi::c_void, i64, i64, i64, i64, *mut i64) -> i64,
+    ordered_insert_commit: unsafe extern "C" fn(
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        i64,
+        *const u8,
+        usize,
+        *const u8,
+        usize,
+        i64,
+        i64,
+        *mut i64,
+    ) -> i64,
+    ordered_begin_iterate:
+        unsafe extern "C" fn(*mut core::ffi::c_void, i64, i64, *mut i64, *mut i64) -> i64,
+    ordered_iterate_row: unsafe extern "C" fn(
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        i64,
+        usize,
+        *mut i64,
+        *mut u8,
+    ) -> i64,
+    ordered_len: unsafe extern "C" fn(*mut core::ffi::c_void, i64, i64, *mut i64) -> i64,
+    string_concat: unsafe extern "C" fn(
+        *const crate::task::RawValueMemory,
+        usize,
+        *const crate::task::RawValueMemory,
+        usize,
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        *mut i64,
+    ) -> i64,
+    string_contains: unsafe extern "C" fn(
+        *const crate::task::RawValueMemory,
+        usize,
+        *const crate::task::RawValueMemory,
+        usize,
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        *mut i64,
+    ) -> i64,
+    string_is_numeric: unsafe extern "C" fn(
+        *const crate::task::RawValueMemory,
+        usize,
+        *const crate::task::RawValueMemory,
+        usize,
+        *mut core::ffi::c_void,
+        i64,
+        *mut i64,
+    ) -> i64,
+    string_split_once: unsafe extern "C" fn(
+        *const crate::task::RawValueMemory,
+        usize,
+        *const crate::task::RawValueMemory,
+        usize,
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        *mut i64,
+        *mut i64,
+    ) -> i64,
+    string_parse_int: unsafe extern "C" fn(
+        *const crate::task::RawValueMemory,
+        usize,
+        *const crate::task::RawValueMemory,
+        usize,
+        *mut core::ffi::c_void,
+        i64,
+        *mut i64,
+    ) -> i64,
+    byte_project: unsafe extern "C" fn(
+        *const crate::task::RawValueMemory,
+        usize,
+        *const crate::task::RawValueMemory,
+        usize,
+        *mut core::ffi::c_void,
+        i64,
+        *mut i64,
+    ) -> i64,
+    path_join: unsafe extern "C" fn(
+        *const crate::task::RawValueMemory,
+        usize,
+        *const crate::task::RawValueMemory,
+        usize,
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        *mut i64,
+    ) -> i64,
+    publications: *mut core::ffi::c_void,
+    publish: unsafe extern "C" fn(*mut core::ffi::c_void, u64, i64, *const u8, usize) -> i64,
 }
 
 const EXIT_AWAIT_PARKED: i64 = 1;
@@ -82,6 +212,17 @@ const EXIT_COMPARE_RIGHT_UNRESIDENT: i64 = 8;
 const EXIT_INVALID_ENUM_SELECTOR: i64 = 9;
 const EXIT_ENUM_PROJECTION_MISMATCH: i64 = 10;
 const EXIT_INVALID_ARRAY_STATUS: i64 = 11;
+const EXIT_INVALID_ORDERED_STATUS: i64 = 12;
+const EXIT_STRING_CONCAT_LEFT_UNRESIDENT: i64 = 13;
+const EXIT_STRING_CONCAT_RIGHT_UNRESIDENT: i64 = 14;
+const EXIT_STRING_CONCAT_ALLOCATION: i64 = 15;
+const EXIT_PUBLICATION_ALLOCATION: i64 = 16;
+const EXIT_INVALID_STRING_STATUS: i64 = 17;
+const EXIT_BYTE_PROJECT_SOURCE_UNRESIDENT: i64 = 18;
+const EXIT_BYTE_PROJECT_ALLOCATION: i64 = 19;
+const EXIT_PATH_JOIN_BASE_UNRESIDENT: i64 = 20;
+const EXIT_PATH_JOIN_SEGMENT_UNRESIDENT: i64 = 21;
+const EXIT_PATH_JOIN_ALLOCATION: i64 = 22;
 
 /// Whether the task JIT lane is usable on this target.
 pub fn available() -> bool {
@@ -342,6 +483,54 @@ fn compile_fn(
                 task_stencils::ARRAY_NEW,
                 Continuations::Fallthrough(task_stencils::ARRAY_NEW_CONT),
             ),
+            Op::OrderedEmpty { .. } => (
+                task_stencils::ORDERED_EMPTY,
+                Continuations::Fallthrough(task_stencils::ORDERED_EMPTY_CONT),
+            ),
+            Op::OrderedBeginProbe { .. } => (
+                task_stencils::ORDERED_BEGIN_PROBE,
+                Continuations::Fallthrough(task_stencils::ORDERED_BEGIN_PROBE_CONT),
+            ),
+            Op::OrderedProbeKey { .. } => (
+                task_stencils::ORDERED_PROBE_KEY,
+                Continuations::Fallthrough(task_stencils::ORDERED_PROBE_KEY_CONT),
+            ),
+            Op::OrderedProbeValue { .. } => (
+                task_stencils::ORDERED_PROBE_VALUE,
+                Continuations::Fallthrough(task_stencils::ORDERED_PROBE_VALUE_CONT),
+            ),
+            Op::OrderedBeginInsert { .. } => (
+                task_stencils::ORDERED_BEGIN_INSERT,
+                Continuations::Fallthrough(task_stencils::ORDERED_BEGIN_INSERT_CONT),
+            ),
+            Op::OrderedInsertInspect { .. } => (
+                task_stencils::ORDERED_INSERT_INSPECT,
+                Continuations::Fallthrough(task_stencils::ORDERED_INSERT_INSPECT_CONT),
+            ),
+            Op::OrderedInsertAdvance { .. } => (
+                task_stencils::ORDERED_INSERT_ADVANCE,
+                Continuations::Fallthrough(task_stencils::ORDERED_INSERT_ADVANCE_CONT),
+            ),
+            Op::OrderedInsertCommit { .. } => (
+                task_stencils::ORDERED_INSERT_COMMIT,
+                Continuations::Fallthrough(task_stencils::ORDERED_INSERT_COMMIT_CONT),
+            ),
+            Op::OrderedBeginIterate { .. } => (
+                task_stencils::ORDERED_BEGIN_ITERATE,
+                Continuations::Fallthrough(task_stencils::ORDERED_BEGIN_ITERATE_CONT),
+            ),
+            Op::OrderedIterateRow { .. } => (
+                task_stencils::ORDERED_ITERATE_ROW,
+                Continuations::Fallthrough(task_stencils::ORDERED_ITERATE_ROW_CONT),
+            ),
+            Op::OrderedLen { .. } => (
+                task_stencils::ORDERED_LEN,
+                Continuations::Fallthrough(task_stencils::ORDERED_LEN_CONT),
+            ),
+            Op::OrderedStatusIs { .. } => (
+                task_stencils::ORDERED_STATUS_IS,
+                Continuations::Fallthrough(task_stencils::ORDERED_STATUS_IS_CONT),
+            ),
             Op::ArrayStoreWord { .. } | Op::ArrayStore { .. } => (
                 task_stencils::ARRAY_STORE_WORD,
                 Continuations::Fallthrough(task_stencils::ARRAY_STORE_WORD_CONT),
@@ -365,6 +554,42 @@ fn compile_fn(
             Op::CompareValueBytes { .. } => (
                 task_stencils::COMPARE_VALUE_BYTES,
                 Continuations::Fallthrough(task_stencils::COMPARE_VALUE_BYTES_CONT),
+            ),
+            Op::StringConcat { .. } => (
+                task_stencils::STRING_CONCAT,
+                Continuations::Fallthrough(task_stencils::STRING_CONCAT_CONT),
+            ),
+            Op::StringContains { .. } => (
+                task_stencils::STRING_CONTAINS,
+                Continuations::Fallthrough(task_stencils::STRING_CONTAINS_CONT),
+            ),
+            Op::StringIsNumeric { .. } => (
+                task_stencils::STRING_IS_NUMERIC,
+                Continuations::Fallthrough(task_stencils::STRING_IS_NUMERIC_CONT),
+            ),
+            Op::StringSplitOnce { .. } => (
+                task_stencils::STRING_SPLIT_ONCE,
+                Continuations::Fallthrough(task_stencils::STRING_SPLIT_ONCE_CONT),
+            ),
+            Op::StringParseInt { .. } => (
+                task_stencils::STRING_PARSE_INT,
+                Continuations::Fallthrough(task_stencils::STRING_PARSE_INT_CONT),
+            ),
+            Op::StringStatusIs { .. } => (
+                task_stencils::STRING_STATUS_IS,
+                Continuations::Fallthrough(task_stencils::STRING_STATUS_IS_CONT),
+            ),
+            Op::ByteProject { .. } => (
+                task_stencils::BYTE_PROJECT,
+                Continuations::Fallthrough(task_stencils::BYTE_PROJECT_CONT),
+            ),
+            Op::PathJoin { .. } => (
+                task_stencils::PATH_JOIN,
+                Continuations::Fallthrough(task_stencils::PATH_JOIN_CONT),
+            ),
+            Op::Publish { .. } => (
+                task_stencils::PUBLISH,
+                Continuations::Fallthrough(task_stencils::PUBLISH_CONT),
             ),
             Op::Await { .. } => (
                 task_stencils::AWAIT,
@@ -481,11 +706,30 @@ fn compile_fn(
             Op::JumpIfZero { .. } => 3,
             Op::LoadIndexedI64 { .. } | Op::StoreIndexedI64 { .. } => 4,
             Op::ArrayNew { .. } => 5,
+            Op::OrderedEmpty { .. } => 2,
+            Op::OrderedBeginProbe { .. } => 4,
+            Op::OrderedProbeKey { .. } => 8,
+            Op::OrderedProbeValue { .. } => 6,
+            Op::OrderedBeginInsert { .. } => 4,
+            Op::OrderedInsertInspect { .. } => 6,
+            Op::OrderedInsertAdvance { .. } => 5,
+            Op::OrderedInsertCommit { .. } => 9,
+            Op::OrderedBeginIterate { .. } => 4,
+            Op::OrderedIterateRow { .. } => 6,
+            Op::OrderedLen { .. } | Op::OrderedStatusIs { .. } => 4,
             Op::ArrayStoreWord { .. } | Op::LoadArray { .. } | Op::ArrayStore { .. } => 6,
             Op::LoadArrayWord { .. } => 5,
             Op::LoadArrayLen { .. } => 4,
             Op::ArrayStatusIs { .. } => 4,
             Op::CompareValueBytes { .. } => 4,
+            Op::StringConcat { .. } => 4,
+            Op::StringContains { .. } | Op::StringParseInt { .. } => 4,
+            Op::StringIsNumeric { .. } => 3,
+            Op::StringStatusIs { .. } => 4,
+            Op::StringSplitOnce { .. } => 6,
+            Op::ByteProject { .. } => 3,
+            Op::PathJoin { .. } => 4,
+            Op::Publish { .. } => 5,
             Op::Await { .. } => 3,
             Op::Call { .. } | Op::CallIndirect { .. } => 1,
             Op::Ret { .. } => 2,
@@ -720,6 +964,200 @@ fn compile_fn(
                     layout.push_prog_word(root.prog_index, v);
                 }
             }
+            Op::OrderedEmpty {
+                dst,
+                collection_schema_ref,
+            } => {
+                layout.push_prog_word(root.prog_index, u64::from(*dst));
+                layout.push_prog_word(root.prog_index, *collection_schema_ref as u64);
+            }
+            Op::OrderedBeginProbe {
+                cursor,
+                status,
+                collection,
+                collection_schema_ref,
+            } => {
+                for v in [
+                    u64::from(*cursor),
+                    u64::from(*status),
+                    u64::from(*collection),
+                    *collection_schema_ref as u64,
+                ] {
+                    layout.push_prog_word(root.prog_index, v);
+                }
+            }
+            Op::OrderedProbeKey {
+                cursor,
+                present,
+                key,
+                left,
+                right,
+                status,
+                key_width,
+                collection_schema_ref,
+            } => {
+                for v in [
+                    u64::from(*cursor),
+                    u64::from(*present),
+                    u64::from(*key),
+                    u64::from(*left),
+                    u64::from(*right),
+                    u64::from(*status),
+                    u64::from(*key_width),
+                    *collection_schema_ref as u64,
+                ] {
+                    layout.push_prog_word(root.prog_index, v);
+                }
+            }
+            Op::OrderedProbeValue {
+                cursor,
+                present,
+                value,
+                status,
+                value_width,
+                collection_schema_ref,
+            } => {
+                for v in [
+                    u64::from(*cursor),
+                    u64::from(*present),
+                    u64::from(*value),
+                    u64::from(*status),
+                    u64::from(*value_width),
+                    *collection_schema_ref as u64,
+                ] {
+                    layout.push_prog_word(root.prog_index, v);
+                }
+            }
+            Op::OrderedBeginInsert {
+                cursor,
+                status,
+                collection,
+                collection_schema_ref,
+            }
+            | Op::OrderedBeginIterate {
+                cursor,
+                status,
+                collection,
+                collection_schema_ref,
+            } => {
+                for v in [
+                    u64::from(*cursor),
+                    u64::from(*status),
+                    u64::from(*collection),
+                    *collection_schema_ref as u64,
+                ] {
+                    layout.push_prog_word(root.prog_index, v);
+                }
+            }
+            Op::OrderedInsertInspect {
+                cursor,
+                present,
+                key,
+                status,
+                key_width,
+                collection_schema_ref,
+            } => {
+                for v in [
+                    u64::from(*cursor),
+                    u64::from(*present),
+                    u64::from(*key),
+                    u64::from(*status),
+                    u64::from(*key_width),
+                    *collection_schema_ref as u64,
+                ] {
+                    layout.push_prog_word(root.prog_index, v);
+                }
+            }
+            Op::OrderedInsertAdvance {
+                cursor,
+                ordering,
+                ready,
+                status,
+                collection_schema_ref,
+            } => {
+                for v in [
+                    u64::from(*cursor),
+                    u64::from(*ordering),
+                    u64::from(*ready),
+                    u64::from(*status),
+                    *collection_schema_ref as u64,
+                ] {
+                    layout.push_prog_word(root.prog_index, v);
+                }
+            }
+            Op::OrderedInsertCommit {
+                dst,
+                cursor,
+                key,
+                value,
+                status,
+                key_width,
+                value_width,
+                collection_schema_ref,
+                replace,
+            } => {
+                for v in [
+                    u64::from(*dst),
+                    u64::from(*cursor),
+                    u64::from(*key),
+                    value.map_or(u64::MAX, u64::from),
+                    u64::from(*status),
+                    u64::from(*key_width),
+                    u64::from(*value_width),
+                    *collection_schema_ref as u64,
+                    u64::from(*replace),
+                ] {
+                    layout.push_prog_word(root.prog_index, v);
+                }
+            }
+            Op::OrderedIterateRow {
+                cursor,
+                present,
+                row,
+                status,
+                row_width,
+                collection_schema_ref,
+            } => {
+                for v in [
+                    u64::from(*cursor),
+                    u64::from(*present),
+                    u64::from(*row),
+                    u64::from(*status),
+                    u64::from(*row_width),
+                    *collection_schema_ref as u64,
+                ] {
+                    layout.push_prog_word(root.prog_index, v);
+                }
+            }
+            Op::OrderedLen {
+                dst,
+                status,
+                collection,
+                collection_schema_ref,
+            } => {
+                for v in [
+                    u64::from(*dst),
+                    u64::from(*status),
+                    u64::from(*collection),
+                    *collection_schema_ref as u64,
+                ] {
+                    layout.push_prog_word(root.prog_index, v);
+                }
+            }
+            Op::OrderedStatusIs {
+                dst,
+                status,
+                expected,
+            } => {
+                for v in [
+                    u64::from(*dst),
+                    u64::from(*status),
+                    *expected as u64,
+                    i as u64,
+                ] {
+                    layout.push_prog_word(root.prog_index, v);
+                }
+            }
             Op::LoadArrayWord {
                 dst,
                 present,
@@ -826,6 +1264,82 @@ fn compile_fn(
                 for v in [dst, a, b] {
                     layout.push_prog_word(root.prog_index, u64::from(*v));
                 }
+                layout.push_prog_word(root.prog_index, i as u64);
+            }
+            Op::StringConcat { dst, a, b } => {
+                for v in [dst, a, b] {
+                    layout.push_prog_word(root.prog_index, u64::from(*v));
+                }
+                layout.push_prog_word(root.prog_index, i as u64);
+            }
+            Op::StringContains { dst, text, needle } => {
+                for value in [dst, text, needle] {
+                    layout.push_prog_word(root.prog_index, u64::from(*value));
+                }
+                layout.push_prog_word(root.prog_index, i as u64);
+            }
+            Op::StringIsNumeric { dst, text } => {
+                for value in [dst, text] {
+                    layout.push_prog_word(root.prog_index, u64::from(*value));
+                }
+                layout.push_prog_word(root.prog_index, i as u64);
+            }
+            Op::StringSplitOnce {
+                left,
+                right,
+                status,
+                text,
+                delimiter,
+            } => {
+                for value in [left, right, status, text, delimiter] {
+                    layout.push_prog_word(root.prog_index, u64::from(*value));
+                }
+                layout.push_prog_word(root.prog_index, i as u64);
+            }
+            Op::StringParseInt { dst, status, text } => {
+                for value in [dst, status, text] {
+                    layout.push_prog_word(root.prog_index, u64::from(*value));
+                }
+                layout.push_prog_word(root.prog_index, i as u64);
+            }
+            Op::StringStatusIs {
+                dst,
+                status,
+                expected,
+            } => {
+                for value in [
+                    u64::from(*dst),
+                    u64::from(*status),
+                    *expected as i64 as u64,
+                    i as u64,
+                ] {
+                    layout.push_prog_word(root.prog_index, value);
+                }
+            }
+            Op::ByteProject { dst, source } => {
+                for v in [dst, source] {
+                    layout.push_prog_word(root.prog_index, u64::from(*v));
+                }
+                layout.push_prog_word(root.prog_index, i as u64);
+            }
+            Op::PathJoin { dst, base, segment } => {
+                for v in [dst, base, segment] {
+                    layout.push_prog_word(root.prog_index, u64::from(*v));
+                }
+                layout.push_prog_word(root.prog_index, i as u64);
+            }
+            Op::Publish {
+                site,
+                record,
+                record_width,
+                record_schema_ref,
+            } => {
+                // [site, record_off, record_width, schema_ref, pc] — the schema
+                // ref rides as a raw i64 witness the log stores verbatim.
+                layout.push_prog_word(root.prog_index, *site);
+                layout.push_prog_word(root.prog_index, u64::from(*record));
+                layout.push_prog_word(root.prog_index, u64::from(*record_width));
+                layout.push_prog_word(root.prog_index, *record_schema_ref as u64);
                 layout.push_prog_word(root.prog_index, i as u64);
             }
             Op::Await { dst, input } => {
@@ -937,6 +1451,7 @@ struct JitFrame {
 pub struct JitTask {
     arena: Vec<u8>,
     molten: crate::task::MoltenArena,
+    publications: crate::task::PublicationLog,
     frames: Vec<JitFrame>,
     pub result: Vec<u8>,
     pub trace: Vec<TaskEvent>,
@@ -949,6 +1464,7 @@ impl JitTask {
         let mut task = JitTask {
             arena: Vec::new(),
             molten: crate::task::MoltenArena::default(),
+            publications: crate::task::PublicationLog::default(),
             frames: Vec::new(),
             result: Vec::new(),
             trace: Vec::new(),
@@ -975,8 +1491,23 @@ impl JitTask {
         self.frames.len()
     }
 
+    #[must_use]
+    pub fn frame_arena_bytes(&self) -> usize {
+        self.arena.len()
+    }
+
     pub fn result_i64(&self) -> i64 {
         i64::from_le_bytes(self.result[..8].try_into().expect("8-byte result"))
+    }
+
+    /// The task's append-only publication log, read-only.
+    #[must_use]
+    pub(crate) fn publications(&self) -> &crate::task::PublicationLog {
+        &self.publications
+    }
+
+    pub(crate) fn molten(&self) -> &crate::task::MoltenArena {
+        &self.molten
     }
 
     /// Write an i64 into the CURRENT frame at `offset` — used for
@@ -1105,6 +1636,25 @@ impl JitTask {
                 array_store: crate::task::array_store_abi,
                 array_load: crate::task::array_load_abi,
                 array_len: crate::task::array_len_abi,
+                ordered_begin_probe: crate::task::ordered_begin_probe_abi,
+                ordered_probe_key: crate::task::ordered_probe_key_abi,
+                ordered_probe_value: crate::task::ordered_probe_value_abi,
+                ordered_begin_insert: crate::task::ordered_begin_insert_abi,
+                ordered_insert_inspect: crate::task::ordered_insert_inspect_abi,
+                ordered_insert_advance: crate::task::ordered_insert_advance_abi,
+                ordered_insert_commit: crate::task::ordered_insert_commit_abi,
+                ordered_begin_iterate: crate::task::ordered_begin_iterate_abi,
+                ordered_iterate_row: crate::task::ordered_iterate_row_abi,
+                ordered_len: crate::task::ordered_len_abi,
+                string_concat: crate::task::string_concat_abi,
+                string_contains: crate::task::string_contains_abi,
+                string_is_numeric: crate::task::string_is_numeric_abi,
+                string_split_once: crate::task::string_split_once_abi,
+                string_parse_int: crate::task::string_parse_int_abi,
+                byte_project: crate::task::byte_project_abi,
+                path_join: crate::task::path_join_abi,
+                publications: (&raw mut self.publications).cast::<core::ffi::c_void>(),
+                publish: crate::task::publish_abi,
             };
             // SAFETY: `frame.resume` is a chain offset of this compiled
             // function; the copied code uses the extern "C" fn(*mut Ctx)
@@ -1265,6 +1815,82 @@ impl JitTask {
                         handle: resume_scratch as i64,
                     });
                 }
+                EXIT_STRING_CONCAT_LEFT_UNRESIDENT | EXIT_STRING_CONCAT_RIGHT_UNRESIDENT => {
+                    let Some(verified) = verified else {
+                        panic!("legacy raw StringConcat operand is not resident");
+                    };
+                    let pc = usize::try_from(index_scratch).expect("pc");
+                    return Err(TaskFault::UnresidentStringConcatOperand {
+                        site: fault_site(verified, frame.fn_id, pc)?,
+                        side: if exit_scratch == EXIT_STRING_CONCAT_LEFT_UNRESIDENT {
+                            CompareSide::Left
+                        } else {
+                            CompareSide::Right
+                        },
+                        handle: resume_scratch as i64,
+                    });
+                }
+                EXIT_STRING_CONCAT_ALLOCATION => {
+                    let Some(verified) = verified else {
+                        panic!("legacy raw StringConcat allocation failed");
+                    };
+                    let pc = usize::try_from(index_scratch).expect("pc");
+                    return Err(TaskFault::StringConcatAllocationFailed {
+                        site: fault_site(verified, frame.fn_id, pc)?,
+                    });
+                }
+                EXIT_BYTE_PROJECT_SOURCE_UNRESIDENT => {
+                    let Some(verified) = verified else {
+                        panic!("legacy raw ByteProject source is not resident");
+                    };
+                    let pc = usize::try_from(index_scratch).expect("pc");
+                    return Err(TaskFault::UnresidentByteProjectSource {
+                        site: fault_site(verified, frame.fn_id, pc)?,
+                        handle: resume_scratch as i64,
+                    });
+                }
+                EXIT_BYTE_PROJECT_ALLOCATION => {
+                    let Some(verified) = verified else {
+                        panic!("legacy raw ByteProject allocation failed");
+                    };
+                    let pc = usize::try_from(index_scratch).expect("pc");
+                    return Err(TaskFault::ByteProjectionAllocationFailed {
+                        site: fault_site(verified, frame.fn_id, pc)?,
+                    });
+                }
+                EXIT_PATH_JOIN_BASE_UNRESIDENT | EXIT_PATH_JOIN_SEGMENT_UNRESIDENT => {
+                    let Some(verified) = verified else {
+                        panic!("legacy raw PathJoin operand is not resident");
+                    };
+                    let pc = usize::try_from(index_scratch).expect("pc");
+                    return Err(TaskFault::UnresidentPathJoinOperand {
+                        site: fault_site(verified, frame.fn_id, pc)?,
+                        side: if exit_scratch == EXIT_PATH_JOIN_BASE_UNRESIDENT {
+                            CompareSide::Left
+                        } else {
+                            CompareSide::Right
+                        },
+                        handle: resume_scratch as i64,
+                    });
+                }
+                EXIT_PATH_JOIN_ALLOCATION => {
+                    let Some(verified) = verified else {
+                        panic!("legacy raw PathJoin allocation failed");
+                    };
+                    let pc = usize::try_from(index_scratch).expect("pc");
+                    return Err(TaskFault::PathJoinAllocationFailed {
+                        site: fault_site(verified, frame.fn_id, pc)?,
+                    });
+                }
+                EXIT_PUBLICATION_ALLOCATION => {
+                    let Some(verified) = verified else {
+                        panic!("legacy raw Publish allocation failed");
+                    };
+                    let pc = usize::try_from(index_scratch).expect("pc");
+                    return Err(TaskFault::PublicationAllocationFailed {
+                        site: fault_site(verified, frame.fn_id, pc)?,
+                    });
+                }
                 EXIT_INVALID_ENUM_SELECTOR | EXIT_ENUM_PROJECTION_MISMATCH => {
                     let Some(verified) = verified else {
                         panic!("typed structural operation requires VerifiedProgram");
@@ -1273,7 +1899,7 @@ impl JitTask {
                     let site = fault_site(verified, frame.fn_id, pc)?;
                     let actual = resume_scratch as i64;
                     let function = &verified.contract().functions[frame.fn_id.0 as usize];
-                    let (value, expected) = match &site.op {
+                    let (value, expected) = match site.op.as_ref() {
                         Op::EnumIsVariant { value, .. } => (*value, None),
                         Op::EnumProjectChecked { value, variant, .. } => {
                             (*value, Some(i64::from(*variant)))
@@ -1313,6 +1939,26 @@ impl JitTask {
                     };
                     let pc = usize::try_from(index_scratch).expect("verified pc fits usize");
                     return Err(TaskFault::InvalidArrayStatus {
+                        site: fault_site(verified, frame.fn_id, pc)?,
+                        actual: resume_scratch as i64,
+                    });
+                }
+                EXIT_INVALID_ORDERED_STATUS => {
+                    let Some(verified) = verified else {
+                        panic!("ordered status validation requires VerifiedProgram");
+                    };
+                    let pc = usize::try_from(index_scratch).expect("verified pc fits usize");
+                    return Err(TaskFault::InvalidOrderedStatus {
+                        site: fault_site(verified, frame.fn_id, pc)?,
+                        actual: resume_scratch as i64,
+                    });
+                }
+                EXIT_INVALID_STRING_STATUS => {
+                    let Some(verified) = verified else {
+                        panic!("string status validation requires VerifiedProgram");
+                    };
+                    let pc = usize::try_from(index_scratch).expect("verified pc fits usize");
+                    return Err(TaskFault::InvalidStringStatus {
                         site: fault_site(verified, frame.fn_id, pc)?,
                         actual: resume_scratch as i64,
                     });

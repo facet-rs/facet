@@ -7,14 +7,28 @@ use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnosti
 use crate::support::{Span, Spanned};
 use crate::surface::{SurfaceParser, ast};
 use crate::vir::{
-    ControlRegion, EffectFacts, EnumType, EnumVariant, Function, FunctionId,
+    ArrayMapGrain, ArrayMapGrainKey, Budget, CheckRecipe, ControlRegion, EffectFacts, EnumType,
+    EnumVariant, Function, FunctionId, GeneratorArm, GeneratorBody, GeneratorStep,
     MatchArm as VirMatchArm, Module, Node, NodeId, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT,
     ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, OrderedMatchArm, Parameter, ParameterId,
-    ParameterKind, RecordField, RecordType, Test, Type, VariantPayload,
+    ParameterKind, RecordField, RecordType, Test, TestMetadata, TraceCheck, Type, VariantPayload,
+    YieldSite, YieldSiteId,
 };
 
 pub struct Compiler {
     parser: SurfaceParser,
+    config: CompilerConfig,
+}
+
+/// Compile-time knobs that select between observationally identical execution
+/// shapes. The molten one-item-append fold is admitted under the as-if law; the
+/// forced-copy differential compiles the same source with the molten shape
+/// disabled so the two value sets can be proven identical.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CompilerConfig {
+    /// When set, every `Array.fold` keeps the semantic copy path even where the
+    /// strict one-item-append shape would otherwise be admitted molten.
+    pub force_molten_copy: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -36,13 +50,23 @@ impl Compiler {
     pub fn new() -> Self {
         Self {
             parser: SurfaceParser::new(),
+            config: CompilerConfig::default(),
+        }
+    }
+
+    /// A compiler that carries explicit shape-selection configuration.
+    #[must_use]
+    pub fn with_config(config: CompilerConfig) -> Self {
+        Self {
+            parser: SurfaceParser::new(),
+            config,
         }
     }
 
     /// Parse, check, and lower to architecture-neutral VIR.
     pub fn compile(&self, source: &str) -> Result<Compilation, Diagnostics> {
         let ast = self.parser.parse(source)?;
-        let module = lower_module(&ast)?;
+        let module = lower_module(&ast, self.config)?;
         let warnings = lint_module(&module);
         Ok(Compilation { module, warnings })
     }
@@ -96,6 +120,8 @@ struct FunctionSignature {
     is_test: bool,
     parameters: Vec<ParameterSignature>,
     return_type: Type,
+    /// Typed `#[test]` metadata, default for non-test functions.
+    metadata: TestMetadata,
 }
 
 #[derive(Clone)]
@@ -111,6 +137,7 @@ struct ModuleContext<'a> {
     signatures: &'a BTreeMap<String, FunctionSignature>,
     types: &'a BTreeMap<String, Type>,
     closures: RefCell<ClosureState>,
+    config: CompilerConfig,
 }
 
 struct ClosureState {
@@ -326,7 +353,12 @@ impl<'a> TypeResolver<'a> {
                     if let Some(guard) = &arm.guard {
                         self.resolve_expr_types(guard)?;
                     }
-                    self.resolve_expr_types(&arm.body)?;
+                    match &arm.body {
+                        ast::MatchArmBody::Block(block) => self.resolve_block_types(block)?,
+                        ast::MatchArmBody::Expr(expression) => {
+                            self.resolve_expr_types(expression)?;
+                        }
+                    }
                 }
             }
             ast::Expr::Binary(expression) => {
@@ -344,12 +376,15 @@ impl<'a> TypeResolver<'a> {
             }
             ast::Expr::MethodCall(expression) => {
                 self.resolve_expr_types(&expression.receiver)?;
-                for argument in &expression.args.args {
+                for argument in method_positional_args(expression) {
                     self.resolve_expr_types(argument)?;
                 }
                 if let Some(named) = &expression.named_args {
                     self.resolve_named_value_types(&named.fields)?;
                 }
+            }
+            ast::Expr::WhereCall(expression) => {
+                self.resolve_named_value_types(&expression.named_args.fields)?;
             }
             ast::Expr::Index(expression) => {
                 self.resolve_expr_types(&expression.receiver)?;
@@ -392,8 +427,10 @@ impl<'a> TypeResolver<'a> {
             }
             ast::Expr::Paren(expression) => self.resolve_expr_types(&expression.inner)?,
             ast::Expr::Identifier(_)
+            | ast::Expr::Path(_)
             | ast::Expr::Str(_)
             | ast::Expr::Number(_)
+            | ast::Expr::Quantity(_)
             | ast::Expr::Bool(_) => {}
         }
         Ok(())
@@ -647,6 +684,7 @@ impl<'a> TypeResolver<'a> {
             ast::Type::Path(path) if path_is(path, "Bool") => Ok(Type::Bool),
             ast::Type::Path(path) if path_is(path, "Int") => Ok(Type::Int),
             ast::Type::Path(path) if path_is(path, "String") => Ok(Type::String),
+            ast::Type::Path(path) if path_is(path, "Path") => Ok(Type::Path),
             ast::Type::Path(path) if path_is(path, "Check") => Ok(Type::Check),
             ast::Type::Generic(_) if is_stream_check_type(ty) => Ok(Type::StreamCheck),
             ast::Type::Generic(generic) if path_is(&generic.base, "Option") => {
@@ -723,7 +761,7 @@ impl<'a> TypeResolver<'a> {
     }
 }
 
-fn lower_module(source: &ast::SourceFile) -> Result<Module, Diagnostics> {
+fn lower_module(source: &ast::SourceFile, config: CompilerConfig) -> Result<Module, Diagnostics> {
     let types = TypeResolver::new(source)?.resolve_all(source)?;
     let declared_type_names = source
         .items
@@ -770,8 +808,10 @@ fn lower_module(source: &ast::SourceFile) -> Result<Module, Diagnostics> {
             functions: BTreeMap::new(),
             scopes: Vec::new(),
         }),
+        config,
     };
     let mut module = Module {
+        force_molten_copy: config.force_molten_copy,
         records: source
             .items
             .iter()
@@ -803,9 +843,13 @@ fn lower_module(source: &ast::SourceFile) -> Result<Module, Diagnostics> {
             module.tests.push(Test {
                 name: function.name.value.clone(),
                 function: signature.id,
+                generator: lowered
+                    .generator
+                    .expect("test function lowering produces a generator body"),
+                metadata: signature.metadata,
             });
         }
-        module.functions.push(lowered);
+        module.functions.push(lowered.function);
     }
     let closures = context.closures.into_inner().functions;
     for (id, function) in closures {
@@ -879,6 +923,7 @@ fn declare_function(
             is_test,
             parameters: Vec::new(),
             return_type: Type::StreamCheck,
+            metadata: parse_test_metadata(function)?,
         });
     }
     if let Some(generics) = &function.generics {
@@ -950,6 +995,7 @@ fn declare_function(
         is_test,
         parameters,
         return_type,
+        metadata: TestMetadata::default(),
     })
 }
 
@@ -1003,6 +1049,133 @@ fn check_test_signature(function: &ast::FnItem) -> Result<(), Diagnostics> {
         }));
     }
     Ok(())
+}
+
+/// Parse the `#[test { … }]` attribute arguments into typed [`TestMetadata`].
+/// Only unit-bearing budget fields are accepted; unknown fields, duplicate
+/// fields, missing/non-unit values, and unit mismatches are typed diagnostics.
+/// Unit-bearing literals are accepted only here, never in ordinary values.
+fn parse_test_metadata(function: &ast::FnItem) -> Result<TestMetadata, Diagnostics> {
+    let mut budget = Budget::default();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    for attribute in &function.attributes {
+        if attribute.name.value != "test" {
+            continue;
+        }
+        let Some(args) = &attribute.args else {
+            continue;
+        };
+        for field in &args.fields {
+            let name = field.name.value.as_str();
+            if !seen.insert(name.to_owned()) {
+                return Err(field_diagnostic(
+                    DiagnosticCode::DuplicateField,
+                    field.name.span,
+                    "test",
+                    name,
+                ));
+            }
+            match name {
+                "budget_wall" => {
+                    let (text, span) = attribute_quantity(field)?;
+                    budget.wall_ns = Some(duration_nanos(text, span)?);
+                }
+                "budget_rss" => {
+                    let (text, span) = attribute_quantity(field)?;
+                    budget.rss_bytes = Some(byte_count(text, span)?);
+                }
+                _ => {
+                    return Err(field_diagnostic(
+                        DiagnosticCode::UnknownField,
+                        field.name.span,
+                        "test",
+                        name,
+                    ));
+                }
+            }
+        }
+    }
+    Ok(TestMetadata { budget })
+}
+
+/// A budget field value must be a unit-bearing literal (`5s`, `256MB`); a bare
+/// field, a plain number, or any other expression is a typed error.
+fn attribute_quantity(field: &ast::NamedValue) -> Result<(&str, Span), Diagnostics> {
+    match &field.value {
+        Some(ast::Expr::Quantity(quantity)) => Ok((quantity.value.as_str(), quantity.span)),
+        Some(other) => Err(type_mismatch(
+            expr_span(other),
+            "a unit-bearing literal",
+            "expression",
+        )),
+        None => Err(type_mismatch(
+            field.name.span,
+            "a unit-bearing literal",
+            "bare field",
+        )),
+    }
+}
+
+/// Split a unit-bearing literal into its decimal magnitude and unit suffix. The
+/// `quantity` token guarantees at least one digit followed by at least one
+/// letter, so both halves are non-empty.
+fn split_quantity(text: &str, span: Span) -> Result<(u64, &str), Diagnostics> {
+    let boundary = text
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(text.len());
+    let (digits, unit) = text.split_at(boundary);
+    let magnitude = digits
+        .parse::<u64>()
+        .map_err(|_| type_mismatch(span, "a representable magnitude", format!("`{text}`")))?;
+    Ok((magnitude, unit))
+}
+
+/// Convert a duration literal to nanoseconds with checked arithmetic. A byte
+/// unit here is a typed unit mismatch, not a silent reinterpretation.
+fn duration_nanos(text: &str, span: Span) -> Result<u64, Diagnostics> {
+    let (magnitude, unit) = split_quantity(text, span)?;
+    let per_unit = match unit {
+        "ns" => 1_u64,
+        "us" => 1_000,
+        "ms" => 1_000_000,
+        "s" => 1_000_000_000,
+        "m" => 60_000_000_000,
+        "h" => 3_600_000_000_000,
+        _ => {
+            return Err(type_mismatch(
+                span,
+                "a duration unit (ns/us/ms/s/m/h)",
+                format!("`{unit}`"),
+            ));
+        }
+    };
+    magnitude
+        .checked_mul(per_unit)
+        .ok_or_else(|| type_mismatch(span, "a representable duration", format!("`{text}`")))
+}
+
+/// Convert a byte-size literal to a byte count with checked arithmetic. Binary
+/// units: `KB`/`MB`/`GB` are 1024-based, matching resident-set budgeting; the
+/// `KiB`/`MiB`/`GiB` spellings are accepted as explicit aliases. A duration
+/// unit here is a typed unit mismatch.
+fn byte_count(text: &str, span: Span) -> Result<u64, Diagnostics> {
+    let (magnitude, unit) = split_quantity(text, span)?;
+    let per_unit = match unit {
+        "B" => 1_u64,
+        "KB" | "KiB" => 1 << 10,
+        "MB" | "MiB" => 1 << 20,
+        "GB" | "GiB" => 1 << 30,
+        _ => {
+            return Err(type_mismatch(
+                span,
+                "a byte unit (B/KB/MB/GB)",
+                format!("`{unit}`"),
+            ));
+        }
+    };
+    magnitude
+        .checked_mul(per_unit)
+        .ok_or_else(|| type_mismatch(span, "a representable byte count", format!("`{text}`")))
 }
 
 fn is_stream_check_type(ty: &ast::Type) -> bool {
@@ -1087,6 +1260,7 @@ fn lower_declared_type(
         ast::Type::Path(path) if path_is(path, "Bool") => Ok(Type::Bool),
         ast::Type::Path(path) if path_is(path, "Int") => Ok(Type::Int),
         ast::Type::Path(path) if path_is(path, "String") => Ok(Type::String),
+        ast::Type::Path(path) if path_is(path, "Path") => Ok(Type::Path),
         ast::Type::Path(path) if path_is(path, "Check") => Ok(Type::Check),
         ast::Type::Generic(_) if is_stream_check_type(ty) => Ok(Type::StreamCheck),
         ast::Type::Generic(generic) if path_is(&generic.base, "Option") => {
@@ -1156,11 +1330,17 @@ fn lower_declared_type(
     }
 }
 
+struct LoweredFunction {
+    function: Function,
+    /// Present for `#[test]` functions: the lowered generator/codata body.
+    generator: Option<GeneratorBody>,
+}
+
 fn lower_function(
     signature: &FunctionSignature,
     function: &ast::FnItem,
     context: &ModuleContext<'_>,
-) -> Result<Function, Diagnostics> {
+) -> Result<LoweredFunction, Diagnostics> {
     let mut nodes = Vec::new();
     let mut yielded_checks = Vec::new();
     let mut bindings = BTreeMap::new();
@@ -1191,71 +1371,412 @@ fn lower_function(
         });
     }
 
-    for statement in &function.body.stmts {
-        match statement {
-            ast::Stmt::Expression(statement) => {
-                return Err(expression_statement_diagnostic(statement.span));
-            }
-            ast::Stmt::Yield(statement) if signature.is_test => {
-                let check = lower_check(&mut nodes, &bindings, context, &statement.value)?;
-                yielded_checks.push(check);
-                push_node(
-                    &mut nodes,
-                    statement.span,
-                    Type::StreamCheck,
-                    EffectFacts::CODATA,
-                    vec![check],
-                    Op::Yield,
-                );
-            }
-            ast::Stmt::Yield(statement) => {
-                return Err(Diagnostics::one(Diagnostic::unsupported(
-                    statement.span,
-                    "yield outside a Stream<Check> test",
-                )));
-            }
-            ast::Stmt::Let(statement) => {
-                lower_let_statement(&mut nodes, &mut bindings, context, statement)?;
-            }
-        }
-    }
-
-    let output = match (&function.body.tail, signature.is_test) {
-        (Some(tail), true) => {
+    let (output, generator) = if signature.is_test {
+        if let Some(tail) = &function.body.tail {
             return Err(Diagnostics::one(Diagnostic::unsupported(
                 expr_span(tail),
                 "test tail expression",
             )));
         }
-        (None, true) => None,
-        (Some(tail), false) => {
-            let value = lower_value_expected(
-                &mut nodes,
-                &bindings,
-                context,
-                tail,
-                Some(&signature.return_type),
-            )?;
-            require_type(&value, &signature.return_type, expr_span(tail))?;
-            Some(value.node)
+        let mut site_counter = 0u32;
+        let generator = lower_generator_body(
+            &mut nodes,
+            &mut yielded_checks,
+            &mut site_counter,
+            &bindings,
+            context,
+            GeneratorBodySource {
+                statements: &function.body.stmts,
+                tail: None,
+                top_level: true,
+            },
+        )?;
+        (None, Some(generator))
+    } else {
+        for statement in &function.body.stmts {
+            match statement {
+                ast::Stmt::Expression(statement) => {
+                    return Err(expression_statement_diagnostic(statement.span));
+                }
+                ast::Stmt::Yield(statement) => {
+                    return Err(Diagnostics::one(Diagnostic::unsupported(
+                        statement.span,
+                        "yield outside a Stream<Check> test",
+                    )));
+                }
+                ast::Stmt::Let(statement) => {
+                    lower_let_statement(&mut nodes, &mut bindings, context, statement)?;
+                }
+            }
         }
-        (None, false) => {
-            return Err(Diagnostics::one(Diagnostic::unsupported(
-                function.body.span,
-                "function without a tail value",
-            )));
-        }
+        let output = match &function.body.tail {
+            Some(tail) => {
+                let value = lower_value_expected(
+                    &mut nodes,
+                    &bindings,
+                    context,
+                    tail,
+                    Some(&signature.return_type),
+                )?;
+                require_type(&value, &signature.return_type, expr_span(tail))?;
+                Some(value.node)
+            }
+            None => {
+                return Err(Diagnostics::one(Diagnostic::unsupported(
+                    function.body.span,
+                    "function without a tail value",
+                )));
+            }
+        };
+        (output, None)
     };
 
-    Ok(Function {
-        id: signature.id,
-        name: function.name.value.clone(),
-        span: function.span,
-        parameters,
-        return_type: signature.return_type.clone(),
+    Ok(LoweredFunction {
+        function: Function {
+            id: signature.id,
+            name: function.name.value.clone(),
+            span: function.span,
+            parameters,
+            return_type: signature.return_type.clone(),
+            nodes,
+            output,
+            yielded_checks,
+        },
+        generator,
+    })
+}
+
+/// Lower an ordered sequence of generator statements (a test body or the body
+/// of a taken control arm) into a [`GeneratorBody`]. Value nodes are appended
+/// to `nodes`; every published check node is recorded in `yielded_checks` for
+/// the `must_use` lint and the flat static runner. `top_level` marks the test
+/// body itself, whose unconditional leaf yields retain the historical
+/// `Op::Yield` codata marker node so flat tests keep their exact VIR shape.
+struct GeneratorBodySource<'a> {
+    statements: &'a [ast::Stmt],
+    tail: Option<&'a ast::Expr>,
+    top_level: bool,
+}
+
+fn lower_generator_body(
+    nodes: &mut Vec<Node>,
+    yielded_checks: &mut Vec<NodeId>,
+    site_counter: &mut u32,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    source: GeneratorBodySource<'_>,
+) -> Result<GeneratorBody, Diagnostics> {
+    let GeneratorBodySource {
+        statements,
+        tail,
+        top_level,
+    } = source;
+    let mut bindings = bindings.clone();
+    let mut steps = Vec::new();
+    for statement in statements {
+        match statement {
+            ast::Stmt::Expression(statement) => {
+                return Err(expression_statement_diagnostic(statement.span));
+            }
+            ast::Stmt::Let(statement) => {
+                lower_let_statement(nodes, &mut bindings, context, statement)?;
+            }
+            ast::Stmt::Yield(statement) => match &statement.value {
+                ast::Expr::Match(expression) => {
+                    steps.push(lower_generator_match(
+                        nodes,
+                        yielded_checks,
+                        site_counter,
+                        &bindings,
+                        context,
+                        expression,
+                    )?);
+                }
+                ast::Expr::If(expression) => {
+                    steps.push(lower_generator_if(
+                        nodes,
+                        yielded_checks,
+                        site_counter,
+                        &bindings,
+                        context,
+                        expression,
+                    )?);
+                }
+                value => {
+                    let site = lower_yield_check_site(
+                        nodes,
+                        yielded_checks,
+                        site_counter,
+                        &bindings,
+                        context,
+                        value,
+                        statement.span,
+                    )?;
+                    // An unconditional top-level value check retains the
+                    // historical `Op::Yield` codata marker so flat tests keep
+                    // their exact VIR shape. A trace site publishes no codata
+                    // island, so it emits no marker node.
+                    if top_level && let CheckRecipe::Value { check } = &site.recipe {
+                        push_node(
+                            nodes,
+                            statement.span,
+                            Type::StreamCheck,
+                            EffectFacts::CODATA,
+                            vec![*check],
+                            Op::Yield,
+                        );
+                    }
+                    steps.push(GeneratorStep::Yield(site));
+                }
+            },
+        }
+    }
+    if let Some(tail) = tail {
+        let site = lower_yield_check_site(
+            nodes,
+            yielded_checks,
+            site_counter,
+            &bindings,
+            context,
+            tail,
+            expr_span(tail),
+        )?;
+        steps.push(GeneratorStep::Yield(site));
+    }
+    Ok(GeneratorBody { steps })
+}
+
+/// Lower one leaf `yield <check>` into a static [`YieldSite`]. A value check is
+/// a pure parameterized recipe (`Op::Expect` over captured values), never an
+/// evaluated boolean or a host call. A trace check is a self-contained
+/// descriptor and contributes no demandable node, so it is not recorded in
+/// `yielded_checks` (there is nothing to demand or `must_use`-consume).
+fn lower_yield_check_site(
+    nodes: &mut Vec<Node>,
+    yielded_checks: &mut Vec<NodeId>,
+    site_counter: &mut u32,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    value: &ast::Expr,
+    span: Span,
+) -> Result<YieldSite, Diagnostics> {
+    let recipe = lower_check(nodes, bindings, context, value)?;
+    if let CheckRecipe::Value { check } = &recipe {
+        yielded_checks.push(*check);
+    }
+    let id = YieldSiteId(*site_counter);
+    *site_counter = site_counter
+        .checked_add(1)
+        .expect("yield site count fits u32");
+    Ok(YieldSite { id, recipe, span })
+}
+
+/// Lower a yielded `match` into a generator [`GeneratorStep::Match`]: real
+/// variant dispatch on a scrutinee value whose taken arm is a nested generator
+/// body. Untaken arms contribute no yield sites, so there are no phantom checks.
+fn lower_generator_match(
+    nodes: &mut Vec<Node>,
+    yielded_checks: &mut Vec<NodeId>,
+    site_counter: &mut u32,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    expression: &ast::MatchExpr,
+) -> Result<GeneratorStep, Diagnostics> {
+    let scrutinee = lower_value(nodes, bindings, context, &expression.scrutinee)?;
+    let Type::Enum(enumeration) = scrutinee.ty.clone() else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            expr_span(&expression.scrutinee),
+            "generator match on a non-enum scrutinee",
+        )));
+    };
+    if !expression
+        .arms
+        .arms
+        .iter()
+        .all(|arm| enum_pattern(&arm.pattern).is_some() && arm.guard.is_none())
+    {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            expression.arms.span,
+            "generator match requires exhaustive enum arms without guards",
+        )));
+    }
+
+    let mut seen = BTreeSet::new();
+    let mut arms = Vec::with_capacity(expression.arms.arms.len());
+    for arm in &expression.arms.arms {
+        let pattern = enum_pattern(&arm.pattern).expect("generator match arm shape checked above");
+        let (variant_index, variant, variant_span) =
+            find_enum_pattern_variant(&enumeration, pattern)?;
+        if !seen.insert(variant_index) {
+            return Err(variant_diagnostic(
+                DiagnosticCode::DuplicateVariant,
+                variant_span,
+                &enumeration.name,
+                &variant.name,
+            ));
+        }
+        let first_binding_node = nodes.len();
+        let mut arm_bindings = bindings.clone();
+        bind_enum_pattern(
+            nodes,
+            &mut arm_bindings,
+            &scrutinee,
+            &enumeration,
+            variant_index,
+            variant,
+            pattern,
+        )?;
+        let binding_nodes = (first_binding_node..nodes.len())
+            .map(|index| NodeId(u32::try_from(index).expect("VIR node index fits u32")))
+            .collect();
+        let body = match &arm.body {
+            ast::MatchArmBody::Block(block) => lower_generator_body(
+                nodes,
+                yielded_checks,
+                site_counter,
+                &arm_bindings,
+                context,
+                GeneratorBodySource {
+                    statements: &block.stmts,
+                    tail: block.tail.as_ref(),
+                    top_level: false,
+                },
+            )?,
+            ast::MatchArmBody::Expr(expression) => {
+                let site = lower_yield_check_site(
+                    nodes,
+                    yielded_checks,
+                    site_counter,
+                    &arm_bindings,
+                    context,
+                    expression,
+                    expr_span(expression),
+                )?;
+                GeneratorBody {
+                    steps: vec![GeneratorStep::Yield(site)],
+                }
+            }
+        };
+        arms.push(GeneratorArm {
+            variant: u32::try_from(variant_index).map_err(|_| {
+                variant_diagnostic(
+                    DiagnosticCode::VariantPayloadMismatch,
+                    enum_pattern_span(pattern),
+                    &enumeration.name,
+                    &variant.name,
+                )
+            })?,
+            condition: NodeId(u32::MAX),
+            bindings: binding_nodes,
+            body,
+        });
+    }
+
+    let missing = enumeration
+        .variants
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| !seen.contains(index))
+        .map(|(_, variant)| variant.name.clone())
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        return Err(Diagnostics::one(Diagnostic {
+            code: DiagnosticCode::NonExhaustiveMatch,
+            primary: expression.arms.span,
+            labels: Vec::new(),
+            payload: DiagnosticPayload::Match { missing },
+        }));
+    }
+
+    for arm in &mut arms {
+        let mut condition_arms = Vec::with_capacity(enumeration.variants.len());
+        for variant in 0..enumeration.variants.len() {
+            let literal = push_node(
+                nodes,
+                expression.span,
+                Type::Bool,
+                EffectFacts::PURE,
+                Vec::new(),
+                Op::Bool(variant == arm.variant as usize),
+            );
+            condition_arms.push(VirMatchArm {
+                variant: u32::try_from(variant).expect("enum variant index fits u32"),
+                nodes: vec![literal],
+                output: literal,
+            });
+        }
+        arm.condition = push_node(
+            nodes,
+            expression.span,
+            Type::Bool,
+            EffectFacts::PURE,
+            vec![scrutinee.node],
+            Op::Match {
+                arms: condition_arms,
+            },
+        );
+    }
+
+    Ok(GeneratorStep::Match {
+        scrutinee: scrutinee.node,
+        arms,
+    })
+}
+
+/// Lower a yielded `if` into a generator [`GeneratorStep::If`]: real two-way
+/// dispatch on a Bool condition whose taken branch is a nested generator body.
+///
+/// r[impl machine.test.generator-step]
+fn lower_generator_if(
+    nodes: &mut Vec<Node>,
+    yielded_checks: &mut Vec<NodeId>,
+    site_counter: &mut u32,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    expression: &ast::IfExpr,
+) -> Result<GeneratorStep, Diagnostics> {
+    let condition = lower_value(nodes, bindings, context, &expression.condition)?;
+    require_type(&condition, &Type::Bool, expr_span(&expression.condition))?;
+    let consequent = lower_generator_body(
         nodes,
-        output,
         yielded_checks,
+        site_counter,
+        bindings,
+        context,
+        GeneratorBodySource {
+            statements: &expression.consequent.stmts,
+            tail: expression.consequent.tail.as_ref(),
+            top_level: false,
+        },
+    )?;
+    let alternative = match &expression.alternative {
+        ast::IfBranch::Block(block) => lower_generator_body(
+            nodes,
+            yielded_checks,
+            site_counter,
+            bindings,
+            context,
+            GeneratorBodySource {
+                statements: &block.stmts,
+                tail: block.tail.as_ref(),
+                top_level: false,
+            },
+        )?,
+        ast::IfBranch::If(inner) => GeneratorBody {
+            steps: vec![lower_generator_if(
+                nodes,
+                yielded_checks,
+                site_counter,
+                bindings,
+                context,
+                inner,
+            )?],
+        },
+    };
+    Ok(GeneratorStep::If {
+        condition: condition.node,
+        consequent,
+        alternative,
     })
 }
 
@@ -1387,7 +1908,7 @@ fn lower_check(
     bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
     expression: &ast::Expr,
-) -> Result<NodeId, Diagnostics> {
+) -> Result<CheckRecipe, Diagnostics> {
     let ast::Expr::Call(call) = expression else {
         return Err(Diagnostics::one(Diagnostic {
             code: DiagnosticCode::TypeMismatch,
@@ -1405,6 +1926,73 @@ fn lower_check(
             "named arguments on a check constructor",
         )));
     }
+    // Trace-check constructors are descriptors over the completed run. They
+    // build no node: their scalar bound is captured directly, so nothing is
+    // lowered to a Weavy island, no scheduler request is issued, and no operand
+    // is demanded. Value-check constructors fall through and root an
+    // `Op::Expect` recipe below.
+    match call.callee.value.as_str() {
+        "scheduler_requests_at_most" => {
+            return Ok(CheckRecipe::Trace(TraceCheck::SchedulerRequestsAtMost {
+                bound: trace_bound(call)?,
+            }));
+        }
+        "memo_entries_at_most" => {
+            return Ok(CheckRecipe::Trace(TraceCheck::MemoEntriesAtMost {
+                bound: trace_bound(call)?,
+            }));
+        }
+        "store_interns_at_most" => {
+            return Ok(CheckRecipe::Trace(TraceCheck::StoreInternsAtMost {
+                bound: trace_bound(call)?,
+            }));
+        }
+        "value_island_spawns_at_most" => {
+            return Ok(CheckRecipe::Trace(TraceCheck::ValueIslandSpawnsAtMost {
+                bound: trace_bound(call)?,
+            }));
+        }
+        "successful_aggregate_freezes_at_most" => {
+            return Ok(CheckRecipe::Trace(
+                TraceCheck::SuccessfulAggregateFreezesAtMost {
+                    bound: trace_bound(call)?,
+                },
+            ));
+        }
+        "active_molten_selections_at_most" => {
+            return Ok(CheckRecipe::Trace(
+                TraceCheck::ActiveMoltenSelectionsAtMost {
+                    bound: trace_bound(call)?,
+                },
+            ));
+        }
+        "forced_copy_selections_at_most" => {
+            return Ok(CheckRecipe::Trace(TraceCheck::ForcedCopySelectionsAtMost {
+                bound: trace_bound(call)?,
+            }));
+        }
+        "framed_bytes_at_most" => {
+            return Ok(CheckRecipe::Trace(TraceCheck::FramedBytesAtMost {
+                bound: trace_bound(call)?,
+            }));
+        }
+        "peak_molten_bytes_at_most" => {
+            return Ok(CheckRecipe::Trace(TraceCheck::PeakMoltenBytesAtMost {
+                bound: trace_bound(call)?,
+            }));
+        }
+        "peak_molten_nodes_at_most" => {
+            return Ok(CheckRecipe::Trace(TraceCheck::PeakMoltenNodesAtMost {
+                bound: trace_bound(call)?,
+            }));
+        }
+        "demanded_times" => {
+            return Ok(CheckRecipe::Trace(trace_function_calls(
+                nodes, bindings, context, call,
+            )?));
+        }
+        _ => {}
+    }
     let condition = match call.callee.value.as_str() {
         "expect" => {
             check_arity(call, 1)?;
@@ -1418,17 +2006,12 @@ fn lower_check(
             let right =
                 lower_value_expected(nodes, bindings, context, &call.args.args[1], Some(&left.ty))?;
             require_same_type(&left, &right, call.span)?;
-            push_node(
+            push_equality_condition(
                 nodes,
                 call.span,
-                Type::Bool,
-                EffectFacts::PURE,
-                vec![left.node, right.node],
-                if call.callee.value == "expect_eq" {
-                    Op::Eq
-                } else {
-                    Op::Ne
-                },
+                &left,
+                &right,
+                call.callee.value == "expect_ne",
             )
         }
         "expect_some" | "expect_none" => {
@@ -1467,14 +2050,78 @@ fn lower_check(
             }));
         }
     };
-    Ok(push_node(
-        nodes,
-        call.span,
-        Type::Check,
-        EffectFacts::PURE,
-        vec![condition],
-        Op::Expect,
-    ))
+    Ok(CheckRecipe::Value {
+        check: push_node(
+            nodes,
+            call.span,
+            Type::Check,
+            EffectFacts::PURE,
+            vec![condition],
+            Op::Expect,
+        ),
+    })
+}
+
+/// The single integer bound of a trace-check constructor. The argument is a
+/// non-negative integer literal read directly from the surface — never demanded
+/// or lowered — so a trace check pins a bound without any evaluation.
+fn trace_bound(call: &ast::Call) -> Result<i64, Diagnostics> {
+    check_arity(call, 1)?;
+    let argument = &call.args.args[0];
+    let ast::Expr::Number(number) = argument else {
+        return Err(type_mismatch(
+            expr_span(argument),
+            "an integer bound literal",
+            "expression",
+        ));
+    };
+    number.value.parse::<i64>().map_err(|_| {
+        type_mismatch(
+            number.span,
+            "Int",
+            format!("number literal `{}`", number.value),
+        )
+    })
+}
+
+fn trace_function_calls(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    call: &ast::Call,
+) -> Result<TraceCheck, Diagnostics> {
+    check_arity(call, 2)?;
+    let callable = lower_value(nodes, bindings, context, &call.args.args[0])?;
+    let function = nodes
+        .iter()
+        .find(|node| node.id == callable.node)
+        .and_then(|node| match node.op {
+            Op::Closure(function) => Some(function),
+            _ => None,
+        })
+        .ok_or_else(|| {
+            type_mismatch(
+                expr_span(&call.args.args[0]),
+                "a direct one-argument function reference",
+                callable.ty.name(),
+            )
+        })?;
+    let argument = &call.args.args[1];
+    let ast::Expr::Number(number) = argument else {
+        return Err(type_mismatch(
+            expr_span(argument),
+            "an integer demand count literal",
+            "expression",
+        ));
+    };
+    let times = number.value.parse::<i64>().map_err(|_| {
+        type_mismatch(
+            number.span,
+            "Int",
+            format!("number literal `{}`", number.value),
+        )
+    })?;
+    Ok(TraceCheck::FunctionCallsExactly { function, times })
 }
 
 #[derive(Clone)]
@@ -1486,16 +2133,24 @@ struct LoweredValue {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PreludeReceiverType {
     Array,
+    String,
     Map,
     Set,
+    Stream,
+    Int,
+    Path,
 }
 
 impl PreludeReceiverType {
     fn from_vir_type(ty: &Type) -> Option<Self> {
         match ty {
             Type::Array(_) => Some(Self::Array),
+            Type::String => Some(Self::String),
             Type::Map { .. } => Some(Self::Map),
             Type::Set(_) => Some(Self::Set),
+            Type::Stream { .. } => Some(Self::Stream),
+            Type::Int => Some(Self::Int),
+            Type::Path => Some(Self::Path),
             _ => None,
         }
     }
@@ -1504,14 +2159,36 @@ impl PreludeReceiverType {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PreludeMethod {
     ArrayLen,
+    ArrayMap,
+    ArrayFold,
+    ArraySplitLast,
+    ArrayAll,
+    ArrayAny,
+    ArrayContains,
+    StringContains,
+    StringSplitOnce,
+    StringParseInt,
+    StringIsNumeric,
+    ArraySorted,
+    ArrayStream,
+    IntRem,
     MapGet,
     MapHas,
     MapLen,
     MapKeys,
+    MapValues,
     MapWith,
     SetHas,
     SetLen,
     SetValues,
+    StreamFilter,
+    StreamFilterMap,
+    StreamFlatMap,
+    StreamCollect,
+    StreamFindMin,
+    StreamFindMax,
+    StreamSplitMin,
+    PathToString,
 }
 
 #[derive(Clone, Copy)]
@@ -1534,6 +2211,84 @@ impl PreludeMethodRegistry {
                 name: "len",
                 arity: 0,
                 method: PreludeMethod::ArrayLen,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Array,
+                name: "map",
+                arity: 1,
+                method: PreludeMethod::ArrayMap,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Array,
+                name: "fold",
+                arity: 2,
+                method: PreludeMethod::ArrayFold,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Array,
+                name: "split_last",
+                arity: 0,
+                method: PreludeMethod::ArraySplitLast,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Array,
+                name: "all",
+                arity: 1,
+                method: PreludeMethod::ArrayAll,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Array,
+                name: "any",
+                arity: 1,
+                method: PreludeMethod::ArrayAny,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Array,
+                name: "contains",
+                arity: 1,
+                method: PreludeMethod::ArrayContains,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::String,
+                name: "contains",
+                arity: 1,
+                method: PreludeMethod::StringContains,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::String,
+                name: "split_once",
+                arity: 1,
+                method: PreludeMethod::StringSplitOnce,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::String,
+                name: "parse_int",
+                arity: 0,
+                method: PreludeMethod::StringParseInt,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::String,
+                name: "is_numeric",
+                arity: 0,
+                method: PreludeMethod::StringIsNumeric,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Array,
+                name: "sorted",
+                arity: 0,
+                method: PreludeMethod::ArraySorted,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Array,
+                name: "stream",
+                arity: 0,
+                method: PreludeMethod::ArrayStream,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Int,
+                name: "rem",
+                arity: 1,
+                method: PreludeMethod::IntRem,
             },
             PreludeMethodEntry {
                 receiver: PreludeReceiverType::Map,
@@ -1561,6 +2316,12 @@ impl PreludeMethodRegistry {
             },
             PreludeMethodEntry {
                 receiver: PreludeReceiverType::Map,
+                name: "values",
+                arity: 0,
+                method: PreludeMethod::MapValues,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Map,
                 name: "with",
                 arity: 2,
                 method: PreludeMethod::MapWith,
@@ -1583,6 +2344,54 @@ impl PreludeMethodRegistry {
                 arity: 0,
                 method: PreludeMethod::SetValues,
             },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Stream,
+                name: "filter",
+                arity: 1,
+                method: PreludeMethod::StreamFilter,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Stream,
+                name: "filter_map",
+                arity: 1,
+                method: PreludeMethod::StreamFilterMap,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Stream,
+                name: "flat_map",
+                arity: 1,
+                method: PreludeMethod::StreamFlatMap,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Stream,
+                name: "collect",
+                arity: 0,
+                method: PreludeMethod::StreamCollect,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Stream,
+                name: "find_min",
+                arity: 1,
+                method: PreludeMethod::StreamFindMin,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Stream,
+                name: "find_max",
+                arity: 1,
+                method: PreludeMethod::StreamFindMax,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Stream,
+                name: "split_min",
+                arity: 0,
+                method: PreludeMethod::StreamSplitMin,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Path,
+                name: "to_string",
+                arity: 0,
+                method: PreludeMethod::PathToString,
+            },
         ],
     };
 
@@ -1604,6 +2413,37 @@ fn lower_value(
     lower_value_expected(nodes, bindings, context, expression, None)
 }
 
+fn validate_path_literal(value: &str, span: Span) -> Result<(), Diagnostics> {
+    if value.is_empty() {
+        return Ok(());
+    }
+    if value.starts_with('/') || value.contains('\\') || value.contains('\0') {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            span,
+            "Path literal must be a relative path",
+        )));
+    }
+    for segment in value.split('/') {
+        validate_path_segment(segment, span)?;
+    }
+    Ok(())
+}
+
+fn validate_path_segment(value: &str, span: Span) -> Result<(), Diagnostics> {
+    if value.is_empty()
+        || matches!(value, "." | "..")
+        || value.contains('/')
+        || value.contains('\\')
+        || value.contains('\0')
+    {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            span,
+            "Path join requires one nonempty segment without separators, dot segments, or NUL",
+        )));
+    }
+    Ok(())
+}
+
 fn lower_value_expected(
     nodes: &mut Vec<Node>,
     bindings: &BTreeMap<String, LoweredValue>,
@@ -1616,6 +2456,13 @@ fn lower_value_expected(
         ast::Expr::If(expression) => lower_if(nodes, bindings, context, expression, expected),
         ast::Expr::Bool(value) => Ok(lower_bool_constant(nodes, value.span, value.value)),
         ast::Expr::Number(value) => lower_integer_literal(nodes, value.span, &value.value),
+        // A unit-bearing literal only has meaning inside an attribute argument
+        // value (e.g. a `#[test]` budget). In an ordinary value position it is a
+        // typed error, never a silently-parsed number.
+        ast::Expr::Quantity(value) => Err(Diagnostics::one(Diagnostic::unsupported(
+            value.span,
+            "unit-bearing literal outside an attribute",
+        ))),
         ast::Expr::Str(value) => Ok(LoweredValue {
             node: push_node(
                 nodes,
@@ -1627,16 +2474,38 @@ fn lower_value_expected(
             ),
             ty: Type::String,
         }),
+        ast::Expr::Path(value) => {
+            validate_path_literal(value.value.as_str(), value.span)?;
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    value.span,
+                    Type::Path,
+                    EffectFacts::PURE,
+                    Vec::new(),
+                    Op::Path(value.value.clone()),
+                ),
+                ty: Type::Path,
+            })
+        }
         ast::Expr::Identifier(identifier) if identifier.value == "None" => {
             lower_none(nodes, identifier.span, expected)
         }
         ast::Expr::Identifier(identifier) => {
-            lookup_binding(bindings, &identifier.value, identifier.span)
+            if let Some(value) = bindings.get(&identifier.value) {
+                Ok(value.clone())
+            } else {
+                lower_function_reference(nodes, context, identifier)
+            }
+        }
+        ast::Expr::Call(call) if call.callee.value == "by_key" => {
+            lower_by_key(nodes, bindings, context, call, expected)
         }
         ast::Expr::Call(call) if call.callee.value == "Some" => {
             lower_some(nodes, bindings, context, call, expected)
         }
         ast::Expr::Call(call) => lower_call(nodes, bindings, context, call),
+        ast::Expr::WhereCall(call) => lower_where_call(nodes, bindings, context, call),
         ast::Expr::Binary(binary) => lower_binary(nodes, bindings, context, binary),
         ast::Expr::Variant(variant) => lower_variant(nodes, bindings, context, variant, expected),
         ast::Expr::Match(match_expr) => lower_match(nodes, bindings, context, match_expr, expected),
@@ -1964,6 +2833,88 @@ fn lower_array_index(
     })
 }
 
+/// The positional arguments of a method call. The parenless named-argument
+/// form (`receiver.name where { .. }`) carries no argument list, so it reads as
+/// an empty positional slice.
+fn method_positional_args(call: &ast::MethodCall) -> &[ast::Expr] {
+    call.args.as_ref().map_or(&[][..], |args| &args.args)
+}
+
+/// Uniform function-call dispatch: `recv.method(args)` → `method(recv) where {
+/// p0: args[0], .. }`. The callee must have exactly one positional parameter
+/// (the receiver) whose type matches the receiver; the method's positional
+/// arguments fill the callee's `where` parameters in declaration order. Builds
+/// the same `Op::Call` shape as a direct call: positional input first, then the
+/// named parameters in signature order.
+fn lower_uniform_call(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    call: &ast::MethodCall,
+    receiver: LoweredValue,
+    signature: &FunctionSignature,
+) -> Result<LoweredValue, Diagnostics> {
+    if signature.is_test {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            call.span,
+            "calling a test function as a method",
+        )));
+    }
+    if let Some(named) = &call.named_args {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            named.span,
+            "named method arguments",
+        )));
+    }
+    let positional: Vec<_> = signature
+        .parameters
+        .iter()
+        .filter(|parameter| parameter.kind == ParameterKind::Positional)
+        .collect();
+    let [receiver_parameter] = positional.as_slice() else {
+        return Err(type_mismatch(
+            call.name.span,
+            "a method with one receiver parameter",
+            &call.name.value,
+        ));
+    };
+    require_type(&receiver, &receiver_parameter.ty, expr_span(&call.receiver))?;
+
+    let named_parameters: Vec<_> = signature
+        .parameters
+        .iter()
+        .filter(|parameter| parameter.kind == ParameterKind::Named)
+        .collect();
+    let arguments = method_positional_args(call);
+    if arguments.len() != named_parameters.len() {
+        return Err(invalid_arity(
+            call.span,
+            named_parameters.len(),
+            arguments.len(),
+        ));
+    }
+
+    let mut inputs = Vec::with_capacity(signature.parameters.len());
+    inputs.push(receiver.node);
+    for (parameter, argument) in named_parameters.into_iter().zip(arguments) {
+        let value = lower_value_expected(nodes, bindings, context, argument, Some(&parameter.ty))?;
+        require_type(&value, &parameter.ty, expr_span(argument))?;
+        inputs.push(value.node);
+    }
+
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            call.span,
+            signature.return_type.clone(),
+            EffectFacts::PURE,
+            inputs,
+            Op::Call(signature.id),
+        ),
+        ty: signature.return_type.clone(),
+    })
+}
+
 fn lower_method_call(
     nodes: &mut Vec<Node>,
     bindings: &BTreeMap<String, LoweredValue>,
@@ -1973,6 +2924,15 @@ fn lower_method_call(
     let receiver = lower_value(nodes, bindings, context, &call.receiver)?;
     let Some(entry) = PreludeMethodRegistry::STANDARD.resolve(&receiver.ty, &call.name.value)
     else {
+        // Uniform function-call syntax: `recv.method(args)` on a value with no
+        // builtin method of that name resolves to the free function `method`
+        // whose sole positional parameter is the receiver, with the method's
+        // positional arguments bound to the function's `where` parameters in
+        // declaration order. This is the general dispatch the version-set
+        // methods (`contains`, `intersect`, `is_empty`) ride on.
+        if let Some(signature) = context.signatures.get(&call.name.value) {
+            return lower_uniform_call(nodes, bindings, context, call, receiver, signature);
+        }
         return Err(Diagnostics::one(Diagnostic {
             code: DiagnosticCode::UnknownMethod,
             primary: call.name.span,
@@ -1982,10 +2942,15 @@ fn lower_method_call(
             },
         }));
     };
-    if call.args.args.len() != entry.arity {
-        return Err(invalid_arity(call.span, entry.arity, call.args.args.len()));
+    let positional = method_positional_args(call);
+    if positional.len() != entry.arity {
+        return Err(invalid_arity(call.span, entry.arity, positional.len()));
     }
-    if let Some(named) = &call.named_args {
+    // `sorted` is the sole method that accepts a named argument: an explicit
+    // `Order<T>` recipe. Every other method rejects named arguments.
+    if let Some(named) = &call.named_args
+        && !matches!(entry.method, PreludeMethod::ArraySorted)
+    {
         return Err(Diagnostics::one(Diagnostic::unsupported(
             named.span,
             "named method arguments",
@@ -2003,14 +2968,358 @@ fn lower_method_call(
             ),
             ty: Type::Int,
         }),
+        PreludeMethod::ArrayMap => {
+            // r[impl lang.collection.array-map]
+            let Type::Array(element) = &receiver.ty else {
+                unreachable!("array map registry entry has an array receiver")
+            };
+            let mapper = match &positional[0] {
+                ast::Expr::Closure(closure) => {
+                    lower_closure_with_parameter(nodes, bindings, context, closure, element)?
+                }
+                expression => lower_value_expected(nodes, bindings, context, expression, None)?,
+            };
+            let Type::Function { parameter, result } = &mapper.ty else {
+                return Err(type_mismatch(
+                    expr_span(&positional[0]),
+                    format!("fn({}) -> _", element.name()),
+                    mapper.ty.name(),
+                ));
+            };
+            if parameter.as_ref() != element.as_ref() {
+                return Err(type_mismatch(
+                    expr_span(&positional[0]),
+                    format!("fn({}) -> _", element.name()),
+                    mapper.ty.name(),
+                ));
+            }
+            let ty = Type::array(result.as_ref().clone());
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::PURE,
+                    vec![receiver.node, mapper.node],
+                    Op::ArrayMap {
+                        grain: ArrayMapGrain {
+                            key: ArrayMapGrainKey::InputPosition,
+                            origin: ArrayMapGrainKey::InputPosition,
+                        },
+                    },
+                ),
+                ty,
+            })
+        }
+        PreludeMethod::ArrayFold => {
+            let Type::Array(element) = &receiver.ty else {
+                unreachable!("array fold registry entry has an array receiver")
+            };
+            let element = element.as_ref().clone();
+            // Checkpoint 4: the strict one-item-append fold over `[]` denotes a
+            // per-element map under the as-if law. Selecting the molten map
+            // shape builds one dense array in-frame and interns it once, exactly
+            // as the copy fold's value but without the O(n²) rebuild. The
+            // forced-copy differential disables this and keeps the semantic copy
+            // path, so the two value sets can be proven identical.
+            if !context.config.force_molten_copy
+                && let Some(mapper) = try_build_molten_append_mapper(
+                    nodes,
+                    bindings,
+                    context,
+                    &positional[0],
+                    &positional[1],
+                    &element,
+                )?
+            {
+                let ty = Type::array(element);
+                return Ok(LoweredValue {
+                    node: push_node(
+                        nodes,
+                        call.span,
+                        ty.clone(),
+                        EffectFacts {
+                            fallible: true,
+                            ..EffectFacts::PURE
+                        },
+                        vec![receiver.node, mapper.node],
+                        Op::ArrayMap {
+                            grain: ArrayMapGrain {
+                                key: ArrayMapGrainKey::InputPosition,
+                                origin: ArrayMapGrainKey::InputPosition,
+                            },
+                        },
+                    ),
+                    ty,
+                });
+            }
+            let initial = lower_fold_initial(nodes, bindings, context, &positional[0], &element)?;
+            let parameter_ty = Type::Tuple(vec![initial.ty.clone(), element.clone()]);
+            let folder = match &positional[1] {
+                ast::Expr::Closure(closure) => {
+                    lower_closure_with_parameter(nodes, bindings, context, closure, &parameter_ty)?
+                }
+                expression => lower_value_expected(nodes, bindings, context, expression, None)?,
+            };
+            let Type::Function { parameter, result } = &folder.ty else {
+                return Err(type_mismatch(
+                    expr_span(&positional[1]),
+                    format!("fn({}) -> {}", parameter_ty.name(), initial.ty.name()),
+                    folder.ty.name(),
+                ));
+            };
+            if parameter.as_ref() != &parameter_ty || result.as_ref() != &initial.ty {
+                return Err(type_mismatch(
+                    expr_span(&positional[1]),
+                    format!("fn({}) -> {}", parameter_ty.name(), initial.ty.name()),
+                    folder.ty.name(),
+                ));
+            }
+            let ty = initial.ty.clone();
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts {
+                        fallible: true,
+                        ..EffectFacts::PURE
+                    },
+                    vec![receiver.node, initial.node, folder.node],
+                    Op::ArrayFold,
+                ),
+                ty,
+            })
+        }
+        PreludeMethod::ArraySplitLast => {
+            let Type::Array(element) = &receiver.ty else {
+                unreachable!("array split_last registry entry has an array receiver")
+            };
+            let payload = Type::Tuple(vec![
+                element.as_ref().clone(),
+                Type::array(element.as_ref().clone()),
+            ]);
+            let ty = Type::option(payload);
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::PURE,
+                    vec![receiver.node],
+                    Op::ArraySplitLast,
+                ),
+                ty,
+            })
+        }
+        PreludeMethod::ArraySorted => {
+            let Type::Array(element) = &receiver.ty else {
+                unreachable!("array sorted registry entry has an array receiver")
+            };
+            let element = element.as_ref().clone();
+            match &call.named_args {
+                Some(named) => {
+                    lower_sorted_with_order(nodes, bindings, context, &receiver, &element, named)
+                }
+                None => {
+                    if !element.structural_order_is_defined() {
+                        return Err(type_mismatch(
+                            call.span,
+                            "Array<T: Ord>",
+                            receiver.ty.name(),
+                        ));
+                    }
+                    let ty = receiver.ty.clone();
+                    Ok(LoweredValue {
+                        node: push_node(
+                            nodes,
+                            call.span,
+                            ty.clone(),
+                            EffectFacts::PURE,
+                            vec![receiver.node],
+                            Op::ArraySorted,
+                        ),
+                        ty,
+                    })
+                }
+            }
+        }
+        PreludeMethod::ArrayAll | PreludeMethod::ArrayAny => {
+            let Type::Array(element) = &receiver.ty else {
+                unreachable!("array predicate registry entry has an array receiver")
+            };
+            let predicate = match &positional[0] {
+                ast::Expr::Closure(closure) => {
+                    lower_closure_with_parameter(nodes, bindings, context, closure, element)?
+                }
+                expression => lower_value_expected(nodes, bindings, context, expression, None)?,
+            };
+            let Type::Function { parameter, result } = &predicate.ty else {
+                return Err(type_mismatch(
+                    expr_span(&positional[0]),
+                    format!("fn({}) -> Bool", element.name()),
+                    predicate.ty.name(),
+                ));
+            };
+            if parameter.as_ref() != element.as_ref() || result.as_ref() != &Type::Bool {
+                return Err(type_mismatch(
+                    expr_span(&positional[0]),
+                    format!("fn({}) -> Bool", element.name()),
+                    predicate.ty.name(),
+                ));
+            }
+            let op = match entry.method {
+                PreludeMethod::ArrayAll => Op::ArrayAll,
+                PreludeMethod::ArrayAny => Op::ArrayAny,
+                _ => unreachable!("array predicate dispatch is closed"),
+            };
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    Type::Bool,
+                    EffectFacts::PURE,
+                    vec![receiver.node, predicate.node],
+                    op,
+                ),
+                ty: Type::Bool,
+            })
+        }
+        PreludeMethod::ArrayContains => {
+            let Type::Array(element) = &receiver.ty else {
+                unreachable!("array contains registry entry has an array receiver")
+            };
+            let element = element.as_ref().clone();
+            let value = lower_value(nodes, bindings, context, &positional[0])?;
+            require_type(&value, &element, expr_span(&positional[0]))?;
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    Type::Bool,
+                    EffectFacts::PURE,
+                    vec![receiver.node, value.node],
+                    Op::ArrayContains,
+                ),
+                ty: Type::Bool,
+            })
+        }
+        PreludeMethod::StringContains => {
+            let needle = lower_value(nodes, bindings, context, &positional[0])?;
+            require_type(&needle, &Type::String, expr_span(&positional[0]))?;
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    Type::Bool,
+                    EffectFacts::PURE,
+                    vec![receiver.node, needle.node],
+                    Op::StringContains,
+                ),
+                ty: Type::Bool,
+            })
+        }
+        PreludeMethod::StringSplitOnce => {
+            let delimiter = lower_value(nodes, bindings, context, &positional[0])?;
+            require_type(&delimiter, &Type::String, expr_span(&positional[0]))?;
+            let ty = Type::Tuple(vec![Type::String, Type::String]);
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts {
+                        fallible: true,
+                        ..EffectFacts::PURE
+                    },
+                    vec![receiver.node, delimiter.node],
+                    Op::StringSplitOnce,
+                ),
+                ty,
+            })
+        }
+        PreludeMethod::StringParseInt => Ok(LoweredValue {
+            node: push_node(
+                nodes,
+                call.span,
+                Type::Int,
+                EffectFacts {
+                    fallible: true,
+                    ..EffectFacts::PURE
+                },
+                vec![receiver.node],
+                Op::StringParseInt,
+            ),
+            ty: Type::Int,
+        }),
+        PreludeMethod::StringIsNumeric => Ok(LoweredValue {
+            node: push_node(
+                nodes,
+                call.span,
+                Type::Bool,
+                EffectFacts::PURE,
+                vec![receiver.node],
+                Op::StringIsNumeric,
+            ),
+            ty: Type::Bool,
+        }),
+        PreludeMethod::ArrayStream => {
+            let Type::Array(element) = &receiver.ty else {
+                unreachable!("array stream registry entry has an array receiver")
+            };
+            let ty = Type::stream(Type::Int, element.as_ref().clone());
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::CODATA,
+                    vec![receiver.node],
+                    Op::ArrayStream,
+                ),
+                ty,
+            })
+        }
+        PreludeMethod::IntRem => {
+            let divisor = lower_value(nodes, bindings, context, &positional[0])?;
+            require_type(&divisor, &Type::Int, expr_span(&positional[0]))?;
+            let quotient = push_node(
+                nodes,
+                call.span,
+                Type::Int,
+                EffectFacts::PURE,
+                vec![receiver.node, divisor.node],
+                Op::Div,
+            );
+            let product = push_node(
+                nodes,
+                call.span,
+                Type::Int,
+                EffectFacts::PURE,
+                vec![quotient, divisor.node],
+                Op::Mul,
+            );
+            let remainder = push_node(
+                nodes,
+                call.span,
+                Type::Int,
+                EffectFacts::PURE,
+                vec![receiver.node, product],
+                Op::Sub,
+            );
+            Ok(LoweredValue {
+                node: remainder,
+                ty: Type::Int,
+            })
+        }
         PreludeMethod::MapGet | PreludeMethod::MapHas | PreludeMethod::MapWith => {
             let (key, value) = receiver
                 .ty
                 .map_types()
                 .map(|(key, value)| (key.clone(), value.clone()))
                 .ok_or_else(|| type_mismatch(call.span, "Map<K, V>", receiver.ty.name()))?;
-            let lowered_key = lower_value(nodes, bindings, context, &call.args.args[0])?;
-            require_type(&lowered_key, &key, expr_span(&call.args.args[0]))?;
+            let lowered_key = lower_value(nodes, bindings, context, &positional[0])?;
+            require_type(&lowered_key, &key, expr_span(&positional[0]))?;
             let (ty, effect, inputs, op) = match entry.method {
                 PreludeMethod::MapGet => (
                     value,
@@ -2028,8 +3337,8 @@ fn lower_method_call(
                     Op::MapHas,
                 ),
                 PreludeMethod::MapWith => {
-                    let lowered_value = lower_value(nodes, bindings, context, &call.args.args[1])?;
-                    require_type(&lowered_value, &value, expr_span(&call.args.args[1]))?;
+                    let lowered_value = lower_value(nodes, bindings, context, &positional[1])?;
+                    require_type(&lowered_value, &value, expr_span(&positional[1]))?;
                     (
                         receiver.ty.clone(),
                         EffectFacts::PURE,
@@ -2073,14 +3382,32 @@ fn lower_method_call(
                 ty,
             })
         }
+        PreludeMethod::MapValues => {
+            let (_, value) = receiver
+                .ty
+                .map_types()
+                .ok_or_else(|| type_mismatch(call.span, "Map<K, V>", receiver.ty.name()))?;
+            let ty = Type::array(value.clone());
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::PURE,
+                    vec![receiver.node],
+                    Op::MapValues,
+                ),
+                ty,
+            })
+        }
         PreludeMethod::SetHas => {
             let element = receiver
                 .ty
                 .set_element()
                 .cloned()
                 .ok_or_else(|| type_mismatch(call.span, "Set<T>", receiver.ty.name()))?;
-            let candidate = lower_value(nodes, bindings, context, &call.args.args[0])?;
-            require_type(&candidate, &element, expr_span(&call.args.args[0]))?;
+            let candidate = lower_value(nodes, bindings, context, &positional[0])?;
+            require_type(&candidate, &element, expr_span(&positional[0]))?;
             Ok(LoweredValue {
                 node: push_node(
                     nodes,
@@ -2123,6 +3450,255 @@ fn lower_method_call(
                 ty,
             })
         }
+        PreludeMethod::StreamFilter => {
+            let (_, value) = receiver
+                .ty
+                .stream_types()
+                .ok_or_else(|| type_mismatch(call.span, "Stream<K, V>", receiver.ty.name()))?;
+            let predicate = match &positional[0] {
+                ast::Expr::Closure(closure) => {
+                    lower_closure_with_parameter(nodes, bindings, context, closure, value)?
+                }
+                expression => lower_value_expected(nodes, bindings, context, expression, None)?,
+            };
+            let Type::Function { parameter, result } = &predicate.ty else {
+                return Err(type_mismatch(
+                    expr_span(&positional[0]),
+                    format!("fn({}) -> Bool", value.name()),
+                    predicate.ty.name(),
+                ));
+            };
+            if parameter.as_ref() != value || result.as_ref() != &Type::Bool {
+                return Err(type_mismatch(
+                    expr_span(&positional[0]),
+                    format!("fn({}) -> Bool", value.name()),
+                    predicate.ty.name(),
+                ));
+            }
+            let ty = receiver.ty.clone();
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::CODATA,
+                    vec![receiver.node, predicate.node],
+                    Op::StreamFilter,
+                ),
+                ty,
+            })
+        }
+        PreludeMethod::StreamFilterMap => {
+            let (key, value) = receiver
+                .ty
+                .stream_types()
+                .ok_or_else(|| type_mismatch(call.span, "Stream<K, V>", receiver.ty.name()))?;
+            let key = key.clone();
+            let value = value.clone();
+            let transform = match &positional[0] {
+                ast::Expr::Closure(closure) => {
+                    lower_closure_with_parameter(nodes, bindings, context, closure, &value)?
+                }
+                expression => lower_value_expected(nodes, bindings, context, expression, None)?,
+            };
+            let Type::Function { parameter, result } = &transform.ty else {
+                return Err(type_mismatch(
+                    expr_span(&positional[0]),
+                    format!("fn({}) -> Option<_>", value.name()),
+                    transform.ty.name(),
+                ));
+            };
+            if parameter.as_ref() != &value {
+                return Err(type_mismatch(
+                    expr_span(&positional[0]),
+                    format!("fn({}) -> Option<_>", value.name()),
+                    transform.ty.name(),
+                ));
+            }
+            let output = result.option_inner().ok_or_else(|| {
+                type_mismatch(
+                    expr_span(&positional[0]),
+                    format!("fn({}) -> Option<_>", value.name()),
+                    transform.ty.name(),
+                )
+            })?;
+            let ty = Type::stream(key, output.clone());
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::CODATA,
+                    vec![receiver.node, transform.node],
+                    Op::StreamFilterMap,
+                ),
+                ty,
+            })
+        }
+        PreludeMethod::StreamFlatMap => {
+            let (key, value) = receiver
+                .ty
+                .stream_types()
+                .ok_or_else(|| type_mismatch(call.span, "Stream<K, V>", receiver.ty.name()))?;
+            let key = key.clone();
+            let value = value.clone();
+            let ast::Expr::Closure(closure) = &positional[0] else {
+                return Err(Diagnostics::one(Diagnostic::unsupported(
+                    expr_span(&positional[0]),
+                    "flat_map expects a closure returning an array stream",
+                )));
+            };
+            // The closure is lowered as an array-returning frame `fn(V) -> [W]`;
+            // its inner stream keys are the dense positions of that array.
+            let transform = lower_array_stream_closure(nodes, bindings, context, closure, &value)?;
+            let Type::Function { parameter, result } = &transform.ty else {
+                return Err(type_mismatch(
+                    expr_span(&positional[0]),
+                    format!("fn({}) -> Stream<_, _>", value.name()),
+                    transform.ty.name(),
+                ));
+            };
+            if parameter.as_ref() != &value {
+                return Err(type_mismatch(
+                    expr_span(&positional[0]),
+                    format!("fn({}) -> Stream<_, _>", value.name()),
+                    transform.ty.name(),
+                ));
+            }
+            let inner_value = result.array_element().ok_or_else(|| {
+                type_mismatch(
+                    expr_span(&positional[0]),
+                    format!("fn({}) -> Stream<_, _>", value.name()),
+                    transform.ty.name(),
+                )
+            })?;
+            let composed_key = Type::Tuple(vec![key, Type::Int]);
+            let ty = Type::stream(composed_key, inner_value.clone());
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::CODATA,
+                    vec![receiver.node, transform.node],
+                    Op::StreamFlatMap,
+                ),
+                ty,
+            })
+        }
+        PreludeMethod::StreamCollect => {
+            let (key, value) = receiver
+                .ty
+                .stream_types()
+                .ok_or_else(|| type_mismatch(call.span, "Stream<K, V>", receiver.ty.name()))?;
+            let ty = Type::map(key.clone(), value.clone());
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts {
+                        fallible: true,
+                        ..EffectFacts::PURE
+                    },
+                    vec![receiver.node],
+                    Op::StreamCollect,
+                ),
+                ty,
+            })
+        }
+        PreludeMethod::StreamFindMin | PreludeMethod::StreamFindMax => {
+            let (_, value) = receiver
+                .ty
+                .stream_types()
+                .ok_or_else(|| type_mismatch(call.span, "Stream<K, V>", receiver.ty.name()))?;
+            if !value.structural_order_is_defined() {
+                return Err(type_mismatch(
+                    call.span,
+                    "Stream<K, V: Ord>",
+                    receiver.ty.name(),
+                ));
+            }
+            let value = value.clone();
+            let predicate = match &positional[0] {
+                ast::Expr::Closure(closure) => {
+                    lower_closure_with_parameter(nodes, bindings, context, closure, &value)?
+                }
+                expression => lower_value_expected(nodes, bindings, context, expression, None)?,
+            };
+            let Type::Function { parameter, result } = &predicate.ty else {
+                return Err(type_mismatch(
+                    expr_span(&positional[0]),
+                    format!("fn({}) -> Bool", value.name()),
+                    predicate.ty.name(),
+                ));
+            };
+            if parameter.as_ref() != &value || result.as_ref() != &Type::Bool {
+                return Err(type_mismatch(
+                    expr_span(&positional[0]),
+                    format!("fn({}) -> Bool", value.name()),
+                    predicate.ty.name(),
+                ));
+            }
+            let op = match entry.method {
+                PreludeMethod::StreamFindMin => Op::StreamFindMin,
+                PreludeMethod::StreamFindMax => Op::StreamFindMax,
+                _ => unreachable!("stream selection dispatch is closed"),
+            };
+            let ty = Type::option(value);
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::PURE,
+                    vec![receiver.node, predicate.node],
+                    op,
+                ),
+                ty,
+            })
+        }
+        PreludeMethod::StreamSplitMin => {
+            let (_, value) = receiver
+                .ty
+                .stream_types()
+                .ok_or_else(|| type_mismatch(call.span, "Stream<K, V>", receiver.ty.name()))?;
+            if !value.structural_order_is_defined() {
+                return Err(type_mismatch(
+                    call.span,
+                    "Stream<K, V: Ord>",
+                    receiver.ty.name(),
+                ));
+            }
+            // The remainder is realized as a dense array of the surviving values
+            // in canonical key order: realization is explicit in the type, and
+            // no stream recipe is placed inside the Option.
+            let rest_ty = Type::array(value.clone());
+            let payload = Type::Tuple(vec![value.clone(), rest_ty]);
+            let ty = Type::option(payload);
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::PURE,
+                    vec![receiver.node],
+                    Op::StreamSplitMin,
+                ),
+                ty,
+            })
+        }
+        PreludeMethod::PathToString => Ok(LoweredValue {
+            node: push_node(
+                nodes,
+                call.span,
+                Type::String,
+                EffectFacts::PURE,
+                vec![receiver.node],
+                Op::PathToString,
+            ),
+            ty: Type::String,
+        }),
     }
 }
 
@@ -2205,7 +3781,7 @@ fn lower_some(
 
 fn lower_closure(
     nodes: &mut Vec<Node>,
-    _outer_bindings: &BTreeMap<String, LoweredValue>,
+    outer_bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
     closure: &ast::ClosureExpr,
     expected: Option<&Type>,
@@ -2232,14 +3808,456 @@ fn lower_closure(
             declared
         }
         (None, Some((expected, _))) => expected.clone(),
-        (None, None) => {
-            return Err(Diagnostics::one(Diagnostic::unsupported(
-                closure.span,
-                "closure parameter without an expected type",
-            )));
-        }
+        // The ratchet's unannotated let-bound closures infer their parameter
+        // from an arithmetic body. The language's numeric literals and
+        // arithmetic operators are Int-only, so this is an exact inference,
+        // rather than a defaulted host-language callback type.
+        (None, None) => Type::Int,
     };
 
+    lower_closure_typed(
+        nodes,
+        outer_bindings,
+        context,
+        closure,
+        parameter_ty,
+        expected_signature.map(|(_, result)| result),
+    )
+}
+
+fn lower_closure_with_parameter(
+    nodes: &mut Vec<Node>,
+    outer_bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    closure: &ast::ClosureExpr,
+    parameter: &Type,
+) -> Result<LoweredValue, Diagnostics> {
+    let parameter_ty = match &closure.ty {
+        Some(declared) => {
+            let declared = lower_declared_type(declared, context.types)?;
+            if &declared != parameter {
+                return Err(type_mismatch(
+                    type_span(declared_type_ref(closure)),
+                    parameter.name(),
+                    declared.name(),
+                ));
+            }
+            declared
+        }
+        None => parameter.clone(),
+    };
+    lower_closure_typed(nodes, outer_bindings, context, closure, parameter_ty, None)
+}
+
+/// Lower a `flat_map` closure `|v| <array>.stream()` to an array-returning
+/// callable value of type `fn(V) -> [W]`. The terminal `.stream()` is a codata
+/// view that `flat_map` re-derives with fresh position keys at collection time,
+/// so the frame itself returns the dense array.
+fn lower_array_stream_closure(
+    nodes: &mut Vec<Node>,
+    outer_bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    closure: &ast::ClosureExpr,
+    parameter: &Type,
+) -> Result<LoweredValue, Diagnostics> {
+    let parameter_ty = match &closure.ty {
+        Some(declared) => {
+            let declared = lower_declared_type(declared, context.types)?;
+            if &declared != parameter {
+                return Err(type_mismatch(
+                    type_span(declared_type_ref(closure)),
+                    parameter.name(),
+                    declared.name(),
+                ));
+            }
+            declared
+        }
+        None => parameter.clone(),
+    };
+    lower_closure_typed_with_body_kind(
+        nodes,
+        outer_bindings,
+        context,
+        closure,
+        parameter_ty,
+        None,
+        ClosureBodyKind::ArrayStreamSource,
+    )
+}
+
+fn declared_type_ref(closure: &ast::ClosureExpr) -> &ast::Type {
+    closure.ty.as_ref().expect("declared closure type")
+}
+
+/// Lower `by_key(|x| <key>)` to an `Order<T>` value.
+///
+/// The subject `T` comes from the expected `Order<T>` type at the call site, so
+/// the key-extraction closure is typed and closed over exactly `T`. The result
+/// is an ordinary Vix recipe: a closure `fn(T) -> (K, T)` that pairs the
+/// extracted key with the source value. Structural comparison of that pair
+/// sorts by `K` and breaks equal keys by the structural order of the source, so
+/// the order is total and equality-consistent. The value is typed `Order<T>`;
+/// its physical representation is the keyed closure a consuming `sorted` reads.
+fn lower_by_key(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    call: &ast::Call,
+    expected: Option<&Type>,
+) -> Result<LoweredValue, Diagnostics> {
+    let Some(Type::Order(subject)) = expected else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            call.span,
+            "by_key is only valid where an Order<T> value is expected",
+        )));
+    };
+    if let Some(named) = &call.named_args {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            named.span,
+            "named arguments on by_key",
+        )));
+    }
+    check_arity(call, 1)?;
+    let ast::Expr::Closure(closure) = &call.args.args[0] else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            expr_span(&call.args.args[0]),
+            "by_key expects a key-extraction closure",
+        )));
+    };
+    let parameter_ty = match &closure.ty {
+        Some(declared) => {
+            let declared = lower_declared_type(declared, context.types)?;
+            if &declared != subject.as_ref() {
+                return Err(type_mismatch(
+                    type_span(declared_type_ref(closure)),
+                    subject.name(),
+                    declared.name(),
+                ));
+            }
+            declared
+        }
+        None => subject.as_ref().clone(),
+    };
+    let keyed = lower_closure_typed_with_body_kind(
+        nodes,
+        bindings,
+        context,
+        closure,
+        parameter_ty,
+        None,
+        ClosureBodyKind::KeyedByParameter,
+    )?;
+    Ok(LoweredValue {
+        node: keyed.node,
+        ty: Type::order(subject.as_ref().clone()),
+    })
+}
+
+/// Lower `array.sorted where { order: <Order<T>> }`.
+///
+/// The caller's `Order<T>` carries a keyed closure `fn(T) -> (K, T)`. Sorting
+/// through it desugars to three recipes that already lower through the verified
+/// machine: map every element to its `(key, element)` pair, structurally sort
+/// the pairs — which orders by key and breaks equal keys by the source value —
+/// then project each pair back to its element. No host call, comparator
+/// callback, or new sort primitive is introduced.
+fn lower_sorted_with_order(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    receiver: &LoweredValue,
+    element: &Type,
+    named: &ast::WhereArgs,
+) -> Result<LoweredValue, Diagnostics> {
+    let [field] = named.fields.as_slice() else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            named.span,
+            "sorted accepts exactly one named argument `order`",
+        )));
+    };
+    if field.name.value != "order" {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            field.name.span,
+            "the only named argument sorted accepts is `order`",
+        )));
+    }
+    let Some(order_expr) = &field.value else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            field.span,
+            "sorted's `order` argument needs an Order<T> value",
+        )));
+    };
+    // Breaking equal keys by the structural order of the source requires the
+    // element type itself to be structurally ordered.
+    if !element.structural_order_is_defined() {
+        return Err(type_mismatch(
+            expr_span(order_expr),
+            "Array<T: Ord>",
+            Type::array(element.clone()).name(),
+        ));
+    }
+    let order_ty = Type::order(element.clone());
+    let order = lower_value_expected(nodes, bindings, context, order_expr, Some(&order_ty))?;
+    require_type(&order, &order_ty, expr_span(order_expr))?;
+
+    // The Order value's physical recipe is its keyed closure `fn(T) -> (K, T)`.
+    let Type::Function { parameter, result } = &nodes[order.node.0 as usize].ty else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            expr_span(order_expr),
+            "sorted's order must be a by_key recipe",
+        )));
+    };
+    if parameter.as_ref() != element {
+        return Err(type_mismatch(
+            expr_span(order_expr),
+            format!("Order<{}>", element.name()),
+            order.ty.name(),
+        ));
+    }
+    let pair_ty = result.as_ref().clone();
+
+    // 1. Pair every element with its extracted key: Array<(K, T)>.
+    let keyed_array_ty = Type::array(pair_ty.clone());
+    let keyed = push_node(
+        nodes,
+        named.span,
+        keyed_array_ty.clone(),
+        EffectFacts::PURE,
+        vec![receiver.node, order.node],
+        Op::ArrayMap {
+            grain: ArrayMapGrain {
+                key: ArrayMapGrainKey::InputPosition,
+                origin: ArrayMapGrainKey::InputPosition,
+            },
+        },
+    );
+
+    // 2. Structurally sort the pairs: orders by key, ties by source value.
+    let sorted_pairs = push_node(
+        nodes,
+        named.span,
+        keyed_array_ty,
+        EffectFacts::PURE,
+        vec![keyed],
+        Op::ArraySorted,
+    );
+
+    // 3. Project each sorted pair back to its element: Array<T>.
+    let project = build_pair_second_closure(nodes, context, &pair_ty, element, named.span)?;
+    let result_ty = Type::array(element.clone());
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            named.span,
+            result_ty.clone(),
+            EffectFacts::PURE,
+            vec![sorted_pairs, project.node],
+            Op::ArrayMap {
+                grain: ArrayMapGrain {
+                    key: ArrayMapGrainKey::InputPosition,
+                    origin: ArrayMapGrainKey::InputPosition,
+                },
+            },
+        ),
+        ty: result_ty,
+    })
+}
+
+/// Build the synthetic closure `|pair| pair.1` of type `fn((K, T)) -> T` that
+/// projects the source value out of a `(key, source)` sort pair.
+fn build_pair_second_closure(
+    nodes: &mut Vec<Node>,
+    context: &ModuleContext<'_>,
+    pair_ty: &Type,
+    element: &Type,
+    span: Span,
+) -> Result<LoweredValue, Diagnostics> {
+    let (id, name) = context.allocate_closure();
+    context.enter_function(name.clone());
+    let mut closure_nodes = Vec::new();
+    let parameter_id = ParameterId(0);
+    let parameter_node = push_node(
+        &mut closure_nodes,
+        span,
+        pair_ty.clone(),
+        EffectFacts::PURE,
+        Vec::new(),
+        Op::Parameter(parameter_id),
+    );
+    let output_node = push_node(
+        &mut closure_nodes,
+        span,
+        element.clone(),
+        EffectFacts::PURE,
+        vec![parameter_node],
+        Op::Project { index: 1 },
+    );
+    let ty = Type::Function {
+        parameter: Box::new(pair_ty.clone()),
+        result: Box::new(element.clone()),
+    };
+    context.insert_closure(Function {
+        id,
+        name,
+        span,
+        parameters: vec![Parameter {
+            id: parameter_id,
+            node: parameter_node,
+            name: "$argument".to_owned(),
+            ty: pair_ty.clone(),
+            kind: ParameterKind::Positional,
+        }],
+        return_type: element.clone(),
+        nodes: closure_nodes,
+        output: Some(output_node),
+        yielded_checks: Vec::new(),
+    });
+    context.leave_function();
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            span,
+            ty.clone(),
+            EffectFacts::PURE,
+            Vec::new(),
+            Op::Closure(id),
+        ),
+        ty,
+    })
+}
+
+/// Lower a fold's initial accumulator. An empty array literal `[]` cannot infer
+/// its element type in isolation; a fold that builds an array over `[element]`
+/// starts from `[element]`, so the empty literal is typed against that element.
+/// Every other initial keeps ordinary inference (scalar and string folds).
+fn lower_fold_initial(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    initial: &ast::Expr,
+    element: &Type,
+) -> Result<LoweredValue, Diagnostics> {
+    if let ast::Expr::Array(array) = initial
+        && array.elems.is_empty()
+    {
+        return lower_value_expected(
+            nodes,
+            bindings,
+            context,
+            initial,
+            Some(&Type::array(element.clone())),
+        );
+    }
+    lower_value(nodes, bindings, context, initial)
+}
+
+/// Recognise the exact strict one-item-append fold shape and, when it holds,
+/// synthesise the per-element mapper `|elem| EXPR : element -> element`.
+///
+/// The shape is: an empty `[]` initial and a closure `|acc, elem| acc + EXPR`
+/// where `acc` is consumed exactly once as the append base — it does not appear
+/// anywhere in `EXPR` — and `EXPR` captures nothing from the enclosing scope. A
+/// fold that fails any of these keeps the semantic copy path.
+fn try_build_molten_append_mapper(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    initial: &ast::Expr,
+    folder: &ast::Expr,
+    element: &Type,
+) -> Result<Option<LoweredValue>, Diagnostics> {
+    // The accumulator base must start empty for the fold to denote a pure map.
+    let ast::Expr::Array(array) = initial else {
+        return Ok(None);
+    };
+    if !array.elems.is_empty() {
+        return Ok(None);
+    }
+    let ast::Expr::Closure(closure) = folder else {
+        return Ok(None);
+    };
+    // Exactly two simple bindings, no type annotation to reconcile.
+    if closure.ty.is_some() {
+        return Ok(None);
+    }
+    let [acc_pattern, elem_pattern] = closure.patterns.as_slice() else {
+        return Ok(None);
+    };
+    let (Some(acc_name), Some(elem_name)) = (binding_name(acc_pattern), binding_name(elem_pattern))
+    else {
+        return Ok(None);
+    };
+    // The body is `acc + EXPR`: a `+` whose left operand is exactly the
+    // accumulator binding.
+    let ast::ClosureBody::Expr(body) = &closure.body else {
+        return Ok(None);
+    };
+    let ast::Expr::Binary(binary) = unwrap_paren(body) else {
+        return Ok(None);
+    };
+    if binary.op.value != "+" {
+        return Ok(None);
+    }
+    let ast::Expr::Identifier(left) = unwrap_paren(&binary.left) else {
+        return Ok(None);
+    };
+    if left.value != acc_name {
+        return Ok(None);
+    }
+    let appended = &binary.right;
+    // The accumulator is consumed once as the append base and nowhere else.
+    if expr_references_name(appended, acc_name) {
+        return Ok(None);
+    }
+    // The appended expression captures nothing from the enclosing scope; its
+    // only free binding is the element parameter.
+    if bindings
+        .keys()
+        .any(|name| name != elem_name && expr_references_name(appended, name))
+    {
+        return Ok(None);
+    }
+    let mapper =
+        build_unary_element_closure(nodes, context, element, elem_name, appended, closure.span)?;
+    // The append is well typed only when the element expression has the
+    // element type; otherwise this is not a same-type append fold and the copy
+    // path owns the proper diagnostic.
+    let Type::Function { result, .. } = &mapper.ty else {
+        return Ok(None);
+    };
+    if result.as_ref() != element {
+        return Ok(None);
+    }
+    Ok(Some(mapper))
+}
+
+/// The bound name of a simple binding pattern, or `None` for any richer pattern.
+fn binding_name(pattern: &ast::Pattern) -> Option<&str> {
+    match pattern {
+        ast::Pattern::Binding(binding) => Some(binding.binding.value.as_str()),
+        _ => None,
+    }
+}
+
+fn unwrap_paren(expression: &ast::Expr) -> &ast::Expr {
+    match expression {
+        ast::Expr::Paren(paren) => unwrap_paren(&paren.inner),
+        other => other,
+    }
+}
+
+/// Build the synthetic closure `|elem| EXPR` of type `fn(element) -> _` by
+/// lowering the real appended sub-expression with `elem` bound to the parameter.
+/// It carries no captures; the caller has proven `EXPR`'s only free binding is
+/// the element parameter.
+fn build_unary_element_closure(
+    nodes: &mut Vec<Node>,
+    context: &ModuleContext<'_>,
+    element: &Type,
+    elem_name: &str,
+    body: &ast::Expr,
+    span: Span,
+) -> Result<LoweredValue, Diagnostics> {
     let (id, name) = context.allocate_closure();
     context.enter_function(name.clone());
     let lowered = (|| {
@@ -2247,7 +4265,253 @@ fn lower_closure(
         let parameter_id = ParameterId(0);
         let parameter_node = push_node(
             &mut closure_nodes,
-            pattern_span(&closure.pattern),
+            span,
+            element.clone(),
+            EffectFacts::PURE,
+            Vec::new(),
+            Op::Parameter(parameter_id),
+        );
+        let mut closure_bindings = BTreeMap::new();
+        closure_bindings.insert(
+            elem_name.to_owned(),
+            LoweredValue {
+                node: parameter_node,
+                ty: element.clone(),
+            },
+        );
+        let output =
+            lower_value_expected(&mut closure_nodes, &closure_bindings, context, body, None)?;
+        let return_type = output.ty.clone();
+        let ty = Type::Function {
+            parameter: Box::new(element.clone()),
+            result: Box::new(return_type.clone()),
+        };
+        Ok::<_, Diagnostics>((
+            Function {
+                id,
+                name: name.clone(),
+                span,
+                parameters: vec![Parameter {
+                    id: parameter_id,
+                    node: parameter_node,
+                    name: "$argument".to_owned(),
+                    ty: element.clone(),
+                    kind: ParameterKind::Positional,
+                }],
+                return_type,
+                nodes: closure_nodes,
+                output: Some(output.node),
+                yielded_checks: Vec::new(),
+            },
+            ty,
+        ))
+    })();
+    context.leave_function();
+    let (function, ty) = lowered?;
+    context.insert_closure(function);
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            span,
+            ty.clone(),
+            EffectFacts::PURE,
+            Vec::new(),
+            Op::Closure(id),
+        ),
+        ty,
+    })
+}
+
+/// Whether `expression` mentions the identifier `name` anywhere in its subtree.
+/// A conservative over-approximation: it descends every sub-expression, so a
+/// name used as a field, method receiver, or nested closure body still counts.
+fn expr_references_name(expression: &ast::Expr, name: &str) -> bool {
+    match expression {
+        ast::Expr::Identifier(identifier) => identifier.value == name,
+        ast::Expr::Path(_)
+        | ast::Expr::Str(_)
+        | ast::Expr::Number(_)
+        | ast::Expr::Quantity(_)
+        | ast::Expr::Bool(_) => false,
+        ast::Expr::Paren(paren) => expr_references_name(&paren.inner, name),
+        ast::Expr::Unary(unary) => expr_references_name(&unary.value, name),
+        ast::Expr::Binary(binary) => {
+            expr_references_name(&binary.left, name) || expr_references_name(&binary.right, name)
+        }
+        ast::Expr::Index(index) => {
+            expr_references_name(&index.receiver, name) || expr_references_name(&index.index, name)
+        }
+        ast::Expr::Field(field) => expr_references_name(&field.receiver, name),
+        ast::Expr::Call(call) => {
+            call.args
+                .args
+                .iter()
+                .any(|arg| expr_references_name(arg, name))
+                || named_args_reference_name(call.named_args.as_ref(), name)
+        }
+        ast::Expr::WhereCall(call) => named_args_reference_name(Some(&call.named_args), name),
+        ast::Expr::MethodCall(call) => {
+            expr_references_name(&call.receiver, name)
+                || call
+                    .args
+                    .as_ref()
+                    .is_some_and(|args| args.args.iter().any(|arg| expr_references_name(arg, name)))
+                || named_args_reference_name(call.named_args.as_ref(), name)
+        }
+        ast::Expr::Array(array) => array.elems.iter().any(|e| expr_references_name(e, name)),
+        ast::Expr::Set(set) => set.elems.iter().any(|e| expr_references_name(e, name)),
+        ast::Expr::Tuple(tuple) => tuple.elems.iter().any(|e| expr_references_name(e, name)),
+        ast::Expr::Map(map) => map.rows.iter().any(|row| {
+            expr_references_name(&row.key, name) || expr_references_name(&row.value, name)
+        }),
+        ast::Expr::Variant(variant) => variant.tuple_payload.as_ref().is_some_and(|payload| {
+            payload
+                .args
+                .iter()
+                .any(|arg| expr_references_name(arg, name))
+        }),
+        ast::Expr::Record(record) => {
+            record
+                .fields
+                .spread
+                .as_ref()
+                .is_some_and(|spread| expr_references_name(&spread.base, name))
+                || record
+                    .fields
+                    .fields
+                    .iter()
+                    .any(|field| named_value_references_name(field, name))
+        }
+        ast::Expr::If(expression) => {
+            expr_references_name(&expression.condition, name)
+                || block_references_name(&expression.consequent, name)
+                || if_branch_references_name(&expression.alternative, name)
+        }
+        ast::Expr::Match(expression) => {
+            expr_references_name(&expression.scrutinee, name)
+                || expression
+                    .arms
+                    .arms
+                    .iter()
+                    .any(|arm| match_arm_references_name(arm, name))
+        }
+        ast::Expr::Closure(closure) => match &closure.body {
+            ast::ClosureBody::Expr(body) => expr_references_name(body, name),
+            ast::ClosureBody::Block(block) => block_references_name(block, name),
+        },
+    }
+}
+
+fn named_args_reference_name(named: Option<&ast::WhereArgs>, name: &str) -> bool {
+    named.is_some_and(|named| {
+        named
+            .fields
+            .iter()
+            .any(|field| named_value_references_name(field, name))
+    })
+}
+
+fn named_value_references_name(field: &ast::NamedValue, name: &str) -> bool {
+    match &field.value {
+        Some(value) => expr_references_name(value, name),
+        // Field punning `{ x }` references the in-scope binding `x`.
+        None => field.name.value == name,
+    }
+}
+
+fn block_references_name(block: &ast::Block, name: &str) -> bool {
+    block.stmts.iter().any(|stmt| match stmt {
+        ast::Stmt::Let(statement) => expr_references_name(&statement.value, name),
+        ast::Stmt::Yield(statement) => expr_references_name(&statement.value, name),
+        ast::Stmt::Expression(statement) => expr_references_name(&statement.value, name),
+    }) || block
+        .tail
+        .as_ref()
+        .is_some_and(|tail| expr_references_name(tail, name))
+}
+
+fn if_branch_references_name(branch: &ast::IfBranch, name: &str) -> bool {
+    match branch {
+        ast::IfBranch::Block(block) => block_references_name(block, name),
+        ast::IfBranch::If(expression) => {
+            expr_references_name(&expression.condition, name)
+                || block_references_name(&expression.consequent, name)
+                || if_branch_references_name(&expression.alternative, name)
+        }
+    }
+}
+
+fn match_arm_references_name(arm: &ast::MatchArm, name: &str) -> bool {
+    let guard = arm
+        .guard
+        .as_ref()
+        .is_some_and(|guard| expr_references_name(guard, name));
+    guard
+        || match &arm.body {
+            ast::MatchArmBody::Block(block) => block_references_name(block, name),
+            ast::MatchArmBody::Expr(body) => expr_references_name(body, name),
+        }
+}
+
+fn lower_closure_typed(
+    nodes: &mut Vec<Node>,
+    outer_bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    closure: &ast::ClosureExpr,
+    parameter_ty: Type,
+    expected_result: Option<&Type>,
+) -> Result<LoweredValue, Diagnostics> {
+    lower_closure_typed_with_body_kind(
+        nodes,
+        outer_bindings,
+        context,
+        closure,
+        parameter_ty,
+        expected_result,
+        ClosureBodyKind::Value,
+    )
+}
+
+/// How a closure body's result value is finalized into the closure frame's
+/// return.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ClosureBodyKind {
+    /// The body value is the closure's return.
+    Value,
+    /// The body is `<array>.stream()`; the closure returns the underlying dense
+    /// array so it lowers as an ordinary array-returning frame. `flat_map`
+    /// streams that array with fresh position keys at collection time.
+    ArrayStreamSource,
+    /// The body extracts a structurally ordered key `K` from the parameter; the
+    /// frame returns the pair `(K, parameter)`. Structural comparison of that
+    /// pair then sorts by the extracted key and breaks equal keys by the
+    /// structural order of the whole source value. This is the recipe an
+    /// `Order<T>` built by `by_key` carries.
+    KeyedByParameter,
+}
+
+fn lower_closure_typed_with_body_kind(
+    nodes: &mut Vec<Node>,
+    outer_bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    closure: &ast::ClosureExpr,
+    parameter_ty: Type,
+    expected_result: Option<&Type>,
+    body_kind: ClosureBodyKind,
+) -> Result<LoweredValue, Diagnostics> {
+    let captures = outer_bindings
+        .iter()
+        .filter(|(name, _)| closure_body_mentions(&closure.body, name))
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect::<Vec<_>>();
+    let (id, name) = context.allocate_closure();
+    context.enter_function(name.clone());
+    let lowered = (|| {
+        let mut closure_nodes = Vec::new();
+        let parameter_id = ParameterId(0);
+        let parameter_node = push_node(
+            &mut closure_nodes,
+            closure.span,
             parameter_ty.clone(),
             EffectFacts::PURE,
             Vec::new(),
@@ -2258,14 +4522,45 @@ fn lower_closure(
             ty: parameter_ty.clone(),
         };
         let mut closure_bindings = BTreeMap::new();
-        bind_irrefutable_pattern(
+        bind_closure_patterns(
             &mut closure_nodes,
             &mut closure_bindings,
-            &closure.pattern,
+            &closure.patterns,
             &parameter_value,
         )?;
+        let mut parameters = vec![Parameter {
+            id: parameter_id,
+            node: parameter_node,
+            name: "$argument".to_owned(),
+            ty: parameter_ty.clone(),
+            kind: ParameterKind::Positional,
+        }];
+        for (index, (name, captured)) in captures.iter().enumerate() {
+            let id = ParameterId(u32::try_from(index + 1).expect("closure capture count fits u32"));
+            let node = push_node(
+                &mut closure_nodes,
+                closure.span,
+                captured.ty.clone(),
+                EffectFacts::PURE,
+                Vec::new(),
+                Op::Parameter(id),
+            );
+            closure_bindings.insert(
+                name.clone(),
+                LoweredValue {
+                    node,
+                    ty: captured.ty.clone(),
+                },
+            );
+            parameters.push(Parameter {
+                id,
+                node,
+                name: format!("$capture_{name}"),
+                ty: captured.ty.clone(),
+                kind: ParameterKind::Positional,
+            });
+        }
 
-        let expected_result = expected_signature.map(|(_, result)| result);
         let output = match &closure.body {
             ast::ClosureBody::Block(block) => lower_value_block(
                 &mut closure_nodes,
@@ -2285,25 +4580,61 @@ fn lower_closure(
         if let Some(expected_result) = expected_result {
             require_type(&output, expected_result, closure.span)?;
         }
+        // For an array-stream-producing closure, redirect the frame's return to
+        // the dense array underneath the terminal `.stream()`, so the closure is
+        // an ordinary array-returning frame.
+        let (output_node, return_type) = match body_kind {
+            ClosureBodyKind::Value => (output.node, output.ty.clone()),
+            ClosureBodyKind::ArrayStreamSource => {
+                let terminal = &closure_nodes[output.node.0 as usize];
+                if !matches!(terminal.op, Op::ArrayStream) {
+                    return Err(Diagnostics::one(Diagnostic::unsupported(
+                        closure.span,
+                        "flat_map closure body must be an array stream",
+                    )));
+                }
+                let array_node = *terminal.inputs.first().ok_or_else(|| {
+                    Diagnostics::one(Diagnostic::unsupported(
+                        closure.span,
+                        "array stream closure has no source array",
+                    ))
+                })?;
+                let array_ty = closure_nodes[array_node.0 as usize].ty.clone();
+                (array_node, array_ty)
+            }
+            ClosureBodyKind::KeyedByParameter => {
+                if !output.ty.structural_order_is_defined() {
+                    return Err(type_mismatch(
+                        closure.span,
+                        "structurally ordered key",
+                        output.ty.name(),
+                    ));
+                }
+                let pair_ty = Type::Tuple(vec![output.ty.clone(), parameter_ty.clone()]);
+                let pair = push_node(
+                    &mut closure_nodes,
+                    closure.span,
+                    pair_ty.clone(),
+                    EffectFacts::PURE,
+                    vec![output.node, parameter_node],
+                    Op::Tuple,
+                );
+                (pair, pair_ty)
+            }
+        };
         let ty = Type::Function {
             parameter: Box::new(parameter_ty.clone()),
-            result: Box::new(output.ty.clone()),
+            result: Box::new(return_type.clone()),
         };
         Ok::<_, Diagnostics>((
             Function {
                 id,
                 name: name.clone(),
                 span: closure.span,
-                parameters: vec![Parameter {
-                    id: parameter_id,
-                    node: parameter_node,
-                    name: "$argument".to_owned(),
-                    ty: parameter_ty,
-                    kind: ParameterKind::Positional,
-                }],
-                return_type: output.ty,
+                parameters,
+                return_type,
                 nodes: closure_nodes,
-                output: Some(output.node),
+                output: Some(output_node),
                 yielded_checks: Vec::new(),
             },
             ty,
@@ -2313,17 +4644,115 @@ fn lower_closure(
     let (function, ty) = lowered?;
     context.insert_closure(function);
 
+    let capture_inputs = captures
+        .iter()
+        .map(|(_, captured)| {
+            let source = nodes.get(captured.node.0 as usize).ok_or_else(|| {
+                Diagnostics::one(Diagnostic::unsupported(
+                    closure.span,
+                    "captured value is absent",
+                ))
+            })?;
+            let Op::Int(value) = source.op else {
+                return Err(Diagnostics::one(Diagnostic::unsupported(
+                    closure.span,
+                    "closure capture currently requires an Int value at construction",
+                )));
+            };
+            Ok(push_node(
+                nodes,
+                closure.span,
+                Type::Int,
+                EffectFacts::PURE,
+                Vec::new(),
+                Op::Int(value),
+            ))
+        })
+        .collect::<Result<Vec<_>, Diagnostics>>()?;
+
     Ok(LoweredValue {
         node: push_node(
             nodes,
             closure.span,
             ty.clone(),
             EffectFacts::PURE,
-            Vec::new(),
+            capture_inputs,
             Op::Closure(id),
         ),
         ty,
     })
+}
+
+fn closure_body_mentions(body: &ast::ClosureBody, name: &str) -> bool {
+    match body {
+        ast::ClosureBody::Expr(expression) => expression_mentions_binding(expression, name),
+        ast::ClosureBody::Block(_) => false,
+    }
+}
+
+fn expression_mentions_binding(expression: &ast::Expr, name: &str) -> bool {
+    match expression {
+        ast::Expr::Identifier(identifier) => identifier.value == name,
+        ast::Expr::Binary(binary) => {
+            expression_mentions_binding(&binary.left, name)
+                || expression_mentions_binding(&binary.right, name)
+        }
+        ast::Expr::Paren(paren) => expression_mentions_binding(&paren.inner, name),
+        _ => false,
+    }
+}
+
+fn bind_closure_patterns(
+    nodes: &mut Vec<Node>,
+    bindings: &mut BTreeMap<String, LoweredValue>,
+    patterns: &[ast::Pattern],
+    parameter: &LoweredValue,
+) -> Result<(), Diagnostics> {
+    if let [pattern] = patterns {
+        return bind_irrefutable_pattern(nodes, bindings, pattern, parameter);
+    }
+    let Type::Tuple(fields) = &parameter.ty else {
+        return Err(type_mismatch(
+            patterns
+                .first()
+                .map(pattern_span)
+                .unwrap_or(Span { start: 0, end: 0 }),
+            format!("{} closure parameters", patterns.len()),
+            parameter.ty.name(),
+        ));
+    };
+    if fields.len() != patterns.len() {
+        return Err(type_mismatch(
+            patterns
+                .first()
+                .map(pattern_span)
+                .unwrap_or(Span { start: 0, end: 0 }),
+            format!("{} closure parameters", patterns.len()),
+            parameter.ty.name(),
+        ));
+    }
+    for (index, (pattern, ty)) in patterns.iter().zip(fields).enumerate() {
+        let index = u32::try_from(index).map_err(|_| {
+            type_mismatch(
+                pattern_span(pattern),
+                "closure field index",
+                index.to_string(),
+            )
+        })?;
+        let field = LoweredValue {
+            node: push_node(
+                nodes,
+                pattern_span(pattern),
+                ty.clone(),
+                EffectFacts::PURE,
+                vec![parameter.node],
+                Op::Project { index },
+            ),
+            ty: ty.clone(),
+        };
+        bind_irrefutable_pattern(nodes, bindings, pattern, &field)?;
+    }
+    Ok(())
 }
 
 fn lower_if(
@@ -2406,6 +4835,30 @@ fn lower_value_block(
         ))
     })?;
     lower_value_expected(nodes, &bindings, context, tail, expected)
+}
+
+fn lower_match_arm_body(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    body: &ast::MatchArmBody,
+    expected: Option<&Type>,
+) -> Result<LoweredValue, Diagnostics> {
+    match body {
+        ast::MatchArmBody::Block(block) => {
+            lower_value_block(nodes, bindings, context, block, expected)
+        }
+        ast::MatchArmBody::Expr(expression) => {
+            lower_value_expected(nodes, bindings, context, expression, expected)
+        }
+    }
+}
+
+fn match_arm_body_span(body: &ast::MatchArmBody) -> Span {
+    match body {
+        ast::MatchArmBody::Block(block) => block.span,
+        ast::MatchArmBody::Expr(expression) => expr_span(expression),
+    }
 }
 
 fn if_branch_span(branch: &ast::IfBranch) -> Span {
@@ -2529,7 +4982,7 @@ fn lower_named_record_values(
     for (index, declared) in declared_fields.iter().enumerate() {
         let node = if let Some(field) = provided.remove(&declared.name) {
             let value = if let Some(expression) = &field.value {
-                lower_value(nodes, bindings, context, expression)?
+                lower_value_expected(nodes, bindings, context, expression, Some(&declared.ty))?
             } else {
                 lookup_binding(bindings, &field.name.value, field.name.span)?
             };
@@ -2845,9 +5298,9 @@ fn lower_enum_match(
             pattern,
         )?;
         let arm_expected = expected.or(result_type.as_ref());
-        let output = lower_value_expected(nodes, &arm_bindings, context, &arm.body, arm_expected)?;
+        let output = lower_match_arm_body(nodes, &arm_bindings, context, &arm.body, arm_expected)?;
         if let Some(expected) = &result_type {
-            require_type(&output, expected, expr_span(&arm.body))?;
+            require_type(&output, expected, match_arm_body_span(&arm.body))?;
         } else {
             result_type = Some(output.ty.clone());
         }
@@ -2959,9 +5412,9 @@ fn lower_ordered_match(
 
         let body_start = nodes.len();
         let arm_expected = expected.or(result_type.as_ref());
-        let output = lower_value_expected(nodes, &arm_bindings, context, &arm.body, arm_expected)?;
+        let output = lower_match_arm_body(nodes, &arm_bindings, context, &arm.body, arm_expected)?;
         if let Some(expected) = &result_type {
-            require_type(&output, expected, expr_span(&arm.body))?;
+            require_type(&output, expected, match_arm_body_span(&arm.body))?;
         } else {
             result_type = Some(output.ty.clone());
         }
@@ -3578,6 +6031,86 @@ fn project_variant_field(
     })
 }
 
+/// Lower a subject-less named call `callee where { ... }`. The only such
+/// builtin today is `range where { from, to } -> [Int]`, the dense half-open
+/// integer array construct.
+fn lower_where_call(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    call: &ast::WhereCall,
+) -> Result<LoweredValue, Diagnostics> {
+    if call.callee.value != "range" {
+        return Err(unknown_name(call.callee.span, &call.callee.value));
+    }
+    let from = named_field_value(&call.named_args, "from")?;
+    let to = named_field_value(&call.named_args, "to")?;
+    if call.named_args.fields.len() != 2 {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            call.named_args.span,
+            "range accepts exactly the named bounds `from` and `to`",
+        )));
+    }
+    let from = lower_value_expected(nodes, bindings, context, from, Some(&Type::Int))?;
+    require_type(
+        &from,
+        &Type::Int,
+        expr_span_of_named(&call.named_args, "from"),
+    )?;
+    let to = lower_value_expected(nodes, bindings, context, to, Some(&Type::Int))?;
+    require_type(&to, &Type::Int, expr_span_of_named(&call.named_args, "to"))?;
+    let ty = Type::array(Type::Int);
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            call.span,
+            ty.clone(),
+            EffectFacts {
+                fallible: true,
+                ..EffectFacts::PURE
+            },
+            vec![from.node, to.node],
+            Op::Range,
+        ),
+        ty,
+    })
+}
+
+/// The value expression of one named argument, resolving field punning
+/// (`{ from }`) to the identifier of the same name.
+fn named_field_value<'a>(
+    named: &'a ast::WhereArgs,
+    name: &str,
+) -> Result<&'a ast::Expr, Diagnostics> {
+    let field = named
+        .fields
+        .iter()
+        .find(|field| field.name.value == name)
+        .ok_or_else(|| {
+            Diagnostics::one(Diagnostic::unsupported(
+                named.span,
+                format!("range requires the named bound `{name}`"),
+            ))
+        })?;
+    match &field.value {
+        Some(value) => Ok(value),
+        // Field punning `{ from }` denotes the in-scope binding `from`.
+        None => Err(Diagnostics::one(Diagnostic::unsupported(
+            field.span,
+            "range bounds must be explicit `name: value` arguments",
+        ))),
+    }
+}
+
+fn expr_span_of_named(named: &ast::WhereArgs, name: &str) -> Span {
+    named
+        .fields
+        .iter()
+        .find(|field| field.name.value == name)
+        .and_then(|field| field.value.as_ref())
+        .map_or(named.span, expr_span)
+}
+
 fn lower_call(
     nodes: &mut Vec<Node>,
     bindings: &BTreeMap<String, LoweredValue>,
@@ -3735,6 +6268,53 @@ fn lower_value_call(
     })
 }
 
+/// Resolve a bare identifier that names a top-level function to a first-class
+/// callable value. A function reference is only well-typed as `fn(T) -> U` when
+/// the function declares exactly one positional parameter and no named ones.
+fn lower_function_reference(
+    nodes: &mut Vec<Node>,
+    context: &ModuleContext<'_>,
+    identifier: &crate::support::Spanned<String>,
+) -> Result<LoweredValue, Diagnostics> {
+    let signature = context
+        .signatures
+        .get(&identifier.value)
+        .ok_or_else(|| unknown_name(identifier.span, &identifier.value))?;
+    if signature.is_test {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            identifier.span,
+            "referencing a test function as a value",
+        )));
+    }
+    let [parameter] = signature.parameters.as_slice() else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            identifier.span,
+            "referencing a function with other than one parameter as a value",
+        )));
+    };
+    if parameter.kind != ParameterKind::Positional {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            identifier.span,
+            "referencing a function with a named parameter as a value",
+        )));
+    }
+    let ty = Type::Function {
+        parameter: Box::new(parameter.ty.clone()),
+        result: Box::new(signature.return_type.clone()),
+    };
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            identifier.span,
+            ty.clone(),
+            EffectFacts::PURE,
+            Vec::new(),
+            Op::Closure(signature.id),
+        ),
+        ty,
+    })
+}
+
 fn lookup_binding(
     bindings: &BTreeMap<String, LoweredValue>,
     name: &str,
@@ -3848,6 +6428,36 @@ fn lower_binary(
             require_type(&right, &Type::Int, expr_span(&binary.right))?;
             (Type::Int, Op::Mul)
         }
+        "/" if left.ty == Type::Path => {
+            let ast::Expr::Str(segment) = &binary.right else {
+                return Err(Diagnostics::one(Diagnostic::unsupported(
+                    expr_span(&binary.right),
+                    "dynamic Path segments",
+                )));
+            };
+            require_type(&right, &Type::String, segment.span)?;
+            validate_path_segment(segment.value.as_str(), segment.span)?;
+            let suffix = push_node(
+                nodes,
+                segment.span,
+                Type::Path,
+                EffectFacts::PURE,
+                Vec::new(),
+                Op::Path(segment.value.clone()),
+            );
+            let joined = push_node(
+                nodes,
+                binary.span,
+                Type::Path,
+                EffectFacts::PURE,
+                vec![left.node, suffix],
+                Op::PathJoin,
+            );
+            return Ok(LoweredValue {
+                node: joined,
+                ty: Type::Path,
+            });
+        }
         "/" => {
             require_type(&left, &Type::Int, expr_span(&binary.left))?;
             require_type(&right, &Type::Int, expr_span(&binary.right))?;
@@ -3855,11 +6465,19 @@ fn lower_binary(
         }
         "==" => {
             require_same_type(&left, &right, binary.span)?;
-            (Type::Bool, Op::Eq)
+            let node = push_equality_condition(nodes, binary.span, &left, &right, false);
+            return Ok(LoweredValue {
+                node,
+                ty: Type::Bool,
+            });
         }
         "!=" => {
             require_same_type(&left, &right, binary.span)?;
-            (Type::Bool, Op::Ne)
+            let node = push_equality_condition(nodes, binary.span, &left, &right, true);
+            return Ok(LoweredValue {
+                node,
+                ty: Type::Bool,
+            });
         }
         "<=>" => {
             require_same_type(&left, &right, binary.span)?;
@@ -3992,6 +6610,93 @@ fn lower_bool_constant(nodes: &mut Vec<Node>, span: Span, value: bool) -> Lowere
     }
 }
 
+/// Build the equality condition for two same-typed values.
+///
+/// Ordered collections have structural value identity, but their VIR handles
+/// are opaque: two maps built by different recipes (a `collect` and a literal)
+/// share no handle. Structural equality desugars to comparison of the canonical
+/// projections that already lower through the verified machine — a map is equal
+/// iff its canonical key array and canonical value array both match, a set iff
+/// its canonical element array matches. Scalars and structural aggregates keep
+/// the direct `Op::Eq`/`Op::Ne` primitive. `negate` requests the `!=` sense.
+fn push_equality_condition(
+    nodes: &mut Vec<Node>,
+    span: Span,
+    left: &LoweredValue,
+    right: &LoweredValue,
+    negate: bool,
+) -> NodeId {
+    let equal = match &left.ty {
+        Type::Map { key, value } => {
+            let key_array = Type::array(key.as_ref().clone());
+            let value_array = Type::array(value.as_ref().clone());
+            let keys_left = push_project(nodes, span, left.node, key_array.clone(), Op::MapKeys);
+            let keys_right = push_project(nodes, span, right.node, key_array, Op::MapKeys);
+            let keys_equal = push_eq(nodes, span, keys_left, keys_right);
+            // The value projections and their comparison form the `then` region
+            // of a short-circuiting `keys_equal && values_equal`.
+            let values_start = nodes.len();
+            let values_left =
+                push_project(nodes, span, left.node, value_array.clone(), Op::MapValues);
+            let values_right = push_project(nodes, span, right.node, value_array, Op::MapValues);
+            let values_equal = push_eq(nodes, span, values_left, values_right);
+            let consequent = control_region(nodes, values_start, values_equal);
+            let alternative_start = nodes.len();
+            let alternative_value = lower_bool_constant(nodes, span, false);
+            let alternative = control_region(nodes, alternative_start, alternative_value.node);
+            push_node(
+                nodes,
+                span,
+                Type::Bool,
+                EffectFacts::PURE,
+                vec![keys_equal],
+                Op::If {
+                    consequent,
+                    alternative,
+                },
+            )
+        }
+        Type::Set(element) => {
+            let element_array = Type::array(element.as_ref().clone());
+            let left_values =
+                push_project(nodes, span, left.node, element_array.clone(), Op::SetValues);
+            let right_values = push_project(nodes, span, right.node, element_array, Op::SetValues);
+            push_eq(nodes, span, left_values, right_values)
+        }
+        _ => {
+            return push_node(
+                nodes,
+                span,
+                Type::Bool,
+                EffectFacts::PURE,
+                vec![left.node, right.node],
+                if negate { Op::Ne } else { Op::Eq },
+            );
+        }
+    };
+    if negate {
+        let alternative = lower_bool_constant(nodes, span, false);
+        push_eq(nodes, span, equal, alternative.node)
+    } else {
+        equal
+    }
+}
+
+fn push_project(nodes: &mut Vec<Node>, span: Span, source: NodeId, ty: Type, op: Op) -> NodeId {
+    push_node(nodes, span, ty, EffectFacts::PURE, vec![source], op)
+}
+
+fn push_eq(nodes: &mut Vec<Node>, span: Span, left: NodeId, right: NodeId) -> NodeId {
+    push_node(
+        nodes,
+        span,
+        Type::Bool,
+        EffectFacts::PURE,
+        vec![left, right],
+        Op::Eq,
+    )
+}
+
 #[derive(Clone, Copy)]
 enum DerivedRelation {
     Less,
@@ -4073,7 +6778,11 @@ fn invalid_arity(span: Span, expected: usize, found: usize) -> Diagnostics {
 
 fn require_type(value: &LoweredValue, expected: &Type, span: Span) -> Result<(), Diagnostics> {
     if &value.ty != expected {
-        return Err(type_mismatch(span, expected.name(), value.ty.name()));
+        let mut diagnostic = type_mismatch(span, expected.name(), value.ty.name());
+        if matches!((expected, &value.ty), (Type::Path, Type::String)) {
+            diagnostic.entries[0].code = DiagnosticCode::StringIsNotPath;
+        }
+        return Err(diagnostic);
     }
     Ok(())
 }
@@ -4129,6 +6838,7 @@ fn expr_span(expression: &ast::Expr) -> Span {
         ast::Expr::Binary(value) => value.span,
         ast::Expr::Unary(value) => value.span,
         ast::Expr::Call(value) => value.span,
+        ast::Expr::WhereCall(value) => value.span,
         ast::Expr::MethodCall(value) => value.span,
         ast::Expr::Field(value) => value.span,
         ast::Expr::Index(value) => value.span,
@@ -4140,8 +6850,10 @@ fn expr_span(expression: &ast::Expr) -> Span {
         ast::Expr::Tuple(value) => value.span,
         ast::Expr::Paren(value) => value.span,
         ast::Expr::Identifier(value) => value.span,
+        ast::Expr::Path(value) => value.span,
         ast::Expr::Str(value) => value.span,
         ast::Expr::Number(value) => value.span,
+        ast::Expr::Quantity(value) => value.span,
         ast::Expr::Bool(value) => value.span,
     }
 }
