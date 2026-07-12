@@ -391,7 +391,9 @@ impl<'a> TypeResolver<'a> {
                 }
             }
             ast::Expr::Paren(expression) => self.resolve_expr_types(&expression.inner)?,
-            ast::Expr::Identifier(_)
+            ast::Expr::Try(expression) => self.resolve_expr_types(&expression.value)?,
+            ast::Expr::Exec(_)
+            | ast::Expr::Identifier(_)
             | ast::Expr::Str(_)
             | ast::Expr::Number(_)
             | ast::Expr::Bool(_) => {}
@@ -1760,6 +1762,27 @@ fn lower_value_expected(
             lower_value_expected(nodes, bindings, context, &paren.inner, expected)
         }
         ast::Expr::Unary(unary) => lower_unary_value(nodes, bindings, context, unary),
+        // The exec-effect band (rungs 067–069). `exec` is a scheduler-owned
+        // demand/effect keyed by canonical preimage and capability value; a
+        // successful stdout is a typed value stream, a nonzero exit a memoized
+        // FailureValue caught by postfix `?`, and two identical exec demands
+        // run once. None of that VIR/runtime plumbing exists yet, so lowering
+        // stops here at a precise typed seam rather than substituting a pure
+        // host call.
+        ast::Expr::Exec(exec) => Err(Diagnostics::one(Diagnostic::unsupported(
+            exec.span,
+            "exec is a scheduler-owned effect that is not lowered yet",
+        ))),
+        // Postfix `?` stops failure propagation. Lower the inner value first so
+        // an exec (or any failing) subject reports its own seam; only if it
+        // lowers does the `?`/Result outcome seam surface.
+        ast::Expr::Try(try_expr) => {
+            lower_value(nodes, bindings, context, &try_expr.value)?;
+            Err(Diagnostics::one(Diagnostic::unsupported(
+                try_expr.span,
+                "postfix `?` outcomes are not lowered yet",
+            )))
+        }
     }
 }
 
@@ -4139,6 +4162,8 @@ fn expr_span(expression: &ast::Expr) -> Span {
         ast::Expr::Record(value) => value.span,
         ast::Expr::Tuple(value) => value.span,
         ast::Expr::Paren(value) => value.span,
+        ast::Expr::Exec(value) => value.span,
+        ast::Expr::Try(value) => value.span,
         ast::Expr::Identifier(value) => value.span,
         ast::Expr::Str(value) => value.span,
         ast::Expr::Number(value) => value.span,

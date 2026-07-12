@@ -3016,59 +3016,103 @@ fn assert_contiguous_sequences(events: &[vix::runtime::Event]) {
         event.sequence == u64::try_from(index).expect("event count fits u64")
     }));
 }
+/// The exec-effect band's new surface parses.
+///
+/// `exec` is a **backtick tagged template whose tag is a capability value**
+/// (`exec echo`"hi"``), and postfix `?` turns a demand's outcome into a
+/// `Result` the surrounding expression can match. The grammar now carries both
+/// constructs plus the `command_template` lexeme, so a source that uses them
+/// is accepted by the surface parser — the byte-level `ParseRejected` the band
+/// opened against is closed.
+#[test]
+fn exec_and_try_surface_parses() {
+    const SOURCE: &str = r#"
+fn drive(echo: Echo) -> Stream<Check> {
+    let out = exec echo`"hi"`;
+    let caught = exec echo`"hi"`?;
+    yield expect_eq(out.stdout, caught.stdout);
+}
+"#;
+    SurfaceParser::new()
+        .parse(SOURCE)
+        .expect("the exec tagged template and postfix `?` parse through the surface");
+}
+
 /// Red certificate for the exec-effect band (rungs 067–069).
 ///
 /// `exec` is a **scheduler-owned demand/effect** keyed by canonical preimage
 /// and capability value (`Echo`/`Sh`); a successful stdout is a typed value
 /// stream, a nonzero exit is a memoized `FailureValue` that postfix `?`
 /// catches, and two identical exec demands run once with `ran_processes`
-/// observing the frozen effect trace. None of that exists yet, and the first
-/// production seam is the surface itself: the grammar has no `exec` tagged
-/// template, so each rung is rejected the moment the parser reaches the
-/// `exec <capability>` juncture. This certificate pins that exact production
-/// red — one `ParseRejected` per rung, at the byte offset of the capability
-/// identifier following `exec` — following the same frontier-diagnostic
-/// pattern the map/set band uses ("map/set lowering is not implemented").
+/// observing the frozen effect trace. The surface now accepts the `exec`
+/// tagged template and postfix `?`, so the seam has moved off the byte-level
+/// parser and down the pipeline. It has not reached green: each rung stops at
+/// the next production boundary, pinned exactly here.
 ///
-/// When the surface grows the `exec` construct these assertions flip, and the
-/// seam moves down the pipeline (checker → VIR → lowering → scheduler effect);
-/// each subsequent red checkpoint records the next seam in turn.
+///   * 067 / 069 — the `exec` construct parses, but the capability **type**
+///     `Echo` is not a known type, so the checker rejects the test parameter
+///     with `UnknownName`. Capability types are the next layer the band needs.
+///   * 068 — `exec sh`…`?` parses through both new constructs, and the seam
+///     advances *past* the `exec` juncture to the built-in outcome pattern
+///     `Ok(_)` / `Err(_)`, which the grammar does not yet carry (`ParseRejected`).
+///
+/// Remaining typed seams to green, each below the live runtime frontier
+/// (map/set lowering is "the next runtime boundary"): capability types
+/// (`Echo`/`Sh`) and `ExecOutcome`, the `ByteStream`/`Stream` value surface
+/// (`.stdout.collect().values()`), the built-in `Result`/outcome surface with
+/// `Ok`/`Err` patterns, `parse_int`, the `?`/outcome VIR lowering, and the
+/// scheduler-owned process effect (demand keyed by canonical preimage ×
+/// capability, memoized `FailureValue` for nonzero exit, `ran_processes`).
 #[test]
-fn exec_effect_rungs_are_red_at_the_surface_seam() {
-    // Locate the `exec <capability>`…`` expression in each canonical rung.
-    // The parser reaches it, has already consumed `exec` as a bare identifier
-    // expression, and rejects on the capability identifier that follows.
-    let exec_expr = |source: &str| {
+fn exec_effect_rungs_are_red_at_the_moved_seam() {
+    // The `exec <capability>`…`` juncture the byte-level parser used to reject.
+    let exec_offset = |source: &str| {
         source
             .match_indices("exec ")
             .find(|(index, _)| {
                 let rest = &source[index + "exec ".len()..];
-                rest.starts_with(|c: char| c.is_ascii_alphabetic())
-                    && rest.contains('`')
-                    && rest
-                        .split('`')
-                        .next()
-                        .is_some_and(|head| head.chars().all(|c| c.is_ascii_alphanumeric()))
+                rest.starts_with(|c: char| c.is_ascii_alphabetic()) && rest.contains('`')
             })
             .map(|(index, _)| index)
             .expect("each exec rung contains an `exec <capability>` expression")
     };
-    for source in [RUNG_067, RUNG_068, RUNG_069] {
-        let exec_offset = exec_expr(source);
-        assert!(source[exec_offset..].starts_with("exec "));
+
+    // 067 and 069: the exec construct parses; the checker rejects the unknown
+    // capability type `Echo`.
+    for source in [RUNG_067, RUNG_069] {
         let diagnostics = Compiler::new()
             .compile(source)
-            .expect_err("the exec surface does not parse yet");
+            .expect_err("the capability type is not known yet");
         assert_eq!(diagnostics.entries.len(), 1);
         let diagnostic = &diagnostics.entries[0];
-        assert_eq!(diagnostic.code, DiagnosticCode::ParseRejected);
-        // A token-level rejection: `exec` parsed as an identifier, then the
-        // capability identifier is an unexpected second token. This is the
-        // production seam the exec-effect band opens against.
-        assert!(
-            diagnostic.message().starts_with("NoToken"),
-            "expected a token-level rejection at the `exec` juncture, got: {}",
-            diagnostic.message()
-        );
+        assert_eq!(diagnostic.code, DiagnosticCode::UnknownName);
+        assert_eq!(diagnostic.message(), "Echo");
     }
+
+    // 068: exec + `?` parse; the reject has advanced past the `exec` juncture
+    // to the built-in outcome pattern the grammar does not yet carry.
+    let diagnostics = Compiler::new()
+        .compile(RUNG_068)
+        .expect_err("the outcome pattern surface is not built yet");
+    assert_eq!(diagnostics.entries.len(), 1);
+    let diagnostic = &diagnostics.entries[0];
+    assert_eq!(diagnostic.code, DiagnosticCode::ParseRejected);
+    assert!(diagnostic.message().starts_with("NoToken"));
+    let byte_position = diagnostic
+        .message()
+        .split("byte_position: ")
+        .nth(1)
+        .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
+        .and_then(|digits| digits.parse::<usize>().ok())
+        .expect("the parse rejection reports a byte position");
+    assert!(
+        byte_position > exec_offset(RUNG_068),
+        "the seam advanced past the `exec` juncture ({}), reached {byte_position}",
+        exec_offset(RUNG_068)
+    );
+    let window = &RUNG_068[byte_position.saturating_sub(6)..(byte_position + 2).min(RUNG_068.len())];
+    assert!(
+        window.contains("Ok("),
+        "the reject sits at the built-in `Ok(_)` outcome pattern, window: {window:?}"
+    );
 }

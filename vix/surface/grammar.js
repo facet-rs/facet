@@ -136,6 +136,8 @@ module.exports = grammar({
         $.match_expr,
         $.binary,
         $.unary,
+        $.exec_expr,
+        $.try_expr,
         $.call,
         $.method_call,
         $.index_expr,
@@ -152,6 +154,23 @@ module.exports = grammar({
         $.number,
         $.boolean,
       ),
+
+    // A command is a backtick tagged template whose tag is a capability VALUE:
+    // `exec echo`"hello"``. The capability names a tool projected out of a
+    // closure; the template body is the argv text (splices arrive at a later
+    // rung). Demanding the result runs a process; constructing it forces
+    // nothing.
+    exec_expr: ($) =>
+      prec(
+        PREC.postfix,
+        seq("exec", field("capability", $.identifier), field("command", $.command_template)),
+      ),
+    // A single lexeme: everything between the backticks. Argv structure is a
+    // checker/lowering concern, not a grammar one.
+    command_template: () => token(seq("`", /[^`]*/, "`")),
+    // Postfix `?` stops failure propagation, turning a demand's outcome into a
+    // `Result` the surrounding expression can match.
+    try_expr: ($) => prec.left(PREC.postfix, seq(field("value", $._expr), "?")),
 
     _closure_body: ($) => choice($.block, $._expr),
     closure_expr: ($) =>
