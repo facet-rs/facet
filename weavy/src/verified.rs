@@ -150,6 +150,24 @@ pub struct FunctionContract {
     pub entries: Vec<RegionId>,
     pub result: RegionId,
     pub call_contract: Option<CallContractId>,
+    /// The boxed capture environment of a closure that carries its captures
+    /// through a task-lifetime environment box rather than as call arguments.
+    /// Empty for ordinary functions and for closures whose captures ride inline
+    /// (the static concrete-capture convention). Each field is one captured
+    /// value's shape at its offset within the box; the entries that follow the
+    /// argument are materialized from it by `CallIndirect` or `EnvLoad`. This
+    /// lives on the function, not the call contract, so a boxed closure's public
+    /// value keeps its uniform semantic callable shape.
+    pub environment: Vec<FrameRegion>,
+}
+
+impl FunctionContract {
+    /// Whether this function materializes trailing capture entries from a boxed
+    /// environment rather than receiving them as call arguments.
+    #[must_use]
+    pub fn is_boxed(&self) -> bool {
+        !self.environment.is_empty()
+    }
 }
 
 /// A function-independent indirect-call ABI.
@@ -169,22 +187,12 @@ pub struct FunctionContract {
 ///   value escapes its construction frame (returned, mapped, stored), so its
 ///   captures cannot travel as caller-frame arguments.
 ///
-/// The verifier proves the convention structurally from `environment`; runtime
-/// never guesses it from handle bits.
+/// The verifier proves the convention structurally from the callee function's
+/// [`FunctionContract::environment`]; runtime never guesses it from handle bits.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CallContract {
     pub entries: Vec<FrameRegion>,
-    pub environment: Vec<FrameRegion>,
     pub result: FrameRegion,
-}
-
-impl CallContract {
-    /// Whether this callable materializes captures from a boxed environment
-    /// rather than receiving them as call arguments.
-    #[must_use]
-    pub fn is_boxed(&self) -> bool {
-        !self.environment.is_empty()
-    }
 }
 
 /// One field use in a structural value shape.
@@ -2141,11 +2149,33 @@ impl Verifier<'_> {
                     ));
                 };
                 let call = &self.contract.calls[call_index];
-                let entries_match = entries.len() == call.entries.len()
-                    && entries
-                        .iter()
-                        .zip(&call.entries)
-                        .all(|(region, expected)| &contract.frame.regions[*region] == expected);
+                // A boxed closure's call contract covers only the leading
+                // argument entries; the trailing capture entries are
+                // materialized from the environment box and their shapes are
+                // proven against `environment` rather than call arguments.
+                let leading = call.entries.len();
+                let entries_match = if contract.environment.is_empty() {
+                    entries.len() == leading
+                        && entries.iter().zip(&call.entries).all(|(region, expected)| {
+                            &contract.frame.regions[*region] == expected
+                        })
+                } else {
+                    entries.len() == leading + contract.environment.len()
+                        && entries
+                            .iter()
+                            .take(leading)
+                            .zip(&call.entries)
+                            .all(|(region, expected)| {
+                                &contract.frame.regions[*region] == expected
+                            })
+                        && entries
+                            .iter()
+                            .skip(leading)
+                            .zip(&contract.environment)
+                            .all(|(region, field)| {
+                                contract.frame.regions[*region].shape == field.shape
+                            })
+                };
                 let concrete_result = &contract.frame.regions[result];
                 let result_matches = concrete_result.shape == call.result.shape
                     && concrete_result.value_shape == call.result.value_shape;
@@ -3584,38 +3614,24 @@ impl Verifier<'_> {
         pc: usize,
         callee: FnId,
     ) -> Result<&[FrameRegion], ProgramError> {
-        let Some(contract) = self
-            .contract
-            .functions
-            .get(callee.0 as usize)
-            .and_then(|function| function.call_contract)
-        else {
-            let function_count = self.contract.functions.len();
-            if (callee.0 as usize) >= function_count {
-                return Err(self.op(
-                    function,
-                    pc,
-                    ProgramDefect::EnvironmentContractOutOfRange {
-                        callee,
-                        function_count,
-                    },
-                ));
-            }
+        let Some(callee_contract) = self.contract.functions.get(callee.0 as usize) else {
             return Err(self.op(
                 function,
                 pc,
-                ProgramDefect::EnvironmentNotBoxed { callee },
+                ProgramDefect::EnvironmentContractOutOfRange {
+                    callee,
+                    function_count: self.contract.functions.len(),
+                },
             ));
         };
-        let call = &self.contract.calls[contract.0 as usize];
-        if call.environment.is_empty() {
+        if callee_contract.environment.is_empty() {
             return Err(self.op(
                 function,
                 pc,
                 ProgramDefect::EnvironmentNotBoxed { callee },
             ));
         }
-        Ok(&call.environment)
+        Ok(&callee_contract.environment)
     }
 
     /// A frame region by id, with no structural-value-shape requirement.
@@ -5096,6 +5112,7 @@ mod tests {
             entries: entries.iter().copied().map(RegionId).collect(),
             result: RegionId(result),
             call_contract: call_contract.map(CallContractId),
+            environment: Vec::new(),
         }
     }
 
@@ -5255,7 +5272,6 @@ mod tests {
                 word_region(0, WordKind::Scalar),
                 word_region(8, WordKind::Scalar),
             ],
-            environment: Vec::new(),
             result: word_region(16, WordKind::Scalar),
         }
     }
@@ -5844,7 +5860,6 @@ mod tests {
     fn rejects_non_narrowed_indirect_and_mismatched_function_contracts() {
         let call_zero = CallContract {
             entries: vec![],
-            environment: Vec::new(),
             result: word_region(0, WordKind::Scalar),
         };
         let callable_kinds =
@@ -5894,7 +5909,6 @@ mod tests {
                 )],
                 calls: vec![CallContract {
                     entries: vec![],
-                    environment: Vec::new(),
                     result: word_region(8, WordKind::Scalar),
                 }],
                 schemas: vec![],
@@ -5915,7 +5929,6 @@ mod tests {
                 )],
                 calls: vec![CallContract {
                     entries: vec![],
-                    environment: Vec::new(),
                     result: word_region(0, WordKind::Status),
                 }],
                 schemas: vec![],
@@ -5943,7 +5956,6 @@ mod tests {
                         word_region(8, WordKind::Scalar),
                         word_region(16, WordKind::Scalar),
                     ],
-                    environment: Vec::new(),
                     result: word_region(24, WordKind::Scalar),
                 }],
                 schemas: vec![],
@@ -5971,7 +5983,6 @@ mod tests {
                         word_region(0, WordKind::Scalar),
                         word_region(16, WordKind::Scalar),
                     ],
-                    environment: Vec::new(),
                     result: word_region(24, WordKind::Scalar),
                 }],
                 schemas: vec![],
@@ -6017,12 +6028,10 @@ mod tests {
                 calls: vec![
                     CallContract {
                         entries: vec![],
-                        environment: Vec::new(),
                         result: word_region(0, WordKind::Scalar),
                     },
                     CallContract {
                         entries: vec![],
-                        environment: Vec::new(),
                         result: word_region(8, WordKind::Scalar),
                     },
                 ],

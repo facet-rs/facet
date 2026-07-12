@@ -1558,14 +1558,11 @@ fn env_handle_parts(handle: i64) -> (u32, u32) {
     ((bits >> 32) as u32, bits as u32)
 }
 
-/// The boxed environment contract of a closure callee. The verifier has
-/// already proven the callee is boxed (its call contract's `environment` is
-/// non-empty), so this resolution is total for a verified program.
-fn env_contract_of(verified: &VerifiedProgram, callee: FnId) -> &crate::CallContract {
-    let contract = verified.contract().functions[callee.0 as usize]
-        .call_contract
-        .expect("boxed closure callee carries a call contract");
-    &verified.contract().calls[contract.0 as usize]
+/// The boxed environment layout of a closure callee. The verifier has already
+/// proven the callee is boxed (its `environment` is non-empty), so this is the
+/// exact capture box layout for a verified program.
+fn env_environment_of(verified: &VerifiedProgram, callee: FnId) -> &[crate::FrameRegion] {
+    &verified.contract().functions[callee.0 as usize].environment
 }
 
 /// Build the task fault for a boxed-environment access failure at the given
@@ -3395,6 +3392,10 @@ impl Task {
                     self.trace.push(TaskEvent::FrameEntered(callee));
                 }
                 Op::CallIndirect { callee, args, ret } => {
+                    // The closure value's environment word sits one word after
+                    // its callable word; preserve its offset before `callee` is
+                    // rebound to the resolved function id.
+                    let environment_word = base + callee as usize + 8;
                     let raw = read_i64_at(&self.arena, base + callee as usize);
                     let callee = if raw < 0 {
                         let Some(verified) = verified else {
@@ -3439,6 +3440,51 @@ impl Task {
                         let dst = callee_frame + copy.dst as usize;
                         self.arena.copy_within(src..src + copy.size as usize, dst);
                     }
+                    // A closure value typed by its semantic signature carries
+                    // captures in a boxed environment. When the verified call
+                    // arguments did not fill every callee entry, the remaining
+                    // capture entries are materialized from the environment box
+                    // named by the closure value's environment word.
+                    if let Some(verified) = verified {
+                        let callee_contract = &verified.contract().functions[callee.0 as usize];
+                        if !callee_contract.environment.is_empty()
+                            && args.len() < callee_contract.entries.len()
+                        {
+                            let handle = read_i64_at(&self.arena, environment_word);
+                            let mut writes: Vec<(usize, Vec<u8>)> = Vec::new();
+                            {
+                                let bytes = self.molten.env_bytes(handle).map_err(|fault| {
+                                    environment_fault(verified, fn_id, pc, fault, handle)
+                                })?;
+                                for (index, field) in
+                                    callee_contract.environment.iter().enumerate()
+                                {
+                                        let entry = args.len() + index;
+                                        let region_id = callee_contract.entries[entry];
+                                        let region =
+                                            &callee_contract.frame.regions[region_id.0 as usize];
+                                        let off = field.offset as usize;
+                                        let len = field.shape.words.len() * 8;
+                                        if off + len > bytes.len() {
+                                            return Err(environment_fault(
+                                                verified,
+                                                fn_id,
+                                                pc,
+                                                EnvBoxFault::OutOfRange,
+                                                handle,
+                                            ));
+                                        }
+                                        writes.push((
+                                            callee_frame + region.offset as usize,
+                                            bytes[off..off + len].to_vec(),
+                                        ));
+                                    }
+                                }
+                                for (dst, data) in writes {
+                                    self.arena[dst..dst + data.len()].copy_from_slice(&data);
+                                }
+                            }
+                        }
                     self.frames.push(FrameRecord {
                         fn_id: callee,
                         base: callee_frame,
@@ -4409,16 +4455,15 @@ impl Task {
                 );
             }
             Op::EnvBox { dst, callee, fields } => {
-                let call = env_contract_of(verified, *callee);
-                let box_len = call
-                    .environment
+                let environment = env_environment_of(verified, *callee);
+                let box_len = environment
                     .iter()
                     .map(|field| field.offset as usize + field.shape.words.len() * 8)
                     .max()
                     .unwrap_or(0);
                 let mut bytes = vec![0u8; box_len];
                 for (index, source) in fields.iter().enumerate() {
-                    let field = &call.environment[index];
+                    let field = &environment[index];
                     let source_region = region(*source);
                     let len = field.shape.words.len() * 8;
                     let off = field.offset as usize;
@@ -4437,8 +4482,8 @@ impl Task {
                 callee,
                 field,
             } => {
-                let call = env_contract_of(verified, *callee);
-                let field_desc = &call.environment[*field as usize];
+                let environment = env_environment_of(verified, *callee);
+                let field_desc = &environment[*field as usize];
                 let len = field_desc.shape.words.len() * 8;
                 let off = field_desc.offset as usize;
                 let handle = read_i64_at(&self.arena, base + region(*env).offset as usize);

@@ -1921,16 +1921,6 @@ impl<'a> ProgramContractBuilder<'a> {
                 let call = functions[target_index].call_contract.ok_or_else(|| {
                     lowering_diagnostic(node.span, "closure target has no exact call ABI")
                 })?;
-                let (callee_region, _) = builder.regions.closure(source.id, node.id, node.span)?;
-                let callee = functions[function_index]
-                    .frame
-                    .regions
-                    .get_mut(callee_region.0 as usize)
-                    .ok_or_else(|| {
-                        lowering_diagnostic(node.span, "closure callee region is absent")
-                    })?;
-                callee.shape = WeavyRegionShape::word(WeavyWordKind::Callable(call));
-
                 let Type::Function { parameter, result } = &node.ty else {
                     return Err(lowering_diagnostic(
                         node.span,
@@ -1945,6 +1935,21 @@ impl<'a> ProgramContractBuilder<'a> {
                         "closure target ABI disagrees with its semantic function type",
                     ));
                 }
+                // The closure value's callable word is the target's own call
+                // contract. For a boxed closure this is already the plain
+                // semantic signature, so all values of one function type share a
+                // copyable value shape (a returned boxed closure flows into a
+                // semantic slot); the boxed environment lives on the function.
+                let (callee_region, _) = builder.regions.closure(source.id, node.id, node.span)?;
+                let callee = functions[function_index]
+                    .frame
+                    .regions
+                    .get_mut(callee_region.0 as usize)
+                    .ok_or_else(|| {
+                        lowering_diagnostic(node.span, "closure callee region is absent")
+                    })?;
+                callee.shape = WeavyRegionShape::word(WeavyWordKind::Callable(call));
+
                 let (shape, value_shape) = builder.intern_callable_value_shape(call);
                 let closure_region = builder.regions.node(source.id, node.id, node.span)?;
                 let closure = functions[function_index]
@@ -2202,43 +2207,51 @@ impl<'a> ProgramContractBuilder<'a> {
                 lowering_diagnostic(function.span, "output node has no frame region")
             })?,
         };
-        let call_contract = if self.closure_targets.contains(&function.id) {
-            // The captures follow the single argument entry. If they exceed one
-            // inline word they are boxed: the concrete contract carries the same
-            // call entries (captures still arrive as call arguments, unboxed at
-            // the call site) plus the environment layout that EnvBox/EnvLoad and
-            // the boxed-convention proof read.
-            let capture_entries = entries
-                .get(1..function.parameters.len())
-                .unwrap_or(&[]);
-            let capture_words: usize = capture_entries
+        // A closure whose captures exceed one inline word carries them in a
+        // task-lifetime environment box. Its public call contract stays the
+        // plain semantic signature — argument in, result out — so all values of
+        // one function type share a copyable value shape; the box layout lives
+        // on the function's `environment`, and the trailing capture entries are
+        // materialized from it by CallIndirect (dynamic) or read directly (the
+        // static concrete-capture optimization keeps its wider contract).
+        let capture_entries = entries.get(1..function.parameters.len()).unwrap_or(&[]);
+        let capture_words: usize = capture_entries
+            .iter()
+            .map(|entry| regions[entry.0 as usize].shape.words.len())
+            .sum();
+        let boxed = self.closure_targets.contains(&function.id) && capture_words > 1;
+        let environment = if boxed {
+            let mut offset = 0u32;
+            capture_entries
                 .iter()
-                .map(|entry| regions[entry.0 as usize].shape.words.len())
-                .sum();
-            if capture_words > 1 {
-                let mut offset = 0u32;
-                let environment = capture_entries
-                    .iter()
-                    .map(|entry| {
-                        let region = &regions[entry.0 as usize];
-                        let field = WeavyFrameRegion::new(offset, region.shape.clone());
-                        offset += (region.shape.words.len() * 8) as u32;
-                        field
-                    })
-                    .collect();
-                Some(self.intern_call(WeavyCallContract {
-                    entries: entries
-                        .iter()
-                        .map(|entry| regions[entry.0 as usize].clone())
-                        .collect(),
-                    environment,
-                    result: canonical_call_region(&regions[result.0 as usize]),
-                }))
-            } else {
-                Some(self.call_contract_for_function(&entries, result, &regions)?)
-            }
+                .map(|entry| {
+                    let region = &regions[entry.0 as usize];
+                    let field = WeavyFrameRegion::new(offset, region.shape.clone());
+                    offset += (region.shape.words.len() * 8) as u32;
+                    field
+                })
+                .collect()
         } else {
+            Vec::new()
+        };
+        let call_contract = if !self.closure_targets.contains(&function.id) {
             None
+        } else if boxed {
+            let result_type = function
+                .nodes
+                .iter()
+                .find(|node| node.id == function.output)
+                .map(|node| &node.ty)
+                .ok_or_else(|| {
+                    lowering_diagnostic(function.span, "closure output node has no type")
+                })?;
+            Some(self.call_contract_for_signature(
+                &function.parameters[0].ty,
+                result_type,
+                function.span,
+            )?)
+        } else {
+            Some(self.call_contract_for_function(&entries, result, &regions)?)
         };
         Ok(WeavyFunctionContract {
             frame: WeavyFrameContract {
@@ -2246,6 +2259,7 @@ impl<'a> ProgramContractBuilder<'a> {
                 regions,
             },
             entries,
+            environment,
             result,
             call_contract,
         })
@@ -2262,7 +2276,6 @@ impl<'a> ProgramContractBuilder<'a> {
                 .iter()
                 .map(|entry| regions[entry.0 as usize].clone())
                 .collect(),
-            environment: Vec::new(),
             result: canonical_call_region(&regions[result.0 as usize]),
         };
         Ok(self.intern_call(call))
@@ -2603,7 +2616,6 @@ impl<'a> ProgramContractBuilder<'a> {
         }
         Ok(self.intern_call(WeavyCallContract {
             entries: vec![entry],
-            environment: Vec::new(),
             result: result_region,
         }))
     }

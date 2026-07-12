@@ -1156,6 +1156,7 @@ mod tests {
             entries: entries.iter().copied().map(RegionId).collect(),
             result: RegionId(result),
             call_contract: call_contract.map(CallContractId),
+            environment: Vec::new(),
         }
     }
 
@@ -1280,7 +1281,6 @@ mod tests {
     fn scalar_call_contract() -> CallContract {
         CallContract {
             entries: vec![word_region(0, WordKind::Scalar)],
-            environment: Vec::new(),
             result: word_region(8, WordKind::Scalar),
         }
     }
@@ -1349,7 +1349,6 @@ mod tests {
                     scalar_call_contract(),
                     CallContract {
                         entries: vec![word_region(0, WordKind::Scalar)],
-                        environment: Vec::new(),
                         result: word_region(16, WordKind::Scalar),
                     },
                 ],
@@ -1610,7 +1609,6 @@ mod tests {
                 )],
                 calls: vec![CallContract {
                     entries: vec![],
-                    environment: Vec::new(),
                     result: word_region(0, WordKind::Scalar),
                 }],
                 schemas: vec![],
@@ -1660,7 +1658,6 @@ mod tests {
                 )],
                 calls: vec![CallContract {
                     entries: vec![],
-                    environment: Vec::new(),
                     result: word_region(0, WordKind::Scalar),
                 }],
                 schemas: vec![],
