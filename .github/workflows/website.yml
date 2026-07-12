@@ -13,6 +13,17 @@ on:
       - '.github/workflows/website.yml'
       - 'facet-showcase/**'
       - 'facet-*/examples/*showcase*.rs'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.config/dodeca.styx'
+      - 'docs/**'
+      - 'styx-docs/**'
+      - '*/docs/**'
+      - '*/README.md'
+      - '.github/workflows/website.yml'
+      - 'facet-showcase/**'
+      - 'facet-*/examples/*showcase*.rs'
   workflow_dispatch:
 
 # Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
@@ -65,6 +76,7 @@ jobs:
           path: docs/public
 
   deploy:
+    if: github.event_name != 'pull_request'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

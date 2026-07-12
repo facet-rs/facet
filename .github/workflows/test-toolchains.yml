@@ -1,0 +1,141 @@
+name: Tests / Toolchains
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  merge_group:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+jobs:
+  nostd:
+    runs-on: bearcove-ubuntu-24.04
+    container:
+      image: ghcr.io/facet-rs/facet-ci:latest-amd64
+    steps:
+      - uses: actions/checkout@v6
+      - name: Select Rust 1.92
+        shell: bash
+        run: |
+          rustup toolchain install 1.92 --profile minimal --component rust-src --component clippy --component llvm-tools-preview --component rustfmt
+          rustup target add thumbv8m.main-none-eabihf --toolchain 1.92
+          echo "RUSTUP_TOOLCHAIN=1.92" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+      - name: Run no-std checks
+        run: just nostd-ci
+
+  miri:
+    runs-on: bearcove-ubuntu-24.04
+    container:
+      image: ghcr.io/facet-rs/facet-ci:latest-miri-amd64
+    steps:
+      - uses: actions/checkout@v6
+      - uses: Swatinem/rust-cache@v2
+      - name: Run Miri
+        env:
+          CI: "true"
+        run: just miri
+
+  nightly:
+    runs-on: bearcove-ubuntu-24.04
+    container:
+      image: ghcr.io/facet-rs/facet-ci:latest-miri-amd64
+    steps:
+      - uses: actions/checkout@v6
+      - uses: Swatinem/rust-cache@v2
+      - name: Run nightly feature tests
+        env:
+          PROPTEST_CASES: 0
+        run: cargo nextest run --package facet-core --features facet-core/simd,facet-core/bytes
+
+  msrv:
+    runs-on: bearcove-ubuntu-24.04
+    container:
+      image: ghcr.io/facet-rs/facet-ci:latest-amd64
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+      - name: Select Rust 1.92
+        shell: bash
+        run: |
+          rustup toolchain install 1.92 --profile minimal --component rust-src --component clippy --component llvm-tools-preview --component rustfmt
+          rustup target add thumbv8m.main-none-eabihf --toolchain 1.92
+          echo "RUSTUP_TOOLCHAIN=1.92" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+      - name: Check MSRV
+        run: just msrv
+
+  vix-interpreter:
+    runs-on: bearcove-ubuntu-24.04
+    container:
+      image: ghcr.io/facet-rs/facet-ci:latest-amd64
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+      - name: Select Rust 1.92
+        shell: bash
+        run: |
+          rustup toolchain install 1.92 --profile minimal --component rust-src --component clippy --component llvm-tools-preview --component rustfmt
+          rustup target add thumbv8m.main-none-eabihf --toolchain 1.92
+          echo "RUSTUP_TOOLCHAIN=1.92" >> "$GITHUB_ENV"
+      - name: Install system dependencies
+        run: apt-get update && apt-get install -y zlib1g-dev
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the interpreter corpus
+        env:
+          PROPTEST_CASES: 0
+          WEAVY_JIT: "0"
+        run: cargo nextest list -p vix -E 'binary(ratchet_runner) | binary(cross_lane_differential)'
+      - name: Run the interpreter corpus except the budget probe
+        env:
+          PROPTEST_CASES: 0
+          WEAVY_JIT: "0"
+        run: >-
+          cargo nextest run -p vix --no-fail-fast
+          -E '(binary(ratchet_runner) | binary(cross_lane_differential)) & not test(=rung_050_deep_tail_recursion_runs_under_its_declared_budget)'
+      - name: Run the execution-budget probe in isolation
+        env:
+          PROPTEST_CASES: 0
+          WEAVY_JIT: "0"
+        run: >-
+          cargo nextest run -p vix --no-fail-fast
+          -E 'test(=rung_050_deep_tail_recursion_runs_under_its_declared_budget)'
+
+  coverage:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    continue-on-error: true
+    runs-on: bearcove-ubuntu-24.04
+    container:
+      image: ghcr.io/facet-rs/facet-ci:latest-amd64
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+      - name: Select nightly with coverage tools
+        shell: bash
+        run: rustup toolchain install nightly --profile minimal --component llvm-tools-preview --component rustfmt
+      - name: Install system dependencies
+        run: apt-get update && apt-get install -y zlib1g-dev
+      - uses: Swatinem/rust-cache@v2
+      - name: Run coverage suite
+        env:
+          PROPTEST_CASES: 0
+        run: |
+          cargo +nightly llvm-cov --no-report nextest --workspace --features ci --no-fail-fast -E 'not (binary(postgres_integration) | binary(query_integration) | test(swift))'
+          cargo +nightly llvm-cov --no-report --doc --workspace --features ci
+          mkdir coverage
+          cargo +nightly llvm-cov report --doctests --lcov --output-path coverage/lcov.info
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v7
+        with:
+          files: coverage/lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false

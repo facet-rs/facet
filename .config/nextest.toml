@@ -153,6 +153,15 @@ slow-timeout = { period = "300s", terminate-after = 2 }
 filter = 'package(vix) & binary(reloc_selection)'
 threads-required = "num-cpus"
 
+# This acceptance test deliberately holds one executor action open while a
+# dependent action completes through a partial output. Running it alongside a
+# saturated workspace can starve its websocket/fake-tool tasks long enough to
+# trip the semantic timeout, so give the probe exclusive ownership of the
+# nextest runner without changing the timeout it is asserting.
+[[profile.default.overrides]]
+filter = 'package(vix-wire) & test(=language_level_pipelining_b_finishes_while_a_still_runs)'
+threads-required = "num-cpus"
+
 # This certificate measures the source-declared execution wall/RSS budget after
 # the child has completed compilation and signalled Ready. Sibling nextest jobs
 # are not part of that execution, so reserve the runner while the watchdog is

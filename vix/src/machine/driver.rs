@@ -1454,7 +1454,11 @@ impl RunnableExecutions {
 #[derive(Clone, Debug)]
 enum ExecMount {
     Concrete(crate::exec::Mount),
-    PendingTree { at: String, tree: i64 },
+    PendingTree {
+        at: String,
+        tree: i64,
+        projected_path: Option<String>,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -3538,6 +3542,19 @@ impl Driver {
             return Ok(None);
         }
         self.ensure_run_started(run_id)?;
+        if self
+            .runs
+            .get(&run_id)
+            .and_then(|run| run.remote.as_ref())
+            .is_some()
+        {
+            // A remote run can resolve an individual producing path before
+            // the command flushes its complete output tree. Let
+            // `project_request` enter `MachinePendingRun::demand_path`
+            // immediately; registering a whole-run waiter here would wake
+            // only after `flush`, destroying language-level pipelining.
+            return Ok(None);
+        }
         if self.poll_run_completion(run_id)? {
             Ok(None)
         } else {
@@ -7705,7 +7722,11 @@ impl Driver {
                 } else {
                     format!("{root}/{}", subpath.trim_start_matches('/'))
                 };
-                mounts.push(ExecMount::PendingTree { at: root, tree });
+                mounts.push(ExecMount::PendingTree {
+                    at: root,
+                    tree,
+                    projected_path: Some(subpath),
+                });
                 Ok(vec![text])
             }
             other => Err(format!("unknown Arg selector {other}")),
@@ -7720,10 +7741,23 @@ impl Driver {
             .iter()
             .map(|mount| match mount {
                 ExecMount::Concrete(mount) => Ok(mount.clone()),
-                ExecMount::PendingTree { at, tree } => {
-                    let forced = self.force_tree_handle(*tree)?;
+                ExecMount::PendingTree {
+                    at,
+                    tree,
+                    projected_path,
+                } => {
+                    let forced = if let Some(path) = projected_path {
+                        self.project_tree_path(*tree, path)?
+                    } else {
+                        self.force_tree_handle(*tree)?
+                    };
                     let TreeEntry::Concrete(tree) = self.store.borrow().tree_entry(forced)? else {
                         return Err("forced command tree stayed pending".into());
+                    };
+                    let tree = if let Some(path) = projected_path {
+                        anchor_projected_tree(tree, path)?
+                    } else {
+                        tree
                     };
                     Ok(crate::exec::Mount {
                         at: at.clone(),
@@ -12259,9 +12293,19 @@ fn pending_exec_identity_hash(
                 hasher.update(mount.at.as_bytes());
                 hasher.update(mount.tree.fingerprint().as_ref());
             }
-            ExecMount::PendingTree { at, tree } => {
+            ExecMount::PendingTree {
+                at,
+                tree,
+                projected_path,
+            } => {
                 hasher.update(&[1]);
                 hasher.update(at.as_bytes());
+                if let Some(path) = projected_path {
+                    hasher.update(&[1]);
+                    hasher.update(path.as_bytes());
+                } else {
+                    hasher.update(&[0]);
+                }
                 if let Some(entry) = store.entry(*tree) {
                     hasher.update(entry.content_hash.as_ref());
                 } else {
@@ -12271,6 +12315,31 @@ fn pending_exec_identity_hash(
         }
     }
     finish_hash(hasher)
+}
+
+fn anchor_projected_tree(tree: crate::exec::Tree, path: &str) -> Result<crate::exec::Tree, String> {
+    let base = path.rsplit_once('/').map_or(path, |(_, base)| base);
+    let exact_file = tree.entries.len() + tree.blobs.len() == 1
+        && (tree.entries.contains_key(base) || tree.blobs.contains_key(base));
+    let mut anchored = crate::exec::Tree::default();
+    if exact_file {
+        if let Some(contents) = tree.entries.get(base) {
+            anchored.entries.insert(path.to_string(), contents.clone());
+        } else if let Some(contents) = tree.blobs.get(base) {
+            anchored.blobs.insert(path.to_string(), contents.clone());
+        }
+        return Ok(anchored);
+    }
+    for (entry, contents) in tree.entries {
+        anchored.entries.insert(format!("{path}/{entry}"), contents);
+    }
+    for (entry, contents) in tree.blobs {
+        anchored.blobs.insert(format!("{path}/{entry}"), contents);
+    }
+    if anchored.entries.is_empty() && anchored.blobs.is_empty() {
+        return Err(format!("projected command mount `{path}` is empty"));
+    }
+    Ok(anchored)
 }
 
 fn descriptor_supports_flat_identity(descriptor: &VixDescriptor) -> bool {

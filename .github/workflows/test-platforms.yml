@@ -1,0 +1,84 @@
+name: Tests / Platforms
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  merge_group:
+  workflow_dispatch:
+
+jobs:
+  macos:
+    name: macOS (${{ matrix.partition }})
+    runs-on: macos-26
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: ["1/3", "2/3", "3/3"]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: "false"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - name: Run macOS tests
+        env:
+          PROPTEST_CASES: 0
+        run: >-
+          cargo nextest run --features ci --workspace --no-fail-fast
+          --partition hash:${{ matrix.partition }}
+          -E 'not (binary(postgres_integration) | binary(query_integration) | test(swift))'
+
+  linux-arm64:
+    name: Linux ARM64 (advisory)
+    continue-on-error: true
+    runs-on: ubuntu-24.04-arm
+    container:
+      image: ghcr.io/facet-rs/facet-ci:latest-arm64
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+      - name: Select Rust 1.92
+        shell: bash
+        run: |
+          rustup toolchain install 1.92 --profile minimal --component rust-src --component clippy --component llvm-tools-preview --component rustfmt
+          rustup target add thumbv8m.main-none-eabihf --toolchain 1.92
+          echo "RUSTUP_TOOLCHAIN=1.92" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+      - name: Run Linux ARM64 tests
+        env:
+          PROPTEST_CASES: 0
+        run: cargo nextest run --features ci --workspace --no-fail-fast -E 'not (binary(postgres_integration) | binary(query_integration) | test(swift))'
+
+  windows:
+    name: Windows (advisory)
+    continue-on-error: true
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - name: Build Rust subject
+        shell: bash
+        run: cargo build -p subject-rust
+      - name: Run Windows tests
+        shell: bash
+        env:
+          PROPTEST_CASES: 0
+        run: cargo nextest run --features ci --workspace --no-fail-fast -E 'not (binary(postgres_integration) | binary(query_integration) | test(swift) | test(typescript))'

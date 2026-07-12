@@ -17,20 +17,6 @@
     <div class="doc-body">
         {{ page.content | safe }}
     </div>
-    {% if page.previous or page.next %}
-    <nav class="doc-pagination" aria-label="Chapter navigation">
-        {% if page.previous %}
-        <a class="doc-page-link doc-page-link-prev" href="{{ page.previous.permalink }}" aria-label="Previous: {{ page.previous.title }}"><span>Previous</span><strong>{{ page.previous.title }}</strong></a>
-        {% else %}
-        <span></span>
-        {% endif %}
-        {% if page.next %}
-        <a class="doc-page-link doc-page-link-next" href="{{ page.next.permalink }}" aria-label="Next: {{ page.next.title }}"><span>Next</span><strong>{{ page.next.title }}</strong></a>
-        {% else %}
-        <span></span>
-        {% endif %}
-    </nav>
-    {% endif %}
     {% if page.last_updated or (source is defined and source.edit_base and page.source_path) %}
     <footer class="doc-footer">
         {% if page.last_updated %}

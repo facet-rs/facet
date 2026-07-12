@@ -622,7 +622,8 @@ pub fn run_source_with_config(
 /// Lane *authority* still lives in Weavy ([`weavy::exec::LaneRequest`] /
 /// `Executable::with_lane`, `r[machine.execution.weavy-owns-mode]`): this is a
 /// forwarding seam used only by the cross-lane certificate, not a machine-side
-/// lane selector — the production path stays on [`LaneRequest::Auto`].
+/// lane selector — the production path stays on
+/// [`weavy::exec::LaneRequest::Auto`].
 pub fn run_source_with_lane(
     source: &str,
     lane: weavy::exec::LaneRequest,
