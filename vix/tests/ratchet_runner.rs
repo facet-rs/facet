@@ -39,6 +39,9 @@ const RUNG_041: &str = include_str!("ratchet/041-maps.vix");
 const RUNG_042: &str = include_str!("ratchet/042-map-overwrite.vix");
 const RUNG_043: &str = include_str!("ratchet/043-map-keys-canonical.vix");
 const RUNG_044: &str = include_str!("ratchet/044-sets.vix");
+const RUNG_067: &str = include_str!("ratchet/067-exec-echo.vix");
+const RUNG_068: &str = include_str!("ratchet/068-exec-failure-is-result.vix");
+const RUNG_069: &str = include_str!("ratchet/069-exec-memoized.vix");
 const RUNG_144: &str = include_str!("ratchet/144-unused-collection-result.warn.vix");
 const RUNG_145: &str = include_str!("ratchet/145-push.reject.vix");
 const RUNG_146: &str = include_str!("ratchet/146-insert.reject.vix");
@@ -3012,4 +3015,60 @@ fn assert_contiguous_sequences(events: &[vix::runtime::Event]) {
     assert!(events.iter().enumerate().all(|(index, event)| {
         event.sequence == u64::try_from(index).expect("event count fits u64")
     }));
+}
+/// Red certificate for the exec-effect band (rungs 067–069).
+///
+/// `exec` is a **scheduler-owned demand/effect** keyed by canonical preimage
+/// and capability value (`Echo`/`Sh`); a successful stdout is a typed value
+/// stream, a nonzero exit is a memoized `FailureValue` that postfix `?`
+/// catches, and two identical exec demands run once with `ran_processes`
+/// observing the frozen effect trace. None of that exists yet, and the first
+/// production seam is the surface itself: the grammar has no `exec` tagged
+/// template, so each rung is rejected the moment the parser reaches the
+/// `exec <capability>` juncture. This certificate pins that exact production
+/// red — one `ParseRejected` per rung, at the byte offset of the capability
+/// identifier following `exec` — following the same frontier-diagnostic
+/// pattern the map/set band uses ("map/set lowering is not implemented").
+///
+/// When the surface grows the `exec` construct these assertions flip, and the
+/// seam moves down the pipeline (checker → VIR → lowering → scheduler effect);
+/// each subsequent red checkpoint records the next seam in turn.
+#[test]
+fn exec_effect_rungs_are_red_at_the_surface_seam() {
+    // Locate the `exec <capability>`…`` expression in each canonical rung.
+    // The parser reaches it, has already consumed `exec` as a bare identifier
+    // expression, and rejects on the capability identifier that follows.
+    let exec_expr = |source: &str| {
+        source
+            .match_indices("exec ")
+            .find(|(index, _)| {
+                let rest = &source[index + "exec ".len()..];
+                rest.starts_with(|c: char| c.is_ascii_alphabetic())
+                    && rest.contains('`')
+                    && rest
+                        .split('`')
+                        .next()
+                        .is_some_and(|head| head.chars().all(|c| c.is_ascii_alphanumeric()))
+            })
+            .map(|(index, _)| index)
+            .expect("each exec rung contains an `exec <capability>` expression")
+    };
+    for source in [RUNG_067, RUNG_068, RUNG_069] {
+        let exec_offset = exec_expr(source);
+        assert!(source[exec_offset..].starts_with("exec "));
+        let diagnostics = Compiler::new()
+            .compile(source)
+            .expect_err("the exec surface does not parse yet");
+        assert_eq!(diagnostics.entries.len(), 1);
+        let diagnostic = &diagnostics.entries[0];
+        assert_eq!(diagnostic.code, DiagnosticCode::ParseRejected);
+        // A token-level rejection: `exec` parsed as an identifier, then the
+        // capability identifier is an unexpected second token. This is the
+        // production seam the exec-effect band opens against.
+        assert!(
+            diagnostic.message().starts_with("NoToken"),
+            "expected a token-level rejection at the `exec` juncture, got: {}",
+            diagnostic.message()
+        );
+    }
 }
