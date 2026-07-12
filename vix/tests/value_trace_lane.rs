@@ -279,12 +279,12 @@ fn rungs_057_059_observe_exact_bundled_preimages() {
     }
 }
 
-/// Higher-order remains independently red at rung 052; the described-wire trace
-/// checks do not bypass it.
+/// Higher-order execution stays green when the described-wire substrate is
+/// integrated. Rung 052 has no trace assertions of its own; this certificate
+/// guards the shared callable/runtime machinery used immediately below it.
 #[test]
-fn rung_052_remains_a_separate_pretrace_boundary() {
-    assert!(
-        run_source(RUNG_052).is_err(),
-        "higher-order remains independently red"
-    );
+fn rung_052_remains_green_across_pretrace_integration() {
+    let report = run_source(RUNG_052).expect("rung 052 runs through Executable");
+    assert!(report.passed());
+    assert!(report.agrees());
 }
