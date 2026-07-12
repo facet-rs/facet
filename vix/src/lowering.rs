@@ -1046,6 +1046,7 @@ struct ProgramContractBuilder<'a> {
     regions: &'a RegionAssignments,
     schemas_preassigned: &'a SchemaAssignments,
     function_order: Vec<FunctionContractSource<'a>>,
+    call_contract_targets: BTreeSet<FunctionId>,
     closure_targets: BTreeSet<FunctionId>,
     callable_outcomes: bool,
     calls: Vec<WeavyCallContract>,
@@ -2020,13 +2021,17 @@ impl<'a> ProgramContractBuilder<'a> {
             });
         }
 
-        let closure_targets = function_order
+        let closure_targets: BTreeSet<_> = function_order
             .iter()
             .flat_map(|function| function.nodes.iter())
             .filter_map(|node| match node.op {
                 Op::Closure(callee) => Some(callee),
                 _ => None,
             })
+            .collect();
+        let call_contract_targets = closure_targets
+            .iter()
+            .copied()
             .chain(function_order.iter().flat_map(|function| {
                 function.nodes.iter().filter_map(move |node| {
                     matches!(node.op, Op::Call(callee) if callee == function.id)
@@ -2041,6 +2046,7 @@ impl<'a> ProgramContractBuilder<'a> {
             regions,
             schemas_preassigned,
             function_order,
+            call_contract_targets,
             closure_targets,
             callable_outcomes: layouts
                 .values()
@@ -2368,23 +2374,28 @@ impl<'a> ProgramContractBuilder<'a> {
                 lowering_diagnostic(function.span, "output node has no frame region")
             })?,
         };
-        // A closure whose captures exceed one inline word carries them in a
+        // A closure whose captures exceed one inline word, or whose body owns
+        // resident constants, carries every non-argument entry in its
         // task-lifetime environment box. Its public call contract stays the
         // plain semantic signature — argument in, result out — so all values of
-        // one function type share a copyable value shape; the box layout lives
-        // on the function's `environment`, and the trailing capture entries are
-        // materialized from it by CallIndirect (dynamic) or read directly (the
-        // static concrete-capture optimization keeps its wider contract).
-        let capture_entries = entries.get(1..function.parameters.len()).unwrap_or(&[]);
+        // one function type share a copyable value shape.
+        let capture_entries = if self.closure_targets.contains(&function.id) {
+            entries.get(1..function.parameters.len()).unwrap_or(&[])
+        } else {
+            &[]
+        };
+        let constant_entries = entries.get(function.parameters.len()..).unwrap_or(&[]);
         let capture_words: usize = capture_entries
             .iter()
             .map(|entry| regions[entry.0 as usize].shape.words.len())
             .sum();
-        let boxed = self.closure_targets.contains(&function.id) && capture_words > 1;
+        let boxed = self.closure_targets.contains(&function.id)
+            && (capture_words > 1 || !constant_entries.is_empty());
         let environment = if boxed {
             let mut offset = 0u32;
             capture_entries
                 .iter()
+                .chain(constant_entries)
                 .map(|entry| {
                     let region = &regions[entry.0 as usize];
                     let field = WeavyFrameRegion::new(offset, region.shape.clone());
@@ -2395,7 +2406,7 @@ impl<'a> ProgramContractBuilder<'a> {
         } else {
             Vec::new()
         };
-        let call_contract = if !self.closure_targets.contains(&function.id) {
+        let call_contract = if !self.call_contract_targets.contains(&function.id) {
             None
         } else if boxed {
             let result_type = function
@@ -2899,6 +2910,7 @@ struct RegionAssignments {
     ordered_cursors: BTreeMap<FunctionId, BTreeMap<NodeId, Vec<WeavyRegionId>>>,
     closures: BTreeMap<FunctionId, BTreeMap<NodeId, (WeavyRegionId, WeavyRegionId)>>,
     array_map_temps: BTreeMap<FunctionId, BTreeMap<NodeId, (WeavyRegionId, WeavyRegionId)>>,
+    constants: BTreeMap<FunctionId, BTreeMap<NodeRef, WeavyRegionId>>,
     outcomes: BTreeMap<FunctionId, WeavyRegionId>,
     outcome_scratch: BTreeMap<FunctionId, AssignedOutcomeScratch>,
     call_outcomes: BTreeMap<FunctionId, BTreeMap<NodeId, WeavyRegionId>>,
@@ -2928,6 +2940,7 @@ impl RegionAssignments {
         let mut ordered_cursors = BTreeMap::new();
         let mut closures = BTreeMap::new();
         let mut array_map_temps = BTreeMap::new();
+        let mut constant_regions = BTreeMap::new();
         let mut outcomes = BTreeMap::new();
         let mut outcome_scratch = BTreeMap::new();
         let mut call_outcomes = BTreeMap::new();
@@ -3031,12 +3044,22 @@ impl RegionAssignments {
             let constants = constant_closures.get(&function).ok_or_else(|| {
                 lowering_diagnostic(span, "missing constants for region assignment")
             })?;
+            let mut assigned_constants = BTreeMap::new();
             for constant in constants {
-                if constant.function != function {
+                let region = if constant.function == function {
+                    *assigned.get(&constant.node).ok_or_else(|| {
+                        lowering_diagnostic(span, "local constant node has no assigned region")
+                    })?
+                } else {
+                    let region = WeavyRegionId(u32::try_from(next).map_err(|_| {
+                        lowering_diagnostic(span, "constant region assignment exceeds u32")
+                    })?);
                     next = next.checked_add(1).ok_or_else(|| {
                         lowering_diagnostic(span, "constant region assignment overflow")
                     })?;
-                }
+                    region
+                };
+                assigned_constants.insert(*constant, region);
             }
             if layout.array_outcome.is_some() {
                 let outcome = WeavyRegionId(u32::try_from(next).map_err(|_| {
@@ -3084,6 +3107,7 @@ impl RegionAssignments {
             ordered_cursors.insert(function, assigned_ordered_cursors);
             closures.insert(function, assigned_closures);
             array_map_temps.insert(function, assigned_array_map_temps);
+            constant_regions.insert(function, assigned_constants);
             Ok(())
         };
         insert(island.function, &island.nodes, Span { start: 0, end: 0 })?;
@@ -3097,6 +3121,7 @@ impl RegionAssignments {
             ordered_cursors,
             closures,
             array_map_temps,
+            constants: constant_regions,
             outcomes,
             outcome_scratch,
             call_outcomes,
@@ -3179,6 +3204,19 @@ impl RegionAssignments {
             .and_then(|nodes| nodes.get(&node))
             .copied()
             .ok_or_else(|| lowering_diagnostic(span, "array map node has no typed temporaries"))
+    }
+
+    fn constant(
+        &self,
+        function: FunctionId,
+        constant: NodeRef,
+        span: Span,
+    ) -> Result<WeavyRegionId, Diagnostics> {
+        self.constants
+            .get(&function)
+            .and_then(|constants| constants.get(&constant))
+            .copied()
+            .ok_or_else(|| lowering_diagnostic(span, "constant has no assigned contract region"))
     }
 
     fn array_outcome(
@@ -6059,11 +6097,25 @@ fn lower_node(
                 .iter()
                 .map(|slot| slot.region.words().as_usize())
                 .sum();
-            let environment = if capture_words > 1 {
+            let constant_regions = target_layout
+                .constant_slots
+                .keys()
+                .map(|constant| {
+                    lowering
+                        .context
+                        .regions
+                        .constant(lowering.function.id, *constant, node.span)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let environment = if capture_words > 1 || !constant_regions.is_empty() {
                 WeavyOp::EnvBox {
                     dst: environment_region,
                     callee: WeavyFnId(callee),
-                    fields: capture_slots.iter().map(|slot| slot.region_id).collect(),
+                    fields: capture_slots
+                        .iter()
+                        .map(|slot| slot.region_id)
+                        .chain(constant_regions)
+                        .collect(),
                 }
             } else if let [capture] = capture_slots.as_slice() {
                 require_value(node, capture, &Type::Int, ValueRepresentation::Word)?;
@@ -11578,41 +11630,44 @@ fn static_closure_call_args(
             "closure capture inputs do not match the callable ABI",
         ));
     }
-    let mut args = Vec::with_capacity(
-        closure.inputs.len().saturating_add(
-            context
-                .layouts
-                .get(&target_id)
-                .map_or(0, |layout| layout.constant_slots.len()),
-        ),
-    );
-    for (index, capture) in closure.inputs.iter().enumerate() {
-        let source = caller_layout.region(*capture, span)?;
-        let destination = target.parameters[index + 1].node;
-        let target_layout = context
-            .layouts
-            .get(&target_id)
-            .ok_or_else(|| lowering_diagnostic(span, "closure target has no frame layout"))?;
-        let destination = target_layout.region(destination, span)?;
-        args.push(ArgCopy {
-            src: source.start().byte_offset(),
-            dst: destination.start().byte_offset(),
-            size: source
-                .byte_size()
-                .ok_or_else(|| lowering_diagnostic(span, "closure capture size overflow"))?,
-        });
-    }
     let target_layout = context
         .layouts
         .get(&target_id)
         .ok_or_else(|| lowering_diagnostic(span, "closure target has no frame layout"))?;
-    for (&constant, &destination) in &target_layout.constant_slots {
-        let source = caller_layout.constant_slot(constant, span)?;
-        args.push(ArgCopy {
-            src: source.byte_offset(),
-            dst: destination.byte_offset(),
-            size: FrameSlot::word_size(),
-        });
+    let capture_words = closure.inputs.iter().try_fold(0usize, |words, capture| {
+        let source = caller_layout.region(*capture, span)?;
+        words
+            .checked_add(source.words().as_usize())
+            .ok_or_else(|| lowering_diagnostic(span, "closure capture width overflow"))
+    })?;
+    let boxed = capture_words > 1 || !target_layout.constant_slots.is_empty();
+    let mut args = Vec::with_capacity(
+        closure
+            .inputs
+            .len()
+            .saturating_add(target_layout.constant_slots.len()),
+    );
+    if !boxed {
+        for (index, capture) in closure.inputs.iter().enumerate() {
+            let source = caller_layout.region(*capture, span)?;
+            let destination = target.parameters[index + 1].node;
+            let destination = target_layout.region(destination, span)?;
+            args.push(ArgCopy {
+                src: source.start().byte_offset(),
+                dst: destination.start().byte_offset(),
+                size: source
+                    .byte_size()
+                    .ok_or_else(|| lowering_diagnostic(span, "closure capture size overflow"))?,
+            });
+        }
+        for (&constant, &destination) in &target_layout.constant_slots {
+            let source = caller_layout.constant_slot(constant, span)?;
+            args.push(ArgCopy {
+                src: source.byte_offset(),
+                dst: destination.byte_offset(),
+                size: FrameSlot::word_size(),
+            });
+        }
     }
     Ok(Some((target_id, args)))
 }
@@ -12193,6 +12248,7 @@ fn schema_order() -> Stream<Check> {
             ordered_cursors: BTreeMap::new(),
             closures: BTreeMap::new(),
             array_map_temps: BTreeMap::new(),
+            constants: BTreeMap::new(),
             outcomes: BTreeMap::new(),
             outcome_scratch: BTreeMap::new(),
             call_outcomes: BTreeMap::new(),
@@ -12203,6 +12259,7 @@ fn schema_order() -> Stream<Check> {
             regions: &regions,
             schemas_preassigned: &assignments,
             function_order: Vec::new(),
+            call_contract_targets: BTreeSet::new(),
             closure_targets: BTreeSet::new(),
             callable_outcomes: false,
             calls: Vec::new(),

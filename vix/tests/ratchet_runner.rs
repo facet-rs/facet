@@ -4044,6 +4044,66 @@ fn rung_049_plain_recursion_uses_stable_verified_call_abi() {
 }
 
 #[test]
+fn recursive_named_parameters_remain_call_arguments() {
+    const SOURCE: &str = r#"
+fn sum_to(n: Int) where { acc: Int, step: Int } -> Int {
+    if n == 0 {
+        acc
+    } else {
+        sum_to(n - 1) where { acc: acc + step, step }
+    }
+}
+
+#[test]
+fn recursive_named_arguments() -> Stream<Check> {
+    yield expect_eq(sum_to(4) where { acc: 0, step: 3 }, 12);
+}
+"#;
+
+    let module = Compiler::new()
+        .compile(SOURCE)
+        .expect("recursive named-parameter source compiles");
+    let function = module
+        .functions
+        .iter()
+        .find(|function| function.name == "sum_to")
+        .expect("sum_to function is present");
+    assert_eq!(function.parameters.len(), 3);
+    assert!(
+        function
+            .nodes
+            .iter()
+            .any(|node| matches!(node.op, VirOp::Call(callee) if callee == function.id))
+    );
+
+    let partitioned = module.partition_test(&module.tests[0]);
+    let island = &partitioned.islands[0];
+    let mut cache = LoweringCache::default();
+    let lowered = cache
+        .get_or_lower(island)
+        .expect("recursive named parameters lower as ordinary call arguments");
+    let attribution = attribution_for(island);
+    let frame = frame_index(&attribution.functions, function.id);
+    let function_contract = &lowered.contract().functions[frame];
+    assert!(function_contract.environment.is_empty());
+    let callable = function_contract
+        .call_contract
+        .expect("recursive function has a stable callable contract");
+    assert_eq!(
+        lowered.contract().calls[callable.0 as usize].entries.len(),
+        3
+    );
+
+    let report = run_source(SOURCE).expect("recursive named arguments execute");
+    assert!(report.passed() && report.agrees());
+    assert_eq!(report.plain.checks.len(), 1);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+#[test]
 fn rung_052_functions_are_first_class_arguments_and_results() {
     let module = Compiler::new()
         .compile(RUNG_052)
