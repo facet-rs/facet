@@ -263,12 +263,26 @@ impl JitProgram {
     pub fn compile(program: &Program) -> Option<JitProgram> {
         Self::compile_with_mode(program, TraceMode::Innards)
     }
+}
 
+/// Whether any function boxes or projects a capture environment. Until the
+/// native lane grows [`Op::EnvBox`]/[`Op::EnvLoad`] stencils, such a program is
+/// executed by the interpreter lane, so both lanes share identical arena and
+/// contract semantics.
+fn program_uses_env_boxes(program: &Program) -> bool {
+    program
+        .fns
+        .iter()
+        .flat_map(|function| &function.code)
+        .any(|op| matches!(op, Op::EnvBox { .. } | Op::EnvLoad { .. }))
+}
+
+impl JitProgram {
     /// Compile with an explicit trace mode. Production STRIPS
     /// instrumentation ops from the chains entirely — zero
     /// instructions, not skipped checks.
     pub fn compile_with_mode(program: &Program, mode: TraceMode) -> Option<JitProgram> {
-        if !available() {
+        if !available() || program_uses_env_boxes(program) {
             return None;
         }
         #[cfg(test)]
@@ -290,7 +304,7 @@ pub(crate) struct JitExecutable {
 
 impl JitExecutable {
     pub(crate) fn compile(verified: Arc<VerifiedProgram>, mode: TraceMode) -> Option<Self> {
-        if !available() {
+        if !available() || program_uses_env_boxes(verified.program()) {
             return None;
         }
         #[cfg(test)]
@@ -400,6 +414,9 @@ fn compile_fn(
                 task_stencils::COPY_VALUE,
                 Continuations::Fallthrough(task_stencils::COPY_VALUE_CONT),
             ),
+            Op::EnvBox { .. } | Op::EnvLoad { .. } => {
+                unreachable!("env-box programs execute on the interpreter lane")
+            }
             Op::EnumConstruct { .. } => (
                 task_stencils::ENUM_CONSTRUCT,
                 Continuations::Fallthrough(task_stencils::ENUM_CONSTRUCT_CONT),
@@ -685,6 +702,9 @@ fn compile_fn(
         prog_len += match op {
             Op::ProductConstruct { fields, .. } => 1 + fields.len() * 3,
             Op::ProductProject { .. } | Op::CopyValue { .. } => 3,
+            Op::EnvBox { .. } | Op::EnvLoad { .. } => {
+                unreachable!("env-box programs execute on the interpreter lane")
+            }
             Op::EnumConstruct { fields, .. } => 5 + fields.len() * 3,
             Op::EnumIsVariant { .. } => 6,
             Op::EnumProjectChecked { .. } => 8,
@@ -741,6 +761,9 @@ fn compile_fn(
     let mut calls = HashMap::new();
     for (i, op) in f.code.iter().enumerate() {
         match op {
+            Op::EnvBox { .. } | Op::EnvLoad { .. } => {
+                unreachable!("env-box programs execute on the interpreter lane")
+            }
             Op::ProductConstruct { dst, fields } => {
                 let (function_contract, program_contract) =
                     verified_compile_contracts(function_contract, program_contract);

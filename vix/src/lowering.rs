@@ -2230,6 +2230,31 @@ impl<'a> ProgramContractBuilder<'a> {
                 .iter()
                 .map(|entry| regions[entry.0 as usize].clone())
                 .collect(),
+            environment: Vec::new(),
+            result: canonical_call_region(&regions[result.0 as usize]),
+        };
+        Ok(self.intern_call(call))
+    }
+
+    /// Build the concrete contract for a closure that materializes its captures
+    /// from a boxed environment: only the leading argument entries are call
+    /// arguments; the trailing capture entries become the environment contract.
+    fn boxed_call_contract_for_function(
+        &mut self,
+        argument_entries: &[WeavyRegionId],
+        capture_entries: &[WeavyRegionId],
+        result: WeavyRegionId,
+        regions: &[WeavyFrameRegion],
+    ) -> Result<WeavyCallContractId, Diagnostics> {
+        let call = WeavyCallContract {
+            entries: argument_entries
+                .iter()
+                .map(|entry| regions[entry.0 as usize].clone())
+                .collect(),
+            environment: capture_entries
+                .iter()
+                .map(|entry| canonical_call_region(&regions[entry.0 as usize]))
+                .collect(),
             result: canonical_call_region(&regions[result.0 as usize]),
         };
         Ok(self.intern_call(call))
@@ -2570,6 +2595,7 @@ impl<'a> ProgramContractBuilder<'a> {
         }
         Ok(self.intern_call(WeavyCallContract {
             entries: vec![entry],
+            environment: Vec::new(),
             result: result_region,
         }))
     }

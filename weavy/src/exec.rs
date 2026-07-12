@@ -503,6 +503,23 @@ pub enum TaskFault {
         index: usize,
         count: usize,
     },
+    /// A boxed capture environment access faulted: the handle named no resident
+    /// environment box in this task, was minted under another task generation,
+    /// or the requested capture exceeded the box.
+    Environment {
+        site: FaultSite,
+        kind: EnvironmentFaultKind,
+        handle: i64,
+    },
+}
+
+/// The closed set of boxed-environment access faults.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EnvironmentFaultKind {
+    Unresident,
+    Stale,
+    OutOfRange,
+    AllocationFailed,
 }
 
 /// A verified program prepared for execution.
@@ -1263,6 +1280,7 @@ mod tests {
     fn scalar_call_contract() -> CallContract {
         CallContract {
             entries: vec![word_region(0, WordKind::Scalar)],
+            environment: Vec::new(),
             result: word_region(8, WordKind::Scalar),
         }
     }
@@ -1331,6 +1349,7 @@ mod tests {
                     scalar_call_contract(),
                     CallContract {
                         entries: vec![word_region(0, WordKind::Scalar)],
+                        environment: Vec::new(),
                         result: word_region(16, WordKind::Scalar),
                     },
                 ],
@@ -1591,6 +1610,7 @@ mod tests {
                 )],
                 calls: vec![CallContract {
                     entries: vec![],
+                    environment: Vec::new(),
                     result: word_region(0, WordKind::Scalar),
                 }],
                 schemas: vec![],
@@ -1640,6 +1660,7 @@ mod tests {
                 )],
                 calls: vec![CallContract {
                     entries: vec![],
+                    environment: Vec::new(),
                     result: word_region(0, WordKind::Scalar),
                 }],
                 schemas: vec![],

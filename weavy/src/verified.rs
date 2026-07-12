@@ -153,10 +153,38 @@ pub struct FunctionContract {
 }
 
 /// A function-independent indirect-call ABI.
+///
+/// A callable follows one of two proven calling conventions, distinguished by
+/// `environment`:
+///
+/// * **Static concrete-capture** (`environment` empty): every parameter —
+///   argument and captures — is passed as an ordinary call argument. Used when
+///   the caller statically knows the concrete closure and holds its captures in
+///   frame. This is the optimized path.
+/// * **Boxed environment** (`environment` non-empty): only the leading argument
+///   entry is passed as a call argument; the remaining declared capture regions
+///   are materialized at callee entry by [`crate::task::Op::EnvLoad`] from the
+///   boxed environment handle threaded through [`crate::task::Op::CallIndirect`]
+///   (the closure value's opaque environment word). Used for a closure whose
+///   value escapes its construction frame (returned, mapped, stored), so its
+///   captures cannot travel as caller-frame arguments.
+///
+/// The verifier proves the convention structurally from `environment`; runtime
+/// never guesses it from handle bits.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CallContract {
     pub entries: Vec<FrameRegion>,
+    pub environment: Vec<FrameRegion>,
     pub result: FrameRegion,
+}
+
+impl CallContract {
+    /// Whether this callable materializes captures from a boxed environment
+    /// rather than receiving them as call arguments.
+    #[must_use]
+    pub fn is_boxed(&self) -> bool {
+        !self.environment.is_empty()
+    }
 }
 
 /// One field use in a structural value shape.
@@ -800,6 +828,42 @@ pub enum ProgramDefect {
     CallArgumentCount {
         expected: usize,
         actual: usize,
+    },
+    /// An `EnvBox`/`EnvLoad` named a call contract that does not exist.
+    EnvironmentContractOutOfRange {
+        contract: CallContractId,
+        contract_count: usize,
+    },
+    /// An `EnvBox`/`EnvLoad` addressed a call contract that carries no boxed
+    /// environment (its `environment` is empty — it uses the static convention).
+    EnvironmentNotBoxed {
+        contract: CallContractId,
+    },
+    /// An `EnvBox` supplied the wrong number of capture field sources for its
+    /// environment contract.
+    EnvironmentFieldCount {
+        contract: CallContractId,
+        expected: usize,
+        actual: usize,
+    },
+    /// An `EnvLoad` addressed a capture index beyond the environment contract.
+    EnvironmentFieldIndex {
+        contract: CallContractId,
+        field: u32,
+        field_count: usize,
+    },
+    /// An `EnvBox` source or `EnvLoad` destination did not match the declared
+    /// shape of its capture field (wrong schema, kind, or width).
+    EnvironmentFieldShape {
+        contract: CallContractId,
+        field: u32,
+        expected: RegionShape,
+        actual: RegionShape,
+    },
+    /// An `EnvBox` result or `EnvLoad` environment word was not a single opaque
+    /// scalar handle word.
+    EnvironmentHandleShape {
+        region: RegionId,
     },
     CallArgumentDestination {
         index: usize,
@@ -2182,6 +2246,78 @@ impl Verifier<'_> {
                     declared,
                 )?;
             }
+            Op::EnvBox {
+                dst,
+                contract,
+                fields,
+            } => {
+                let environment = self.env_contract(function_id, pc, *contract)?;
+                if environment.len() != fields.len() {
+                    let expected = environment.len();
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::EnvironmentFieldCount {
+                            contract: *contract,
+                            expected,
+                            actual: fields.len(),
+                        },
+                    ));
+                }
+                let declared: Vec<RegionShape> =
+                    environment.iter().map(|field| field.shape.clone()).collect();
+                self.require_env_handle(function_id, pc, function_index, *dst)?;
+                for (index, source) in fields.iter().enumerate() {
+                    let actual = self.plain_region(function_id, pc, function_index, *source)?;
+                    if !shapes_assignable(&actual.shape, &declared[index]) {
+                        return Err(self.op(
+                            function_id,
+                            pc,
+                            ProgramDefect::EnvironmentFieldShape {
+                                contract: *contract,
+                                field: index as u32,
+                                expected: declared[index].clone(),
+                                actual: actual.shape.clone(),
+                            },
+                        ));
+                    }
+                }
+            }
+            Op::EnvLoad {
+                dst,
+                env,
+                contract,
+                field,
+            } => {
+                let environment = self.env_contract(function_id, pc, *contract)?;
+                let Some(declared) = environment.get(*field as usize).map(|f| f.shape.clone())
+                else {
+                    let field_count = environment.len();
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::EnvironmentFieldIndex {
+                            contract: *contract,
+                            field: *field,
+                            field_count,
+                        },
+                    ));
+                };
+                self.require_env_handle(function_id, pc, function_index, *env)?;
+                let destination = self.plain_region(function_id, pc, function_index, *dst)?;
+                if !shapes_assignable(&declared, &destination.shape) {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::EnvironmentFieldShape {
+                            contract: *contract,
+                            field: *field,
+                            expected: declared,
+                            actual: destination.shape.clone(),
+                        },
+                    ));
+                }
+            }
             Op::CopyValue { dst, src } => {
                 let source = self.structural_region(function_id, pc, function_index, *src)?;
                 let destination = self.structural_region(function_id, pc, function_index, *dst)?;
@@ -3444,6 +3580,80 @@ impl Verifier<'_> {
         Ok(region_contract)
     }
 
+    /// The boxed environment layout of a call contract, or a defect if the
+    /// contract is out of range or uses the static (non-boxed) convention.
+    fn env_contract(
+        &self,
+        function: FnId,
+        pc: usize,
+        contract: CallContractId,
+    ) -> Result<&[FrameRegion], ProgramError> {
+        let Some(call) = usize::try_from(contract.0)
+            .ok()
+            .and_then(|index| self.contract.calls.get(index))
+        else {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::EnvironmentContractOutOfRange {
+                    contract,
+                    contract_count: self.contract.calls.len(),
+                },
+            ));
+        };
+        if call.environment.is_empty() {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::EnvironmentNotBoxed { contract },
+            ));
+        }
+        Ok(&call.environment)
+    }
+
+    /// A frame region by id, with no structural-value-shape requirement.
+    fn plain_region(
+        &self,
+        function: FnId,
+        pc: usize,
+        function_index: usize,
+        region: RegionId,
+    ) -> Result<&FrameRegion, ProgramError> {
+        let regions = &self.contract.functions[function_index].frame.regions;
+        usize::try_from(region.0)
+            .ok()
+            .and_then(|index| regions.get(index))
+            .ok_or_else(|| {
+                self.op(
+                    function,
+                    pc,
+                    ProgramDefect::StructuralRegionOutOfRange {
+                        region,
+                        region_count: regions.len(),
+                    },
+                )
+            })
+    }
+
+    /// Require a region to be a single opaque scalar environment-handle word.
+    fn require_env_handle(
+        &self,
+        function: FnId,
+        pc: usize,
+        function_index: usize,
+        region: RegionId,
+    ) -> Result<(), ProgramError> {
+        let handle = self.plain_region(function, pc, function_index, region)?;
+        if handle.shape.words.len() != 1 || !handle.shape.words[0].contains(WordKind::Scalar) {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::EnvironmentHandleShape { region },
+            ));
+        }
+        Ok(())
+    }
+
     fn product_region(
         &self,
         function: FnId,
@@ -4601,6 +4811,8 @@ impl Verifier<'_> {
                     Op::ConstI64 { .. }
                     | Op::ProductConstruct { .. }
                     | Op::ProductProject { .. }
+                    | Op::EnvBox { .. }
+                    | Op::EnvLoad { .. }
                     | Op::CopyValue { .. }
                     | Op::EnumConstruct { .. }
                     | Op::EnumIsVariant { .. }
@@ -5036,6 +5248,7 @@ mod tests {
                 word_region(0, WordKind::Scalar),
                 word_region(8, WordKind::Scalar),
             ],
+            environment: Vec::new(),
             result: word_region(16, WordKind::Scalar),
         }
     }
@@ -5624,6 +5837,7 @@ mod tests {
     fn rejects_non_narrowed_indirect_and_mismatched_function_contracts() {
         let call_zero = CallContract {
             entries: vec![],
+            environment: Vec::new(),
             result: word_region(0, WordKind::Scalar),
         };
         let callable_kinds =
@@ -5673,6 +5887,7 @@ mod tests {
                 )],
                 calls: vec![CallContract {
                     entries: vec![],
+                    environment: Vec::new(),
                     result: word_region(8, WordKind::Scalar),
                 }],
                 schemas: vec![],
@@ -5693,6 +5908,7 @@ mod tests {
                 )],
                 calls: vec![CallContract {
                     entries: vec![],
+                    environment: Vec::new(),
                     result: word_region(0, WordKind::Status),
                 }],
                 schemas: vec![],
@@ -5720,6 +5936,7 @@ mod tests {
                         word_region(8, WordKind::Scalar),
                         word_region(16, WordKind::Scalar),
                     ],
+                    environment: Vec::new(),
                     result: word_region(24, WordKind::Scalar),
                 }],
                 schemas: vec![],
@@ -5747,6 +5964,7 @@ mod tests {
                         word_region(0, WordKind::Scalar),
                         word_region(16, WordKind::Scalar),
                     ],
+                    environment: Vec::new(),
                     result: word_region(24, WordKind::Scalar),
                 }],
                 schemas: vec![],
@@ -5792,10 +6010,12 @@ mod tests {
                 calls: vec![
                     CallContract {
                         entries: vec![],
+                        environment: Vec::new(),
                         result: word_region(0, WordKind::Scalar),
                     },
                     CallContract {
                         entries: vec![],
+                        environment: Vec::new(),
                         result: word_region(8, WordKind::Scalar),
                     },
                 ],
