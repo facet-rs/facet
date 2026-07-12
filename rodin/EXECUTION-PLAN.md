@@ -35,15 +35,18 @@ Cargo fixtures.
 ## Current checkpoint
 
 At the time of the latest authoritative integration checkpoint
-(`3a27246e7`):
+(`ee6d32b3f`):
 
-- the canonical rung prefix is green through rung 059. The merged root is
+- the canonical rung prefix is green through rung 061. The merged root is
   byte-identical to the isolated integration tree whose combined Vix+Weavy run
-  `e6e3d49f-d206-4ab0-9144-4dc640edbf80` passed 683/683 tests. This includes the
+  `01926b49-22ec-4282-8872-c8676f8c9e36` passed 694/694 tests. This includes the
   unchanged budgeted rung 050, the million-element shared-publication rung 051,
   native higher-order closures in rung 052, the lazy-demand and described-wire
-  band through rung 059, live Cargo oracles, and the solver-readiness band
-  through rung 092. Workspace all-target/all-feature check, strict
+  band through rung 059, oracle-backed structural snapshot checks through rung
+  061, live Cargo oracles, and the solver-readiness band through rung 092. The
+  canonical corpus through 061 additionally runs as an in-process native versus
+  interpreter semantic differential, and CI pins a native-target
+  `WEAVY_JIT=0` interpreter leg. Workspace all-target/all-feature check, strict
   all-feature/all-target Clippy, formatting, and diff checks are green at that
   full-suite checkpoint; exact-root rung-050 runs are recorded below;
 - rung 031 executes unchanged through the completed two-stage generator path.
@@ -464,7 +467,10 @@ context rebuilding, and production counters are exercised together by the
 unchanged million-element rung. Rungs 052-059 subsequently fold native boxed
 closure environments, checked lazy wires, force-on-park, selective aggregate
 and keyed-element demand, memoized shared invocations, and observer-independent
-described-wire checks. The canonical next boundary is rung 060.
+described-wire checks. Rungs 060-061 add structural snapshot checks that consume
+an external test/name-keyed oracle, render scalar and aggregate values
+canonically, fail on missing or drifted goldens, and agree across typed
+native/interpreter lane selection. The canonical next boundary is rung 062.
 
 Before any composite dynamic key or completed aggregate crosses that boundary,
 the runtime Store must intern it through the canonical framed value walk:
