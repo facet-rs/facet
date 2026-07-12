@@ -1,0 +1,142 @@
+// Native Rodin kernel.
+//
+// This file is derived from rodin/docs/. It is not a port of rodin/rodin.vix
+// or vix/corpus-next/rodin.vix. The harness supplies typed PackageUniverse and
+// SolveInput values; the pure kernel returns RodinOutcome without reading Cargo,
+// parsing an index, rendering text, or calling a host solver.
+
+enum PackageSource {
+    Registry(String),
+    Git { url: String, rev: String },
+    Path(String),
+}
+
+enum CompatClass {
+    Major(Int),
+    ZeroMinor(Int),
+    ZeroZeroPatch(Int),
+}
+
+struct PackageId {
+    source: PackageSource,
+    name: String,
+    compat: CompatClass,
+}
+
+enum DependencyKind { Normal, Build, Dev }
+
+// A target predicate is normalized to disjunctive normal form by the fixture
+// adapter. Each conjunction is typed data; the kernel never parses cfg text.
+struct CfgConjunction {
+    required_atoms: Set<String>,
+    forbidden_atoms: Set<String>,
+    required_values: Map<String, String>,
+}
+
+struct TargetPredicate {
+    triples: Set<String>,
+    any: [CfgConjunction],
+}
+
+struct Dependency {
+    package: PackageId,
+    requirement: VersionSet,
+    kind: DependencyKind,
+    target: Option<TargetPredicate>,
+    optional: Bool,
+    default_features: Bool,
+    features: Set<String>,
+}
+
+enum FeatureEffect {
+    Local(String),
+    Activate(PackageId),
+    Strong { package: PackageId, feature: String },
+    Weak { package: PackageId, feature: String },
+}
+
+struct FeatureRule {
+    name: String,
+    effects: [FeatureEffect],
+}
+
+struct PackageRow {
+    package: PackageId,
+    version: Version,
+    dependencies: [Dependency],
+    features: [FeatureRule],
+    yanked: Bool,
+    links: Option<String>,
+    provenance: String,
+}
+
+struct PackageUniverse {
+    rows: Map<PackageId, [PackageRow]>,
+}
+
+struct RootRequest {
+    package: PackageId,
+    requirement: VersionSet,
+    features: Set<String>,
+    default_features: Bool,
+}
+
+struct TargetFacts {
+    triple: String,
+    atoms: Set<String>,
+    values: Map<String, String>,
+}
+
+struct SolvePolicy {
+    consume_build: Bool,
+    consume_dev: Bool,
+    mutually_exclusive_features: Map<PackageId, Set<Set<String>>>,
+}
+
+struct SolveInput {
+    universe: PackageUniverse,
+    roots: [RootRequest],
+    target: TargetFacts,
+    policy: SolvePolicy,
+}
+
+struct SelectedPackage {
+    package: PackageId,
+    version: Version,
+    features: Set<String>,
+}
+
+struct ResolvedEdge {
+    from: PackageId,
+    to: PackageId,
+    kind: DependencyKind,
+}
+
+struct SolveResult {
+    selected: Map<PackageId, SelectedPackage>,
+    edges: Set<ResolvedEdge>,
+}
+
+enum ConflictCause {
+    EmptyDomain(PackageId),
+    NoCandidates(PackageId),
+    FeatureExclusion { package: PackageId, left: String, right: String },
+    LinksCollision { links: String, left: PackageId, right: PackageId },
+}
+
+struct Conflict {
+    cause: ConflictCause,
+    decisions: Map<PackageId, Version>,
+    region: Map<PackageId, VersionSet>,
+    provenance: [String],
+}
+
+enum UnsupportedInput {
+    DomainMultiplicity(PackageId),
+}
+
+enum RodinOutcome {
+    Solved(SolveResult),
+    Failed(Conflict),
+    Unsupported(UnsupportedInput),
+}

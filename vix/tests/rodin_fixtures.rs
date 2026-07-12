@@ -67,10 +67,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use facet::Facet;
 use semver::Version as SemVer;
+use vix::diagnostic::{DiagnosticCode, DiagnosticPayload};
 use vix::machine::{DriveEvent, Machine, MachineArg, NamedArg, RenderedValue};
+use vix::ratchet::{RunError, run_source};
 
 const LINUX: &str = "x86_64-unknown-linux-gnu";
 const WINDOWS: &str = "x86_64-pc-windows-msvc";
+const STD_VERSION: &str = include_str!("../std/version.vix");
+const NATIVE_RODIN_KERNEL: &str = include_str!("../../rodin/kernel.vix");
 
 /// Which dependency table a dependency lives in.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2119,6 +2123,72 @@ fn rodin_linear_interiors_use_tail_loops() {
 // only oracle; no recorded reference selection is consulted. Both oracles run on
 // one shared materialized workspace so the path-source coordinate is comparable.
 // ===========================================================================
+
+const NATIVE_KERNEL_RED_FIXTURE: &str = r#"
+fn native_line_input() -> SolveInput {
+    let app = PackageId {
+        source: PackageSource::Path("fixture/app"),
+        name: "app",
+        compat: CompatClass::ZeroMinor(1),
+    };
+    let row = PackageRow {
+        package: app,
+        version: parse_version("0.1.0"),
+        dependencies: [],
+        features: [],
+        yanked: false,
+        links: None,
+        provenance: "fixture/app/Cargo.toml",
+    };
+    SolveInput {
+        universe: PackageUniverse { rows: %{app => [row]} },
+        roots: [RootRequest {
+            package: app,
+            requirement: parse_req("=0.1.0"),
+            features: %[],
+            default_features: true,
+        }],
+        target: TargetFacts {
+            triple: "x86_64-unknown-linux-gnu",
+            atoms: %["unix"],
+            values: %{"target_arch" => "x86_64", "target_os" => "linux"},
+        },
+        policy: SolvePolicy {
+            consume_build: true,
+            consume_dev: false,
+            mutually_exclusive_features: %{},
+        },
+    }
+}
+
+#[test]
+fn native_rodin_line() -> Stream<Check> {
+    yield match rodin_solve(native_line_input()) {
+        RodinOutcome::Solved(result) => expect_eq(result.selected.len(), 1),
+        RodinOutcome::Failed(_) => expect(false),
+        RodinOutcome::Unsupported(_) => expect(false),
+    };
+}
+"#;
+
+#[test]
+fn native_rodin_kernel_starts_at_the_typed_entrypoint_boundary() {
+    let source = format!("{STD_VERSION}\n{NATIVE_RODIN_KERNEL}\n{NATIVE_KERNEL_RED_FIXTURE}");
+    let Err(RunError::Diagnostics(diagnostics)) = run_source(&source) else {
+        panic!("the first native kernel checkpoint is red at its typed solver entrypoint");
+    };
+    assert_eq!(diagnostics.entries.len(), 1, "one exact red boundary");
+    let entry = &diagnostics.entries[0];
+    assert_eq!(
+        entry.code,
+        DiagnosticCode::UnknownName,
+        "typed contract stopped before the entrypoint boundary: {entry:?}"
+    );
+    let DiagnosticPayload::Name { name } = &entry.payload else {
+        panic!("UnknownName carries the missing typed entrypoint: {entry:?}");
+    };
+    assert_eq!(name, "rodin_solve");
+}
 
 /// A trivial three-crate line workspace: `app -> mid -> leaf`, all `0.1.0`, all
 /// path dependencies.
