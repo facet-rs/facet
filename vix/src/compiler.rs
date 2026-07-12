@@ -2907,6 +2907,26 @@ fn lower_array_index(
     let element = element.clone();
     let position = lower_value(nodes, bindings, context, &index.index)?;
     require_type(&position, &Type::Int, expr_span(&index.index))?;
+    // Array.map is keyed lazy codata at the element boundary: projecting one
+    // element of `source.map(f)` denotes `f(source[i])` — one application at a
+    // canonical recipe+argument identity — never an eager whole-array map. When
+    // the mapper is a capture-free function and the position is a static index
+    // of a dense array literal, lower the projection directly to that single
+    // application. The unprojected map materializes nothing.
+    if let Some((function, argument)) = map_projection(nodes, context, receiver.node, position.node)
+    {
+        return Ok(LoweredValue {
+            node: push_node(
+                nodes,
+                index.span,
+                element.clone(),
+                EffectFacts::PURE,
+                vec![argument],
+                Op::Call(function),
+            ),
+            ty: element,
+        });
+    }
     Ok(LoweredValue {
         node: push_node(
             nodes,
@@ -2921,6 +2941,56 @@ fn lower_array_index(
         ),
         ty: element,
     })
+}
+
+/// Recognize `source.map(f)[i]` where `f` is a capture-free top-level function,
+/// `source` is a dense array literal, and `i` is a static in-bounds position.
+/// Returns the mapper's function identity and the source element node it applies
+/// to, so the projection lowers to that one application — the keyed-codata
+/// element boundary at a stable recipe identity. An anonymous closure keeps the
+/// fused-projection map path: it has no standalone recipe to demand.
+fn map_projection(
+    nodes: &[Node],
+    context: &ModuleContext<'_>,
+    array: NodeId,
+    position: NodeId,
+) -> Option<(FunctionId, NodeId)> {
+    let map = nodes.get(array.0 as usize)?;
+    if !matches!(map.op, Op::ArrayMap { .. }) {
+        return None;
+    }
+    let [source, mapper] = map.inputs[..] else {
+        return None;
+    };
+    let mapper = nodes.get(mapper.0 as usize)?;
+    let Op::Closure(function) = mapper.op else {
+        return None;
+    };
+    if !mapper.inputs.is_empty() {
+        return None;
+    }
+    // Only a top-level named function has a standalone recipe to demand; an
+    // anonymous closure is inline map machinery.
+    if !context
+        .signatures
+        .values()
+        .any(|signature| signature.id == function)
+    {
+        return None;
+    }
+    let Op::Int(index) = nodes.get(position.0 as usize)?.op else {
+        return None;
+    };
+    let index = usize::try_from(index).ok()?;
+    let source = nodes.get(source.0 as usize)?;
+    if !matches!(source.op, Op::Array) {
+        return None;
+    }
+    source
+        .inputs
+        .get(index)
+        .copied()
+        .map(|node| (function, node))
 }
 
 /// The positional arguments of a method call. The parenless named-argument

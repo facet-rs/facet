@@ -51,6 +51,14 @@ fn rungs_054_through_056_prove_undemanded_values_are_free() {
     assert_rung_green(RUNG_056);
 }
 
+/// Rung 057 proves Array.map is keyed lazy codata at the element boundary:
+/// projecting `ys[1]` from `[2, 3, 4].map(slow_square)` demands only
+/// `slow_square(3)` — one keyed application, never an eager whole-array map.
+#[test]
+fn rung_057_proves_array_map_element_independence() {
+    assert_rung_green(RUNG_057);
+}
+
 /// Rung 058 proves same recipe+argument memoizes to one computation:
 /// `costly(7)` aliased twice executes once. Rung 059 proves distinct arguments
 /// stay distinct: `costly(1)` and `costly(2)` are separate demands.
@@ -61,18 +69,11 @@ fn rungs_058_059_prove_wire_memoization_and_distinct_arguments() {
 }
 
 /// Higher-order remains independently red at rung 052; the described-wire trace
-/// checks do not bypass it. Rung 057 (keyed lazy `Array.map` codata) remains a
-/// separate readiness boundary until element projection demands its mapper as a
-/// keyed wire.
+/// checks do not bypass it, and the described-wire rungs 053-059 never use it.
 #[test]
-fn rung_052_and_057_remain_separate_pretrace_boundaries() {
+fn rung_052_remains_a_separate_pretrace_boundary() {
     assert!(
         run_source(RUNG_052).is_err(),
         "higher-order remains independently red"
-    );
-    let report = run_source(RUNG_057).expect("rung 057 compiles and runs its value checks");
-    assert!(
-        !report.passed(),
-        "rung 057 stays red until Array.map projects its mapper as a keyed demand"
     );
 }
