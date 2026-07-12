@@ -103,7 +103,10 @@ fn rungs_055_056_prove_control_flow_non_demand_with_frame_evidence() {
     let report = run_source(RUNG_055).expect("rung 055 runs");
     assert!(report.passed() && report.agrees());
     assert_eq!(
-        frame_entries(RUNG_055).get("full_audit").copied().unwrap_or(0),
+        frame_entries(RUNG_055)
+            .get("full_audit")
+            .copied()
+            .unwrap_or(0),
         0,
         "the untaken match arm never executes",
     );
@@ -111,7 +114,10 @@ fn rungs_055_056_prove_control_flow_non_demand_with_frame_evidence() {
     let report = run_source(RUNG_056).expect("rung 056 runs");
     assert!(report.passed() && report.agrees());
     assert_eq!(
-        frame_entries(RUNG_056).get("landmine").copied().unwrap_or(0),
+        frame_entries(RUNG_056)
+            .get("landmine")
+            .copied()
+            .unwrap_or(0),
         0,
         "the unused let is never executed and never faults",
     );
@@ -125,8 +131,8 @@ fn rungs_055_056_prove_control_flow_non_demand_with_frame_evidence() {
 fn described_wire_checks_do_not_change_execution() {
     for source in [RUNG_055, RUNG_056] {
         let with = run_source(source).expect("rung with trace checks runs");
-        let without = run_source(&without_trace_checks(source))
-            .expect("rung without trace checks runs");
+        let without =
+            run_source(&without_trace_checks(source)).expect("rung without trace checks runs");
         assert_eq!(
             value_check_identities(&with),
             value_check_identities(&without),
@@ -151,7 +157,9 @@ fn described_wire_checks_do_not_change_execution() {
 fn described_wire_rungs_await_the_lazy_demand_substrate() {
     for source in [RUNG_053, RUNG_057, RUNG_058, RUNG_059] {
         assert!(
-            !run_source(source).expect("rung runs its value checks").passed(),
+            !run_source(source)
+                .expect("rung runs its value checks")
+                .passed(),
             "positive-demand rung stays red until its invocation is a real shared demand",
         );
     }
@@ -159,7 +167,10 @@ fn described_wire_rungs_await_the_lazy_demand_substrate() {
     // 054's trace check must not be trusted while the field initializer still
     // executes inline: the demand log and the frame trace disagree.
     assert_eq!(
-        frame_entries(RUNG_054).get("expensive").copied().unwrap_or(0),
+        frame_entries(RUNG_054)
+            .get("expensive")
+            .copied()
+            .unwrap_or(0),
         1,
         "rung 054 still executes the undemanded field initializer inline",
     );
