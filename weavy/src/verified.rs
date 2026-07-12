@@ -150,9 +150,45 @@ pub struct FunctionContract {
     pub entries: Vec<RegionId>,
     pub result: RegionId,
     pub call_contract: Option<CallContractId>,
+    /// The boxed capture environment of a closure that carries its captures
+    /// through a task-lifetime environment box rather than as call arguments.
+    /// Empty for ordinary functions and for closures whose captures ride inline
+    /// (the static concrete-capture convention). Each field is one captured
+    /// value's shape at its offset within the box; the entries that follow the
+    /// argument are materialized from it by `CallIndirect` or `EnvLoad`. This
+    /// lives on the function, not the call contract, so a boxed closure's public
+    /// value keeps its uniform semantic callable shape.
+    pub environment: Vec<FrameRegion>,
+}
+
+impl FunctionContract {
+    /// Whether this function materializes trailing capture entries from a boxed
+    /// environment rather than receiving them as call arguments.
+    #[must_use]
+    pub fn is_boxed(&self) -> bool {
+        !self.environment.is_empty()
+    }
 }
 
 /// A function-independent indirect-call ABI.
+///
+/// A callable follows one of two proven calling conventions, distinguished by
+/// `environment`:
+///
+/// * **Static concrete-capture** (`environment` empty): every parameter —
+///   argument and captures — is passed as an ordinary call argument. Used when
+///   the caller statically knows the concrete closure and holds its captures in
+///   frame. This is the optimized path.
+/// * **Boxed environment** (`environment` non-empty): only the leading argument
+///   entry is passed as a call argument; the remaining declared capture regions
+///   are materialized at callee entry by [`crate::task::Op::EnvLoad`] from the
+///   boxed environment handle threaded through [`crate::task::Op::CallIndirect`]
+///   (the closure value's opaque environment word). Used for a closure whose
+///   value escapes its construction frame (returned, mapped, stored), so its
+///   captures cannot travel as caller-frame arguments.
+///
+/// The verifier proves the convention structurally from the callee function's
+/// [`FunctionContract::environment`]; runtime never guesses it from handle bits.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CallContract {
     pub entries: Vec<FrameRegion>,
@@ -220,9 +256,22 @@ pub struct ValueShapeContract {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PayloadKind {
     Inline,
-    OpaqueBytes { byte_comparable: bool },
-    DenseArray { element: SchemaRef },
+    OpaqueBytes {
+        byte_comparable: bool,
+    },
+    DenseArray {
+        element: SchemaRef,
+    },
     OrderedCollection(OrderedCollectionContract),
+    /// A descriptor record type for the append-only publication substrate.
+    ///
+    /// The schema's `inline` shape must be a nonempty scalar run: a published
+    /// descriptor is copied by value into task-owned storage, so admitting only
+    /// scalar words keeps handles (store or molten) out of the completed log.
+    /// The schema's optional `value_shape` types the captured frame value; the
+    /// schema identity itself is the record type, distinct from the opaque
+    /// per-site provenance key carried on each [`crate::task::Op::Publish`].
+    PublicationRecord,
 }
 
 /// The value arity represented by one persistent ordered-collection page.
@@ -413,6 +462,21 @@ pub enum AccessRole {
     ArrayElementSource,
     ArrayElementDestination,
     ArrayLengthDestination,
+    OrderedCollectionHandle,
+    OrderedStatus,
+    OrderedCursorDestination,
+    OrderedCursorSource,
+    OrderedPresent,
+    OrderedKeyDestination,
+    OrderedKeySource,
+    OrderedValueDestination,
+    OrderedValueSource,
+    OrderedRowDestination,
+    OrderedChildHandle,
+    OrderedOrderingSource,
+    OrderedReadyDestination,
+    OrderedLengthDestination,
+    PublicationRecordSource,
 }
 
 /// Structural failure for a checked frame range.
@@ -773,6 +837,42 @@ pub enum ProgramDefect {
         expected: usize,
         actual: usize,
     },
+    /// An `EnvBox`/`EnvLoad` named a closure callee that does not exist.
+    EnvironmentContractOutOfRange {
+        callee: FnId,
+        function_count: usize,
+    },
+    /// An `EnvBox`/`EnvLoad` addressed a closure callee that carries no boxed
+    /// environment (its `environment` is empty — it uses the static convention).
+    EnvironmentNotBoxed {
+        callee: FnId,
+    },
+    /// An `EnvBox` supplied the wrong number of capture field sources for its
+    /// environment contract.
+    EnvironmentFieldCount {
+        callee: FnId,
+        expected: usize,
+        actual: usize,
+    },
+    /// An `EnvLoad` addressed a capture index beyond the environment contract.
+    EnvironmentFieldIndex {
+        callee: FnId,
+        field: u32,
+        field_count: usize,
+    },
+    /// An `EnvBox` source or `EnvLoad` destination did not match the declared
+    /// shape of its capture field (wrong schema, kind, or width).
+    EnvironmentFieldShape {
+        callee: FnId,
+        field: u32,
+        expected: RegionShape,
+        actual: RegionShape,
+    },
+    /// An `EnvBox` result or `EnvLoad` environment word was not a single opaque
+    /// scalar handle word.
+    EnvironmentHandleShape {
+        region: RegionId,
+    },
     CallArgumentDestination {
         index: usize,
         expected_offset: u32,
@@ -835,6 +935,90 @@ pub enum ProgramDefect {
         expected: RegionShape,
         actual: RegionShape,
     },
+    /// An ordered-collection op's static schema witness was not a valid schema
+    /// index.
+    OrderedCollectionWitnessOutOfRange {
+        witness: i64,
+        schema_count: usize,
+    },
+    /// An ordered-collection op's collection handle schema did not match the
+    /// op's static schema witness.
+    OrderedCollectionSchemaMismatch {
+        handle: SchemaRef,
+        witness: SchemaRef,
+    },
+    /// An ordered-collection op named a handle whose schema is not an ordered
+    /// collection.
+    OrderedCollectionSchemaNotCollection {
+        schema: SchemaRef,
+    },
+    /// An ordered cursor destination was not exactly two internal opaque words.
+    OrderedCursorRegionShape {
+        region: RegionId,
+        shape: RegionShape,
+    },
+    /// An opaque cursor word escaped its internal confinement: it appeared at a
+    /// function/call entry or result, i.e. it could be published or aliased
+    /// across a call boundary.
+    OpaqueRegionEscapes {
+        owner: ShapeOwner,
+    },
+    /// An opaque cursor word was copied. Cursors are single-use and may never be
+    /// duplicated by a raw word copy.
+    OpaqueWordNotCopyable {
+        role: AccessRole,
+    },
+    /// A probe key destination's static width did not match its key schema's
+    /// exact inline byte length.
+    OrderedKeyWidth {
+        schema: SchemaRef,
+        expected: usize,
+        actual: u32,
+    },
+    /// A probe key destination's region shape did not match its key schema's
+    /// inline shape or structural value shape exactly.
+    OrderedKeyShapeMismatch {
+        schema: SchemaRef,
+        expected: RegionShape,
+        actual: RegionShape,
+    },
+    /// A probe value destination's static width did not match its value schema's
+    /// exact inline byte length.
+    OrderedValueWidth {
+        schema: SchemaRef,
+        expected: usize,
+        actual: u32,
+    },
+    /// A probe value destination's region shape did not match its value schema's
+    /// inline shape or structural value shape exactly.
+    OrderedValueShapeMismatch {
+        schema: SchemaRef,
+        expected: RegionShape,
+        actual: RegionShape,
+    },
+    OrderedRowWidth {
+        schema: SchemaRef,
+        expected: usize,
+        actual: u32,
+    },
+    OrderedRowShapeMismatch {
+        schema: SchemaRef,
+        expected: RegionShape,
+        actual: RegionShape,
+    },
+    /// A value projection targeted a Set collection, which has no values.
+    OrderedValueOnSet {
+        schema: SchemaRef,
+    },
+    OrderedInsertValueArity {
+        schema: SchemaRef,
+        kind: OrderedCollectionKind,
+        has_value: bool,
+        value_width: u32,
+    },
+    OrderedSetInsertMustDeduplicate {
+        schema: SchemaRef,
+    },
     ArraySchemaNotDense {
         schema: SchemaRef,
     },
@@ -856,6 +1040,36 @@ pub enum ProgramDefect {
         witness: i64,
         schema_count: usize,
     },
+    /// A [`crate::task::Op::Publish`] static schema witness was not a valid
+    /// schema index.
+    PublicationSchemaWitnessOutOfRange {
+        witness: i64,
+        schema_count: usize,
+    },
+    /// A publish op's witnessed schema was not a publication-record schema.
+    PublicationSchemaNotRecord {
+        schema: SchemaRef,
+    },
+    /// A publication-record schema's inline shape was not a nonempty scalar run,
+    /// so a published descriptor could carry a handle out of the task.
+    PublicationRecordSchemaNotScalar {
+        schema: SchemaRef,
+        inline: RegionShape,
+    },
+    /// A publish op's static record width did not match its record schema's
+    /// exact inline byte length.
+    PublicationRecordWidth {
+        schema: SchemaRef,
+        expected: usize,
+        actual: u32,
+    },
+    /// A publish op's record region shape or structural value shape did not match
+    /// its record schema exactly.
+    PublicationRecordShapeMismatch {
+        schema: SchemaRef,
+        expected: RegionShape,
+        actual: RegionShape,
+    },
     UnsupportedOp {
         op: UnsupportedOp,
     },
@@ -870,6 +1084,76 @@ pub enum ProgramDefect {
 pub enum StructuralKind {
     Product,
     Enum,
+}
+
+/// Which half of an ordered-collection row a payload destination projects.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OrderedPart {
+    Key,
+    Value,
+    Row,
+}
+
+/// A payload destination's schema paired with which row half it projects.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct OrderedPayload {
+    schema: SchemaRef,
+    part: OrderedPart,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct OrderedPayloadRegion {
+    offset: u32,
+    width: u32,
+    payload: OrderedPayload,
+    role: AccessRole,
+}
+
+impl OrderedPart {
+    fn width_defect(self, schema: SchemaRef, expected: usize, actual: u32) -> ProgramDefect {
+        match self {
+            OrderedPart::Key => ProgramDefect::OrderedKeyWidth {
+                schema,
+                expected,
+                actual,
+            },
+            OrderedPart::Value => ProgramDefect::OrderedValueWidth {
+                schema,
+                expected,
+                actual,
+            },
+            OrderedPart::Row => ProgramDefect::OrderedRowWidth {
+                schema,
+                expected,
+                actual,
+            },
+        }
+    }
+
+    fn shape_defect(
+        self,
+        schema: SchemaRef,
+        expected: RegionShape,
+        actual: RegionShape,
+    ) -> ProgramDefect {
+        match self {
+            OrderedPart::Key => ProgramDefect::OrderedKeyShapeMismatch {
+                schema,
+                expected,
+                actual,
+            },
+            OrderedPart::Value => ProgramDefect::OrderedValueShapeMismatch {
+                schema,
+                expected,
+                actual,
+            },
+            OrderedPart::Row => ProgramDefect::OrderedRowShapeMismatch {
+                schema,
+                expected,
+                actual,
+            },
+        }
+    }
 }
 
 /// Structured verifier error. Function and PC are absent only for global
@@ -1407,6 +1691,9 @@ impl Verifier<'_> {
             }));
         }
         let size = self.validate_shape(&region.shape, owner, None)?;
+        if shape_has_opaque(&region.shape) {
+            return Err(self.global(ProgramDefect::OpaqueRegionEscapes { owner }));
+        }
         let start = usize::try_from(region.offset).map_err(|_| {
             self.global(ProgramDefect::CallRegionEndOverflow {
                 owner,
@@ -1514,6 +1801,22 @@ impl Verifier<'_> {
                     schema: schema_ref,
                     inline: schema.inline.clone(),
                 }));
+            }
+            if matches!(schema.payload, PayloadKind::PublicationRecord) {
+                let scalar_run = !schema.inline.words.is_empty()
+                    && schema
+                        .inline
+                        .words
+                        .iter()
+                        .all(|word| word.is_exactly(WordKind::Scalar));
+                if !scalar_run {
+                    return Err(
+                        self.global(ProgramDefect::PublicationRecordSchemaNotScalar {
+                            schema: schema_ref,
+                            inline: schema.inline.clone(),
+                        }),
+                    );
+                }
             }
             if let PayloadKind::DenseArray { element } = schema.payload {
                 let Ok(index) = usize::try_from(element.0) else {
@@ -1800,6 +2103,14 @@ impl Verifier<'_> {
                         },
                     ));
                 }
+                if shape_has_opaque(&contract.frame.regions[index].shape) {
+                    return Err(self.function(
+                        function_id,
+                        ProgramDefect::OpaqueRegionEscapes {
+                            owner: ShapeOwner::FrameRegion(region),
+                        },
+                    ));
+                }
                 entries.push(index);
             }
             let Some(result) = usize::try_from(contract.result.0)
@@ -1815,6 +2126,14 @@ impl Verifier<'_> {
                     },
                 ));
             };
+            if shape_has_opaque(&contract.frame.regions[result].shape) {
+                return Err(self.function(
+                    function_id,
+                    ProgramDefect::OpaqueRegionEscapes {
+                        owner: ShapeOwner::FrameRegion(contract.result),
+                    },
+                ));
+            }
 
             if let Some(call_contract) = contract.call_contract {
                 let Some(call_index) = usize::try_from(call_contract.0)
@@ -1830,11 +2149,28 @@ impl Verifier<'_> {
                     ));
                 };
                 let call = &self.contract.calls[call_index];
-                let entries_match = entries.len() == call.entries.len()
-                    && entries
-                        .iter()
-                        .zip(&call.entries)
-                        .all(|(region, expected)| &contract.frame.regions[*region] == expected);
+                // A boxed closure's call contract covers only the leading
+                // argument entries; the trailing capture entries are
+                // materialized from the environment box and their shapes are
+                // proven against `environment` rather than call arguments.
+                let leading = call.entries.len();
+                let entries_match = if contract.environment.is_empty() {
+                    entries.len() == leading
+                        && entries
+                            .iter()
+                            .zip(&call.entries)
+                            .all(|(region, expected)| &contract.frame.regions[*region] == expected)
+                } else {
+                    entries.len() == leading + contract.environment.len()
+                        && entries
+                            .iter()
+                            .take(leading)
+                            .zip(&call.entries)
+                            .all(|(region, expected)| &contract.frame.regions[*region] == expected)
+                        && entries.iter().skip(leading).zip(&contract.environment).all(
+                            |(region, field)| contract.frame.regions[*region].shape == field.shape,
+                        )
+                };
                 let concrete_result = &contract.frame.regions[result];
                 let result_matches = concrete_result.shape == call.result.shape
                     && concrete_result.value_shape == call.result.value_shape;
@@ -1934,6 +2270,80 @@ impl Verifier<'_> {
                     *dst,
                     declared,
                 )?;
+            }
+            Op::EnvBox {
+                dst,
+                callee,
+                fields,
+            } => {
+                let environment = self.env_contract(function_id, pc, *callee)?;
+                if environment.len() != fields.len() {
+                    let expected = environment.len();
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::EnvironmentFieldCount {
+                            callee: *callee,
+                            expected,
+                            actual: fields.len(),
+                        },
+                    ));
+                }
+                let declared: Vec<RegionShape> = environment
+                    .iter()
+                    .map(|field| field.shape.clone())
+                    .collect();
+                self.require_env_handle(function_id, pc, function_index, *dst)?;
+                for (index, source) in fields.iter().enumerate() {
+                    let actual = self.plain_region(function_id, pc, function_index, *source)?;
+                    if !shapes_assignable(&actual.shape, &declared[index]) {
+                        return Err(self.op(
+                            function_id,
+                            pc,
+                            ProgramDefect::EnvironmentFieldShape {
+                                callee: *callee,
+                                field: index as u32,
+                                expected: declared[index].clone(),
+                                actual: actual.shape.clone(),
+                            },
+                        ));
+                    }
+                }
+            }
+            Op::EnvLoad {
+                dst,
+                env,
+                callee,
+                field,
+            } => {
+                let environment = self.env_contract(function_id, pc, *callee)?;
+                let Some(declared) = environment.get(*field as usize).map(|f| f.shape.clone())
+                else {
+                    let field_count = environment.len();
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::EnvironmentFieldIndex {
+                            callee: *callee,
+                            field: *field,
+                            field_count,
+                        },
+                    ));
+                };
+                self.require_env_handle(function_id, pc, function_index, *env)?;
+                let destination = self.plain_region(function_id, pc, function_index, *dst)?;
+                if !shapes_assignable(&declared, &destination.shape) {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::EnvironmentFieldShape {
+                            callee: *callee,
+                            field: *field,
+                            expected: declared,
+                            actual: destination.shape.clone(),
+                        },
+                    ));
+                }
             }
             Op::CopyValue { dst, src } => {
                 let source = self.structural_region(function_id, pc, function_index, *src)?;
@@ -2093,6 +2503,24 @@ impl Verifier<'_> {
                     &self.contract.functions[function_index].frame.regions[source_index];
                 let destination = &destination_region.shape.words[destination_word];
                 let source = &source_region.shape.words[source_word];
+                if destination.contains(WordKind::Opaque) {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::OpaqueWordNotCopyable {
+                            role: AccessRole::Destination,
+                        },
+                    ));
+                }
+                if source.contains(WordKind::Opaque) {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::OpaqueWordNotCopyable {
+                            role: AccessRole::Source,
+                        },
+                    ));
+                }
                 if !source.is_subset_of(destination) {
                     return Err(self.op(
                         function_id,
@@ -2310,6 +2738,276 @@ impl Verifier<'_> {
                     ));
                 }
             }
+            Op::StringConcat { dst, a, b } => {
+                let dst_schema =
+                    self.read_handle(function_id, pc, frame, *dst, AccessRole::Destination)?;
+                let left_schema =
+                    self.read_handle(function_id, pc, frame, *a, AccessRole::CompareLeft)?;
+                let right_schema =
+                    self.read_handle(function_id, pc, frame, *b, AccessRole::CompareRight)?;
+                if left_schema != right_schema || dst_schema != left_schema {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::CompareSchemaMismatch {
+                            left: dst_schema,
+                            right: if dst_schema == left_schema {
+                                right_schema
+                            } else {
+                                left_schema
+                            },
+                        },
+                    ));
+                }
+                let schema_index = usize::try_from(dst_schema.0).map_err(|_| {
+                    self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::SchemaNotByteComparable { schema: dst_schema },
+                    )
+                })?;
+                if !matches!(
+                    self.contract.schemas[schema_index].payload,
+                    PayloadKind::OpaqueBytes {
+                        byte_comparable: true
+                    }
+                ) {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::SchemaNotByteComparable { schema: dst_schema },
+                    ));
+                }
+            }
+            Op::StringContains { dst, text, needle } => {
+                self.require_scalar_write(function_id, pc, frame, *dst, AccessRole::Destination)?;
+                let text_schema =
+                    self.read_handle(function_id, pc, frame, *text, AccessRole::CompareLeft)?;
+                let needle_schema =
+                    self.read_handle(function_id, pc, frame, *needle, AccessRole::CompareRight)?;
+                if text_schema != needle_schema {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::CompareSchemaMismatch {
+                            left: text_schema,
+                            right: needle_schema,
+                        },
+                    ));
+                }
+                self.require_byte_comparable_schema(function_id, pc, text_schema)?;
+            }
+            Op::StringIsNumeric { dst, text } => {
+                self.require_scalar_write(function_id, pc, frame, *dst, AccessRole::Destination)?;
+                let text_schema =
+                    self.read_handle(function_id, pc, frame, *text, AccessRole::CompareLeft)?;
+                self.require_byte_comparable_schema(function_id, pc, text_schema)?;
+            }
+            Op::StringSplitOnce {
+                left,
+                right,
+                status,
+                text,
+                delimiter,
+            } => {
+                let left_schema =
+                    self.read_handle(function_id, pc, frame, *left, AccessRole::Destination)?;
+                let right_schema =
+                    self.read_handle(function_id, pc, frame, *right, AccessRole::Destination)?;
+                let text_schema =
+                    self.read_handle(function_id, pc, frame, *text, AccessRole::CompareLeft)?;
+                let delimiter_schema =
+                    self.read_handle(function_id, pc, frame, *delimiter, AccessRole::CompareRight)?;
+                if left_schema != text_schema
+                    || right_schema != text_schema
+                    || delimiter_schema != text_schema
+                {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::CompareSchemaMismatch {
+                            left: text_schema,
+                            right: delimiter_schema,
+                        },
+                    ));
+                }
+                self.require_byte_comparable_schema(function_id, pc, text_schema)?;
+                self.require_status_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *status,
+                    AccessRole::ArrayStatus,
+                )?;
+            }
+            Op::StringParseInt { dst, status, text } => {
+                self.require_scalar_write(function_id, pc, frame, *dst, AccessRole::Destination)?;
+                let text_schema =
+                    self.read_handle(function_id, pc, frame, *text, AccessRole::CompareLeft)?;
+                self.require_byte_comparable_schema(function_id, pc, text_schema)?;
+                self.require_status_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *status,
+                    AccessRole::ArrayStatus,
+                )?;
+            }
+            Op::StringStatusIs {
+                dst,
+                status,
+                expected: _,
+            } => {
+                self.require_scalar_write(function_id, pc, frame, *dst, AccessRole::Destination)?;
+                self.require_status_read(
+                    function_id,
+                    pc,
+                    frame,
+                    *status,
+                    AccessRole::ArrayStatusSource,
+                )?;
+            }
+            Op::ByteProject { dst, source } => {
+                let dst_schema =
+                    self.read_handle(function_id, pc, frame, *dst, AccessRole::Destination)?;
+                let source_schema =
+                    self.read_handle(function_id, pc, frame, *source, AccessRole::Source)?;
+                for schema in [source_schema, dst_schema] {
+                    let schema_index = usize::try_from(schema.0).map_err(|_| {
+                        self.op(
+                            function_id,
+                            pc,
+                            ProgramDefect::SchemaNotByteComparable { schema },
+                        )
+                    })?;
+                    if !matches!(
+                        self.contract.schemas[schema_index].payload,
+                        PayloadKind::OpaqueBytes {
+                            byte_comparable: true
+                        }
+                    ) {
+                        return Err(self.op(
+                            function_id,
+                            pc,
+                            ProgramDefect::SchemaNotByteComparable { schema },
+                        ));
+                    }
+                }
+            }
+            Op::IntToString { dst, src } => {
+                let dst_schema =
+                    self.read_handle(function_id, pc, frame, *dst, AccessRole::Destination)?;
+                self.require_scalar_read(function_id, pc, frame, *src, AccessRole::Source)?;
+                let schema_index = usize::try_from(dst_schema.0).map_err(|_| {
+                    self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::SchemaNotByteComparable { schema: dst_schema },
+                    )
+                })?;
+                if !matches!(
+                    self.contract.schemas[schema_index].payload,
+                    PayloadKind::OpaqueBytes {
+                        byte_comparable: true
+                    }
+                ) {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::SchemaNotByteComparable { schema: dst_schema },
+                    ));
+                }
+            }
+            Op::PathJoin { dst, base, segment } => {
+                let dst_schema =
+                    self.read_handle(function_id, pc, frame, *dst, AccessRole::Destination)?;
+                let base_schema =
+                    self.read_handle(function_id, pc, frame, *base, AccessRole::CompareLeft)?;
+                let segment_schema =
+                    self.read_handle(function_id, pc, frame, *segment, AccessRole::CompareRight)?;
+                if dst_schema != base_schema || dst_schema != segment_schema {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::CompareSchemaMismatch {
+                            left: dst_schema,
+                            right: if dst_schema != base_schema {
+                                base_schema
+                            } else {
+                                segment_schema
+                            },
+                        },
+                    ));
+                }
+                let schema_index = usize::try_from(dst_schema.0).map_err(|_| {
+                    self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::SchemaNotByteComparable { schema: dst_schema },
+                    )
+                })?;
+                if !matches!(
+                    self.contract.schemas[schema_index].payload,
+                    PayloadKind::OpaqueBytes {
+                        byte_comparable: true
+                    }
+                ) {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::SchemaNotByteComparable { schema: dst_schema },
+                    ));
+                }
+            }
+            Op::Publish {
+                site: _,
+                record,
+                record_width,
+                record_schema_ref,
+            } => {
+                let schema = self.publication_record_schema(function_id, pc, *record_schema_ref)?;
+                let expected = &self.contract.schemas[schema.0 as usize];
+                let expected_len = expected.inline.checked_byte_len().ok_or_else(|| {
+                    self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::ShapeSizeOverflow {
+                            owner: ShapeOwner::SchemaInline(schema),
+                        },
+                    )
+                })?;
+                if expected_len == 0 || usize::try_from(*record_width).ok() != Some(expected_len) {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::PublicationRecordWidth {
+                            schema,
+                            expected: expected_len,
+                            actual: *record_width,
+                        },
+                    ));
+                }
+                let region_index = self.exact_region(
+                    function_id,
+                    pc,
+                    frame,
+                    *record,
+                    expected_len,
+                    AccessRole::PublicationRecordSource,
+                )?;
+                let region = &self.contract.functions[function_index].frame.regions[region_index];
+                if region.shape != expected.inline || region.value_shape != expected.value_shape {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::PublicationRecordShapeMismatch {
+                            schema,
+                            expected: expected.inline.clone(),
+                            actual: region.shape.clone(),
+                        },
+                    ));
+                }
+            }
             Op::ConstF64 { dst, bits: _ } => {
                 self.reject_raw_structural_word(
                     function_id,
@@ -2464,6 +3162,440 @@ impl Verifier<'_> {
             Op::HostCallYield { .. } => {
                 return Err(self.unsupported(function_id, pc, UnsupportedOp::HostCallYield));
             }
+            Op::OrderedEmpty {
+                dst,
+                collection_schema_ref,
+            } => {
+                let (collection, _) =
+                    self.ordered_collection_contract(function_id, pc, *collection_schema_ref)?;
+                self.require_handle_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *dst,
+                    collection,
+                    AccessRole::Destination,
+                )?;
+            }
+            Op::OrderedBeginProbe {
+                cursor,
+                status,
+                collection,
+                collection_schema_ref,
+            }
+            | Op::OrderedBeginInsert {
+                cursor,
+                status,
+                collection,
+                collection_schema_ref,
+            }
+            | Op::OrderedBeginIterate {
+                cursor,
+                status,
+                collection,
+                collection_schema_ref,
+            } => {
+                self.ordered_collection(
+                    function_id,
+                    pc,
+                    frame,
+                    *collection,
+                    *collection_schema_ref,
+                )?;
+                self.require_status_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *status,
+                    AccessRole::OrderedStatus,
+                )?;
+                self.require_ordered_cursor_region(
+                    function_id,
+                    pc,
+                    function_index,
+                    frame,
+                    *cursor,
+                    AccessRole::OrderedCursorDestination,
+                )?;
+            }
+            Op::OrderedProbeKey {
+                cursor,
+                present,
+                key,
+                left,
+                right,
+                status,
+                key_width,
+                collection_schema_ref,
+            } => {
+                let (collection_schema, key_schema) =
+                    self.ordered_collection_schemas(function_id, pc, *collection_schema_ref)?;
+                self.require_ordered_cursor_region(
+                    function_id,
+                    pc,
+                    function_index,
+                    frame,
+                    *cursor,
+                    AccessRole::OrderedCursorSource,
+                )?;
+                self.require_scalar_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *present,
+                    AccessRole::OrderedPresent,
+                )?;
+                self.require_ordered_payload_region(
+                    function_id,
+                    pc,
+                    frame,
+                    OrderedPayloadRegion {
+                        offset: *key,
+                        width: *key_width,
+                        payload: OrderedPayload {
+                            schema: key_schema,
+                            part: OrderedPart::Key,
+                        },
+                        role: AccessRole::OrderedKeyDestination,
+                    },
+                )?;
+                self.require_handle_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *left,
+                    collection_schema,
+                    AccessRole::OrderedChildHandle,
+                )?;
+                self.require_handle_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *right,
+                    collection_schema,
+                    AccessRole::OrderedChildHandle,
+                )?;
+                self.require_status_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *status,
+                    AccessRole::OrderedStatus,
+                )?;
+            }
+            Op::OrderedProbeValue {
+                cursor,
+                present,
+                value,
+                status,
+                value_width,
+                collection_schema_ref,
+            } => {
+                let (_, value_schema) =
+                    self.ordered_collection_value_schema(function_id, pc, *collection_schema_ref)?;
+                self.require_ordered_cursor_region(
+                    function_id,
+                    pc,
+                    function_index,
+                    frame,
+                    *cursor,
+                    AccessRole::OrderedCursorSource,
+                )?;
+                self.require_scalar_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *present,
+                    AccessRole::OrderedPresent,
+                )?;
+                self.require_ordered_payload_region(
+                    function_id,
+                    pc,
+                    frame,
+                    OrderedPayloadRegion {
+                        offset: *value,
+                        width: *value_width,
+                        payload: OrderedPayload {
+                            schema: value_schema,
+                            part: OrderedPart::Value,
+                        },
+                        role: AccessRole::OrderedValueDestination,
+                    },
+                )?;
+                self.require_status_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *status,
+                    AccessRole::OrderedStatus,
+                )?;
+            }
+            Op::OrderedInsertInspect {
+                cursor,
+                present,
+                key,
+                status,
+                key_width,
+                collection_schema_ref,
+            } => {
+                let (_, key_schema) =
+                    self.ordered_collection_schemas(function_id, pc, *collection_schema_ref)?;
+                self.require_ordered_cursor_region(
+                    function_id,
+                    pc,
+                    function_index,
+                    frame,
+                    *cursor,
+                    AccessRole::OrderedCursorSource,
+                )?;
+                self.require_scalar_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *present,
+                    AccessRole::OrderedPresent,
+                )?;
+                self.require_ordered_payload_region(
+                    function_id,
+                    pc,
+                    frame,
+                    OrderedPayloadRegion {
+                        offset: *key,
+                        width: *key_width,
+                        payload: OrderedPayload {
+                            schema: key_schema,
+                            part: OrderedPart::Key,
+                        },
+                        role: AccessRole::OrderedKeyDestination,
+                    },
+                )?;
+                self.require_status_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *status,
+                    AccessRole::OrderedStatus,
+                )?;
+            }
+            Op::OrderedInsertAdvance {
+                cursor,
+                ordering,
+                ready,
+                status,
+                collection_schema_ref,
+            } => {
+                self.ordered_collection_contract(function_id, pc, *collection_schema_ref)?;
+                self.require_ordered_cursor_region(
+                    function_id,
+                    pc,
+                    function_index,
+                    frame,
+                    *cursor,
+                    AccessRole::OrderedCursorSource,
+                )?;
+                self.require_scalar_read(
+                    function_id,
+                    pc,
+                    frame,
+                    *ordering,
+                    AccessRole::OrderedOrderingSource,
+                )?;
+                self.require_scalar_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *ready,
+                    AccessRole::OrderedReadyDestination,
+                )?;
+                self.require_status_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *status,
+                    AccessRole::OrderedStatus,
+                )?;
+            }
+            Op::OrderedInsertCommit {
+                dst,
+                cursor,
+                key,
+                value,
+                status,
+                key_width,
+                value_width,
+                collection_schema_ref,
+                replace,
+            } => {
+                let (collection, contract) =
+                    self.ordered_collection_contract(function_id, pc, *collection_schema_ref)?;
+                self.require_ordered_cursor_region(
+                    function_id,
+                    pc,
+                    function_index,
+                    frame,
+                    *cursor,
+                    AccessRole::OrderedCursorSource,
+                )?;
+                self.require_handle_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *dst,
+                    collection,
+                    AccessRole::Destination,
+                )?;
+                self.require_ordered_payload_region(
+                    function_id,
+                    pc,
+                    frame,
+                    OrderedPayloadRegion {
+                        offset: *key,
+                        width: *key_width,
+                        payload: OrderedPayload {
+                            schema: contract.key,
+                            part: OrderedPart::Key,
+                        },
+                        role: AccessRole::OrderedKeySource,
+                    },
+                )?;
+                match (contract.kind, contract.value, value) {
+                    (OrderedCollectionKind::Map, Some(value_schema), Some(value)) => {
+                        self.require_ordered_payload_region(
+                            function_id,
+                            pc,
+                            frame,
+                            OrderedPayloadRegion {
+                                offset: *value,
+                                width: *value_width,
+                                payload: OrderedPayload {
+                                    schema: value_schema,
+                                    part: OrderedPart::Value,
+                                },
+                                role: AccessRole::OrderedValueSource,
+                            },
+                        )?;
+                    }
+                    (OrderedCollectionKind::Set, None, None) if *value_width == 0 => {
+                        if !*replace {
+                            return Err(self.op(
+                                function_id,
+                                pc,
+                                ProgramDefect::OrderedSetInsertMustDeduplicate {
+                                    schema: collection,
+                                },
+                            ));
+                        }
+                    }
+                    (kind, _, value) => {
+                        return Err(self.op(
+                            function_id,
+                            pc,
+                            ProgramDefect::OrderedInsertValueArity {
+                                schema: collection,
+                                kind,
+                                has_value: value.is_some(),
+                                value_width: *value_width,
+                            },
+                        ));
+                    }
+                }
+                self.require_status_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *status,
+                    AccessRole::OrderedStatus,
+                )?;
+            }
+            Op::OrderedIterateRow {
+                cursor,
+                present,
+                row,
+                status,
+                row_width,
+                collection_schema_ref,
+            } => {
+                let (_, contract) =
+                    self.ordered_collection_contract(function_id, pc, *collection_schema_ref)?;
+                self.require_ordered_cursor_region(
+                    function_id,
+                    pc,
+                    function_index,
+                    frame,
+                    *cursor,
+                    AccessRole::OrderedCursorSource,
+                )?;
+                self.require_scalar_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *present,
+                    AccessRole::OrderedPresent,
+                )?;
+                self.require_ordered_payload_region(
+                    function_id,
+                    pc,
+                    frame,
+                    OrderedPayloadRegion {
+                        offset: *row,
+                        width: *row_width,
+                        payload: OrderedPayload {
+                            schema: contract.row,
+                            part: OrderedPart::Row,
+                        },
+                        role: AccessRole::OrderedRowDestination,
+                    },
+                )?;
+                self.require_status_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *status,
+                    AccessRole::OrderedStatus,
+                )?;
+            }
+            Op::OrderedLen {
+                dst,
+                status,
+                collection,
+                collection_schema_ref,
+            } => {
+                self.ordered_collection(
+                    function_id,
+                    pc,
+                    frame,
+                    *collection,
+                    *collection_schema_ref,
+                )?;
+                self.require_scalar_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *dst,
+                    AccessRole::OrderedLengthDestination,
+                )?;
+                self.require_status_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *status,
+                    AccessRole::OrderedStatus,
+                )?;
+            }
+            Op::OrderedStatusIs {
+                dst,
+                status,
+                expected: _,
+            } => {
+                self.require_scalar_write(function_id, pc, frame, *dst, AccessRole::Destination)?;
+                self.require_status_read(
+                    function_id,
+                    pc,
+                    frame,
+                    *status,
+                    AccessRole::OrderedStatus,
+                )?;
+            }
         }
         Ok(None)
     }
@@ -2497,6 +3629,73 @@ impl Verifier<'_> {
             ));
         }
         Ok(region_contract)
+    }
+
+    /// The boxed environment layout of a closure callee, or a defect if the
+    /// callee is out of range or uses the static (non-boxed) convention.
+    fn env_contract(
+        &self,
+        function: FnId,
+        pc: usize,
+        callee: FnId,
+    ) -> Result<&[FrameRegion], ProgramError> {
+        let Some(callee_contract) = self.contract.functions.get(callee.0 as usize) else {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::EnvironmentContractOutOfRange {
+                    callee,
+                    function_count: self.contract.functions.len(),
+                },
+            ));
+        };
+        if callee_contract.environment.is_empty() {
+            return Err(self.op(function, pc, ProgramDefect::EnvironmentNotBoxed { callee }));
+        }
+        Ok(&callee_contract.environment)
+    }
+
+    /// A frame region by id, with no structural-value-shape requirement.
+    fn plain_region(
+        &self,
+        function: FnId,
+        pc: usize,
+        function_index: usize,
+        region: RegionId,
+    ) -> Result<&FrameRegion, ProgramError> {
+        let regions = &self.contract.functions[function_index].frame.regions;
+        usize::try_from(region.0)
+            .ok()
+            .and_then(|index| regions.get(index))
+            .ok_or_else(|| {
+                self.op(
+                    function,
+                    pc,
+                    ProgramDefect::StructuralRegionOutOfRange {
+                        region,
+                        region_count: regions.len(),
+                    },
+                )
+            })
+    }
+
+    /// Require a region to be a single opaque scalar environment-handle word.
+    fn require_env_handle(
+        &self,
+        function: FnId,
+        pc: usize,
+        function_index: usize,
+        region: RegionId,
+    ) -> Result<(), ProgramError> {
+        let handle = self.plain_region(function, pc, function_index, region)?;
+        if handle.shape.words.len() != 1 || !handle.shape.words[0].contains(WordKind::Scalar) {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::EnvironmentHandleShape { region },
+            ));
+        }
+        Ok(())
     }
 
     fn product_region(
@@ -2962,6 +4161,34 @@ impl Verifier<'_> {
         Ok(*schema)
     }
 
+    fn require_byte_comparable_schema(
+        &self,
+        function: FnId,
+        pc: usize,
+        schema: SchemaRef,
+    ) -> Result<(), ProgramError> {
+        let Some(contract) = self.contract.schemas.get(schema.0 as usize) else {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::SchemaNotByteComparable { schema },
+            ));
+        };
+        if !matches!(
+            contract.payload,
+            PayloadKind::OpaqueBytes {
+                byte_comparable: true
+            }
+        ) {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::SchemaNotByteComparable { schema },
+            ));
+        }
+        Ok(())
+    }
+
     fn require_scalar_read(
         &self,
         function: FnId,
@@ -3120,6 +4347,253 @@ impl Verifier<'_> {
             ));
         }
         Ok(witness)
+    }
+
+    fn ordered_collection(
+        &self,
+        function: FnId,
+        pc: usize,
+        frame: &ValidatedFrame,
+        collection: u32,
+        witness: i64,
+    ) -> Result<SchemaRef, ProgramError> {
+        let handle_schema = self.read_handle(
+            function,
+            pc,
+            frame,
+            collection,
+            AccessRole::OrderedCollectionHandle,
+        )?;
+        let witness = usize::try_from(witness)
+            .ok()
+            .filter(|index| *index < self.contract.schemas.len())
+            .and_then(|index| u32::try_from(index).ok().map(SchemaRef))
+            .ok_or_else(|| {
+                self.op(
+                    function,
+                    pc,
+                    ProgramDefect::OrderedCollectionWitnessOutOfRange {
+                        witness,
+                        schema_count: self.contract.schemas.len(),
+                    },
+                )
+            })?;
+        if witness != handle_schema {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::OrderedCollectionSchemaMismatch {
+                    handle: handle_schema,
+                    witness,
+                },
+            ));
+        }
+        if !matches!(
+            self.contract.schemas[witness.0 as usize].payload,
+            PayloadKind::OrderedCollection(_)
+        ) {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::OrderedCollectionSchemaNotCollection { schema: witness },
+            ));
+        }
+        Ok(witness)
+    }
+
+    /// Resolve a publish op's static schema witness to a publication-record
+    /// schema, rejecting an out-of-range witness or a non-record schema.
+    fn publication_record_schema(
+        &self,
+        function: FnId,
+        pc: usize,
+        witness: i64,
+    ) -> Result<SchemaRef, ProgramError> {
+        let schema = usize::try_from(witness)
+            .ok()
+            .filter(|index| *index < self.contract.schemas.len())
+            .and_then(|index| u32::try_from(index).ok().map(SchemaRef))
+            .ok_or_else(|| {
+                self.op(
+                    function,
+                    pc,
+                    ProgramDefect::PublicationSchemaWitnessOutOfRange {
+                        witness,
+                        schema_count: self.contract.schemas.len(),
+                    },
+                )
+            })?;
+        if !matches!(
+            self.contract.schemas[schema.0 as usize].payload,
+            PayloadKind::PublicationRecord
+        ) {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::PublicationSchemaNotRecord { schema },
+            ));
+        }
+        Ok(schema)
+    }
+
+    fn ordered_collection_schemas(
+        &self,
+        function: FnId,
+        pc: usize,
+        witness: i64,
+    ) -> Result<(SchemaRef, SchemaRef), ProgramError> {
+        let (collection, contract) = self.ordered_collection_contract(function, pc, witness)?;
+        Ok((collection, contract.key))
+    }
+
+    fn ordered_collection_contract(
+        &self,
+        function: FnId,
+        pc: usize,
+        witness: i64,
+    ) -> Result<(SchemaRef, &OrderedCollectionContract), ProgramError> {
+        let collection = usize::try_from(witness)
+            .ok()
+            .filter(|index| *index < self.contract.schemas.len())
+            .and_then(|index| u32::try_from(index).ok().map(SchemaRef))
+            .ok_or_else(|| {
+                self.op(
+                    function,
+                    pc,
+                    ProgramDefect::OrderedCollectionWitnessOutOfRange {
+                        witness,
+                        schema_count: self.contract.schemas.len(),
+                    },
+                )
+            })?;
+        let PayloadKind::OrderedCollection(contract) =
+            &self.contract.schemas[collection.0 as usize].payload
+        else {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::OrderedCollectionSchemaNotCollection { schema: collection },
+            ));
+        };
+        Ok((collection, contract))
+    }
+
+    /// The full collection schema table refs for a value projection: the
+    /// collection schema and its value schema, rejecting a Set (no value).
+    fn ordered_collection_value_schema(
+        &self,
+        function: FnId,
+        pc: usize,
+        witness: i64,
+    ) -> Result<(SchemaRef, SchemaRef), ProgramError> {
+        let (collection, contract) = self.ordered_collection_contract(function, pc, witness)?;
+        let Some(value) = contract.value else {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::OrderedValueOnSet { schema: collection },
+            ));
+        };
+        Ok((collection, value))
+    }
+
+    /// A key or value destination must be a whole region whose shape and
+    /// structural value shape are exactly the named schema, at its exact width.
+    fn require_ordered_payload_region(
+        &self,
+        function: FnId,
+        pc: usize,
+        frame: &ValidatedFrame,
+        region: OrderedPayloadRegion,
+    ) -> Result<(), ProgramError> {
+        let OrderedPayloadRegion {
+            offset,
+            width,
+            payload,
+            role,
+        } = region;
+        let OrderedPayload { schema, part } = payload;
+        let expected = &self.contract.schemas[schema.0 as usize];
+        let expected_len = expected.inline.checked_byte_len().ok_or_else(|| {
+            self.op(
+                function,
+                pc,
+                ProgramDefect::ShapeSizeOverflow {
+                    owner: ShapeOwner::SchemaInline(schema),
+                },
+            )
+        })?;
+        if expected_len == 0 || usize::try_from(width).ok() != Some(expected_len) {
+            return Err(self.op(function, pc, part.width_defect(schema, expected_len, width)));
+        }
+        let region_index = self.exact_region(function, pc, frame, offset, expected_len, role)?;
+        let region = &self.contract.functions[function.0 as usize].frame.regions[region_index];
+        if region.shape != expected.inline || region.value_shape != expected.value_shape {
+            return Err(self.op(
+                function,
+                pc,
+                part.shape_defect(schema, expected.inline.clone(), region.shape.clone()),
+            ));
+        }
+        Ok(())
+    }
+
+    /// A child collection handle destination must be exactly `Handle(schema)`.
+    fn require_handle_write(
+        &self,
+        function: FnId,
+        pc: usize,
+        frame: &ValidatedFrame,
+        offset: u32,
+        schema: SchemaRef,
+        role: AccessRole,
+    ) -> Result<(), ProgramError> {
+        let kinds = self.word_kinds(function, pc, frame, offset, role)?;
+        if !kinds.is_exactly(WordKind::Handle(schema)) {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::KindMismatch {
+                    role,
+                    required: KindRequirement::Handle,
+                    allowed: kinds.clone(),
+                },
+            ));
+        }
+        Ok(())
+    }
+
+    /// A cursor region must name a whole two-word region that is exactly
+    /// internal opaque cursor words and carries no structural value shape.
+    fn require_ordered_cursor_region(
+        &self,
+        function: FnId,
+        pc: usize,
+        function_index: usize,
+        frame: &ValidatedFrame,
+        offset: u32,
+        role: AccessRole,
+    ) -> Result<(), ProgramError> {
+        let region_index = self.exact_region(function, pc, frame, offset, WORD_SIZE * 2, role)?;
+        let region = &self.contract.functions[function_index].frame.regions[region_index];
+        let two_opaque_words = region.value_shape.is_none()
+            && region.shape.words.len() == 2
+            && region
+                .shape
+                .words
+                .iter()
+                .all(|word| word.is_exactly(WordKind::Opaque));
+        if !two_opaque_words {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::OrderedCursorRegionShape {
+                    region: RegionId(region_index as u32),
+                    shape: region.shape.clone(),
+                },
+            ));
+        }
+        Ok(())
     }
 
     fn validate_array_width(
@@ -3381,6 +4855,8 @@ impl Verifier<'_> {
                     Op::ConstI64 { .. }
                     | Op::ProductConstruct { .. }
                     | Op::ProductProject { .. }
+                    | Op::EnvBox { .. }
+                    | Op::EnvLoad { .. }
                     | Op::CopyValue { .. }
                     | Op::EnumConstruct { .. }
                     | Op::EnumIsVariant { .. }
@@ -3400,6 +4876,16 @@ impl Verifier<'_> {
                     | Op::CallIndirect { .. }
                     | Op::Await { .. }
                     | Op::CompareValueBytes { .. }
+                    | Op::StringConcat { .. }
+                    | Op::StringContains { .. }
+                    | Op::StringIsNumeric { .. }
+                    | Op::StringSplitOnce { .. }
+                    | Op::StringParseInt { .. }
+                    | Op::StringStatusIs { .. }
+                    | Op::ByteProject { .. }
+                    | Op::IntToString { .. }
+                    | Op::PathJoin { .. } => pending.push(pc + 1),
+                    Op::Publish { .. }
                     | Op::ConstF64 { .. }
                     | Op::AddF64 { .. }
                     | Op::MulF64 { .. }
@@ -3408,6 +4894,18 @@ impl Verifier<'_> {
                     | Op::LoadArray { .. }
                     | Op::LoadArrayLen { .. }
                     | Op::ArrayStatusIs { .. }
+                    | Op::OrderedBeginProbe { .. }
+                    | Op::OrderedEmpty { .. }
+                    | Op::OrderedProbeKey { .. }
+                    | Op::OrderedProbeValue { .. }
+                    | Op::OrderedBeginInsert { .. }
+                    | Op::OrderedInsertInspect { .. }
+                    | Op::OrderedInsertAdvance { .. }
+                    | Op::OrderedInsertCommit { .. }
+                    | Op::OrderedBeginIterate { .. }
+                    | Op::OrderedIterateRow { .. }
+                    | Op::OrderedLen { .. }
+                    | Op::OrderedStatusIs { .. }
                     | Op::Trace { .. } => pending.push(pc + 1),
                     Op::ArrayStoreWord { .. } => {
                         return Err(self.unsupported(
@@ -3515,6 +5013,16 @@ fn shapes_assignable(source: &RegionShape, destination: &RegionShape) -> bool {
             .iter()
             .zip(&destination.words)
             .all(|(source, destination)| source.is_subset_of(destination))
+}
+
+/// Whether any word of a region admits the internal opaque cursor kind. Opaque
+/// words are confined to internal cursor destinations; they may never appear at
+/// a function/call entry or result, where they could be published or aliased.
+fn shape_has_opaque(shape: &RegionShape) -> bool {
+    shape
+        .words
+        .iter()
+        .any(|word| word.contains(WordKind::Opaque))
 }
 
 #[cfg(test)]
@@ -3626,6 +5134,7 @@ mod tests {
             entries: entries.iter().copied().map(RegionId).collect(),
             result: RegionId(result),
             call_contract: call_contract.map(CallContractId),
+            environment: Vec::new(),
         }
     }
 
@@ -3891,6 +5400,41 @@ mod tests {
         )
     }
 
+    #[test]
+    fn string_byte_operations_reject_non_byte_comparable_schemas() {
+        for operation in [
+            Op::StringContains {
+                dst: 16,
+                text: 0,
+                needle: 8,
+            },
+            Op::StringSplitOnce {
+                left: 0,
+                right: 8,
+                status: 16,
+                text: 0,
+                delimiter: 8,
+            },
+            Op::StringParseInt {
+                dst: 16,
+                status: 16,
+                text: 0,
+            },
+        ] {
+            let (mut program, contract) = compare_program(false);
+            program.fns[0].code[0] = operation;
+            assert_eq!(
+                program.verify(contract).expect_err("schema is rejected"),
+                op_error(
+                    0,
+                    ProgramDefect::SchemaNotByteComparable {
+                        schema: SchemaRef(0)
+                    }
+                )
+            );
+        }
+    }
+
     fn gapped_and_schema_program() -> (Program, ProgramContract) {
         (
             Program {
@@ -3906,7 +5450,7 @@ mod tests {
                 functions: vec![function_contract(
                     3,
                     vec![
-                        word_region(0, WordKind::Opaque),
+                        word_region(0, WordKind::Scalar),
                         word_region(16, WordKind::Scalar),
                     ],
                     &[],
@@ -4585,6 +6129,78 @@ mod tests {
             .0
             .verify(multi_entry_placement.1)
             .expect("function call contracts preserve exact multi-entry argument placement");
+    }
+
+    #[test]
+    fn byte_project_requires_byte_comparable_source_and_destination_schemas() {
+        let path = SchemaRef(0);
+        let string = SchemaRef(1);
+        let fixture = || {
+            (
+                Program {
+                    fns: vec![function(
+                        2,
+                        vec![
+                            Op::ByteProject { dst: 8, source: 0 },
+                            Op::Ret { src: 8, size: 8 },
+                        ],
+                    )],
+                },
+                ProgramContract {
+                    functions: vec![function_contract(
+                        2,
+                        vec![
+                            word_region(0, WordKind::Handle(path)),
+                            word_region(8, WordKind::Handle(string)),
+                        ],
+                        &[0],
+                        1,
+                        None,
+                    )],
+                    calls: vec![],
+                    schemas: vec![
+                        schema(
+                            RegionShape::word(WordKind::Handle(path)),
+                            PayloadKind::OpaqueBytes {
+                                byte_comparable: true,
+                            },
+                        ),
+                        schema(
+                            RegionShape::word(WordKind::Handle(string)),
+                            PayloadKind::OpaqueBytes {
+                                byte_comparable: true,
+                            },
+                        ),
+                    ],
+                    value_shapes: vec![],
+                },
+            )
+        };
+
+        let (program, contract) = fixture();
+        program
+            .verify(contract)
+            .expect("distinct opaque Path and String schemas admit byte projection");
+
+        let (program, mut contract) = fixture();
+        contract.schemas[0].payload = PayloadKind::OpaqueBytes {
+            byte_comparable: false,
+        };
+        assert_eq!(
+            program.verify(contract).expect_err("path payload mismatch"),
+            op_error(0, ProgramDefect::SchemaNotByteComparable { schema: path }),
+        );
+
+        let (program, mut contract) = fixture();
+        contract.schemas[1].payload = PayloadKind::OpaqueBytes {
+            byte_comparable: false,
+        };
+        assert_eq!(
+            program
+                .verify(contract)
+                .expect_err("string payload mismatch"),
+            op_error(0, ProgramDefect::SchemaNotByteComparable { schema: string }),
+        );
     }
 
     #[test]
@@ -5826,6 +7442,116 @@ mod tests {
     }
 
     #[test]
+    fn admits_boxed_projection_and_rejects_environment_defects() {
+        let scalar = RegionShape::word(WordKind::Scalar);
+        let pair = RegionShape::new(vec![kinds(WordKind::Scalar), kinds(WordKind::Scalar)]);
+        let build = |field: u32, callee: u32, environment: Vec<FrameRegion>, dst: RegionShape| {
+            let program = Program {
+                fns: vec![function(
+                    3,
+                    vec![
+                        Op::EnvLoad {
+                            dst: RegionId(0),
+                            env: RegionId(1),
+                            callee: FnId(callee),
+                            field,
+                        },
+                        Op::Ret { src: 0, size: 8 },
+                    ],
+                )],
+            };
+            let mut contract = function_contract(
+                3,
+                vec![
+                    region(0, dst),
+                    word_region(8, WordKind::Scalar),
+                    word_region(16, WordKind::Scalar),
+                ],
+                &[2],
+                0,
+                None,
+            );
+            contract.environment = environment;
+            (
+                program,
+                ProgramContract {
+                    functions: vec![contract],
+                    calls: vec![],
+                    schemas: vec![],
+                    value_shapes: vec![],
+                },
+            )
+        };
+
+        // A scalar capture projected into a scalar slot is the boxed convention.
+        let (program, contract) = build(0, 0, vec![region(0, scalar.clone())], scalar.clone());
+        assert!(
+            program.verify(contract).is_ok(),
+            "boxed projection verifies"
+        );
+
+        let index = build(3, 0, vec![region(0, scalar.clone())], scalar.clone());
+        let not_boxed = build(0, 0, vec![], scalar.clone());
+        let out_of_range = build(0, 9, vec![region(0, scalar.clone())], scalar.clone());
+        let width = build(0, 0, vec![region(0, pair.clone())], scalar.clone());
+        let cases = [
+            InvalidCase {
+                name: "capture index out of range",
+                program: index.0,
+                contract: index.1,
+                expected: op_error(
+                    0,
+                    ProgramDefect::EnvironmentFieldIndex {
+                        callee: FnId(0),
+                        field: 3,
+                        field_count: 1,
+                    },
+                ),
+            },
+            InvalidCase {
+                name: "callee is not boxed",
+                program: not_boxed.0,
+                contract: not_boxed.1,
+                expected: op_error(0, ProgramDefect::EnvironmentNotBoxed { callee: FnId(0) }),
+            },
+            InvalidCase {
+                name: "callee out of range",
+                program: out_of_range.0,
+                contract: out_of_range.1,
+                expected: op_error(
+                    0,
+                    ProgramDefect::EnvironmentContractOutOfRange {
+                        callee: FnId(9),
+                        function_count: 1,
+                    },
+                ),
+            },
+            InvalidCase {
+                name: "capture width mismatch",
+                program: width.0,
+                contract: width.1,
+                expected: op_error(
+                    0,
+                    ProgramDefect::EnvironmentFieldShape {
+                        callee: FnId(0),
+                        field: 0,
+                        expected: pair.clone(),
+                        actual: scalar.clone(),
+                    },
+                ),
+            },
+        ];
+        for case in cases {
+            assert_eq!(
+                case.program.verify(case.contract).expect_err(case.name),
+                case.expected,
+                "{}",
+                case.name
+            );
+        }
+    }
+
+    #[test]
     fn rejects_copy_value_for_non_structural_handle_regions() {
         let string_schema = SchemaRef(0);
         let error = Program {
@@ -6634,5 +8360,550 @@ mod tests {
                 },
             }
         );
+    }
+
+    /// The map schema table shared by the ordered-begin-probe admission cases.
+    fn ordered_probe_schemas() -> Vec<SchemaContract> {
+        let scalar = RegionShape::word(WordKind::Scalar);
+        let row = RegionShape::new(vec![WordKind::Scalar.into(), WordKind::Scalar.into()]);
+        vec![
+            schema(scalar.clone(), PayloadKind::Inline),
+            schema(scalar.clone(), PayloadKind::Inline),
+            schema(row, PayloadKind::Inline),
+            schema(
+                RegionShape::word(WordKind::Handle(SchemaRef(3))),
+                PayloadKind::OrderedCollection(OrderedCollectionContract {
+                    kind: OrderedCollectionKind::Map,
+                    key: SchemaRef(0),
+                    value: Some(SchemaRef(1)),
+                    row: SchemaRef(2),
+                    fanout: 4,
+                }),
+            ),
+        ]
+    }
+
+    fn ordered_probe_program(
+        collection_region: FrameRegion,
+        cursor_region: FrameRegion,
+        schema_witness: i64,
+        entries: &[u32],
+    ) -> (Program, ProgramContract) {
+        (
+            Program {
+                fns: vec![function(
+                    4,
+                    vec![
+                        Op::OrderedBeginProbe {
+                            cursor: 8,
+                            status: 24,
+                            collection: 0,
+                            collection_schema_ref: schema_witness,
+                        },
+                        Op::Ret { src: 24, size: 8 },
+                    ],
+                )],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    4,
+                    vec![
+                        collection_region,
+                        cursor_region,
+                        word_region(24, WordKind::Status),
+                    ],
+                    entries,
+                    2,
+                    None,
+                )],
+                calls: vec![],
+                schemas: ordered_probe_schemas(),
+                value_shapes: vec![],
+            },
+        )
+    }
+
+    #[test]
+    fn ordered_begin_probe_admits_a_confined_cursor_and_rejects_escape() {
+        let handle = || word_region(0, WordKind::Handle(SchemaRef(3)));
+        let opaque_cursor = || region(8, RegionShape::new(vec![WordKind::Opaque.into(); 2]));
+
+        // Baseline: a Handle(collection) operand, a two-word opaque cursor, and
+        // a status destination, with the cursor confined (not an entry/result).
+        let (program, contract) = ordered_probe_program(handle(), opaque_cursor(), 3, &[0]);
+        program
+            .verify(contract)
+            .expect("a confined ordered begin probe is admitted");
+
+        // The cursor destination must be exactly two internal opaque words.
+        let (program, contract) = ordered_probe_program(
+            handle(),
+            region(8, RegionShape::new(vec![WordKind::Scalar.into(); 2])),
+            3,
+            &[0],
+        );
+        assert_eq!(
+            program.verify(contract).expect_err("cursor must be opaque"),
+            op_error(
+                0,
+                ProgramDefect::OrderedCursorRegionShape {
+                    region: RegionId(1),
+                    shape: RegionShape::new(vec![WordKind::Scalar.into(); 2]),
+                },
+            ),
+        );
+
+        // The collection handle schema must actually be an ordered collection.
+        let (program, contract) = ordered_probe_program(
+            word_region(0, WordKind::Handle(SchemaRef(0))),
+            opaque_cursor(),
+            0,
+            &[0],
+        );
+        assert_eq!(
+            program
+                .verify(contract)
+                .expect_err("scalar schema is not a collection"),
+            op_error(
+                0,
+                ProgramDefect::OrderedCollectionSchemaNotCollection {
+                    schema: SchemaRef(0),
+                },
+            ),
+        );
+
+        // The handle schema and the static witness must agree.
+        let (program, contract) = ordered_probe_program(
+            word_region(0, WordKind::Handle(SchemaRef(0))),
+            opaque_cursor(),
+            3,
+            &[0],
+        );
+        assert_eq!(
+            program
+                .verify(contract)
+                .expect_err("handle schema disagrees with witness"),
+            op_error(
+                0,
+                ProgramDefect::OrderedCollectionSchemaMismatch {
+                    handle: SchemaRef(0),
+                    witness: SchemaRef(3),
+                },
+            ),
+        );
+
+        // An opaque cursor may never appear at a function entry: it would escape.
+        let (program, contract) = ordered_probe_program(handle(), opaque_cursor(), 3, &[0, 1]);
+        assert_eq!(
+            program
+                .verify(contract)
+                .expect_err("opaque cursor cannot be an entry"),
+            function_error(ProgramDefect::OpaqueRegionEscapes {
+                owner: ShapeOwner::FrameRegion(RegionId(1)),
+            }),
+        );
+    }
+
+    fn ordered_probe_key_program(
+        regions: Vec<FrameRegion>,
+        key_width: u32,
+    ) -> (Program, ProgramContract) {
+        (
+            Program {
+                fns: vec![function(
+                    7,
+                    vec![
+                        Op::OrderedProbeKey {
+                            cursor: 0,
+                            present: 16,
+                            key: 24,
+                            left: 32,
+                            right: 40,
+                            status: 48,
+                            key_width,
+                            collection_schema_ref: 3,
+                        },
+                        Op::Ret { src: 48, size: 8 },
+                    ],
+                )],
+            },
+            ProgramContract {
+                functions: vec![function_contract(7, regions, &[], 5, None)],
+                calls: vec![],
+                schemas: ordered_probe_schemas(),
+                value_shapes: vec![],
+            },
+        )
+    }
+
+    #[test]
+    fn ordered_probe_key_types_every_handshake_operand() {
+        let regions = || {
+            vec![
+                region(0, RegionShape::new(vec![WordKind::Opaque.into(); 2])),
+                word_region(16, WordKind::Scalar),
+                word_region(24, WordKind::Scalar),
+                word_region(32, WordKind::Handle(SchemaRef(3))),
+                word_region(40, WordKind::Handle(SchemaRef(3))),
+                word_region(48, WordKind::Status),
+            ]
+        };
+
+        // Baseline: opaque cursor source, scalar present, a key matching the key
+        // schema, child handles typed to the collection, and a status.
+        let (program, contract) = ordered_probe_key_program(regions(), 8);
+        program
+            .verify(contract)
+            .expect("a well-typed probe key is admitted");
+
+        // The key destination width must equal the key schema's inline width.
+        let (program, contract) = ordered_probe_key_program(regions(), 16);
+        assert_eq!(
+            program.verify(contract).expect_err("wrong key width"),
+            op_error(
+                0,
+                ProgramDefect::OrderedKeyWidth {
+                    schema: SchemaRef(0),
+                    expected: 8,
+                    actual: 16,
+                },
+            ),
+        );
+
+        // A child handle must be exactly the collection handle schema.
+        let mut wrong_child = regions();
+        wrong_child[3] = word_region(32, WordKind::Handle(SchemaRef(0)));
+        let (program, contract) = ordered_probe_key_program(wrong_child, 8);
+        assert_eq!(
+            program.verify(contract).expect_err("wrong child schema"),
+            op_error(
+                0,
+                ProgramDefect::KindMismatch {
+                    role: AccessRole::OrderedChildHandle,
+                    required: KindRequirement::Handle,
+                    allowed: kinds(WordKind::Handle(SchemaRef(0))),
+                },
+            ),
+        );
+
+        // The cursor source must be exactly two internal opaque words.
+        let mut wrong_cursor = regions();
+        wrong_cursor[0] = region(0, RegionShape::new(vec![WordKind::Scalar.into(); 2]));
+        let (program, contract) = ordered_probe_key_program(wrong_cursor, 8);
+        assert_eq!(
+            program.verify(contract).expect_err("cursor must be opaque"),
+            op_error(
+                0,
+                ProgramDefect::OrderedCursorRegionShape {
+                    region: RegionId(0),
+                    shape: RegionShape::new(vec![WordKind::Scalar.into(); 2]),
+                },
+            ),
+        );
+    }
+
+    fn ordered_map_and_set_schemas() -> Vec<SchemaContract> {
+        let scalar = RegionShape::word(WordKind::Scalar);
+        let row = RegionShape::new(vec![WordKind::Scalar.into(), WordKind::Scalar.into()]);
+        vec![
+            schema(scalar.clone(), PayloadKind::Inline),
+            schema(scalar.clone(), PayloadKind::Inline),
+            schema(row, PayloadKind::Inline),
+            schema(
+                RegionShape::word(WordKind::Handle(SchemaRef(3))),
+                PayloadKind::OrderedCollection(OrderedCollectionContract {
+                    kind: OrderedCollectionKind::Map,
+                    key: SchemaRef(0),
+                    value: Some(SchemaRef(1)),
+                    row: SchemaRef(2),
+                    fanout: 4,
+                }),
+            ),
+            schema(
+                RegionShape::word(WordKind::Handle(SchemaRef(4))),
+                PayloadKind::OrderedCollection(OrderedCollectionContract {
+                    kind: OrderedCollectionKind::Set,
+                    key: SchemaRef(0),
+                    value: None,
+                    row: SchemaRef(0),
+                    fanout: 4,
+                }),
+            ),
+        ]
+    }
+
+    fn ordered_probe_value_program(
+        value_width: u32,
+        collection_schema_ref: i64,
+    ) -> (Program, ProgramContract) {
+        (
+            Program {
+                fns: vec![function(
+                    5,
+                    vec![
+                        Op::OrderedProbeValue {
+                            cursor: 0,
+                            present: 16,
+                            value: 24,
+                            status: 32,
+                            value_width,
+                            collection_schema_ref,
+                        },
+                        Op::Ret { src: 32, size: 8 },
+                    ],
+                )],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    5,
+                    vec![
+                        region(0, RegionShape::new(vec![WordKind::Opaque.into(); 2])),
+                        word_region(16, WordKind::Scalar),
+                        word_region(24, WordKind::Scalar),
+                        word_region(32, WordKind::Status),
+                    ],
+                    &[],
+                    3,
+                    None,
+                )],
+                calls: vec![],
+                schemas: ordered_map_and_set_schemas(),
+                value_shapes: vec![],
+            },
+        )
+    }
+
+    #[test]
+    fn ordered_probe_value_types_the_value_and_rejects_sets() {
+        // Baseline: a Map value projection at the exact value width verifies.
+        let (program, contract) = ordered_probe_value_program(8, 3);
+        program
+            .verify(contract)
+            .expect("a well-typed value projection is admitted");
+
+        // A Set collection has no values, so a value projection is a type error.
+        let (program, contract) = ordered_probe_value_program(8, 4);
+        assert_eq!(
+            program.verify(contract).expect_err("value on set"),
+            op_error(
+                0,
+                ProgramDefect::OrderedValueOnSet {
+                    schema: SchemaRef(4),
+                },
+            ),
+        );
+
+        // The value destination width must equal the value schema inline width.
+        let (program, contract) = ordered_probe_value_program(16, 3);
+        assert_eq!(
+            program.verify(contract).expect_err("wrong value width"),
+            op_error(
+                0,
+                ProgramDefect::OrderedValueWidth {
+                    schema: SchemaRef(1),
+                    expected: 8,
+                    actual: 16,
+                },
+            ),
+        );
+    }
+
+    #[test]
+    fn opaque_cursor_words_are_not_copyable() {
+        // A raw word copy could duplicate a single-use cursor; both directions
+        // of an opaque copy are rejected before the token can be aliased.
+        let (program, contract) = single_function(
+            2,
+            vec![Op::CopyI64 { dst: 8, src: 0 }, Op::Ret { src: 8, size: 8 }],
+            vec![
+                region(0, RegionShape::word(WordKind::Opaque)),
+                word_region(8, WordKind::Scalar),
+            ],
+            1,
+        );
+        assert_eq!(
+            program.verify(contract).expect_err("opaque source copy"),
+            op_error(
+                0,
+                ProgramDefect::OpaqueWordNotCopyable {
+                    role: AccessRole::Source,
+                },
+            ),
+        );
+    }
+
+    /// One publish program: `Publish` at pc 0, returning an untouched scalar so
+    /// the record region alone carries the case's shape. Frame word 0 is the
+    /// result; the record region lives from word 1 on.
+    fn publish_program(
+        publish: Op,
+        regions: Vec<FrameRegion>,
+        schemas: Vec<SchemaContract>,
+        value_shapes: Vec<ValueShapeContract>,
+    ) -> (Program, ProgramContract) {
+        let words = regions
+            .iter()
+            .map(|region| (region.offset as usize / WORD_SIZE) + region.shape.words.len().max(1))
+            .max()
+            .unwrap_or(1);
+        (
+            Program {
+                fns: vec![function(words, vec![publish, Op::Ret { src: 0, size: 8 }])],
+            },
+            ProgramContract {
+                functions: vec![function_contract(words, regions, &[], 0, None)],
+                calls: vec![],
+                schemas,
+                value_shapes,
+            },
+        )
+    }
+
+    fn publish_record(width: u32, schema_ref: i64) -> Op {
+        Op::Publish {
+            site: 0xF00D,
+            record: 8,
+            record_width: width,
+            record_schema_ref: schema_ref,
+        }
+    }
+
+    #[test]
+    fn publish_admits_a_scalar_record_and_rejects_malformed_contracts() {
+        let scalar = || RegionShape::word(WordKind::Scalar);
+        let record_regions = || {
+            vec![
+                word_region(0, WordKind::Scalar),
+                word_region(8, WordKind::Scalar),
+            ]
+        };
+
+        // Baseline: a one-word scalar publication record is admitted. The opaque
+        // site key is never interpreted; the record schema types the bytes.
+        let (program, contract) = publish_program(
+            publish_record(8, 0),
+            record_regions(),
+            vec![schema(scalar(), PayloadKind::PublicationRecord)],
+            vec![],
+        );
+        program
+            .verify(contract)
+            .expect("a scalar publication record is admitted");
+
+        // An out-of-range schema witness is rejected.
+        let (program, contract) = publish_program(
+            publish_record(8, 99),
+            record_regions(),
+            vec![schema(scalar(), PayloadKind::PublicationRecord)],
+            vec![],
+        );
+        assert_eq!(
+            program.verify(contract).expect_err("witness out of range"),
+            op_error(
+                0,
+                ProgramDefect::PublicationSchemaWitnessOutOfRange {
+                    witness: 99,
+                    schema_count: 1,
+                },
+            ),
+        );
+
+        // A witness that names a non-publication schema is rejected.
+        let (program, contract) = publish_program(
+            publish_record(8, 0),
+            record_regions(),
+            vec![schema(scalar(), PayloadKind::Inline)],
+            vec![],
+        );
+        assert_eq!(
+            program.verify(contract).expect_err("schema not a record"),
+            op_error(
+                0,
+                ProgramDefect::PublicationSchemaNotRecord {
+                    schema: SchemaRef(0),
+                },
+            ),
+        );
+
+        // A publication-record schema whose inline shape hides a handle word is
+        // rejected globally: a published descriptor must never carry a store or
+        // molten handle out of the task (no handle leakage).
+        let handle_inline = RegionShape::new(vec![
+            WordKind::Scalar.into(),
+            WordKind::Handle(SchemaRef(0)).into(),
+        ]);
+        let (program, contract) = publish_program(
+            publish_record(16, 0),
+            vec![
+                word_region(0, WordKind::Scalar),
+                region(8, handle_inline.clone()),
+            ],
+            vec![schema(
+                handle_inline.clone(),
+                PayloadKind::PublicationRecord,
+            )],
+            vec![],
+        );
+        assert_eq!(
+            program
+                .verify(contract)
+                .expect_err("handle in a publication record"),
+            global_error(ProgramDefect::PublicationRecordSchemaNotScalar {
+                schema: SchemaRef(0),
+                inline: handle_inline,
+            }),
+        );
+
+        // A record width that disagrees with the schema's inline length is
+        // rejected before any region is bound.
+        let (program, contract) = publish_program(
+            publish_record(16, 0),
+            record_regions(),
+            vec![schema(scalar(), PayloadKind::PublicationRecord)],
+            vec![],
+        );
+        assert_eq!(
+            program.verify(contract).expect_err("record width mismatch"),
+            op_error(
+                0,
+                ProgramDefect::PublicationRecordWidth {
+                    schema: SchemaRef(0),
+                    expected: 8,
+                    actual: 16,
+                },
+            ),
+        );
+
+        // A record region whose structural value shape disagrees with the
+        // schema is rejected: raw bytes never publish without the exact
+        // verifier-owned region/value-shape contract.
+        let value_shapes = vec![ValueShapeContract {
+            shape: scalar(),
+            kind: ValueShapeKind::Product {
+                fields: vec![field(0, scalar())],
+            },
+        }];
+        let (program, contract) = publish_program(
+            publish_record(8, 0),
+            record_regions(),
+            vec![structural_schema(
+                scalar(),
+                ValueShapeRef(0),
+                PayloadKind::PublicationRecord,
+            )],
+            value_shapes,
+        );
+        let error = program
+            .verify(contract)
+            .expect_err("record structural shape mismatch");
+        assert!(matches!(
+            error.defect,
+            ProgramDefect::PublicationRecordShapeMismatch {
+                schema: SchemaRef(0),
+                ..
+            }
+        ));
+        assert_eq!(error.function, Some(FnId(0)));
+        assert_eq!(error.pc, Some(0));
     }
 }

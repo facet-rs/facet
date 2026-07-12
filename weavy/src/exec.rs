@@ -12,7 +12,9 @@
 use std::sync::Arc;
 
 use crate::jit::task_lane::{JitExecutable, JitTask};
-use crate::task::{FnId, HostFn, Op, Task, TaskEvent, TaskStep, TraceMode, ValueMemories};
+use crate::task::{
+    FnId, HostFn, Op, PublicationLog, Task, TaskEvent, TaskStep, TraceMode, ValueMemories,
+};
 use crate::{
     CallContractId, CallSiteFacts, DriveRequirements, FrameRegion, FunctionContract, RegionId,
     SchemaRef, ValueShapeKind, ValueShapeRef, VerifiedProgram, WordKind,
@@ -78,6 +80,54 @@ pub struct StoreHandle {
     index: usize,
 }
 
+/// One inline ABI value with every nested reference represented as a typed
+/// frozen value rather than an integer handle.
+#[derive(Clone, Debug)]
+pub struct FrozenInlineValue {
+    bytes: Vec<u8>,
+    references: Vec<(u32, FrozenValue)>,
+}
+
+impl FrozenInlineValue {
+    #[must_use]
+    pub fn new(bytes: Vec<u8>) -> Self {
+        Self {
+            bytes,
+            references: Vec::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn with_reference(mut self, offset: u32, value: FrozenValue) -> Self {
+        self.references.push((offset, value));
+        self
+    }
+}
+
+/// Handle-free execution representation accepted only while initializing a
+/// verified task entry. Store references are typed `StoreHandle`s; molten and
+/// ordered values are imported into that task's private namespaces.
+#[derive(Clone, Debug)]
+pub enum FrozenValue {
+    Store {
+        schema: SchemaRef,
+        handle: StoreHandle,
+    },
+    Opaque {
+        schema: SchemaRef,
+        bytes: Vec<u8>,
+    },
+    Dense {
+        schema: SchemaRef,
+        elements: Vec<FrozenInlineValue>,
+    },
+    Ordered {
+        schema: SchemaRef,
+        rows: Vec<(FrozenInlineValue, Option<FrozenInlineValue>)>,
+    },
+    Inline(FrozenInlineValue),
+}
+
 impl StoreHandle {
     #[must_use]
     pub fn new(index: usize) -> Option<Self> {
@@ -100,7 +150,7 @@ impl StoreHandle {
 pub struct FaultSite {
     pub function: FnId,
     pub pc: usize,
-    pub op: Op,
+    pub op: Box<Op>,
     pub call: Option<CallSiteFacts>,
 }
 
@@ -111,9 +161,143 @@ pub struct StructuralResult<'a> {
     region: RegionId,
     value_shape: ValueShapeRef,
     shape: &'a crate::ValueShapeContract,
+    value_shapes: &'a [crate::ValueShapeContract],
+}
+
+/// One verifier-described structural value borrowed from a completed task.
+/// Its representation bytes and offsets remain private; callers can only walk
+/// the verified scalar, handle, product, and active-enum views.
+#[derive(Clone, Copy)]
+pub struct TaskStructuralValue<'task> {
+    bytes: &'task [u8],
+    entry: FnId,
+    region: RegionId,
+    shape: &'task crate::RegionShape,
+    value_shape: Option<&'task crate::ValueShapeContract>,
+    value_shapes: &'task [crate::ValueShapeContract],
+}
+
+impl<'task> TaskStructuralValue<'task> {
+    pub fn scalar_word(self) -> Result<i64, TaskFault> {
+        let [word] = self.shape.words.as_slice() else {
+            return Err(self.invalid());
+        };
+        if !word.is_exactly(WordKind::Scalar) {
+            return Err(self.invalid());
+        }
+        self.word(0)
+    }
+
+    pub fn value_ref(self) -> Result<TaskValueRef<'task>, TaskFault> {
+        let [word] = self.shape.words.as_slice() else {
+            return Err(self.invalid());
+        };
+        let [WordKind::Handle(schema)] = word.as_slice() else {
+            return Err(self.invalid());
+        };
+        Ok(TaskValueRef {
+            word: self.word(0)?,
+            schema: *schema,
+            lifetime: core::marker::PhantomData,
+        })
+    }
+
+    pub fn product_field(self, field: u32) -> Result<Self, TaskFault> {
+        let Some(shape) = self.value_shape else {
+            return Err(self.invalid());
+        };
+        let ValueShapeKind::Product { fields } = &shape.kind else {
+            return Err(self.invalid());
+        };
+        self.field(fields.get(field as usize).ok_or_else(|| self.invalid())?)
+    }
+
+    pub fn enum_selector(self) -> Result<u32, TaskFault> {
+        let Some(shape) = self.value_shape else {
+            return Err(self.invalid());
+        };
+        let ValueShapeKind::Enum { selector, variants } = &shape.kind else {
+            return Err(self.invalid());
+        };
+        let actual = self.word(selector.offset)?;
+        let actual = usize::try_from(actual).map_err(|_| self.invalid())?;
+        if actual >= variants.len() {
+            return Err(self.invalid());
+        }
+        u32::try_from(actual).map_err(|_| self.invalid())
+    }
+
+    pub fn enum_field(self, variant: u32, field: u32) -> Result<Self, TaskFault> {
+        let Some(shape) = self.value_shape else {
+            return Err(self.invalid());
+        };
+        let ValueShapeKind::Enum { variants, .. } = &shape.kind else {
+            return Err(self.invalid());
+        };
+        let field = variants
+            .get(variant as usize)
+            .and_then(|variant| variant.fields.get(field as usize))
+            .ok_or_else(|| self.invalid())?;
+        self.field(field)
+    }
+
+    fn field(self, field: &'task crate::ValueFieldUse) -> Result<Self, TaskFault> {
+        let start = field.offset as usize;
+        let len = field
+            .shape
+            .checked_byte_len()
+            .ok_or_else(|| self.invalid())?;
+        let end = start.checked_add(len).ok_or_else(|| self.invalid())?;
+        let bytes = self.bytes.get(start..end).ok_or_else(|| self.invalid())?;
+        let value_shape = field
+            .value_shape
+            .map(|shape| self.contract_shape(shape).ok_or_else(|| self.invalid()))
+            .transpose()?;
+        Ok(Self {
+            bytes,
+            entry: self.entry,
+            region: self.region,
+            shape: &field.shape,
+            value_shape,
+            value_shapes: self.value_shapes,
+        })
+    }
+
+    fn contract_shape(self, shape: ValueShapeRef) -> Option<&'task crate::ValueShapeContract> {
+        self.value_shapes.get(shape.0 as usize)
+    }
+
+    fn word(self, offset: u32) -> Result<i64, TaskFault> {
+        let start = offset as usize;
+        let end = start
+            .checked_add(size_of::<i64>())
+            .ok_or_else(|| self.invalid())?;
+        let bytes = self.bytes.get(start..end).ok_or_else(|| self.invalid())?;
+        Ok(i64::from_le_bytes(bytes.try_into().expect("checked word")))
+    }
+
+    fn invalid(self) -> TaskFault {
+        TaskFault::InvalidResultShape {
+            entry: self.entry,
+            region: self.region,
+            size: self.bytes.len(),
+        }
+    }
 }
 
 impl StructuralResult<'_> {
+    #[must_use]
+    pub fn as_value(&self) -> TaskStructuralValue<'_> {
+        TaskStructuralValue {
+            bytes: self.bytes,
+            entry: self.entry,
+            region: self.region,
+            shape: &self.shape.shape,
+            value_shape: Some(self.shape),
+            value_shapes: self.value_shapes,
+        }
+    }
+
     pub fn enum_selector(&self) -> Result<i64, TaskFault> {
         let ValueShapeKind::Enum { selector, variants } = &self.shape.kind else {
             return Err(TaskFault::InvalidResultShape {
@@ -161,6 +345,52 @@ impl StructuralResult<'_> {
         self.word(field.offset)
     }
 
+    /// Read a handle-shaped field as an opaque reference tied to the completed
+    /// task borrow. The raw machine word is never exposed.
+    pub fn enum_value_field(
+        &self,
+        variant: u32,
+        field: u32,
+    ) -> Result<TaskValueRef<'_>, TaskFault> {
+        let ValueShapeKind::Enum { variants, .. } = &self.shape.kind else {
+            return Err(TaskFault::InvalidResultShape {
+                entry: self.entry,
+                region: self.region,
+                size: self.bytes.len(),
+            });
+        };
+        let field = variants
+            .get(variant as usize)
+            .and_then(|variant| variant.fields.get(field as usize))
+            .ok_or(TaskFault::InvalidResultShape {
+                entry: self.entry,
+                region: self.region,
+                size: self.bytes.len(),
+            })?;
+        let [word] = field.shape.words.as_slice() else {
+            return Err(TaskFault::InvalidResultShape {
+                entry: self.entry,
+                region: self.region,
+                size: self.bytes.len(),
+            });
+        };
+        if !matches!(word.as_slice(), [WordKind::Handle(_)]) {
+            return Err(TaskFault::InvalidResultShape {
+                entry: self.entry,
+                region: self.region,
+                size: self.bytes.len(),
+            });
+        }
+        Ok(TaskValueRef {
+            word: self.word(field.offset)?,
+            schema: match word.as_slice() {
+                [WordKind::Handle(schema)] => *schema,
+                _ => unreachable!("checked handle field"),
+            },
+            lifetime: core::marker::PhantomData,
+        })
+    }
+
     fn word(&self, offset: u32) -> Result<i64, TaskFault> {
         let start = offset as usize;
         let end = start
@@ -180,6 +410,283 @@ impl StructuralResult<'_> {
             })?;
         Ok(i64::from_le_bytes(
             bytes.try_into().expect("checked structural result word"),
+        ))
+    }
+}
+
+/// Opaque task-result reference. Its machine word is private and its lifetime
+/// is minted only inside [`ExecTask::with_result_resolver`].
+#[derive(Clone, Copy)]
+pub struct TaskValueRef<'task> {
+    word: i64,
+    schema: SchemaRef,
+    lifetime: core::marker::PhantomData<&'task mut &'task ()>,
+}
+
+/// A resolved value reference. Store indices occupy their typed nonnegative
+/// namespace; task-local molten bytes remain borrowed from the task; externally
+/// lent molten references retain a distinct typed namespace.
+pub enum ResolvedTaskValue<'task> {
+    Store(StoreHandle),
+    TaskMolten(&'task [u8]),
+    LentMolten { index: usize },
+}
+
+pub struct ResolvedOrderedRow<'task> {
+    key: TaskStructuralValue<'task>,
+    value: Option<TaskStructuralValue<'task>>,
+}
+
+impl<'task> ResolvedOrderedRow<'task> {
+    #[must_use]
+    pub fn key(&self) -> TaskStructuralValue<'task> {
+        self.key
+    }
+
+    #[must_use]
+    pub fn value(&self) -> Option<TaskStructuralValue<'task>> {
+        self.value
+    }
+}
+
+pub struct ResolvedOrderedCollection<'task> {
+    rows: Vec<ResolvedOrderedRow<'task>>,
+}
+
+pub struct ResolvedDenseArray<'task> {
+    elements: Vec<TaskStructuralValue<'task>>,
+}
+
+impl<'task> ResolvedDenseArray<'task> {
+    #[must_use]
+    pub fn elements(&self) -> &[TaskStructuralValue<'task>] {
+        &self.elements
+    }
+}
+
+impl<'task> ResolvedOrderedCollection<'task> {
+    #[must_use]
+    pub fn rows(&self) -> &[ResolvedOrderedRow<'task>] {
+        &self.rows
+    }
+}
+
+/// Borrow-scoped resolver for opaque result references. It has no constructor
+/// and cannot outlive the closure passed to `with_result_resolver`.
+pub struct TaskValueResolver<'task> {
+    molten: &'task crate::task::MoltenArena,
+    contract: &'task crate::ProgramContract,
+}
+
+impl<'task> TaskValueResolver<'task> {
+    pub fn resolve(&self, value: TaskValueRef<'task>) -> Option<ResolvedTaskValue<'task>> {
+        match self.molten.resolve_handle(value.word)? {
+            crate::task::ResolvedHandle::Store(index) => {
+                Some(ResolvedTaskValue::Store(StoreHandle::new(index)?))
+            }
+            crate::task::ResolvedHandle::TaskMolten(bytes) => {
+                Some(ResolvedTaskValue::TaskMolten(bytes))
+            }
+            crate::task::ResolvedHandle::LentMolten(index) => {
+                Some(ResolvedTaskValue::LentMolten { index })
+            }
+        }
+    }
+
+    /// Resolve one nested handle word without exposing that word. The caller
+    /// supplies the typed payload offset; semantic identity is still rebuilt
+    /// from element position, schema, and referent identity.
+    pub fn resolve_nested(
+        &self,
+        bytes: &'task [u8],
+        offset: usize,
+    ) -> Option<ResolvedTaskValue<'task>> {
+        let word = i64::from_le_bytes(bytes.get(offset..offset.checked_add(8)?)?.try_into().ok()?);
+        self.resolve(TaskValueRef {
+            word,
+            schema: SchemaRef(u32::MAX),
+            lifetime: core::marker::PhantomData,
+        })
+    }
+
+    pub fn resolve_ordered(
+        &self,
+        value: TaskValueRef<'task>,
+    ) -> Result<ResolvedOrderedCollection<'task>, TaskFault> {
+        let collection = self
+            .contract
+            .schemas
+            .get(value.schema.0 as usize)
+            .ok_or_else(|| self.invalid_ordered())?;
+        let crate::PayloadKind::OrderedCollection(ordered) = &collection.payload else {
+            return Err(self.invalid_ordered());
+        };
+        let key = self
+            .contract
+            .schemas
+            .get(ordered.key.0 as usize)
+            .ok_or_else(|| self.invalid_ordered())?;
+        let value_contract = ordered
+            .value
+            .map(|schema| {
+                self.contract
+                    .schemas
+                    .get(schema.0 as usize)
+                    .ok_or_else(|| self.invalid_ordered())
+            })
+            .transpose()?;
+        let rows = self
+            .molten
+            .ordered_rows(value.word, i64::from(value.schema.0))
+            .map_err(|_| self.invalid_ordered())?;
+        rows.into_iter()
+            .map(|row| {
+                let key_value = self.structural(row.key, &key.inline, key.value_shape)?;
+                let value = match (row.value, value_contract) {
+                    (Some(bytes), Some(contract)) => {
+                        Some(self.structural(bytes, &contract.inline, contract.value_shape)?)
+                    }
+                    (None, None) => None,
+                    _ => return Err(self.invalid_ordered()),
+                };
+                Ok(ResolvedOrderedRow {
+                    key: key_value,
+                    value,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(|rows| ResolvedOrderedCollection { rows })
+    }
+
+    pub fn resolve_dense(
+        &self,
+        value: TaskValueRef<'task>,
+    ) -> Result<ResolvedDenseArray<'task>, TaskFault> {
+        let collection = self
+            .contract
+            .schemas
+            .get(value.schema.0 as usize)
+            .ok_or_else(|| self.invalid_ordered())?;
+        let crate::PayloadKind::DenseArray { element } = collection.payload else {
+            return Err(self.invalid_ordered());
+        };
+        let element_contract = self
+            .contract
+            .schemas
+            .get(element.0 as usize)
+            .ok_or_else(|| self.invalid_ordered())?;
+        let width = element_contract
+            .inline
+            .checked_byte_len()
+            .ok_or_else(|| self.invalid_ordered())?;
+        let elements = self
+            .molten
+            .dense_elements(value.word, i64::from(element.0), width)
+            .map_err(|_| self.invalid_ordered())?
+            .into_iter()
+            .map(|bytes| {
+                self.structural(
+                    bytes,
+                    &element_contract.inline,
+                    element_contract.value_shape,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(ResolvedDenseArray { elements })
+    }
+
+    fn structural(
+        &self,
+        bytes: &'task [u8],
+        shape: &'task crate::RegionShape,
+        value_shape: Option<ValueShapeRef>,
+    ) -> Result<TaskStructuralValue<'task>, TaskFault> {
+        if shape.checked_byte_len() != Some(bytes.len()) {
+            return Err(self.invalid_ordered());
+        }
+        let value_shape = value_shape
+            .map(|shape| {
+                self.contract
+                    .value_shapes
+                    .get(shape.0 as usize)
+                    .ok_or_else(|| self.invalid_ordered())
+            })
+            .transpose()?;
+        Ok(TaskStructuralValue {
+            bytes,
+            entry: FnId(0),
+            region: RegionId(0),
+            shape,
+            value_shape,
+            value_shapes: &self.contract.value_shapes,
+        })
+    }
+
+    fn invalid_ordered(&self) -> TaskFault {
+        TaskFault::InvalidResultShape {
+            entry: FnId(0),
+            region: RegionId(0),
+            size: 0,
+        }
+    }
+
+    #[must_use]
+    pub fn molten_stats(&self) -> (usize, usize) {
+        self.molten.stats()
+    }
+}
+
+/// One descriptor in a completed task's append-only publication log.
+///
+/// The view is read-only and lives only as long as the borrow of the task. Its
+/// bytes are an owned copy the task made when the publish op ran, so nothing
+/// here aliases the frame, the molten arena, or any lent value memory. The
+/// record type is a verifier-owned publication-record schema; the provenance
+/// key is opaque front-end identity the machine never interprets.
+pub struct PublishedDescriptor<'a> {
+    site: u64,
+    schema: SchemaRef,
+    value_shape: Option<ValueShapeRef>,
+    bytes: &'a [u8],
+}
+
+impl<'a> PublishedDescriptor<'a> {
+    /// The opaque, front-end-assigned provenance key the publish op carried.
+    #[must_use]
+    pub fn provenance_key(&self) -> u64 {
+        self.site
+    }
+
+    /// The publication-record schema that types this descriptor's bytes.
+    #[must_use]
+    pub fn record_schema(&self) -> SchemaRef {
+        self.schema
+    }
+
+    /// The structural value shape of the captured frame value, if the record
+    /// schema declared one.
+    #[must_use]
+    pub fn value_shape(&self) -> Option<ValueShapeRef> {
+        self.value_shape
+    }
+
+    /// The exact captured bytes, copied by value at publish time.
+    #[must_use]
+    pub fn bytes(&self) -> &'a [u8] {
+        self.bytes
+    }
+
+    /// One captured scalar word, read little-endian at `offset` within the
+    /// record. The record schema admits only scalar words, so any in-range,
+    /// word-sized read names a captured scalar; an out-of-range read returns
+    /// `None`.
+    #[must_use]
+    pub fn word(&self, offset: u32) -> Option<i64> {
+        let start = usize::try_from(offset).ok()?;
+        let end = start.checked_add(size_of::<i64>())?;
+        let bytes = self.bytes.get(start..end)?;
+        Some(i64::from_le_bytes(
+            bytes.try_into().expect("checked publication word"),
         ))
     }
 }
@@ -272,6 +779,35 @@ pub enum TaskFault {
         side: CompareSide,
         handle: i64,
     },
+    UnresidentStringConcatOperand {
+        site: FaultSite,
+        side: CompareSide,
+        handle: i64,
+    },
+    StringConcatAllocationFailed {
+        site: FaultSite,
+    },
+    UnresidentByteProjectSource {
+        site: FaultSite,
+        handle: i64,
+    },
+    ByteProjectionAllocationFailed {
+        site: FaultSite,
+    },
+    IntToStringAllocationFailed {
+        site: FaultSite,
+    },
+    UnresidentPathJoinOperand {
+        site: FaultSite,
+        side: CompareSide,
+        handle: i64,
+    },
+    PathJoinAllocationFailed {
+        site: FaultSite,
+    },
+    PublicationAllocationFailed {
+        site: FaultSite,
+    },
     InvalidEnumSelector {
         site: FaultSite,
         value_shape: ValueShapeRef,
@@ -285,6 +821,14 @@ pub enum TaskFault {
         actual: i64,
     },
     InvalidArrayStatus {
+        site: FaultSite,
+        actual: i64,
+    },
+    InvalidStringStatus {
+        site: FaultSite,
+        actual: i64,
+    },
+    InvalidOrderedStatus {
         site: FaultSite,
         actual: i64,
     },
@@ -308,6 +852,27 @@ pub enum TaskFault {
         state: ExecTaskState,
     },
     DriveAfterDone,
+    PublicationIndexOutOfRange {
+        index: usize,
+        count: usize,
+    },
+    /// A boxed capture environment access faulted: the handle named no resident
+    /// environment box in this task, was minted under another task generation,
+    /// or the requested capture exceeded the box.
+    Environment {
+        site: FaultSite,
+        kind: EnvironmentFaultKind,
+        handle: i64,
+    },
+}
+
+/// The closed set of boxed-environment access faults.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EnvironmentFaultKind {
+    Unresident,
+    Stale,
+    OutOfRange,
+    AllocationFailed,
 }
 
 /// A verified program prepared for execution.
@@ -396,7 +961,7 @@ impl Executable {
         let function = self.function(entry)?;
         for (index, region) in function.entries.iter().copied().enumerate() {
             let region_contract = &function.frame.regions[region.0 as usize];
-            if region_contract.value_shape.is_some() || entry_word_kind(region_contract).is_none() {
+            if region_contract.value_shape.is_none() && entry_word_kind(region_contract).is_none() {
                 return Err(TaskFault::InvalidEntryShape {
                     entry,
                     index,
@@ -466,6 +1031,57 @@ impl ExecTask<'_> {
         handle: StoreHandle,
     ) -> Result<(), TaskFault> {
         self.write_entry_word(index, handle.as_i64(), EntryWriteKind::StoreHandle(schema))
+    }
+
+    pub fn write_entry_frozen(
+        &mut self,
+        index: usize,
+        value: &FrozenValue,
+    ) -> Result<(), TaskFault> {
+        self.check_not_poisoned()?;
+        let function = self.executable.function(self.entry)?;
+        let Some(region) = function.entries.get(index).copied() else {
+            return Err(TaskFault::InvalidEntryIndex {
+                entry: self.entry,
+                index,
+                entry_count: function.entries.len(),
+            });
+        };
+        let declared = function.frame.regions[region.0 as usize].clone();
+        if self.entries_closed {
+            return Err(TaskFault::EntryWriteAfterDrive {
+                entry: self.entry,
+                index,
+                region,
+            });
+        }
+        if self.entries_initialized[index] {
+            return Err(TaskFault::EntryAlreadyInitialized {
+                entry: self.entry,
+                index,
+                region,
+            });
+        }
+        let contract = self.executable.verified.contract().clone();
+        let bytes = match &mut self.lane {
+            Lane::Interpreter(task) => {
+                materialize_frozen(value, &declared.shape, &contract, task.molten_mut())
+            }
+            Lane::Native(task) => {
+                materialize_frozen(value, &declared.shape, &contract, task.molten_mut())
+            }
+        }
+        .map_err(|()| TaskFault::InvalidEntryShape {
+            entry: self.entry,
+            index,
+            region,
+        })?;
+        match &mut self.lane {
+            Lane::Interpreter(task) => task.write_bytes(declared.offset, &bytes),
+            Lane::Native(task) => task.write_bytes(declared.offset, &bytes),
+        }
+        self.entries_initialized[index] = true;
+        Ok(())
     }
 
     fn write_entry_word(
@@ -581,7 +1197,15 @@ impl ExecTask<'_> {
         }
     }
 
-    pub fn result(&self) -> Result<&[u8], TaskFault> {
+    #[must_use]
+    pub fn frame_arena_bytes(&self) -> usize {
+        match &self.lane {
+            Lane::Interpreter(task) => task.frame_arena_bytes(),
+            Lane::Native(task) => task.frame_arena_bytes(),
+        }
+    }
+
+    pub(crate) fn result(&self) -> Result<&[u8], TaskFault> {
         self.check_result_available()?;
         Ok(match &self.lane {
             Lane::Interpreter(task) => &task.result,
@@ -649,7 +1273,77 @@ impl ExecTask<'_> {
             region,
             value_shape,
             shape,
+            value_shapes: &self.executable.verified.contract().value_shapes,
         })
+    }
+
+    /// Inspect a completed structural result together with an opaque resolver
+    /// borrowed from the same lane-owned molten arena. The higher-ranked
+    /// closure prevents the resolver and opaque references from escaping this
+    /// borrow; interpreter and native lanes expose the identical contract.
+    pub fn with_result_resolver<R>(
+        &self,
+        use_result: impl for<'task> FnOnce(
+            StructuralResult<'task>,
+            TaskValueResolver<'task>,
+        ) -> Result<R, TaskFault>,
+    ) -> Result<R, TaskFault> {
+        let result = self.result_structural()?;
+        let molten = match &self.lane {
+            Lane::Interpreter(task) => task.molten(),
+            Lane::Native(task) => task.molten(),
+        };
+        use_result(
+            result,
+            TaskValueResolver {
+                molten,
+                contract: self.executable.verified.contract(),
+            },
+        )
+    }
+
+    /// Number of descriptors the task published, available once the task is
+    /// done and never poisoned. Preserves the result lifecycle: a task that
+    /// faulted surfaces [`TaskFault::PoisonedResult`], one still running
+    /// surfaces [`TaskFault::ResultBeforeDone`].
+    pub fn publication_count(&self) -> Result<usize, TaskFault> {
+        self.check_result_available()?;
+        Ok(self.publications().len())
+    }
+
+    /// The descriptor at `index` in publication order, as a read-only,
+    /// contract-typed view. Gated by the same result lifecycle as
+    /// [`ExecTask::publication_count`].
+    pub fn publication(&self, index: usize) -> Result<PublishedDescriptor<'_>, TaskFault> {
+        self.check_result_available()?;
+        let log = self.publications();
+        let (record, bytes) = log
+            .get(index)
+            .ok_or(TaskFault::PublicationIndexOutOfRange {
+                index,
+                count: log.len(),
+            })?;
+        // Publish admission proved the stored witness names a valid
+        // publication-record schema, and the log copies that witness verbatim.
+        let schema_index = usize::try_from(record.schema_ref)
+            .ok()
+            .filter(|index| *index < self.executable.verified.contract().schemas.len())
+            .expect("publish admission proved record schema witness");
+        let schema = SchemaRef(schema_index as u32);
+        let value_shape = self.executable.verified.contract().schemas[schema_index].value_shape;
+        Ok(PublishedDescriptor {
+            site: record.site,
+            schema,
+            value_shape,
+            bytes,
+        })
+    }
+
+    fn publications(&self) -> &PublicationLog {
+        match &self.lane {
+            Lane::Interpreter(task) => task.publications(),
+            Lane::Native(task) => task.publications(),
+        }
     }
 
     fn check_not_poisoned(&self) -> Result<(), TaskFault> {
@@ -725,6 +1419,128 @@ impl ExecTask<'_> {
     fn poison(&mut self, fault: TaskFault) -> TaskFault {
         self.poisoned = Some(fault.clone());
         fault
+    }
+}
+
+fn materialize_frozen(
+    value: &FrozenValue,
+    expected: &crate::RegionShape,
+    contract: &crate::ProgramContract,
+    molten: &mut crate::task::MoltenArena,
+) -> Result<Vec<u8>, ()> {
+    match value {
+        FrozenValue::Store { schema, handle } => {
+            require_handle_schema(expected, *schema)?;
+            Ok(handle.as_i64().to_le_bytes().to_vec())
+        }
+        FrozenValue::Opaque { schema, bytes } => {
+            require_handle_schema(expected, *schema)?;
+            let handle = molten.import_opaque(bytes).map_err(|_| ())?;
+            Ok(handle.to_le_bytes().to_vec())
+        }
+        FrozenValue::Dense { schema, elements } => {
+            require_handle_schema(expected, *schema)?;
+            let collection = contract.schemas.get(schema.0 as usize).ok_or(())?;
+            let crate::PayloadKind::DenseArray { element } = &collection.payload else {
+                return Err(());
+            };
+            let element_contract = contract.schemas.get(element.0 as usize).ok_or(())?;
+            let elements = elements
+                .iter()
+                .map(|value| materialize_inline(value, &element_contract.inline, contract, molten))
+                .collect::<Result<Vec<_>, ()>>()?;
+            let handle = molten
+                .import_dense(
+                    i64::from(element.0),
+                    element_contract.inline.checked_byte_len().ok_or(())?,
+                    &elements,
+                )
+                .map_err(|_| ())?;
+            Ok(handle.to_le_bytes().to_vec())
+        }
+        FrozenValue::Ordered { schema, rows } => {
+            require_handle_schema(expected, *schema)?;
+            let collection = contract.schemas.get(schema.0 as usize).ok_or(())?;
+            let crate::PayloadKind::OrderedCollection(ordered) = &collection.payload else {
+                return Err(());
+            };
+            let key = contract.schemas.get(ordered.key.0 as usize).ok_or(())?;
+            let value_contract = ordered
+                .value
+                .map(|schema| contract.schemas.get(schema.0 as usize).ok_or(()))
+                .transpose()?;
+            let rows = rows
+                .iter()
+                .map(|(row_key, row_value)| {
+                    let key_bytes = materialize_inline(row_key, &key.inline, contract, molten)?;
+                    let value_bytes = match (row_value, value_contract) {
+                        (Some(row_value), Some(value_contract)) => Some(materialize_inline(
+                            row_value,
+                            &value_contract.inline,
+                            contract,
+                            molten,
+                        )?),
+                        (None, None) => None,
+                        _ => return Err(()),
+                    };
+                    Ok((key_bytes, value_bytes))
+                })
+                .collect::<Result<Vec<_>, ()>>()?;
+            let handle = molten
+                .import_ordered(i64::from(schema.0), &rows)
+                .map_err(|_| ())?;
+            Ok(handle.to_le_bytes().to_vec())
+        }
+        FrozenValue::Inline(value) => materialize_inline(value, expected, contract, molten),
+    }
+}
+
+fn materialize_inline(
+    value: &FrozenInlineValue,
+    expected: &crate::RegionShape,
+    contract: &crate::ProgramContract,
+    molten: &mut crate::task::MoltenArena,
+) -> Result<Vec<u8>, ()> {
+    if expected.checked_byte_len() != Some(value.bytes.len()) {
+        return Err(());
+    }
+    let mut bytes = value.bytes.clone();
+    for (offset, reference) in &value.references {
+        let word = usize::try_from(*offset).map_err(|_| ())? / size_of::<i64>();
+        if usize::try_from(*offset).map_err(|_| ())? % size_of::<i64>() != 0 {
+            return Err(());
+        }
+        let expected_word = expected.words.get(word).ok_or(())?;
+        let schema = match reference {
+            FrozenValue::Store { schema, .. }
+            | FrozenValue::Opaque { schema, .. }
+            | FrozenValue::Dense { schema, .. }
+            | FrozenValue::Ordered { schema, .. } => *schema,
+            FrozenValue::Inline(_) => return Err(()),
+        };
+        if !expected_word.as_slice().contains(&WordKind::Handle(schema)) {
+            return Err(());
+        }
+        let reference = materialize_frozen(
+            reference,
+            &crate::RegionShape::word(WordKind::Handle(schema)),
+            contract,
+            molten,
+        )?;
+        let start = usize::try_from(*offset).map_err(|_| ())?;
+        bytes[start..start + size_of::<i64>()].copy_from_slice(&reference);
+    }
+    Ok(bytes)
+}
+
+fn require_handle_schema(expected: &crate::RegionShape, schema: SchemaRef) -> Result<(), ()> {
+    let [word] = expected.words.as_slice() else {
+        return Err(());
+    };
+    if word.is_exactly(WordKind::Handle(schema)) {
+        Ok(())
+    } else {
+        Err(())
     }
 }
 
@@ -816,7 +1632,7 @@ pub(crate) fn fault_site(
     Ok(FaultSite {
         function,
         pc,
-        op,
+        op: Box::new(op),
         call,
     })
 }
@@ -873,6 +1689,7 @@ mod tests {
             entries: entries.iter().copied().map(RegionId).collect(),
             result: RegionId(result),
             call_contract: call_contract.map(CallContractId),
+            environment: Vec::new(),
         }
     }
 
@@ -1115,9 +1932,202 @@ mod tests {
         )
     }
 
+    /// `compare((a ++ b) ++ c, expected)` — a StringConcat result feeds a second
+    /// StringConcat, whose result feeds a CompareValueBytes. Entries `0..=3` are
+    /// the four operand handles; the returned scalar is the three-way ordinal.
+    fn string_concat_program() -> (Program, ProgramContract) {
+        let schema = SchemaRef(0);
+        (
+            Program {
+                fns: vec![function(
+                    7,
+                    vec![
+                        Op::StringConcat {
+                            dst: 32,
+                            a: 0,
+                            b: 8,
+                        },
+                        Op::StringConcat {
+                            dst: 40,
+                            a: 32,
+                            b: 16,
+                        },
+                        Op::CompareValueBytes {
+                            dst: 48,
+                            a: 40,
+                            b: 24,
+                        },
+                        Op::Ret { src: 48, size: 8 },
+                    ],
+                )],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    7,
+                    vec![
+                        word_region(0, WordKind::Handle(schema)),
+                        word_region(8, WordKind::Handle(schema)),
+                        word_region(16, WordKind::Handle(schema)),
+                        word_region(24, WordKind::Handle(schema)),
+                        word_region(32, WordKind::Handle(schema)),
+                        word_region(40, WordKind::Handle(schema)),
+                        word_region(48, WordKind::Scalar),
+                    ],
+                    &[0, 1, 2, 3],
+                    6,
+                    None,
+                )],
+                calls: vec![],
+                schemas: vec![SchemaContract {
+                    inline: RegionShape::word(WordKind::Handle(schema)),
+                    value_shape: None,
+                    payload: PayloadKind::OpaqueBytes {
+                        byte_comparable: true,
+                    },
+                }],
+                value_shapes: vec![],
+            },
+        )
+    }
+
+    fn string_operation_program(operation: Op) -> (Program, ProgramContract) {
+        let schema = SchemaRef(0);
+        (
+            Program {
+                fns: vec![function(5, vec![operation, Op::Ret { src: 32, size: 8 }])],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    5,
+                    vec![
+                        word_region(0, WordKind::Handle(schema)),
+                        word_region(8, WordKind::Handle(schema)),
+                        word_region(16, WordKind::Handle(schema)),
+                        word_region(24, WordKind::Status),
+                        word_region(32, WordKind::Scalar),
+                    ],
+                    &[0, 1],
+                    4,
+                    None,
+                )],
+                calls: vec![],
+                schemas: vec![SchemaContract {
+                    inline: RegionShape::word(WordKind::Handle(schema)),
+                    value_shape: None,
+                    payload: PayloadKind::OpaqueBytes {
+                        byte_comparable: true,
+                    },
+                }],
+                value_shapes: vec![],
+            },
+        )
+    }
+
+    fn byte_project_program() -> (Program, ProgramContract) {
+        let path = SchemaRef(0);
+        let string = SchemaRef(1);
+        (
+            Program {
+                fns: vec![function(
+                    4,
+                    vec![
+                        Op::ByteProject { dst: 8, source: 0 },
+                        Op::CompareValueBytes {
+                            dst: 24,
+                            a: 8,
+                            b: 16,
+                        },
+                        Op::Ret { src: 24, size: 8 },
+                    ],
+                )],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    4,
+                    vec![
+                        word_region(0, WordKind::Handle(path)),
+                        word_region(8, WordKind::Handle(string)),
+                        word_region(16, WordKind::Handle(string)),
+                        word_region(24, WordKind::Scalar),
+                    ],
+                    &[0, 2],
+                    3,
+                    None,
+                )],
+                calls: vec![],
+                schemas: vec![
+                    SchemaContract {
+                        inline: RegionShape::word(WordKind::Handle(path)),
+                        value_shape: None,
+                        payload: PayloadKind::OpaqueBytes {
+                            byte_comparable: true,
+                        },
+                    },
+                    SchemaContract {
+                        inline: RegionShape::word(WordKind::Handle(string)),
+                        value_shape: None,
+                        payload: PayloadKind::OpaqueBytes {
+                            byte_comparable: true,
+                        },
+                    },
+                ],
+                value_shapes: vec![],
+            },
+        )
+    }
+
+    fn path_join_program() -> (Program, ProgramContract) {
+        let path = SchemaRef(0);
+        (
+            Program {
+                fns: vec![function(
+                    5,
+                    vec![
+                        Op::PathJoin {
+                            dst: 16,
+                            base: 0,
+                            segment: 8,
+                        },
+                        Op::CompareValueBytes {
+                            dst: 32,
+                            a: 16,
+                            b: 24,
+                        },
+                        Op::Ret { src: 32, size: 8 },
+                    ],
+                )],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    5,
+                    vec![
+                        word_region(0, WordKind::Handle(path)),
+                        word_region(8, WordKind::Handle(path)),
+                        word_region(16, WordKind::Handle(path)),
+                        word_region(24, WordKind::Handle(path)),
+                        word_region(32, WordKind::Scalar),
+                    ],
+                    &[0, 1, 3],
+                    4,
+                    None,
+                )],
+                calls: vec![],
+                schemas: vec![SchemaContract {
+                    inline: RegionShape::word(WordKind::Handle(path)),
+                    value_shape: None,
+                    payload: PayloadKind::OpaqueBytes {
+                        byte_comparable: true,
+                    },
+                }],
+                value_shapes: vec![],
+            },
+        )
+    }
+
     fn non_scalar_entry_program() -> (Program, ProgramContract) {
-        let mut callable = AllowedKinds::new(WordKind::Callable(CallContractId(0)));
-        callable = callable.allowing(WordKind::Opaque);
+        // A callable word is non-scalar, so the entry accessor must reject it;
+        // opaque cursor words are separately confined and cannot appear here.
+        let callable = AllowedKinds::new(WordKind::Callable(CallContractId(0)));
         (
             Program {
                 fns: vec![function(1, vec![Op::Ret { src: 0, size: 8 }])],
@@ -1164,8 +2174,9 @@ mod tests {
     }
 
     fn non_scalar_result_program() -> (Program, ProgramContract) {
-        let mut callable = AllowedKinds::new(WordKind::Callable(CallContractId(0)));
-        callable = callable.allowing(WordKind::Opaque);
+        // A callable result word is non-scalar, so the result accessor must
+        // reject it; opaque cursor words are separately barred from results.
+        let callable = AllowedKinds::new(WordKind::Callable(CallContractId(0)));
         (
             Program {
                 fns: vec![function(1, vec![Op::Ret { src: 0, size: 8 }])],
@@ -1731,9 +2742,589 @@ mod tests {
         };
         assert_eq!(site.function, FnId(0));
         assert_eq!(site.pc, 0);
-        assert!(matches!(site.op, Op::ArrayStatusIs { .. }));
+        assert!(matches!(site.op.as_ref(), Op::ArrayStatusIs { .. }));
         assert_eq!(trace, vec![TaskEvent::FrameEntered(FnId(0))]);
         assert!(matches!(*poison, TaskFault::PoisonedReDrive { .. }));
+    }
+
+    #[test]
+    fn string_status_discriminator_matches_across_public_executable_lanes() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let string_program = || {
+            let (mut program, contract) = array_status_program();
+            program.fns[0].code[0] = Op::StringStatusIs {
+                dst: 0,
+                status: 8,
+                expected: crate::task::StringOpStatus::Ok,
+            };
+            verify((program, contract))
+        };
+        let interpreter = run_public_array_status(string_program(), 99, true)
+            .expect_err("invalid StringOpStatus faults in interpreter");
+        let native = run_public_array_status(string_program(), 99, false)
+            .expect_err("invalid StringOpStatus faults in native lane");
+        assert_eq!(interpreter, native);
+        let (fault, trace, poison) = interpreter;
+        let site = match *fault {
+            TaskFault::InvalidStringStatus { site, actual } => {
+                assert_eq!(actual, 99);
+                site
+            }
+            fault => panic!("unexpected string status fault: {fault:?}"),
+        };
+        assert_eq!(site.function, FnId(0));
+        assert_eq!(site.pc, 0);
+        assert!(matches!(site.op.as_ref(), Op::StringStatusIs { .. }));
+        assert_eq!(trace, vec![TaskEvent::FrameEntered(FnId(0))]);
+        assert!(matches!(*poison, TaskFault::PoisonedReDrive { .. }));
+    }
+
+    fn ordered_begin_probe_program() -> (Program, ProgramContract) {
+        use crate::{OrderedCollectionContract, OrderedCollectionKind};
+
+        let collection = SchemaRef(3);
+        let opaque_cursor = RegionShape::new(vec![AllowedKinds::new(WordKind::Opaque); 2]);
+        (
+            Program {
+                fns: vec![function(
+                    4,
+                    vec![
+                        Op::OrderedBeginProbe {
+                            cursor: 8,
+                            status: 24,
+                            collection: 0,
+                            collection_schema_ref: 3,
+                        },
+                        Op::Ret { src: 24, size: 8 },
+                    ],
+                )],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    4,
+                    vec![
+                        word_region(0, WordKind::Handle(collection)),
+                        FrameRegion::new(8, opaque_cursor),
+                        word_region(24, WordKind::Status),
+                    ],
+                    &[0],
+                    2,
+                    None,
+                )],
+                calls: vec![],
+                schemas: vec![
+                    SchemaContract {
+                        inline: RegionShape::word(WordKind::Scalar),
+                        value_shape: None,
+                        payload: PayloadKind::Inline,
+                    },
+                    SchemaContract {
+                        inline: RegionShape::word(WordKind::Scalar),
+                        value_shape: None,
+                        payload: PayloadKind::Inline,
+                    },
+                    SchemaContract {
+                        inline: RegionShape::new(vec![
+                            AllowedKinds::new(WordKind::Scalar),
+                            AllowedKinds::new(WordKind::Scalar),
+                        ]),
+                        value_shape: None,
+                        payload: PayloadKind::Inline,
+                    },
+                    SchemaContract {
+                        inline: RegionShape::word(WordKind::Handle(collection)),
+                        value_shape: None,
+                        payload: PayloadKind::OrderedCollection(OrderedCollectionContract {
+                            kind: OrderedCollectionKind::Map,
+                            key: SchemaRef(0),
+                            value: Some(SchemaRef(1)),
+                            row: SchemaRef(2),
+                            fanout: 4,
+                        }),
+                    },
+                ],
+                value_shapes: vec![],
+            },
+        )
+    }
+
+    fn ordered_map_schemas() -> Vec<SchemaContract> {
+        use crate::{OrderedCollectionContract, OrderedCollectionKind};
+        vec![
+            SchemaContract {
+                inline: RegionShape::word(WordKind::Scalar),
+                value_shape: None,
+                payload: PayloadKind::Inline,
+            },
+            SchemaContract {
+                inline: RegionShape::word(WordKind::Scalar),
+                value_shape: None,
+                payload: PayloadKind::Inline,
+            },
+            SchemaContract {
+                inline: RegionShape::new(vec![
+                    AllowedKinds::new(WordKind::Scalar),
+                    AllowedKinds::new(WordKind::Scalar),
+                ]),
+                value_shape: None,
+                payload: PayloadKind::Inline,
+            },
+            SchemaContract {
+                inline: RegionShape::word(WordKind::Handle(SchemaRef(3))),
+                value_shape: None,
+                payload: PayloadKind::OrderedCollection(OrderedCollectionContract {
+                    kind: OrderedCollectionKind::Map,
+                    key: SchemaRef(0),
+                    value: Some(SchemaRef(1)),
+                    row: SchemaRef(2),
+                    fanout: 4,
+                }),
+            },
+        ]
+    }
+
+    fn ordered_probe_program(code: Vec<Op>, entries: &[u32]) -> (Program, ProgramContract) {
+        let collection = WordKind::Handle(SchemaRef(3));
+        (
+            Program {
+                fns: vec![function(8, code)],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    8,
+                    vec![
+                        word_region(0, collection),
+                        FrameRegion::new(
+                            8,
+                            RegionShape::new(vec![AllowedKinds::new(WordKind::Opaque); 2]),
+                        ),
+                        word_region(24, WordKind::Status),
+                        word_region(32, WordKind::Scalar),
+                        word_region(40, WordKind::Scalar),
+                        word_region(48, collection),
+                        word_region(56, collection),
+                    ],
+                    entries,
+                    2,
+                    None,
+                )],
+                calls: vec![],
+                schemas: ordered_map_schemas(),
+                value_shapes: vec![],
+            },
+        )
+    }
+
+    fn probe_key_op() -> Op {
+        Op::OrderedProbeKey {
+            cursor: 8,
+            present: 32,
+            key: 40,
+            left: 48,
+            right: 56,
+            status: 24,
+            key_width: 8,
+            collection_schema_ref: 3,
+        }
+    }
+
+    #[test]
+    fn ordered_probe_key_handshake_matches_across_lanes() {
+        use crate::task::OrderedOpStatus;
+
+        let begin = Op::OrderedBeginProbe {
+            cursor: 8,
+            status: 24,
+            collection: 0,
+            collection_schema_ref: 3,
+        };
+        // Each case returns the probe status word; the interpreter and native
+        // lanes must agree on every closed-handshake outcome.
+        let cases: [(&str, (Program, ProgramContract), i64, OrderedOpStatus); 3] = [
+            (
+                "empty handshake miss",
+                ordered_probe_program(
+                    vec![begin.clone(), probe_key_op(), Op::Ret { src: 24, size: 8 }],
+                    &[0],
+                ),
+                0,
+                OrderedOpStatus::Ok,
+            ),
+            (
+                "forged cursor",
+                ordered_probe_program(vec![probe_key_op(), Op::Ret { src: 24, size: 8 }], &[]),
+                -1,
+                OrderedOpStatus::InvalidHandle,
+            ),
+            (
+                "stale double probe",
+                ordered_probe_program(
+                    vec![
+                        begin.clone(),
+                        probe_key_op(),
+                        probe_key_op(),
+                        Op::Ret { src: 24, size: 8 },
+                    ],
+                    &[0],
+                ),
+                0,
+                OrderedOpStatus::Stale,
+            ),
+        ];
+        for (name, program, cursor_seed, expected) in cases {
+            let verified = Arc::new(verify(program));
+            // collection handle @0 (empty), cursor index @8, generation @16.
+            let interp = run_interpreter(
+                &verified,
+                |task| {
+                    task.write_i64(0, crate::task::ORDERED_EMPTY_HANDLE);
+                    task.write_i64(8, cursor_seed);
+                    task.write_i64(16, 0);
+                },
+                ValueMemories::empty(),
+            )
+            .unwrap_or_else(|fault| panic!("{name}: {fault:?}"));
+            assert_eq!(interp.0, TaskStep::Done, "{name}");
+            assert_eq!(
+                i64::from_le_bytes(interp.1[..8].try_into().unwrap()),
+                expected as i64,
+                "{name} interpreter status"
+            );
+            if let Some(native) = run_native(
+                Arc::clone(&verified),
+                |task| {
+                    task.write_i64(0, crate::task::ORDERED_EMPTY_HANDLE);
+                    task.write_i64(8, cursor_seed);
+                    task.write_i64(16, 0);
+                },
+                ValueMemories::empty(),
+            ) {
+                assert_eq!(native.expect("native probe"), interp, "{name}");
+            }
+        }
+    }
+
+    fn ordered_value_program(code: Vec<Op>, entries: &[u32]) -> (Program, ProgramContract) {
+        let collection = WordKind::Handle(SchemaRef(3));
+        (
+            Program {
+                fns: vec![function(6, code)],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    6,
+                    vec![
+                        word_region(0, collection),
+                        FrameRegion::new(
+                            8,
+                            RegionShape::new(vec![AllowedKinds::new(WordKind::Opaque); 2]),
+                        ),
+                        word_region(24, WordKind::Status),
+                        word_region(32, WordKind::Scalar),
+                        word_region(40, WordKind::Scalar),
+                    ],
+                    entries,
+                    2,
+                    None,
+                )],
+                calls: vec![],
+                schemas: ordered_map_schemas(),
+                value_shapes: vec![],
+            },
+        )
+    }
+
+    fn probe_value_op() -> Op {
+        Op::OrderedProbeValue {
+            cursor: 8,
+            present: 32,
+            value: 40,
+            status: 24,
+            value_width: 8,
+            collection_schema_ref: 3,
+        }
+    }
+
+    #[test]
+    fn ordered_probe_value_handshake_matches_across_lanes() {
+        use crate::task::OrderedOpStatus;
+
+        let begin = Op::OrderedBeginProbe {
+            cursor: 8,
+            status: 24,
+            collection: 0,
+            collection_schema_ref: 3,
+        };
+        let cases: [(&str, (Program, ProgramContract), i64, OrderedOpStatus); 2] = [
+            (
+                "empty value miss",
+                ordered_value_program(
+                    vec![
+                        begin.clone(),
+                        probe_value_op(),
+                        Op::Ret { src: 24, size: 8 },
+                    ],
+                    &[0],
+                ),
+                0,
+                OrderedOpStatus::Ok,
+            ),
+            (
+                "forged value cursor",
+                ordered_value_program(vec![probe_value_op(), Op::Ret { src: 24, size: 8 }], &[]),
+                -1,
+                OrderedOpStatus::InvalidHandle,
+            ),
+        ];
+        for (name, program, cursor_seed, expected) in cases {
+            let verified = Arc::new(verify(program));
+            let interp = run_interpreter(
+                &verified,
+                |task| {
+                    task.write_i64(0, crate::task::ORDERED_EMPTY_HANDLE);
+                    task.write_i64(8, cursor_seed);
+                    task.write_i64(16, 0);
+                },
+                ValueMemories::empty(),
+            )
+            .unwrap_or_else(|fault| panic!("{name}: {fault:?}"));
+            assert_eq!(
+                i64::from_le_bytes(interp.1[..8].try_into().unwrap()),
+                expected as i64,
+                "{name} interpreter status"
+            );
+            if let Some(native) = run_native(
+                Arc::clone(&verified),
+                |task| {
+                    task.write_i64(0, crate::task::ORDERED_EMPTY_HANDLE);
+                    task.write_i64(8, cursor_seed);
+                    task.write_i64(16, 0);
+                },
+                ValueMemories::empty(),
+            ) {
+                assert_eq!(native.expect("native value probe"), interp, "{name}");
+            }
+        }
+    }
+
+    #[test]
+    fn ordered_begin_probe_matches_across_public_executable_lanes() {
+        use crate::task::OrderedOpStatus;
+
+        // The disjoint empty ordered root begins a cursor: status Ok.
+        // A handle naming no resident node is InvalidHandle. Both outcomes must
+        // agree between the interpreter and the native lane.
+        for (handle, expected) in [
+            (crate::task::ORDERED_EMPTY_HANDLE, OrderedOpStatus::Ok),
+            (5i64, OrderedOpStatus::InvalidHandle),
+        ] {
+            let verified = Arc::new(verify(ordered_begin_probe_program()));
+            let interp = run_interpreter(
+                &verified,
+                |task| task.write_i64(0, handle),
+                ValueMemories::empty(),
+            )
+            .expect("ordered begin probe runs");
+            assert_eq!(interp.0, TaskStep::Done);
+            assert_eq!(
+                i64::from_le_bytes(interp.1[..8].try_into().unwrap()),
+                expected as i64,
+                "interpreter status for handle {handle}"
+            );
+            if let Some(native) = run_native(
+                Arc::clone(&verified),
+                |task| task.write_i64(0, handle),
+                ValueMemories::empty(),
+            ) {
+                assert_eq!(native.expect("native ordered begin probe runs"), interp);
+            }
+        }
+    }
+
+    fn ordered_write_program() -> (Program, ProgramContract) {
+        use crate::task::OrderedOpStatus;
+
+        let status_ok = || Op::OrderedStatusIs {
+            dst: 128,
+            status: 40,
+            expected: OrderedOpStatus::Ok,
+        };
+        let accumulate = || Op::MulI64 {
+            dst: 120,
+            a: 120,
+            b: 128,
+        };
+        let code = vec![
+            Op::OrderedEmpty {
+                dst: 16,
+                collection_schema_ref: 3,
+            },
+            Op::ConstI64 { dst: 120, value: 1 },
+            Op::OrderedBeginInsert {
+                cursor: 24,
+                status: 40,
+                collection: 16,
+                collection_schema_ref: 3,
+            },
+            status_ok(),
+            accumulate(),
+            Op::OrderedInsertInspect {
+                cursor: 24,
+                present: 48,
+                key: 56,
+                status: 40,
+                key_width: 8,
+                collection_schema_ref: 3,
+            },
+            status_ok(),
+            accumulate(),
+            Op::OrderedInsertCommit {
+                dst: 16,
+                cursor: 24,
+                key: 0,
+                value: Some(8),
+                status: 40,
+                key_width: 8,
+                value_width: 8,
+                collection_schema_ref: 3,
+                replace: false,
+            },
+            status_ok(),
+            accumulate(),
+            Op::OrderedLen {
+                dst: 112,
+                status: 40,
+                collection: 16,
+                collection_schema_ref: 3,
+            },
+            status_ok(),
+            accumulate(),
+            Op::ConstI64 { dst: 64, value: 1 },
+            Op::EqI64 {
+                dst: 128,
+                a: 112,
+                b: 64,
+            },
+            accumulate(),
+            Op::OrderedBeginIterate {
+                cursor: 80,
+                status: 40,
+                collection: 16,
+                collection_schema_ref: 3,
+            },
+            status_ok(),
+            accumulate(),
+            Op::OrderedIterateRow {
+                cursor: 80,
+                present: 48,
+                row: 96,
+                status: 40,
+                row_width: 16,
+                collection_schema_ref: 3,
+            },
+            status_ok(),
+            accumulate(),
+            Op::EqI64 {
+                dst: 128,
+                a: 96,
+                b: 0,
+            },
+            accumulate(),
+            Op::EqI64 {
+                dst: 128,
+                a: 104,
+                b: 8,
+            },
+            accumulate(),
+            Op::MulI64 {
+                dst: 120,
+                a: 120,
+                b: 48,
+            },
+            Op::Ret { src: 120, size: 8 },
+        ];
+        let collection = WordKind::Handle(SchemaRef(3));
+        (
+            Program {
+                fns: vec![function(17, code)],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    17,
+                    vec![
+                        word_region(0, WordKind::Scalar),
+                        word_region(8, WordKind::Scalar),
+                        word_region(16, collection),
+                        FrameRegion::new(
+                            24,
+                            RegionShape::new(vec![AllowedKinds::new(WordKind::Opaque); 2]),
+                        ),
+                        word_region(40, WordKind::Status),
+                        word_region(48, WordKind::Scalar),
+                        word_region(56, WordKind::Scalar),
+                        word_region(64, WordKind::Scalar),
+                        word_region(72, WordKind::Scalar),
+                        FrameRegion::new(
+                            80,
+                            RegionShape::new(vec![AllowedKinds::new(WordKind::Opaque); 2]),
+                        ),
+                        FrameRegion::new(
+                            96,
+                            RegionShape::new(vec![
+                                AllowedKinds::new(WordKind::Scalar),
+                                AllowedKinds::new(WordKind::Scalar),
+                            ]),
+                        ),
+                        word_region(112, WordKind::Scalar),
+                        word_region(120, WordKind::Scalar),
+                        word_region(128, WordKind::Scalar),
+                    ],
+                    &[0, 1],
+                    12,
+                    None,
+                )],
+                calls: vec![],
+                schemas: ordered_map_schemas(),
+                value_shapes: vec![],
+            },
+        )
+    }
+
+    fn run_public_ordered_write(force_interpreter: bool) -> (i64, LaneFacts) {
+        let previous = std::env::var_os("WEAVY_JIT");
+        if force_interpreter {
+            unsafe { std::env::set_var("WEAVY_JIT", "0") };
+        } else {
+            unsafe { std::env::remove_var("WEAVY_JIT") };
+        }
+        let executable = Executable::new(verify(ordered_write_program()));
+        match previous {
+            Some(value) => unsafe { std::env::set_var("WEAVY_JIT", value) },
+            None => unsafe { std::env::remove_var("WEAVY_JIT") },
+        }
+        let facts = executable.lane_facts();
+        let mut task = executable.spawn(FnId(0)).expect("ordered task spawns");
+        task.write_entry_i64(0, 7).expect("key entry");
+        task.write_entry_i64(1, 70).expect("value entry");
+        assert_eq!(task.drive(&mut [], &[]), Ok(TaskStep::Done));
+        (task.result_i64().expect("scalar result"), facts)
+    }
+
+    #[test]
+    fn ordered_write_iteration_and_length_match_across_public_lanes() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let interpreter = run_public_ordered_write(true);
+        let native = run_public_ordered_write(false);
+        assert_eq!(interpreter.0, 1);
+        assert_eq!(native.0, interpreter.0);
+        assert_eq!(interpreter.1.selected, LaneKind::Interpreter);
+        if task_lane::available() {
+            assert_eq!(native.1.selected, LaneKind::Native);
+        }
     }
 
     #[test]
@@ -1794,7 +3385,7 @@ mod tests {
             };
             assert_eq!(site.function, FnId(0));
             assert_eq!(site.pc, expected_pc);
-            assert_eq!(site.op, op);
+            assert_eq!(site.op.as_ref(), &op);
             assert_eq!(interpreter.1, vec![TaskEvent::FrameEntered(FnId(0))]);
             assert!(matches!(interpreter.2, TaskFault::PoisonedReDrive { .. }));
         }
@@ -1824,6 +3415,98 @@ mod tests {
             task.run_verified_with_value_memories(&jit, &mut [], &[], &mut [], value_memories)
                 .map(|step| (step, task.result, task.trace)),
         )
+    }
+
+    #[test]
+    fn boxed_environment_threads_and_faults_identically_across_lanes() {
+        let scalar = || RegionShape::word(WordKind::Scalar);
+        let env_program = |code: Vec<Op>| {
+            let program = Program {
+                fns: vec![function(4, code)],
+            };
+            let mut contract = function_contract(
+                4,
+                vec![
+                    word_region(0, WordKind::Scalar),  // dst / projected capture
+                    word_region(8, WordKind::Scalar),  // environment handle
+                    word_region(16, WordKind::Scalar), // captured source value
+                    word_region(24, WordKind::Scalar), // argument entry
+                ],
+                &[3],
+                0,
+                None,
+            );
+            contract.environment = vec![FrameRegion::new(0, scalar())];
+            (
+                program,
+                ProgramContract {
+                    functions: vec![contract],
+                    calls: vec![],
+                    schemas: vec![],
+                    value_shapes: vec![],
+                },
+            )
+        };
+
+        // EnvBox -> EnvLoad round trip: box a captured value, project it back,
+        // and return it. Both lanes reach the same env arena and agree.
+        let success = env_program(vec![
+            Op::ConstI64 { dst: 16, value: 42 },
+            Op::EnvBox {
+                dst: RegionId(1),
+                callee: FnId(0),
+                fields: vec![RegionId(2)],
+            },
+            Op::EnvLoad {
+                dst: RegionId(0),
+                env: RegionId(1),
+                callee: FnId(0),
+                field: 0,
+            },
+            Op::Ret { src: 0, size: 8 },
+        ]);
+        let verified = Arc::new(verify(success));
+        let interp = run_interpreter(&verified, |_| {}, ValueMemories::empty())
+            .expect("interpreter runs the boxed round trip");
+        assert_eq!(interp.0, TaskStep::Done);
+        assert_eq!(i64::from_le_bytes(interp.1[..8].try_into().unwrap()), 42);
+        if let Some(native) = run_native(Arc::clone(&verified), |_| {}, ValueMemories::empty()) {
+            assert_eq!(
+                native.expect("native runs the boxed round trip"),
+                interp,
+                "boxed environment round trip differs across lanes",
+            );
+        }
+
+        // A fabricated environment handle fails closed with the same typed fault
+        // and site in both lanes.
+        let stale = env_program(vec![
+            Op::ConstI64 { dst: 8, value: 0 },
+            Op::EnvLoad {
+                dst: RegionId(0),
+                env: RegionId(1),
+                callee: FnId(0),
+                field: 0,
+            },
+            Op::Ret { src: 0, size: 8 },
+        ]);
+        let verified = Arc::new(verify(stale));
+        let interp_fault = run_interpreter(&verified, |_| {}, ValueMemories::empty())
+            .expect_err("a fabricated environment handle faults");
+        assert!(matches!(
+            interp_fault,
+            TaskFault::Environment {
+                kind: EnvironmentFaultKind::Stale,
+                ..
+            }
+        ));
+        if let Some(native) = run_native(Arc::clone(&verified), |_| {}, ValueMemories::empty()) {
+            assert_eq!(
+                native.expect_err("native fabricated handle faults"),
+                interp_fault,
+                "boxed environment fault differs across lanes",
+            );
+        }
     }
 
     #[test]
@@ -1914,20 +3597,24 @@ mod tests {
     }
 
     #[test]
-    fn public_spawn_rejects_structural_entry_until_typed_writer_exists() {
+    fn public_spawn_accepts_structural_entry_for_typed_writer() {
         let executable = Executable::new(verify(structural_entry_program(Op::EnumIsVariant {
             dst: RegionId(1),
             value: RegionId(0),
             variant: 0,
         })));
-        assert!(matches!(
-            executable.spawn(FnId(0)),
-            Err(TaskFault::InvalidEntryShape {
-                entry: FnId(0),
-                index: 0,
-                region: RegionId(0),
-            })
-        ));
+        let mut task = executable
+            .spawn(FnId(0))
+            .expect("structural entry is admitted");
+        task.write_entry_frozen(
+            0,
+            &FrozenValue::Inline(FrozenInlineValue::new(
+                [0_i64.to_le_bytes(), 7_i64.to_le_bytes()].concat(),
+            )),
+        )
+        .expect("typed writer materializes the verified enum shape");
+        assert_eq!(task.drive(&mut [], &[]), Ok(TaskStep::Done));
+        assert_eq!(task.result_i64(), Ok(1));
     }
 
     #[test]
@@ -2454,6 +4141,554 @@ mod tests {
             memories,
         ) {
             assert_eq!(native.expect_err("equal unresident compare"), interp);
+        }
+    }
+
+    #[test]
+    fn string_concat_result_feeds_concat_and_compare_across_lanes() {
+        let verified = Arc::new(verify(string_concat_program()));
+        let store = [
+            ValueMemory::from_slice(b"a"),
+            ValueMemory::from_slice(b"b"),
+            ValueMemory::from_slice(b"c"),
+            ValueMemory::from_slice(b"abc"),
+        ];
+        let memories = ValueMemories {
+            store: &store,
+            molten: &[],
+        };
+        let seed = |task: &mut Task| {
+            task.write_i64(0, 0);
+            task.write_i64(8, 1);
+            task.write_i64(16, 2);
+            task.write_i64(24, 3);
+        };
+        let interp = run_interpreter(&verified, seed, memories).expect("string concat runs");
+        // The nested concatenation equals the interned "abc": ordinal 1 = equal.
+        assert_eq!(interp.1, 1i64.to_le_bytes().to_vec());
+        if let Some(native) = run_native(
+            Arc::clone(&verified),
+            |task: &mut JitTask| {
+                task.write_i64(0, 0);
+                task.write_i64(8, 1);
+                task.write_i64(16, 2);
+                task.write_i64(24, 3);
+            },
+            memories,
+        ) {
+            assert_eq!(native.expect("string concat runs on native"), interp);
+        }
+
+        // A non-resident operand faults with the precise side on both lanes.
+        let store = [
+            ValueMemory::from_slice(b"a"),
+            ValueMemory::empty(),
+            ValueMemory::from_slice(b"c"),
+            ValueMemory::from_slice(b"abc"),
+        ];
+        let memories = ValueMemories {
+            store: &store,
+            molten: &[],
+        };
+        let interp = run_interpreter(
+            &verified,
+            |task: &mut Task| {
+                task.write_i64(0, 0);
+                task.write_i64(8, 1);
+                task.write_i64(16, 2);
+                task.write_i64(24, 3);
+            },
+            memories,
+        )
+        .expect_err("unresident string concat operand");
+        assert!(matches!(
+            interp,
+            TaskFault::UnresidentStringConcatOperand {
+                side: CompareSide::Right,
+                handle: 1,
+                ..
+            }
+        ));
+        if let Some(native) = run_native(
+            Arc::clone(&verified),
+            |task: &mut JitTask| {
+                task.write_i64(0, 0);
+                task.write_i64(8, 1);
+                task.write_i64(16, 2);
+                task.write_i64(24, 3);
+            },
+            memories,
+        ) {
+            assert_eq!(
+                native.expect_err("unresident string concat operand"),
+                interp
+            );
+        }
+    }
+
+    #[test]
+    fn string_byte_operations_preserve_unresident_faults_across_lanes() {
+        let cases = [
+            (
+                "contains-left",
+                Op::StringContains {
+                    dst: 32,
+                    text: 0,
+                    needle: 8,
+                },
+                1,
+                CompareSide::Left,
+            ),
+            (
+                "contains-right",
+                Op::StringContains {
+                    dst: 32,
+                    text: 0,
+                    needle: 8,
+                },
+                1,
+                CompareSide::Right,
+            ),
+            (
+                "split-text",
+                Op::StringSplitOnce {
+                    left: 16,
+                    right: 16,
+                    status: 24,
+                    text: 0,
+                    delimiter: 8,
+                },
+                1,
+                CompareSide::Left,
+            ),
+            (
+                "split-delimiter",
+                Op::StringSplitOnce {
+                    left: 16,
+                    right: 16,
+                    status: 24,
+                    text: 0,
+                    delimiter: 8,
+                },
+                1,
+                CompareSide::Right,
+            ),
+            (
+                "parse-text",
+                Op::StringParseInt {
+                    dst: 32,
+                    status: 24,
+                    text: 0,
+                },
+                1,
+                CompareSide::Left,
+            ),
+        ];
+        for (name, operation, bad, side) in cases {
+            let verified = Arc::new(verify(string_operation_program(operation)));
+            let store = [ValueMemory::from_slice(b"a"), ValueMemory::empty()];
+            let memories = ValueMemories {
+                store: &store,
+                molten: &[],
+            };
+            let text = if side == CompareSide::Left { 1 } else { 0 };
+            let needle = if side == CompareSide::Right { 1 } else { 0 };
+            let interp = run_interpreter(
+                &verified,
+                |task| {
+                    task.write_i64(0, text);
+                    task.write_i64(8, needle);
+                },
+                memories,
+            )
+            .expect_err(name);
+            assert!(
+                matches!(interp, TaskFault::UnresidentStringConcatOperand { side: actual, handle, site: FaultSite { function: FnId(0), pc: 0, .. } } if actual == side && handle == bad)
+            );
+            if let Some(native) = run_native(
+                Arc::clone(&verified),
+                |task| {
+                    task.write_i64(0, text);
+                    task.write_i64(8, needle);
+                },
+                memories,
+            ) {
+                assert_eq!(native.expect_err(name), interp);
+            }
+        }
+    }
+
+    #[test]
+    fn byte_project_copies_across_distinct_schemas_across_lanes() {
+        let verified = Arc::new(verify(byte_project_program()));
+        let store = [
+            ValueMemory::from_slice(b"crates/taxon/Cargo.toml"),
+            ValueMemory::from_slice(b"crates/taxon/Cargo.toml"),
+        ];
+        let memories = ValueMemories {
+            store: &store,
+            molten: &[],
+        };
+        let interp = run_interpreter(
+            &verified,
+            |task: &mut Task| {
+                task.write_i64(0, 0);
+                task.write_i64(16, 1);
+            },
+            memories,
+        )
+        .expect("byte projection runs in the interpreter");
+        assert_eq!(interp.1, 1i64.to_le_bytes().to_vec());
+        let native = run_native(
+            Arc::clone(&verified),
+            |task: &mut JitTask| {
+                task.write_i64(0, 0);
+                task.write_i64(16, 1);
+            },
+            memories,
+        );
+        if cfg!(weavy_jit_active) {
+            assert_eq!(
+                native
+                    .expect("native byte projection is available when the JIT is active")
+                    .expect("byte projection runs natively"),
+                interp,
+            );
+        } else {
+            assert!(native.is_none(), "disabled JIT must not run a native lane");
+        }
+    }
+
+    #[test]
+    fn path_join_is_root_aware_and_faults_for_unresident_operands_across_lanes() {
+        let verified = Arc::new(verify(path_join_program()));
+        for (base, segment, expected) in [
+            (b"".as_slice(), b"x".as_slice(), b"x".as_slice()),
+            (b"a".as_slice(), b"x".as_slice(), b"a/x".as_slice()),
+        ] {
+            let store = [
+                ValueMemory::from_slice(base),
+                ValueMemory::from_slice(segment),
+                ValueMemory::from_slice(expected),
+            ];
+            let memories = ValueMemories {
+                store: &store,
+                molten: &[],
+            };
+            let interp = run_interpreter(
+                &verified,
+                |task: &mut Task| {
+                    task.write_i64(0, 0);
+                    task.write_i64(8, 1);
+                    task.write_i64(24, 2);
+                },
+                memories,
+            )
+            .expect("Path join runs in the interpreter");
+            assert_eq!(interp.1, 1i64.to_le_bytes().to_vec());
+            let native = run_native(
+                Arc::clone(&verified),
+                |task: &mut JitTask| {
+                    task.write_i64(0, 0);
+                    task.write_i64(8, 1);
+                    task.write_i64(24, 2);
+                },
+                memories,
+            );
+            if cfg!(weavy_jit_active) {
+                assert_eq!(
+                    native
+                        .expect("native Path join is available when the JIT is active")
+                        .expect("Path join runs natively"),
+                    interp,
+                );
+            } else {
+                assert!(native.is_none(), "disabled JIT must not run a native lane");
+            }
+        }
+
+        let store = [
+            ValueMemory::empty(),
+            ValueMemory::from_slice(b"x"),
+            ValueMemory::from_slice(b"x"),
+        ];
+        let memories = ValueMemories {
+            store: &store,
+            molten: &[],
+        };
+        let interp = run_interpreter(
+            &verified,
+            |task: &mut Task| {
+                task.write_i64(0, 0);
+                task.write_i64(8, 1);
+                task.write_i64(24, 2);
+            },
+            memories,
+        )
+        .expect_err("unresident Path join base faults");
+        assert!(matches!(
+            interp,
+            TaskFault::UnresidentPathJoinOperand {
+                side: CompareSide::Left,
+                handle: 0,
+                ..
+            }
+        ));
+        let native = run_native(
+            Arc::clone(&verified),
+            |task: &mut JitTask| {
+                task.write_i64(0, 0);
+                task.write_i64(8, 1);
+                task.write_i64(24, 2);
+            },
+            memories,
+        );
+        if cfg!(weavy_jit_active) {
+            assert_eq!(
+                native
+                    .expect("native Path join is available when the JIT is active")
+                    .expect_err("unresident Path join base faults natively"),
+                interp,
+            );
+        } else {
+            assert!(native.is_none(), "disabled JIT must not run a native lane");
+        }
+    }
+
+    /// A generator-shaped program: entry `n` at word 0 drives control flow. It
+    /// always publishes one descriptor `(n, marker)` under site `0xAAAA`, then
+    /// publishes a second `(n, marker)` under site `0xBBBB` only on the
+    /// nonzero-`n` path. The returned scalar is `n`. The record is a two-scalar
+    /// product built with `ProductConstruct`, exactly as a real lowering would
+    /// assemble a descriptor before publishing it.
+    fn publication_program() -> (Program, ProgramContract) {
+        let pair_shape = RegionShape::new(vec![
+            AllowedKinds::new(WordKind::Scalar),
+            AllowedKinds::new(WordKind::Scalar),
+        ]);
+        let value_shapes = vec![ValueShapeContract {
+            shape: pair_shape.clone(),
+            kind: ValueShapeKind::Product {
+                fields: vec![
+                    ValueFieldUse::new(0, RegionShape::word(WordKind::Scalar)),
+                    ValueFieldUse::new(8, RegionShape::word(WordKind::Scalar)),
+                ],
+            },
+        }];
+        (
+            Program {
+                fns: vec![function(
+                    5,
+                    vec![
+                        Op::ConstI64 { dst: 8, value: 7 },
+                        Op::ProductConstruct {
+                            dst: RegionId(2),
+                            fields: vec![
+                                StructuralFieldSource {
+                                    field: 0,
+                                    source: RegionId(0),
+                                },
+                                StructuralFieldSource {
+                                    field: 1,
+                                    source: RegionId(1),
+                                },
+                            ],
+                        },
+                        Op::Publish {
+                            site: 0xAAAA,
+                            record: 16,
+                            record_width: 16,
+                            record_schema_ref: 0,
+                        },
+                        Op::CopyI64 { dst: 32, src: 0 },
+                        Op::JumpIfZero {
+                            value: 0,
+                            target: 6,
+                        },
+                        Op::Publish {
+                            site: 0xBBBB,
+                            record: 16,
+                            record_width: 16,
+                            record_schema_ref: 0,
+                        },
+                        Op::Ret { src: 32, size: 8 },
+                    ],
+                )],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    5,
+                    vec![
+                        word_region(0, WordKind::Scalar),
+                        word_region(8, WordKind::Scalar),
+                        structural_region(16, pair_shape.clone(), ValueShapeRef(0)),
+                        word_region(32, WordKind::Scalar),
+                    ],
+                    &[0],
+                    3,
+                    None,
+                )],
+                calls: vec![],
+                schemas: vec![SchemaContract {
+                    inline: pair_shape,
+                    value_shape: Some(ValueShapeRef(0)),
+                    payload: PayloadKind::PublicationRecord,
+                }],
+                value_shapes,
+            },
+        )
+    }
+
+    /// Drive `publication_program` with entry `n` on one lane, returning the
+    /// completed log as `(site, schema_ref, bytes)` in publication order.
+    type LanePublications = Vec<(u64, i64, Vec<u8>)>;
+
+    fn interpreter_publications(verified: &VerifiedProgram, n: i64) -> LanePublications {
+        let mut task = Task::spawn_with_mode(verified.program(), FnId(0), TraceMode::Innards);
+        task.write_i64(0, n);
+        let step = task
+            .run_verified_with_value_memories(
+                verified,
+                &mut [],
+                &[],
+                &mut [],
+                ValueMemories::empty(),
+            )
+            .expect("publication program runs");
+        assert_eq!(step, TaskStep::Done);
+        let log = task.publications();
+        (0..log.len())
+            .map(|index| {
+                let (record, bytes) = log.get(index).expect("descriptor in range");
+                (record.site, record.schema_ref, bytes.to_vec())
+            })
+            .collect()
+    }
+
+    fn native_publications(verified: Arc<VerifiedProgram>, n: i64) -> Option<LanePublications> {
+        let jit = JitExecutable::compile(verified, TraceMode::Innards)?;
+        let mut task = JitTask::spawn_verified(&jit, FnId(0));
+        task.write_i64(0, n);
+        let step = task
+            .run_verified_with_value_memories(&jit, &mut [], &[], &mut [], ValueMemories::empty())
+            .expect("publication program runs on native");
+        assert_eq!(step, TaskStep::Done);
+        let log = task.publications();
+        Some(
+            (0..log.len())
+                .map(|index| {
+                    let (record, bytes) = log.get(index).expect("descriptor in range");
+                    (record.site, record.schema_ref, bytes.to_vec())
+                })
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn public_publication_log_captures_branch_multiplicity_and_copies() {
+        let executable = Executable::new(verify(publication_program()));
+
+        // Nonzero n takes the second publish: two descriptors, each an exact
+        // copy of the captured (n, marker) frame value.
+        let mut task = executable.spawn(FnId(0)).expect("entry shape");
+        task.write_entry_i64(0, 3).unwrap();
+        assert_eq!(task.drive(&mut [], &[]), Ok(TaskStep::Done));
+        assert_eq!(task.result_i64(), Ok(3));
+        assert_eq!(task.publication_count(), Ok(2));
+
+        let first = task.publication(0).expect("first descriptor");
+        assert_eq!(first.provenance_key(), 0xAAAA);
+        assert_eq!(first.record_schema(), SchemaRef(0));
+        assert_eq!(first.value_shape(), Some(ValueShapeRef(0)));
+        let mut expected = 3i64.to_le_bytes().to_vec();
+        expected.extend_from_slice(&7i64.to_le_bytes());
+        assert_eq!(first.bytes(), expected.as_slice());
+        assert_eq!(first.word(0), Some(3));
+        assert_eq!(first.word(8), Some(7));
+        assert_eq!(first.word(16), None);
+
+        let second = task.publication(1).expect("second descriptor");
+        assert_eq!(second.provenance_key(), 0xBBBB);
+        assert_eq!(second.bytes(), expected.as_slice());
+
+        assert!(matches!(
+            task.publication(2),
+            Err(TaskFault::PublicationIndexOutOfRange { index: 2, count: 2 })
+        ));
+    }
+
+    #[test]
+    fn public_publication_log_records_single_descriptor_on_zero_branch() {
+        let executable = Executable::new(verify(publication_program()));
+        let mut task = executable.spawn(FnId(0)).expect("entry shape");
+        task.write_entry_i64(0, 0).unwrap();
+        assert_eq!(task.drive(&mut [], &[]), Ok(TaskStep::Done));
+        assert_eq!(task.publication_count(), Ok(1));
+        let only = task.publication(0).expect("only descriptor");
+        assert_eq!(only.provenance_key(), 0xAAAA);
+        assert_eq!(only.word(0), Some(0));
+        assert_eq!(only.word(8), Some(7));
+    }
+
+    #[test]
+    fn public_publication_log_is_empty_when_nothing_is_published() {
+        let executable = Executable::new(verify(scalar_add_program()));
+        let mut task = executable.spawn(FnId(0)).expect("entry shape");
+        task.write_entry_i64(0, 20).unwrap();
+        task.write_entry_i64(1, 22).unwrap();
+        assert_eq!(task.drive(&mut [], &[]), Ok(TaskStep::Done));
+        assert_eq!(task.publication_count(), Ok(0));
+        assert!(matches!(
+            task.publication(0),
+            Err(TaskFault::PublicationIndexOutOfRange { index: 0, count: 0 })
+        ));
+    }
+
+    #[test]
+    fn public_publication_preserves_result_lifecycle() {
+        let executable = Executable::new(verify(publication_program()));
+
+        // Before the task is done the log is not observable.
+        let task = executable.spawn(FnId(0)).expect("entry shape");
+        assert!(matches!(
+            task.publication_count(),
+            Err(TaskFault::ResultBeforeDone {
+                state: ExecTaskState::NotStarted,
+            })
+        ));
+
+        // A poisoned task surfaces its original fault through the log surface,
+        // never a stale or partial log.
+        let mut task = executable.spawn(FnId(0)).expect("entry shape");
+        // Missing the required entry poisons the task on drive.
+        let poison = task.drive(&mut [], &[]).expect_err("missing entry poisons");
+        assert!(matches!(poison, TaskFault::EntryMissing { .. }));
+        assert!(matches!(
+            task.publication_count(),
+            Err(TaskFault::PoisonedResult { .. })
+        ));
+        assert!(matches!(
+            task.publication(0),
+            Err(TaskFault::PoisonedResult { .. })
+        ));
+    }
+
+    #[test]
+    fn publication_log_matches_across_native_and_interpreter_lanes() {
+        let verified = Arc::new(verify(publication_program()));
+        for n in [0i64, 1, 5, -4] {
+            let interp = interpreter_publications(&verified, n);
+            // Site keys and captured bytes are exactly as published.
+            let expected_first = {
+                let mut bytes = n.to_le_bytes().to_vec();
+                bytes.extend_from_slice(&7i64.to_le_bytes());
+                bytes
+            };
+            assert_eq!(interp[0], (0xAAAA, 0, expected_first.clone()));
+            assert_eq!(interp.len(), if n == 0 { 1 } else { 2 });
+            if let Some(native) = native_publications(Arc::clone(&verified), n) {
+                assert_eq!(native, interp, "lane publication logs diverged at n={n}");
+            }
         }
     }
 

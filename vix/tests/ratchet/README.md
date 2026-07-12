@@ -33,6 +33,22 @@ the vix book (`/vix`) exists. That is the definition of done.
    chapter. The harness is itself part of what the ladder demands into
    existence.
 
+## Priority tracks do not reorder the ladder
+
+A named implementation-priority track may select existing rung files above the
+current consecutive red boundary. This makes an end-to-end product dependency
+cone visible without renumbering the pedagogical ladder.
+
+- A track references the original rung source; it does not copy or weaken it.
+- Green track entries above a red predecessor are progress, not canonical score.
+- Original surface-introduction order and the foundation contract still bind.
+- A missing prerequisite is added to the track or implemented canonically; it
+  is never replaced by a track-local workaround.
+- Rung corrections remain explicit design decisions.
+
+The active Rodin track, gates, and stop conditions are specified in
+[`rodin/EXECUTION-PLAN.md`](../../../rodin/EXECUTION-PLAN.md).
+
 ## Fixtures the suite ships
 
 - `fixture_tree(name)` — small file trees (`small-crate`, `touched-fixture`,
@@ -43,8 +59,12 @@ the vix book (`/vix`) exists. That is the definition of done.
   learn from), `libe` (1.0.0, optional dep `libnet` behind feature `net`),
   `libz` (never visited — asserting laziness), plus archived `.crate`
   files for fetch/extract rungs.
-- `fixture_workspace("kitchen-sink")` — 12 packages, diamonds, features,
-  and a recorded `expected_selection()` from the reference resolver.
+- `fixture_workspace("kitchen-sink")` — 12 packages, diamonds, features. Its
+  `cargo_selection()` is cargo's own locked selection (cargo generate-lockfile),
+  the only oracle (rodin/docs/00-oracle.md), and a value the *test harness*
+  supplies — not a host call the solver makes (the pure solver stays host-free).
+  There is no recorded reference selection: the Rust reference resolver was
+  deleted and was never an authority.
 - Rungs marked for rerun execute twice against one store; variants
   `rerun_with: "<fixture-mutation>"` apply the named mutation between runs.
 
@@ -80,7 +100,7 @@ the vix book (`/vix`) exists. That is the definition of done.
 | 089–091 | capstone: search | trivial solve, backtracking-without-trail, unsat is None |
 | 092–095 | capstone: learning & discipline | learned pruning, deterministic solve, lazy index, solution snapshot |
 | 096–097 | capstone: features | optional deps on/off (+never_read) |
-| 098 | capstone: oracle | matches the reference resolver on kitchen-sink |
+| 098 | capstone: oracle | matches cargo's locked selection on kitchen-sink |
 | 099 | capstone: warm restart | one req bumped; untouched subtree untouched |
 | 100 | **the solver** | the book's final chapter, whole, green |
 

@@ -216,6 +216,15 @@ artifact collection defined below.
 > `[T; N]`. Two arrays with equal elements in equal positions are the same
 > value, whatever built them.
 
+> r[lang.collection.array-map]
+>
+> `xs.map(f)` on `xs: [T]` and `f: fn(T) -> U` has type `[U]` and the same
+> length as `xs`. Result position `i` is `f(xs[i])`, and its origin is input
+> position `i`. Result positions are independently demandable. The language
+> promises no left-to-right execution order; the compiler selects an
+> inspectable fused, looped, or fanned execution shape without changing the
+> position-keyed semantic grain recipe.
+
 > r[lang.collection.array-index]
 >
 > `a[i]` on `a: [T]` has type `T`. The index is an `Int` addressing positions
