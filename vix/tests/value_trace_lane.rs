@@ -217,13 +217,44 @@ fn rung_053_lazy_parameters_demand_only_the_taken_argument() {
     );
 }
 
+/// Rung 054 is certified green through independently-demandable aggregate fields:
+/// `Point { x: cheap(), y: expensive() }` is never materialized; `p.x` fuses to an
+/// `AwaitWire` of `x`'s initializer, so `cheap()` runs and `expensive()` never
+/// does. The frame trace and the demand log now agree, and the observer never
+/// fabricates it: removing the trace checks leaves value results and the executed
+/// frame trace byte-identical.
+#[test]
+fn rung_054_projects_one_field_without_computing_the_other() {
+    let report = run_source(RUNG_054).expect("rung 054 runs");
+    assert!(report.passed() && report.agrees(), "{report:?}");
+    assert_eq!(
+        frame_entries(RUNG_054)
+            .get("expensive")
+            .copied()
+            .unwrap_or(0),
+        0,
+        "the undemanded field initializer never executes",
+    );
+    assert_eq!(
+        frame_entries(RUNG_054).get("cheap").copied().unwrap_or(0),
+        1,
+        "the projected field initializer is demanded exactly once",
+    );
+
+    let with = run_source(RUNG_054).expect("rung 054 with trace checks runs");
+    let without = run_source(&without_trace_checks(RUNG_054)).expect("rung 054 without runs");
+    assert_eq!(
+        value_check_identities(&with),
+        value_check_identities(&without)
+    );
+    assert_eq!(call_events(&with), call_events(&without));
+}
+
 /// Rungs 057/059 remain the standing red boundary above the certified substrate.
 /// 057 needs keyed `Array.map` element demands; 059 needs the external observer to
 /// distinguish exact invocation preimages that the cost model fused into a direct
 /// `WeavyOp::Call` (rung 004). Their positive demand observers stay zero until each
-/// capability lands. 054 still executes the undemanded field initializer inline:
-/// its `never_demanded` observer and the frame trace disagree until independently
-/// demandable aggregate fields land.
+/// capability lands.
 #[test]
 fn described_wire_rungs_await_the_lazy_demand_substrate() {
     for source in [RUNG_057, RUNG_059] {
@@ -234,17 +265,6 @@ fn described_wire_rungs_await_the_lazy_demand_substrate() {
             "positive-demand rung stays red until its invocation is a real shared demand",
         );
     }
-
-    // 054's trace check must not be trusted while the field initializer still
-    // executes inline: the demand log and the frame trace disagree.
-    assert_eq!(
-        frame_entries(RUNG_054)
-            .get("expensive")
-            .copied()
-            .unwrap_or(0),
-        1,
-        "rung 054 still executes the undemanded field initializer inline",
-    );
 }
 
 /// Higher-order remains independently red at rung 052; the described-wire trace

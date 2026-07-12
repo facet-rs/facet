@@ -133,6 +133,40 @@ fn distinct_call_sites_cannot_cross_wire() {
     assert_eq!(frames.get("other").copied().unwrap_or(0), 0);
 }
 
+const POINT: &str = r#"
+struct Point { x: Int, y: Int }
+fn cheap() -> Int { 41 }
+fn expensive() -> Int { 999 }
+"#;
+
+/// Projecting one field of a projection-only local record demands only that
+/// field's initializer; the other field's invocation never runs.
+#[test]
+fn projecting_one_field_never_computes_the_other() {
+    let source = format!(
+        "{POINT}\n#[test]\nfn t() -> Stream<Check> {{\n    let p = Point {{ x: cheap(), y: expensive() }};\n    yield expect_eq(p.x + 1, 42);\n    yield never_demanded(expensive());\n    yield demanded(cheap());\n}}\n"
+    );
+    let report = run_source(&source).expect("runs");
+    assert!(report.passed() && report.agrees(), "{report:?}");
+    let frames = frame_entries(&source);
+    assert_eq!(frames.get("cheap").copied().unwrap_or(0), 1);
+    assert_eq!(frames.get("expensive").copied().unwrap_or(0), 0);
+}
+
+/// Demanding the other field forces the other field: `p.y` computes `expensive`
+/// and leaves `cheap` — never projected here — uncomputed.
+#[test]
+fn demanding_the_other_field_forces_only_that_field() {
+    let source = format!(
+        "{POINT}\n#[test]\nfn t() -> Stream<Check> {{\n    let p = Point {{ x: cheap(), y: expensive() }};\n    yield expect_eq(p.y, 999);\n    yield demanded(expensive());\n    yield never_demanded(cheap());\n}}\n"
+    );
+    let report = run_source(&source).expect("runs");
+    assert!(report.passed() && report.agrees(), "{report:?}");
+    let frames = frame_entries(&source);
+    assert_eq!(frames.get("expensive").copied().unwrap_or(0), 1);
+    assert_eq!(frames.get("cheap").copied().unwrap_or(0), 0);
+}
+
 /// A strict call (no wire parameters) stays a bundled direct `WeavyOp::Call`:
 /// the partition extracts no argument island and the check island lowers a
 /// direct call, exactly as rung 004 requires.

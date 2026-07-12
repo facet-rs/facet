@@ -1420,12 +1420,16 @@ impl Module {
                 }
             }
         }
+        // Independently-demandable aggregate fields: a projection of a
+        // projection-only local record becomes an `AwaitWire` of its own field's
+        // initializer, so demanding `p.x` never computes `p.y` (rung 054).
+        let projection_wires = projection_field_wires(function);
         // Collapse structurally equal wire invocations to one representative demand
-        // identity. `wire_ids` maps every shared-consumer node to its representative
-        // wire island (rung 058); `lazy_arg_reps` maps every lazy call argument node
-        // to its representative wire island (rung 053). `wire_islands` are the
-        // argument islands built once per representative and driven lazily through
-        // force-on-park.
+        // identity. `wire_ids` maps every shared-consumer node and every fused field
+        // projection to the representative wire island it awaits (rungs 058/054);
+        // `lazy_arg_reps` maps every lazy call argument node to its representative
+        // wire island (rung 053). `wire_islands` are the argument islands built once
+        // per representative and driven lazily through force-on-park.
         let mut wire_representatives = Vec::new();
         let (wire_ids, lazy_arg_reps) = {
             let mut fingerprints = BTreeMap::new();
@@ -1438,10 +1442,14 @@ impl Module {
                 }
                 self.value_island_id(function.id, representative)
             };
-            let wire_ids = wire_nodes
+            let mut wire_ids = wire_nodes
                 .iter()
                 .map(|node| (node.id, register(node.id)))
                 .collect::<BTreeMap<_, _>>();
+            for &(project, field_init) in &projection_wires {
+                let representative = register(field_init);
+                wire_ids.insert(project, representative);
+            }
             let lazy_arg_reps = lazy_arg_nodes
                 .iter()
                 .map(|&arg| (arg, register(arg)))
@@ -1613,6 +1621,14 @@ impl Module {
             }
         }
         prune_control_regions(&mut nodes, &needed);
+        // A fused field projection or awaited wire consumer no longer references
+        // the aggregate it was cut from, so its now-dead subtree — an unmaterialized
+        // record and its unprojected field initializers — must be dropped before
+        // collecting callees, or an undemanded field's invocation would execute.
+        if !wires.is_empty() {
+            let live = island_reachable(&nodes, output);
+            nodes.retain(|node| live.contains(&node.id));
+        }
         let mut seen = BTreeSet::from([function.id]);
         let mut callees = Vec::new();
         collect_callees(self, &nodes, &mut seen, &mut callees);
@@ -2027,6 +2043,86 @@ impl PartitionedTest {
 /// order. A call's argument inputs align with the callee's parameters by index
 /// (positional then named), so a wire parameter at index `i` is fed by the call
 /// node's input at index `i`.
+/// Locally constructed records/tuples consumed only by field projections of
+/// inline-word fields: each such projection is an independently-demandable
+/// aggregate field. Returns `(projection node, field-initializer node)` pairs, so
+/// the projection can demand only its own field's initializer through
+/// force-on-park while the aggregate is never materialized and the other fields
+/// are never computed. A record consumed whole (passed, returned, or a control
+/// output) stays materialized and is excluded.
+fn projection_field_wires(function: &Function) -> Vec<(NodeId, NodeId)> {
+    let mut region_outputs = BTreeSet::new();
+    for node in &function.nodes {
+        match &node.op {
+            Op::If {
+                consequent,
+                alternative,
+            } => {
+                region_outputs.insert(consequent.output);
+                region_outputs.insert(alternative.output);
+            }
+            Op::Match { arms } => {
+                region_outputs.extend(arms.iter().map(|arm| arm.output));
+            }
+            Op::OrderedMatch { arms, fallback } => {
+                for arm in arms {
+                    region_outputs.insert(arm.condition.output);
+                    region_outputs.insert(arm.body.output);
+                }
+                region_outputs.insert(fallback.output);
+            }
+            _ => {}
+        }
+    }
+    let mut result = Vec::new();
+    for record in &function.nodes {
+        if !matches!(record.op, Op::Record | Op::Tuple) {
+            continue;
+        }
+        let mut projections = Vec::new();
+        let mut whole = function.output == Some(record.id) || region_outputs.contains(&record.id);
+        for other in &function.nodes {
+            if other.id == record.id {
+                continue;
+            }
+            match &other.op {
+                Op::Project { index } if other.inputs == [record.id] => {
+                    projections.push((other.id, *index, other.ty.clone()));
+                }
+                _ if other.inputs.contains(&record.id) => whole = true,
+                _ => {}
+            }
+        }
+        if whole || projections.is_empty() {
+            continue;
+        }
+        // Only fuse when every projected field is an inline word the force-on-park
+        // scalar resume supports; a composite field stays materialized.
+        let projected_word = projections
+            .iter()
+            .all(|(_, _, ty)| matches!(ty, Type::Int | Type::Bool));
+        // Only fuse when materializing the aggregate would execute a genuinely
+        // undemanded field invocation — an unprojected field whose initializer is a
+        // user call (rung 054's `expensive()`). A record of literals or fully
+        // projected fields is materialized unchanged, so aggregate contract shapes
+        // are preserved where no partial-demand laziness is observable.
+        let projected: BTreeSet<u32> = projections.iter().map(|(_, index, _)| *index).collect();
+        let saves_an_invocation = (0..record.inputs.len()).any(|index| {
+            !projected.contains(&(index as u32))
+                && matches!(
+                    function.nodes[record.inputs[index].0 as usize].op,
+                    Op::Call(_)
+                )
+        });
+        if projected_word && saves_an_invocation {
+            for (project, index, _) in projections {
+                result.push((project, record.inputs[index as usize]));
+            }
+        }
+    }
+    result
+}
+
 /// The lazy-argument representative map for building one island, with the
 /// island's own representative excluded so its own invocation is computed rather
 /// than stopped at as a wire boundary.
