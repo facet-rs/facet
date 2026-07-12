@@ -165,15 +165,18 @@ fn assert_suites_agree(rung: &str, lane_pair: &str, native: &SuiteRun, interp: &
     );
 }
 
-/// Prove the report ran purely on its selected lane. A task spawns into exactly
-/// one authority, so the opposite lane's spawn counter must be zero and the
-/// selected lane's spawn counter must account for every task spawn. This is what
+/// Prove the report ran purely on its selected lane. Every scheduler task that
+/// actually reaches an executable spawns into exactly one authority; the chaos
+/// lane may discard a task at an edge safepoint *before* it reaches the
+/// executable, so the lane-classified spawns account for `task_spawns` minus
+/// `task_discards`. The opposite lane's spawn counter must be zero. This is what
 /// makes a silent native→interpreter fallback observable rather than a
 /// false-green interpreter/interpreter comparison.
 fn assert_lane_purity(rung: &str, report: &RatchetReport, lane: LaneRequest) -> u64 {
     let mut native_spawns = 0;
     for (which, suite) in [("plain", &report.plain), ("chaos", &report.chaos)] {
         let c = &suite.counters;
+        let executed = c.task_spawns - c.task_discards;
         match lane {
             LaneRequest::Native => {
                 assert_eq!(
@@ -181,8 +184,8 @@ fn assert_lane_purity(rung: &str, report: &RatchetReport, lane: LaneRequest) -> 
                     "{rung} ({which}): native lane spawned an interpreter task",
                 );
                 assert_eq!(
-                    c.native_task_spawns, c.task_spawns,
-                    "{rung} ({which}): native lane left task spawns unaccounted",
+                    c.native_task_spawns, executed,
+                    "{rung} ({which}): native lane left executed task spawns unaccounted",
                 );
                 native_spawns += c.native_task_spawns;
             }
@@ -192,8 +195,8 @@ fn assert_lane_purity(rung: &str, report: &RatchetReport, lane: LaneRequest) -> 
                     "{rung} ({which}): interpreter lane spawned a native task",
                 );
                 assert_eq!(
-                    c.interpreter_task_spawns, c.task_spawns,
-                    "{rung} ({which}): interpreter lane left task spawns unaccounted",
+                    c.interpreter_task_spawns, executed,
+                    "{rung} ({which}): interpreter lane left executed task spawns unaccounted",
                 );
             }
             LaneRequest::Auto => unreachable!("differential never uses the Auto lane"),

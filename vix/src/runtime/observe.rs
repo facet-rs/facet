@@ -50,6 +50,7 @@ pub enum ExecutionLaneFact {
 pub enum ExecutionFallbackFact {
     NativeUnavailable,
     DisabledByEnvironment,
+    DisabledByRequest,
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]

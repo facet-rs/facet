@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
-use weavy::exec::Executable;
+use weavy::exec::{Executable, LaneRequest};
 use weavy::mem::Layout;
 use weavy::task::{
     ArgCopy, ArrayOpStatus, Fn as WeavyFn, FnId as WeavyFnId, Op as WeavyOp, OrderedOpStatus,
@@ -313,6 +313,12 @@ pub struct LoweringCache {
     entries: BTreeMap<RecipeId, LoweringArtifact>,
     counters: LoweringCacheCounters,
     trace_mode: TraceMode,
+    /// The typed lane every executable in this cache is compiled for. The
+    /// ordinary production cache uses [`LaneRequest::Auto`] (Weavy's own
+    /// native/interpreter policy); a cross-lane differential builds one cache per
+    /// forced lane so both authorities can run in one process without touching
+    /// the `WEAVY_JIT` environment variable.
+    lane: LaneRequest,
 }
 
 impl Default for LoweringCache {
@@ -321,6 +327,7 @@ impl Default for LoweringCache {
             entries: BTreeMap::new(),
             counters: LoweringCacheCounters::default(),
             trace_mode: TraceMode::Production,
+            lane: LaneRequest::Auto,
         }
     }
 }
@@ -337,6 +344,17 @@ impl LoweringCache {
         }
     }
 
+    /// Construct a production-trace cache whose executables are compiled for an
+    /// explicit [`LaneRequest`]. This is the seam the cross-lane differential
+    /// uses to lower the same island once per authority.
+    #[must_use]
+    pub fn for_lane(lane: LaneRequest) -> Self {
+        Self {
+            lane,
+            ..Self::default()
+        }
+    }
+
     pub fn get_or_lower(&mut self, island: &Island) -> Result<&LoweringArtifact, LoweringError> {
         let recipe = RecipeId::from_canonical_vir(&island.canonical_recipe_bytes());
         if self.entries.contains_key(&recipe) {
@@ -344,7 +362,7 @@ impl LoweringCache {
             return Ok(self.entries.get(&recipe).expect("entry was just observed"));
         }
         self.counters.misses += 1;
-        let lowered = lower_island(island, recipe, self.trace_mode)?;
+        let lowered = lower_island(island, recipe, self.trace_mode, self.lane)?;
         self.entries.insert(recipe, lowered);
         Ok(self.entries.get(&recipe).expect("entry was just inserted"))
     }
@@ -412,6 +430,7 @@ fn lower_island(
     island: &Island,
     recipe: RecipeId,
     trace_mode: TraceMode,
+    lane: LaneRequest,
 ) -> Result<LoweringArtifact, LoweringError> {
     let output = island
         .nodes
@@ -571,7 +590,7 @@ fn lower_island(
         // Keep source-attributed `Op::Trace` nodes in the verified program. The
         // cache chooses bounded Production tracing for ordinary execution or
         // explicit Innards tracing for diagnostics.
-        executable: Executable::with_trace_mode(verified, trace_mode),
+        executable: Executable::with_lane(verified, trace_mode, lane),
         array_outcome,
         pc_nodes,
         constants,

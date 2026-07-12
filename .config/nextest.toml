@@ -180,3 +180,13 @@ slow-timeout = { period = "120s", terminate-after = 5 }
 [[profile.default.overrides]]
 filter = 'package(vix) & test(accepted_rungs_verify_and_execute_through_one_executable)'
 slow-timeout = { period = "120s", terminate-after = 5 }
+
+# The cross-lane differential (F1) compiles the accepted canonical corpus
+# (through rung 059) once and executes every accepted rung through both an
+# explicitly-selected native Executable and an explicitly-selected interpreter
+# Executable, plain and chaos. Running the heavy tail-recursion and
+# million-element rungs through the interpreter lane twice puts it in the same
+# ~123s bounded band as the accepted-rungs certificate; give it the same leash.
+[[profile.default.overrides]]
+filter = 'package(vix) & test(accepted_corpus_agrees_across_native_and_interpreter_lanes)'
+slow-timeout = { period = "120s", terminate-after = 5 }
