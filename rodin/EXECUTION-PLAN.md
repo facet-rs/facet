@@ -35,17 +35,17 @@ Cargo fixtures.
 ## Current checkpoint
 
 At the time of the latest authoritative integration checkpoint
-(`3aa85ee069`):
+(`3a27246e7`):
 
-- the canonical rung prefix is green through rung 051. The merged root has the
-  same source tree as the ordered-publication branch whose combined Vix+Weavy
-  run `f1342822-0c91-4354-8d41-8f366af3e360` passed 647/647 tests. This includes
-  the unchanged budgeted rung 050, the million-element shared-publication rung
-  051, live Cargo oracles, and the solver-readiness band through rung 092.
-  Workspace all-target
-  check, strict all-feature/all-target Clippy, formatting, and diff checks are
-  green at that full-suite checkpoint; exact-root rung-050 runs are recorded
-  below;
+- the canonical rung prefix is green through rung 059. The merged root is
+  byte-identical to the isolated integration tree whose combined Vix+Weavy run
+  `e6e3d49f-d206-4ab0-9144-4dc640edbf80` passed 683/683 tests. This includes the
+  unchanged budgeted rung 050, the million-element shared-publication rung 051,
+  native higher-order closures in rung 052, the lazy-demand and described-wire
+  band through rung 059, live Cargo oracles, and the solver-readiness band
+  through rung 092. Workspace all-target/all-feature check, strict
+  all-feature/all-target Clippy, formatting, and diff checks are green at that
+  full-suite checkpoint; exact-root rung-050 runs are recorded below;
 - rung 031 executes unchanged through the completed two-stage generator path.
   One verified generator task runs real `Match`/`If` control and publishes only
   taken `YieldSiteId`s; the runner then evaluates those provenance-keyed Value
@@ -116,6 +116,29 @@ At the time of the latest authoritative integration checkpoint
   enum, record, tuple, dense, ordered, and nested combinations. Store,
   task-molten, ordered-root, and lent-molten namespaces remain disjoint; frozen
   references persist semantic `ValueId`s rather than raw handles;
+- rung 052 is green unchanged through both execution engines. Higher-order
+  callable values keep a uniform public shape while captured callable
+  environments live in verifier-described task-local boxes. `EnvBox`,
+  `EnvLoad`, `FunctionContract.environment`, and the shared indirect-call
+  unboxing routine prove the capture layout rather than interpreting handle
+  bits. The native stencil lane and `WEAVY_JIT=0` interpreter lane agree on
+  values, traces, stale-handle faults, and source attribution; rung 048's static
+  concrete-capture convention remains a direct checked call;
+- rungs 053-059 are green unchanged through descriptor-independent demand
+  semantics. Checked integer division produces a typed, attributed
+  `DivisionByZero` only when its wire is forced. Conservative parameter
+  strictness identifies conditionally consumed arguments; call-site-specialized
+  bundled callees await only the taken argument through the scheduler's
+  force-on-park/resume protocol, while strict calls remain ordinary verified
+  frames. Aggregate projections demand only the selected field, indexed
+  `Array.map` projections demand only the selected keyed application, equal
+  invocation preimages share one memo realization, and distinct argument
+  identities remain distinct. Bounded Production observation records executed
+  bundled preimages without creating scheduler edges. Every described-wire
+  certificate has a metamorphic control proving that removing the observer
+  leaves value identities and the executed frame/call trace unchanged. Focused
+  default and `WEAVY_JIT=0` integration runs each passed the same 33 selected
+  closure, demand, solver, and scale certificates;
 - the Rodin-readiness track is continuously green through rungs 083-088.
   Ordinary Vix `std/version.vix`, prepended by the readiness harness while the
   compiler lacks an ambient prelude, defines full SemVer values and normalized
@@ -438,7 +461,10 @@ recognizes only a single-consumption append fold and leaves every other fold on
 the semantic path. Shared value-island extraction, borrow-scoped result
 resolution, scheduler-owned framed publication, consumer arguments, failure
 context rebuilding, and production counters are exercised together by the
-unchanged million-element rung. The canonical next boundary is rung 052.
+unchanged million-element rung. Rungs 052-059 subsequently fold native boxed
+closure environments, checked lazy wires, force-on-park, selective aggregate
+and keyed-element demand, memoized shared invocations, and observer-independent
+described-wire checks. The canonical next boundary is rung 060.
 
 Before any composite dynamic key or completed aggregate crosses that boundary,
 the runtime Store must intern it through the canonical framed value walk:
