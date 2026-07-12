@@ -7420,6 +7420,113 @@ mod tests {
     }
 
     #[test]
+    fn admits_boxed_projection_and_rejects_environment_defects() {
+        let scalar = RegionShape::word(WordKind::Scalar);
+        let pair = RegionShape::new(vec![kinds(WordKind::Scalar), kinds(WordKind::Scalar)]);
+        let build = |field: u32, callee: u32, environment: Vec<FrameRegion>, dst: RegionShape| {
+            let program = Program {
+                fns: vec![function(
+                    3,
+                    vec![
+                        Op::EnvLoad {
+                            dst: RegionId(0),
+                            env: RegionId(1),
+                            callee: FnId(callee),
+                            field,
+                        },
+                        Op::Ret { src: 0, size: 8 },
+                    ],
+                )],
+            };
+            let mut contract = function_contract(
+                3,
+                vec![
+                    region(0, dst),
+                    word_region(8, WordKind::Scalar),
+                    word_region(16, WordKind::Scalar),
+                ],
+                &[2],
+                0,
+                None,
+            );
+            contract.environment = environment;
+            (
+                program,
+                ProgramContract {
+                    functions: vec![contract],
+                    calls: vec![],
+                    schemas: vec![],
+                    value_shapes: vec![],
+                },
+            )
+        };
+
+        // A scalar capture projected into a scalar slot is the boxed convention.
+        let (program, contract) = build(0, 0, vec![region(0, scalar.clone())], scalar.clone());
+        assert!(program.verify(contract).is_ok(), "boxed projection verifies");
+
+        let index = build(3, 0, vec![region(0, scalar.clone())], scalar.clone());
+        let not_boxed = build(0, 0, vec![], scalar.clone());
+        let out_of_range = build(0, 9, vec![region(0, scalar.clone())], scalar.clone());
+        let width = build(0, 0, vec![region(0, pair.clone())], scalar.clone());
+        let cases = [
+            InvalidCase {
+                name: "capture index out of range",
+                program: index.0,
+                contract: index.1,
+                expected: op_error(
+                    0,
+                    ProgramDefect::EnvironmentFieldIndex {
+                        callee: FnId(0),
+                        field: 3,
+                        field_count: 1,
+                    },
+                ),
+            },
+            InvalidCase {
+                name: "callee is not boxed",
+                program: not_boxed.0,
+                contract: not_boxed.1,
+                expected: op_error(0, ProgramDefect::EnvironmentNotBoxed { callee: FnId(0) }),
+            },
+            InvalidCase {
+                name: "callee out of range",
+                program: out_of_range.0,
+                contract: out_of_range.1,
+                expected: op_error(
+                    0,
+                    ProgramDefect::EnvironmentContractOutOfRange {
+                        callee: FnId(9),
+                        function_count: 1,
+                    },
+                ),
+            },
+            InvalidCase {
+                name: "capture width mismatch",
+                program: width.0,
+                contract: width.1,
+                expected: op_error(
+                    0,
+                    ProgramDefect::EnvironmentFieldShape {
+                        callee: FnId(0),
+                        field: 0,
+                        expected: pair.clone(),
+                        actual: scalar.clone(),
+                    },
+                ),
+            },
+        ];
+        for case in cases {
+            assert_eq!(
+                case.program.verify(case.contract).expect_err(case.name),
+                case.expected,
+                "{}",
+                case.name
+            );
+        }
+    }
+
+    #[test]
     fn rejects_copy_value_for_non_structural_handle_regions() {
         let string_schema = SchemaRef(0);
         let error = Program {
