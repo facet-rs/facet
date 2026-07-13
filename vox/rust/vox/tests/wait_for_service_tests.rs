@@ -1,6 +1,7 @@
 //! Tests for ConnectBuilder::wait_for_service initial-connect waiting.
 
 use std::time::Duration;
+use tokio::io::AsyncWriteExt;
 use vox_core::ConnectionError;
 
 #[vox::service]
@@ -113,9 +114,9 @@ async fn wait_for_service_deadline_caps_individual_attempt() {
 
 #[tokio::test]
 async fn wait_for_service_fails_immediately_on_protocol_error() {
-    // Server that immediately closes the connection without speaking vox.
-    // This causes ConnectionError::Protocol (link closed during transport prologue),
-    // which is terminal for this peer and must not consume the full wait_for_service timeout.
+    // Server that writes an invalid Vox link prologue. This deterministically
+    // produces ConnectionError::Protocol, which is terminal for this peer and
+    // must not consume the full wait_for_service timeout.
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind");
@@ -123,8 +124,11 @@ async fn wait_for_service_fails_immediately_on_protocol_error() {
 
     let server = tokio::spawn(async move {
         loop {
-            let (socket, _) = listener.accept().await.expect("accept");
-            drop(socket);
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            socket
+                .write_all(b"NOPE!!")
+                .await
+                .expect("write invalid Vox link prologue");
         }
     });
 
@@ -147,6 +151,6 @@ async fn wait_for_service_fails_immediately_on_protocol_error() {
     );
     assert!(
         matches!(err, ConnectionError::Protocol(_)),
-        "expected ConnectionError::Protocol for peer that closed connection, got: {err:?}"
+        "expected ConnectionError::Protocol for invalid link prologue, got: {err:?}"
     );
 }

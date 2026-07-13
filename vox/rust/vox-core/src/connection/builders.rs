@@ -92,9 +92,16 @@ where
 {
     let (tx, mut rx) = link.split();
     let handshake_result =
-        handshake_as_initiator(&tx, &mut rx, settings, vox_types::Metadata::default())
+        match handshake_as_initiator(&tx, &mut rx, settings, vox_types::Metadata::default())
             .await
-            .map_err(connection_error_from_handshake)?;
+            .map_err(connection_error_from_handshake)
+        {
+            Ok(handshake_result) => handshake_result,
+            Err(error) => {
+                let _ = tx.close().await;
+                return Err(error);
+            }
+        };
     let message_plan =
         message_plan_from_handshake_observed(&handshake_result, None, ConnectionRole::Initiator)?;
     Ok(ConnectionInitiatorBuilder::new(
@@ -118,9 +125,16 @@ where
 {
     let (tx, mut rx) = link.split();
     let handshake_result =
-        handshake_as_acceptor(&tx, &mut rx, settings, vox_types::Metadata::default())
+        match handshake_as_acceptor(&tx, &mut rx, settings, vox_types::Metadata::default())
             .await
-            .map_err(connection_error_from_handshake)?;
+            .map_err(connection_error_from_handshake)
+        {
+            Ok(handshake_result) => handshake_result,
+            Err(error) => {
+                let _ = tx.close().await;
+                return Err(error);
+            }
+        };
     let message_plan =
         message_plan_from_handshake_observed(&handshake_result, None, ConnectionRole::Acceptor)?;
     Ok(ConnectionAcceptorBuilder::new(
@@ -922,7 +936,7 @@ impl<L> ConnectionTransportInitiatorBuilder<L> {
         L::Tx: MaybeSend + MaybeSync + 'static,
         L::Rx: MaybeSend + 'static,
     {
-        let handshake_result = handshake_as_initiator_observed(
+        let handshake_result = match handshake_as_initiator_observed(
             &link.tx,
             &mut link.rx,
             config.connection_settings.clone(),
@@ -931,7 +945,14 @@ impl<L> ConnectionTransportInitiatorBuilder<L> {
             Arc::clone(&config.identity_resolver),
             config.observer.as_ref(),
         )
-        .await?;
+        .await
+        {
+            Ok(handshake_result) => handshake_result,
+            Err(error) => {
+                let _ = link.tx.close().await;
+                return Err(error);
+            }
+        };
         let message_plan = message_plan_from_handshake_observed(
             &handshake_result,
             config.observer.as_ref(),
@@ -1189,7 +1210,7 @@ impl<L: Link> ConnectionTransportAcceptorBuilder<L> {
             config,
         } = self;
         let mut link = accept_transport_observed(link, config.observer.as_ref()).await?;
-        let handshake_result = handshake_as_acceptor_observed(
+        let handshake_result = match handshake_as_acceptor_observed(
             &link.tx,
             &mut link.rx,
             config.connection_settings.clone(),
@@ -1198,7 +1219,14 @@ impl<L: Link> ConnectionTransportAcceptorBuilder<L> {
             Arc::clone(&config.identity_resolver),
             config.observer.as_ref(),
         )
-        .await?;
+        .await
+        {
+            Ok(handshake_result) => handshake_result,
+            Err(error) => {
+                let _ = link.tx.close().await;
+                return Err(error);
+            }
+        };
         let message_plan = message_plan_from_handshake_observed(
             &handshake_result,
             config.observer.as_ref(),

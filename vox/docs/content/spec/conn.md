@@ -36,6 +36,64 @@ Connection/Lane/RequestScope runtime contract.
 >   * Unix sockets
 >   * Named pipes on Windows
 
+## Iroh transport
+
+Iroh gives Vox a NAT-traversing transport whose endpoint name is already a
+cryptographic public key. Vox still owns the RPC protocol: Iroh establishes the
+authenticated path and one ordered byte stream, then the ordinary Vox link
+prologue, connection handshake, identity resolver, lanes, and requests run on
+top of it.
+
+> r[transport.iroh.link]
+>
+> The Rust `vox-iroh` transport MUST map one Iroh bidirectional QUIC stream to
+> one Vox link. It MUST use the ordinary bounded `StreamLink` message framing
+> and transport prologue. It MUST NOT substitute QUIC datagrams, parallel QUIC
+> streams, or an Iroh-specific RPC protocol for the Vox link contract.
+
+> r[transport.iroh.alpn]
+>
+> Vox-over-Iroh endpoints MUST negotiate the versioned ALPN
+> `vox/iroh/1`. A peer that does not negotiate that ALPN MUST NOT enter the Vox
+> transport prologue or connection handshake.
+
+> r[transport.iroh.evidence]
+>
+> After the Iroh TLS handshake succeeds, the locally verified remote
+> `EndpointId` MUST be attached to the Vox link as generic Ed25519 public-key
+> transport evidence. The exact 32 public-key bytes MUST be available to the
+> connection identity resolver before any service lane can open. The endpoint
+> identity MUST NOT be copied through peer-authored metadata or payloads.
+
+> r[transport.iroh.path-equivalence]
+>
+> Direct and relay-carried Iroh connections MUST expose the same Vox link,
+> public-key evidence, ALPN, framing, close behavior, and connection policy
+> semantics. Path selection and direct-path upgrades MUST NOT create a second
+> Vox connection or change the peer identity.
+
+> r[transport.iroh.cancel-safe]
+>
+> Vox-over-Iroh sends MUST use the transport-owned bounded writer queue from
+> `StreamLink`. Dropping a caller's send future MUST either leave the payload
+> wholly uncommitted or enqueue the complete payload exactly once; it MUST NOT
+> leave a partially written QUIC frame.
+
+> r[transport.iroh.close]
+>
+> Gracefully closing the Vox transmit half MUST finish the Iroh send stream
+> after all committed payloads. The peer MUST observe those payloads in order
+> followed by end-of-stream. Dropping both link halves MUST release the owning
+> Iroh connection, and transport failures MUST remain distinguishable from
+> ordinary end-of-stream.
+
+> r[transport.iroh.observability]
+>
+> Vox connections carried by Iroh MUST retain the ordinary `VoxObserver`
+> establishment, identity-resolution, driver, channel, and close events.
+> Transport tracing SHOULD identify dial, accept, and failure phases using a
+> redacted EndpointId representation and MUST NOT log secret-key material.
+
 > r[transport.stream.local]
 >
 > Vox provides a `LocalLink` abstraction that uses named pipes on Windows and
@@ -306,6 +364,7 @@ without pretending that all of those paths have the same security evidence.
 >   * synthetic test identity;
 >   * local process or platform identity;
 >   * certificate-backed identity;
+>   * public-key-backed identity;
 >   * application/user identity produced by a local verifier;
 >   * composite identity that records more than one verified basis.
 >

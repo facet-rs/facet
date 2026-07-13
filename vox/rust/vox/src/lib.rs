@@ -196,6 +196,7 @@ pub use vox_types::{
     PeerIdentity,
     PeerIdentityForm,
     ProtocolErrorKind,
+    PublicKeyAlgorithm,
     ReplySink,
     RequestAuthorizationContext,
     RequestCall,

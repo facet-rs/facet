@@ -6,11 +6,22 @@
 //! not grow with the element count.
 
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::cell::Cell;
 
 use vix::runtime::{FramedNode, SchemaId};
 
-static ALLOCS: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    static COUNT_ALLOCATIONS: Cell<bool> = const { Cell::new(false) };
+    static ALLOCS: Cell<usize> = const { Cell::new(0) };
+}
+
+fn record_allocation() {
+    COUNT_ALLOCATIONS.with(|counting| {
+        if counting.get() {
+            ALLOCS.with(|allocs| allocs.set(allocs.get() + 1));
+        }
+    });
+}
 
 struct CountingAllocator;
 
@@ -18,14 +29,14 @@ struct CountingAllocator;
 // relaxed counter on the allocating paths.
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        ALLOCS.fetch_add(1, Ordering::Relaxed);
+        record_allocation();
         unsafe { System.alloc(layout) }
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         unsafe { System.dealloc(ptr, layout) }
     }
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        ALLOCS.fetch_add(1, Ordering::Relaxed);
+        record_allocation();
         unsafe { System.realloc(ptr, layout, new_size) }
     }
 }
@@ -50,10 +61,14 @@ fn inline_sequence(count: usize) -> FramedNode {
 /// Measure the heap allocations performed while hashing an already-built inline
 /// sequence node. The count must be independent of the element count.
 fn hash_allocations(node: &FramedNode) -> usize {
-    let start = ALLOCS.load(Ordering::Relaxed);
+    ALLOCS.with(|allocs| allocs.set(0));
+    COUNT_ALLOCATIONS.with(|counting| {
+        assert!(!counting.replace(true), "allocation scopes do not nest");
+    });
     let id = node.identity();
     std::hint::black_box(&id);
-    ALLOCS.load(Ordering::Relaxed) - start
+    COUNT_ALLOCATIONS.with(|counting| counting.set(false));
+    ALLOCS.with(Cell::get)
 }
 
 #[test]

@@ -10,6 +10,7 @@ members = [
   "rust/vox-rt-macros",
   "rust/vox-schema",
   "rust/vox-core",
+  "rust/vox-iroh",
   "rust/vox-stream",
   "rust/vox-websocket",
   "rust/vox-inprocess",
@@ -58,6 +59,7 @@ vox-fdpass = { path = "rust/vox-fdpass", version = "0.10.0-rc.0" }
 vox-codegen = { path = "rust/vox-codegen", version = "0.10.0-rc.0" }
 vox-websocket = { path = "rust/vox-websocket", version = "0.10.0-rc.0" }
 vox-inprocess = { path = "rust/vox-inprocess", version = "0.10.0-rc.0" }
+vox-iroh = { path = "rust/vox-iroh", version = "0.10.0-rc.0" }
 vox-local = { path = "rust/vox-local", version = "0.10.0-rc.0" }
 vox-ffi = { path = "rust/vox-ffi", version = "0.10.0-rc.0" }
 subject-rust = { path = "rust/subject-rust", version = "0.2.2" }
@@ -116,6 +118,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 indexmap = "2"
+iroh = "1.0.2"
 smallvec = "1.15.1"
 getrandom = { version = "0.4", features = ["wasm_js"] }
 zerocopy = { version = "0.8", features = ["derive"] }

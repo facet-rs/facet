@@ -693,6 +693,7 @@ const fn peer_identity_form_label(form: PeerIdentityForm) -> &'static str {
         PeerIdentityForm::Synthetic => "synthetic",
         PeerIdentityForm::LocalProcess => "local-process",
         PeerIdentityForm::CertificateBacked => "certificate-backed",
+        PeerIdentityForm::PublicKeyBacked => "public-key-backed",
         PeerIdentityForm::ApplicationUser => "application-user",
         PeerIdentityForm::Composite => "composite",
     }

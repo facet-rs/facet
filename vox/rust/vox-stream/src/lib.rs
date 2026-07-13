@@ -7,7 +7,7 @@
 use std::io;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 use vox_types::{Backing, Link, LinkRx, LinkTx};
@@ -99,6 +99,12 @@ pub(crate) fn validate_link_prologue(
 pub struct StreamLink<R, W> {
     reader: R,
     writer: W,
+}
+
+#[derive(Debug)]
+struct QueuedFrame {
+    bytes: Vec<u8>,
+    flushed: oneshot::Sender<()>,
 }
 
 impl<R, W> StreamLink<R, W> {
@@ -228,7 +234,7 @@ where
     type Rx = StreamLinkRx<BufReader<R>>;
 
     fn split(self) -> (Self::Tx, Self::Rx) {
-        let (tx_chan, mut rx_chan) = mpsc::channel::<Vec<u8>>(128);
+        let (tx_chan, mut rx_chan) = mpsc::channel::<QueuedFrame>(128);
         let (read_tx, read_rx) = mpsc::channel::<io::Result<Option<Backing>>>(128);
         let mut reader = BufReader::new(self.reader);
         let mut writer = BufWriter::new(self.writer);
@@ -288,18 +294,23 @@ where
             // can validate immediately rather than blocking until the first real frame.
             writer.write_all(&link_prologue(false)).await?;
             writer.flush().await?;
-            while let Some(bytes) = rx_chan.recv().await {
-                let len = frame_len_prefix(bytes.len())?;
+            while let Some(frame) = rx_chan.recv().await {
+                let len = frame_len_prefix(frame.bytes.len())?;
                 writer.write_all(&len).await?;
-                writer.write_all(&bytes).await?;
+                writer.write_all(&frame.bytes).await?;
+                let mut flushed = vec![frame.flushed];
                 // Drain any already-queued messages before flushing,
                 // so bursts coalesce into fewer syscalls.
-                while let Ok(bytes) = rx_chan.try_recv() {
-                    let len = frame_len_prefix(bytes.len())?;
+                while let Ok(frame) = rx_chan.try_recv() {
+                    let len = frame_len_prefix(frame.bytes.len())?;
                     writer.write_all(&len).await?;
-                    writer.write_all(&bytes).await?;
+                    writer.write_all(&frame.bytes).await?;
+                    flushed.push(frame.flushed);
                 }
                 writer.flush().await?;
+                for flushed in flushed {
+                    let _ = flushed.send(());
+                }
             }
             writer.shutdown().await?;
             Ok(())
@@ -325,7 +336,7 @@ where
 
 /// Sending half of a [`StreamLink`].
 pub struct StreamLinkTx {
-    tx: mpsc::Sender<Vec<u8>>,
+    tx: mpsc::Sender<QueuedFrame>,
     writer_task: JoinHandle<io::Result<()>>,
 }
 
@@ -338,8 +349,14 @@ impl LinkTx for StreamLinkTx {
         let permit = self.tx.clone().reserve_owned().await.map_err(|_| {
             io::Error::new(io::ErrorKind::ConnectionReset, "stream writer task stopped")
         })?;
-        drop(permit.send(bytes));
-        Ok(())
+        let (flushed, wait_for_flush) = oneshot::channel();
+        drop(permit.send(QueuedFrame { bytes, flushed }));
+        wait_for_flush.await.map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "stream writer stopped before frame was flushed",
+            )
+        })
     }
 
     async fn close(self) -> io::Result<()> {
@@ -905,15 +922,23 @@ mod tests {
     }
 
     // r[verify link.tx.cancel-safe]
+    // r[verify transport.iroh.cancel-safe]
     #[tokio::test]
     async fn send_cancel_before_capacity_does_not_enqueue() {
-        let (tx, mut rx) = mpsc::channel::<Vec<u8>>(1);
+        let (tx, mut rx) = mpsc::channel::<QueuedFrame>(1);
         let link_tx = StreamLinkTx {
             tx,
             writer_task: tokio::spawn(async { Ok(()) }),
         };
 
-        link_tx.send(b"first".to_vec()).await.unwrap();
+        let (flushed, _wait_for_flush) = oneshot::channel();
+        link_tx
+            .tx
+            .try_send(QueuedFrame {
+                bytes: b"first".to_vec(),
+                flushed,
+            })
+            .unwrap();
         {
             let pending = link_tx.send(b"second".to_vec());
             tokio::pin!(pending);
@@ -925,7 +950,7 @@ mod tests {
             );
         }
 
-        assert_eq!(rx.recv().await.unwrap(), b"first".to_vec());
+        assert_eq!(rx.recv().await.unwrap().bytes, b"first".to_vec());
         assert!(matches!(
             rx.try_recv(),
             Err(mpsc::error::TryRecvError::Empty)
@@ -934,8 +959,41 @@ mod tests {
         link_tx.close().await.unwrap();
     }
 
+    // r[verify link.tx.cancel-safe]
+    // r[verify transport.iroh.cancel-safe]
+    #[tokio::test]
+    async fn send_cancel_after_enqueue_still_flushes_once() {
+        let (tx, mut rx) = mpsc::channel::<QueuedFrame>(1);
+        let (started_tx, started_rx) = oneshot::channel();
+        let (release_tx, release_rx) = oneshot::channel();
+        let (recorded_tx, recorded_rx) = oneshot::channel();
+        let writer_task = tokio::spawn(async move {
+            let frame = rx.recv().await.expect("queued frame");
+            let _ = started_tx.send(());
+            let _ = release_rx.await;
+            let _ = recorded_tx.send(frame.bytes);
+            let _ = frame.flushed.send(());
+            Ok(())
+        });
+        let link_tx = StreamLinkTx { tx, writer_task };
+
+        {
+            let pending = link_tx.send(b"committed".to_vec());
+            tokio::pin!(pending);
+            tokio::select! {
+                result = &mut pending => panic!("send completed before writer release: {result:?}"),
+                result = started_rx => result.expect("writer started"),
+            }
+        }
+
+        let _ = release_tx.send(());
+        assert_eq!(recorded_rx.await.unwrap(), b"committed".to_vec());
+        link_tx.close().await.unwrap();
+    }
+
     // r[verify link.tx.close]
     // r[verify link.rx.eof]
+    // r[verify transport.iroh.close]
     #[tokio::test]
     async fn eof_on_peer_close() {
         let (a, b) = duplex_pair();

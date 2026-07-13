@@ -26,7 +26,7 @@ impl WsListener {
 impl VoxListener for WsListener {
     type Link = vox_websocket::WsLink<tokio::net::TcpStream>;
 
-    async fn accept(&mut self) -> std::io::Result<Self::Link> {
+    async fn accept(&mut self) -> std::io::Result<vox_core::Attachment<Self::Link>> {
         // A failed websocket UPGRADE is a problem with one connection (port
         // scanners, health checks, stray TCP clients), not with the listener:
         // skip it and keep accepting. Only TCP-level accept errors — actual
@@ -34,7 +34,7 @@ impl VoxListener for WsListener {
         loop {
             let (stream, addr) = self.tcp.accept().await?;
             match vox_websocket::WsLink::server(stream).await {
-                Ok(link) => return Ok(link),
+                Ok(link) => return Ok(vox_core::Attachment::initiator(link)),
                 Err(error) => {
                     tracing::debug!(%addr, ?error, "websocket upgrade failed; ignoring connection");
                 }

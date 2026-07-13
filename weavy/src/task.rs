@@ -3631,6 +3631,105 @@ impl Task {
         )
     }
 
+    #[inline]
+    fn run_word_ops(&mut self, code: &[Op], base: usize, mut pc: usize) -> Option<usize> {
+        let mut handled = false;
+        while let Some(op) = code.get(pc) {
+            match op {
+                Op::ConstI64 { dst, value } => {
+                    write_i64_at(&mut self.arena, base + *dst as usize, *value);
+                    pc += 1;
+                }
+                Op::AddI64 { dst, a, b } => {
+                    let va = read_i64_at(&self.arena, base + *a as usize);
+                    let vb = read_i64_at(&self.arena, base + *b as usize);
+                    write_i64_at(&mut self.arena, base + *dst as usize, va.wrapping_add(vb));
+                    pc += 1;
+                }
+                Op::MulI64 { dst, a, b } => {
+                    let va = read_i64_at(&self.arena, base + *a as usize);
+                    let vb = read_i64_at(&self.arena, base + *b as usize);
+                    write_i64_at(&mut self.arena, base + *dst as usize, va.wrapping_mul(vb));
+                    pc += 1;
+                }
+                Op::DivI64 { dst, a, b } => {
+                    let va = read_i64_at(&self.arena, base + *a as usize);
+                    let vb = read_i64_at(&self.arena, base + *b as usize);
+                    let value = if vb == 0 { 0 } else { va.wrapping_div(vb) };
+                    write_i64_at(&mut self.arena, base + *dst as usize, value);
+                    pc += 1;
+                }
+                Op::SubI64 { dst, a, b } => {
+                    let va = read_i64_at(&self.arena, base + *a as usize);
+                    let vb = read_i64_at(&self.arena, base + *b as usize);
+                    write_i64_at(&mut self.arena, base + *dst as usize, va.wrapping_sub(vb));
+                    pc += 1;
+                }
+                Op::CopyI64 { dst, src } => {
+                    let value = read_i64_at(&self.arena, base + *src as usize);
+                    write_i64_at(&mut self.arena, base + *dst as usize, value);
+                    pc += 1;
+                }
+                Op::EqI64 { dst, a, b } => {
+                    let va = read_i64_at(&self.arena, base + *a as usize);
+                    let vb = read_i64_at(&self.arena, base + *b as usize);
+                    write_i64_at(&mut self.arena, base + *dst as usize, i64::from(va == vb));
+                    pc += 1;
+                }
+                Op::NeI64 { dst, a, b } => {
+                    let va = read_i64_at(&self.arena, base + *a as usize);
+                    let vb = read_i64_at(&self.arena, base + *b as usize);
+                    write_i64_at(&mut self.arena, base + *dst as usize, i64::from(va != vb));
+                    pc += 1;
+                }
+                Op::LtI64 { dst, a, b } => {
+                    let va = read_i64_at(&self.arena, base + *a as usize);
+                    let vb = read_i64_at(&self.arena, base + *b as usize);
+                    write_i64_at(&mut self.arena, base + *dst as usize, i64::from(va < vb));
+                    pc += 1;
+                }
+                Op::LeI64 { dst, a, b } => {
+                    let va = read_i64_at(&self.arena, base + *a as usize);
+                    let vb = read_i64_at(&self.arena, base + *b as usize);
+                    write_i64_at(&mut self.arena, base + *dst as usize, i64::from(va <= vb));
+                    pc += 1;
+                }
+                Op::GtI64 { dst, a, b } => {
+                    let va = read_i64_at(&self.arena, base + *a as usize);
+                    let vb = read_i64_at(&self.arena, base + *b as usize);
+                    write_i64_at(&mut self.arena, base + *dst as usize, i64::from(va > vb));
+                    pc += 1;
+                }
+                Op::GeI64 { dst, a, b } => {
+                    let va = read_i64_at(&self.arena, base + *a as usize);
+                    let vb = read_i64_at(&self.arena, base + *b as usize);
+                    write_i64_at(&mut self.arena, base + *dst as usize, i64::from(va >= vb));
+                    pc += 1;
+                }
+                Op::Jump { target } => {
+                    pc = *target as usize;
+                }
+                Op::JumpIfZero { value, target } => {
+                    let value = read_i64_at(&self.arena, base + *value as usize);
+                    if value == 0 {
+                        pc = *target as usize;
+                    } else {
+                        pc += 1;
+                    }
+                }
+                Op::Trace { id } => {
+                    if self.mode == TraceMode::Innards {
+                        self.trace.push(TaskEvent::Mark(*id));
+                    }
+                    pc += 1;
+                }
+                _ => break,
+            }
+            handled = true;
+        }
+        handled.then_some(pc)
+    }
+
     fn run_hosted_with_value_memories_inner(
         &mut self,
         verified: Option<&VerifiedProgram>,
@@ -3646,10 +3745,14 @@ impl Task {
             let fn_id = frame.fn_id;
             let pc = frame.pc;
             let code = &program.fns[frame.fn_id.0 as usize].code;
-            if frame.pc >= code.len() {
+            if pc >= code.len() {
                 panic!("function {:?} fell off its code without Ret", fn_id);
             }
-            match code[frame.pc].clone() {
+            if let Some(pc) = self.run_word_ops(code, base, pc) {
+                self.frames.last_mut().expect("frame").pc = pc;
+                continue;
+            }
+            match code[pc].clone() {
                 op @ (Op::ProductConstruct { .. }
                 | Op::ProductProject { .. }
                 | Op::CopyValue { .. }
