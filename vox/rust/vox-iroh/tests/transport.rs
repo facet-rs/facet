@@ -35,6 +35,7 @@ impl Echo for EchoService {
 #[derive(Clone, Default)]
 struct RecordingObserver {
     public_key_identities: Arc<AtomicUsize>,
+    rejected_handshakes: Arc<AtomicUsize>,
     successful_requests: Arc<AtomicUsize>,
 }
 
@@ -53,6 +54,19 @@ impl VoxObserver for RecordingObserver {
             } if details.identity_form == Some(PeerIdentityForm::PublicKeyBacked)
         ) {
             self.public_key_identities.fetch_add(1, Ordering::SeqCst);
+        }
+        if matches!(
+            event,
+            EstablishmentEvent::Finished {
+                context: vox::EstablishmentContext {
+                    phase: EstablishmentPhase::ConnectionHandshake,
+                    ..
+                },
+                outcome: EstablishmentOutcome::Rejected,
+                ..
+            }
+        ) {
+            self.rejected_handshakes.fetch_add(1, Ordering::SeqCst);
         }
     }
 
@@ -298,6 +312,72 @@ async fn unknown_endpoint_is_rejected_before_service_lane_open() {
     server.abort();
     unknown_endpoint.close().await;
     enrolled_endpoint.close().await;
+    server_endpoint.close().await;
+}
+
+// r[verify transport.iroh.evidence]
+// r[verify transport.iroh.close]
+#[tokio::test]
+async fn client_identity_rejection_reaches_server_before_connection_close() {
+    let server_endpoint = Endpoint::builder(presets::Minimal)
+        .alpns(vec![ALPN.to_vec()])
+        .bind()
+        .await
+        .expect("bind server endpoint");
+    let client_endpoint = Endpoint::builder(presets::Minimal)
+        .bind()
+        .await
+        .expect("bind client endpoint");
+    let expected_server = Endpoint::builder(presets::Minimal)
+        .bind()
+        .await
+        .expect("bind expected server endpoint");
+    let accepted_lanes = Arc::new(AtomicUsize::new(0));
+    let observer = RecordingObserver::default();
+
+    let server = tokio::spawn(
+        vox::serve_listener(
+            IrohListener::new(server_endpoint.clone()),
+            CountingAcceptor::new(EchoDispatcher::new(EchoService), accepted_lanes.clone()),
+        )
+        .identity_resolver(require_endpoint(
+            client_endpoint.id(),
+            Arc::new(AtomicUsize::new(0)),
+        ))
+        .observer(observer.clone())
+        .run(),
+    );
+
+    let result = vox::initiator(IrohLinkSource::new(
+        client_endpoint.clone(),
+        server_endpoint.addr(),
+    ))
+    .identity_resolver(require_endpoint(
+        expected_server.id(),
+        Arc::new(AtomicUsize::new(0)),
+    ))
+    .establish::<EchoClient>()
+    .await;
+
+    assert!(matches!(
+        result,
+        Err(ConnectionError::EstablishmentRejected(Decline {
+            reason: EstablishmentRejectReason::Unauthenticated,
+            ..
+        }))
+    ));
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while observer.rejected_handshakes.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("server did not receive the client's typed identity rejection");
+    assert_eq!(accepted_lanes.load(Ordering::SeqCst), 0);
+
+    server.abort();
+    expected_server.close().await;
+    client_endpoint.close().await;
     server_endpoint.close().await;
 }
 

@@ -17,6 +17,8 @@ use vox_types::{
 // r[impl transport.iroh.alpn]
 pub const ALPN: &[u8] = b"vox/iroh/1";
 
+const GRACEFUL_CLOSE_WINDOW: std::time::Duration = std::time::Duration::from_secs(5);
+
 type InnerLink = StreamLink<RecvStream, SendStream>;
 type InnerRx = StreamLinkRx<tokio::io::BufReader<RecvStream>>;
 
@@ -72,7 +74,9 @@ impl LinkTx for IrohLinkTx {
     async fn close(self) -> io::Result<()> {
         let Self { inner, connection } = self;
         let result = inner.close().await;
-        drop(connection);
+        tokio::spawn(async move {
+            let _ = tokio::time::timeout(GRACEFUL_CLOSE_WINDOW, connection.closed()).await;
+        });
         result
     }
 }
