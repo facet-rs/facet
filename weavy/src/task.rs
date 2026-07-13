@@ -2034,7 +2034,7 @@ pub(crate) fn unbox_call_environment(
 /// and no other mutable or shared reference may concurrently access that arena.
 /// `out_index` and `out_generation` must each be non-null and writable for one
 /// `i64`, and must not alias memory inside `arena`. This function writes
-/// [`ORDERED_CURSOR_POISON`]/`0` to the outputs before it attempts the
+/// the internal poison sentinel and `0` to the outputs before it attempts the
 /// operation, overwriting them only on success.
 pub(crate) unsafe extern "C" fn ordered_begin_probe_abi(
     arena: *mut core::ffi::c_void,
@@ -3303,7 +3303,7 @@ pub enum Op {
     /// On success the two-word opaque region at `cursor` receives the cursor
     /// token (arena index, task generation) and `frame[status]` receives
     /// [`OrderedOpStatus::Ok`]; on failure the cursor index word receives
-    /// [`ORDERED_CURSOR_POISON`], its generation word `0`, and `frame[status]`
+    /// the internal poison sentinel, its generation word `0`, and `frame[status]`
     /// the precise [`OrderedOpStatus`]. The cursor word is internal-only: the
     /// verifier forbids it at entries, results, calls, publication, copy, and
     /// scalar interpretation.

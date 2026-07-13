@@ -13,6 +13,17 @@ on:
       - '.github/workflows/website.yml'
       - 'facet-showcase/**'
       - 'facet-*/examples/*showcase*.rs'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.config/dodeca.styx'
+      - 'docs/**'
+      - 'styx-docs/**'
+      - '*/docs/**'
+      - '*/README.md'
+      - '.github/workflows/website.yml'
+      - 'facet-showcase/**'
+      - 'facet-*/examples/*showcase*.rs'
   workflow_dispatch:
 
 # Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
@@ -23,8 +34,8 @@ permissions:
 
 # Allow only one concurrent deployment
 concurrency:
-  group: "pages"
-  cancel-in-progress: false
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -33,8 +44,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.10.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 26
+          cache: pnpm
+
+      - name: Install website dependencies
+        run: pnpm install --frozen-lockfile
+
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-bindgen CLI
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen-cli
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -65,6 +97,7 @@ jobs:
           path: docs/public
 
   deploy:
+    if: github.event_name != 'pull_request'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

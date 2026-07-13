@@ -8,6 +8,10 @@ on:
   merge_group:
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   benchmarks:
     name: Run benchmarks
@@ -18,12 +22,15 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Setup Rust and cargo-codspeed
-        uses: moonrepo/setup-rust@v0
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-codspeed
+        uses: taiki-e/install-action@v2
         with:
-          channel: stable
-          cache-target: release
-          bins: cargo-codspeed
+          tool: cargo-codspeed
+
+      - uses: Swatinem/rust-cache@v2
 
       - name: Build benchmark targets
         run: >

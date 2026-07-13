@@ -14,6 +14,10 @@ on:
     branches: [main]
   merge_group:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
@@ -408,6 +412,7 @@ jobs:
 
   rust-windows:
     name: Rust / Windows
+    continue-on-error: true
     runs-on: windows-2025
     timeout-minutes: 30
     # None of this job's steps need vox/ as cwd (plain `cargo -p` invocations

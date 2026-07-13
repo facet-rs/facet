@@ -73,7 +73,7 @@ mod version_set;
 
 pub use driver::{
     CodeBundle, CodeRef, DriveEvent, MachineExecBackend, MachineExecRequest, MachinePathDemand,
-    MachinePendingRun, RenderedValue, StoreHandle, StoreValue, ValueBundle,
+    MachinePathStatus, MachinePendingRun, RenderedValue, StoreHandle, StoreValue, ValueBundle,
 };
 pub use lower::{Machine, MachineArg, NamedArg, ReloadDiff};
 pub use value::TotalF64;

@@ -24,8 +24,8 @@ use facet::Facet;
 use tokio::sync::Mutex;
 use vix::exec::{Blake3Hash, ExecPlan, MountedWorld, ObservedWorld, Outcome, ReadSet, Role, Tree};
 use vix::machine::{
-    Machine, MachineExecBackend, MachineExecRequest, MachinePathDemand, MachinePendingRun,
-    ValueBundle,
+    Machine, MachineExecBackend, MachineExecRequest, MachinePathDemand, MachinePathStatus,
+    MachinePendingRun, ValueBundle,
 };
 use vox::Tx;
 
@@ -871,6 +871,15 @@ impl FleetRun {
 }
 
 impl MachinePendingRun for FleetRun {
+    fn path_status(&self, path: &str) -> Result<MachinePathStatus, String> {
+        let state = self.state.lock().unwrap();
+        if state.ready_paths.contains(path) || state.finished.is_some() {
+            Ok(MachinePathStatus::Ready)
+        } else {
+            Ok(MachinePathStatus::Pending)
+        }
+    }
+
     fn demand_path(&self, path: &str) -> Result<MachinePathDemand, String> {
         // Wait only for THIS path — the language-level rmeta move.
         {

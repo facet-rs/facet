@@ -34,7 +34,9 @@ struct Ctx {
     prog: *const u64,
     frame: *mut u8,
     ready: *mut i64,
+    ready_count: usize,
     awaited: *const i64,
+    awaited_count: usize,
     resume: *mut u64,
     await_index: *mut u64,
     exit: *mut i64,
@@ -1721,7 +1723,9 @@ impl JitTask {
                 prog: unsafe { entry_prog.add(frame.prog_pos) },
                 frame: unsafe { arena_base.add(frame.base) },
                 ready: self.ready_scratch.as_mut_ptr(),
+                ready_count: self.ready_scratch.len(),
                 awaited: awaited.as_ptr(),
+                awaited_count: awaited.len(),
                 resume: &mut resume_scratch,
                 await_index: &mut index_scratch,
                 exit: &mut exit_scratch,
@@ -2413,6 +2417,36 @@ mod tests {
         assert_eq!(task.result_i64(), 61);
         assert_eq!(jit_calls, 1);
         assert_eq!(task.trace, interp.trace);
+    }
+
+    #[test]
+    fn await_reads_an_input_beyond_the_initial_readiness_capacity() {
+        let program = Program {
+            fns: vec![TaskFn {
+                frame: Layout {
+                    size: 1528,
+                    align: 8,
+                },
+                code: vec![
+                    Op::Await {
+                        dst: 1488,
+                        input: 18,
+                    },
+                    Op::Ret { src: 1488, size: 8 },
+                ],
+            }],
+        };
+        let pending_ready = vec![false; 16];
+        let pending_awaited = vec![0; 16];
+        let mut ready = vec![false; 20];
+        ready[18] = true;
+        let mut awaited = vec![0; 20];
+        awaited[18] = 8;
+        differential(
+            &program,
+            FnId(0),
+            &[(&pending_ready, &pending_awaited), (&ready, &awaited)],
+        );
     }
 
     /// Drive interp and JIT through the same schedule; assert identical

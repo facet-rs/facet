@@ -4173,7 +4173,9 @@ fn rung_052_functions_are_first_class_arguments_and_results() {
     // Certificate: the boxed-environment closure executes natively through the
     // JIT by default and on the interpreter under WEAVY_JIT=0 — never a
     // per-program lane fallback — and both lanes produce identical checks.
-    let expected_lane = if std::env::var("WEAVY_JIT").as_deref() == Ok("0") {
+    let expected_lane = if std::env::var("WEAVY_JIT").as_deref() == Ok("0")
+        || !weavy::jit::task_lane::available()
+    {
         vix::runtime::ExecutionLaneFact::Interpreter
     } else {
         vix::runtime::ExecutionLaneFact::Native

@@ -35,7 +35,7 @@ pub mod lower;
 pub use lower::{CompiledDecode, CompiledEncode, compile_decode, compile_encode};
 
 /// Stencil machine code extracted from rustc's object output at build time
-/// (`build.rs`). Only [`native`] reads these; [`native_stub`] takes over (and
+/// (`build.rs`). Only [`native`] reads these; `native_stub` takes over (and
 /// this module would otherwise be all dead code) when the native backend
 /// isn't active for this build.
 #[cfg(phon_jit_native)]
