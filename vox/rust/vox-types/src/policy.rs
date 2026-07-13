@@ -120,6 +120,7 @@ pub enum PeerIdentityForm {
     Synthetic,
     LocalProcess,
     CertificateBacked,
+    PublicKeyBacked,
     ApplicationUser,
     Composite,
 }

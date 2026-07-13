@@ -357,6 +357,7 @@ without pretending that all of those paths have the same security evidence.
 >   * synthetic test identity;
 >   * local process or platform identity;
 >   * certificate-backed identity;
+>   * public-key-backed identity;
 >   * application/user identity produced by a local verifier;
 >   * composite identity that records more than one verified basis.
 >

@@ -20,27 +20,19 @@ pub const ALPN: &[u8] = b"vox/iroh/1";
 type InnerLink = StreamLink<RecvStream, SendStream>;
 type InnerRx = StreamLinkRx<tokio::io::BufReader<RecvStream>>;
 
-struct ConnectionGuard(Connection);
-
-impl Drop for ConnectionGuard {
-    fn drop(&mut self) {
-        self.0.close(0u32.into(), b"vox link released");
-    }
-}
-
 /// One Vox link carried by one Iroh bidirectional stream.
 // r[impl transport.iroh.link]
 // r[impl transport.iroh.path-equivalence]
 pub struct IrohLink {
     inner: InnerLink,
-    connection: Arc<ConnectionGuard>,
+    connection: Arc<Connection>,
 }
 
 impl IrohLink {
     fn new(connection: Connection, send: SendStream, recv: RecvStream) -> Self {
         Self {
             inner: StreamLink::new(recv, send),
-            connection: Arc::new(ConnectionGuard(connection)),
+            connection: Arc::new(connection),
         }
     }
 }
@@ -67,7 +59,7 @@ impl Link for IrohLink {
 /// Transmit half of an [`IrohLink`].
 pub struct IrohLinkTx {
     inner: StreamLinkTx,
-    connection: Arc<ConnectionGuard>,
+    connection: Arc<Connection>,
 }
 
 impl LinkTx for IrohLinkTx {
@@ -88,7 +80,7 @@ impl LinkTx for IrohLinkTx {
 /// Receive half of an [`IrohLink`].
 pub struct IrohLinkRx {
     inner: InnerRx,
-    connection: Arc<ConnectionGuard>,
+    connection: Arc<Connection>,
 }
 
 impl LinkRx for IrohLinkRx {
