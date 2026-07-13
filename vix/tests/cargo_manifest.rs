@@ -555,8 +555,8 @@ fn real_workspace_metadata_baseline_is_counted() -> Result<(), String> {
             .count();
     }
 
-    assert_eq!(workspace_members.len(), 147);
-    assert_eq!(vix_member_count, 147);
+    assert_eq!(workspace_members.len(), 148);
+    assert_eq!(vix_member_count, 148);
     // vix gained one dependency (libc) for the outer budget runner's
     // cross-process resident-set observation. It is a workspace-inherited
     // dependency, so it also adds one to the workspace-allowlist count.
@@ -565,8 +565,11 @@ fn real_workspace_metadata_baseline_is_counted() -> Result<(), String> {
     // typed-decode lane to drive the shared `FormatParser` trait against the
     // compiler-known target type. Being a plain path dependency it adds to the
     // oracle dependency total but not to the workspace-allowlist count.
-    assert_eq!(total_oracle_deps, 1137);
-    assert_eq!(before_workspace_allowlist_failures, 766);
+    //
+    // vox-iroh adds ten direct normal and development dependency edges for its
+    // authenticated Iroh transport and production-path certificates.
+    assert_eq!(total_oracle_deps, 1147);
+    assert_eq!(before_workspace_allowlist_failures, 776);
     assert_eq!(target_cfg_represented, 55);
 
     Ok(())
@@ -590,7 +593,7 @@ fn real_workspace_member_only_index_builds_bounded_ring() -> Result<(), String> 
     )?;
     let workspace_members: BTreeSet<_> = metadata.workspace_members.iter().collect();
 
-    assert_eq!(workspace_members.len(), 147);
+    assert_eq!(workspace_members.len(), 148);
     assert_eq!(package_count, limit + 1);
     assert_eq!(clause_count, 35);
     Ok(())
