@@ -10,9 +10,11 @@ use iroh::{
     Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, endpoint::presets, tls::CaTlsConfig,
 };
 use vox::{
-    ConnectionError, Decline, EstablishmentRejectReason, IdentityBasis, IdentityBasisProvenance,
-    IdentityResolutionContext, LaneAcceptor, LaneRejection, LaneRequest, PeerEvidenceItem,
-    PeerIdentity, PeerIdentityForm, PendingLane, PublicKeyAlgorithm, identity_resolver_fn,
+    ConnectionError, Decline, DriverEvent, EstablishmentEvent, EstablishmentOutcome,
+    EstablishmentPhase, EstablishmentRejectReason, IdentityBasis, IdentityBasisProvenance,
+    IdentityResolutionContext, LaneAcceptor, LaneRejection, LaneRequest, LinkSource,
+    PeerEvidenceItem, PeerIdentity, PeerIdentityForm, PendingLane, PublicKeyAlgorithm, RpcOutcome,
+    VoxObserver, identity_resolver_fn,
 };
 use vox_iroh::{ALPN, IrohLinkSource, IrohListener};
 
@@ -27,6 +29,43 @@ struct EchoService;
 impl Echo for EchoService {
     async fn echo(&self, value: String) -> String {
         value
+    }
+}
+
+#[derive(Clone, Default)]
+struct RecordingObserver {
+    public_key_identities: Arc<AtomicUsize>,
+    successful_requests: Arc<AtomicUsize>,
+}
+
+impl VoxObserver for RecordingObserver {
+    fn establishment_event(&self, event: EstablishmentEvent) {
+        if matches!(
+            event,
+            EstablishmentEvent::Finished {
+                context: vox::EstablishmentContext {
+                    phase: EstablishmentPhase::IdentityResolution,
+                    ..
+                },
+                outcome: EstablishmentOutcome::Ok,
+                details,
+                ..
+            } if details.identity_form == Some(PeerIdentityForm::PublicKeyBacked)
+        ) {
+            self.public_key_identities.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    fn driver_event(&self, event: DriverEvent) {
+        if matches!(
+            event,
+            DriverEvent::RequestFinished {
+                outcome: RpcOutcome::Ok,
+                ..
+            }
+        ) {
+            self.successful_requests.fetch_add(1, Ordering::SeqCst);
+        }
     }
 }
 
@@ -88,6 +127,7 @@ async fn exercise_authenticated_echo(
     let server_resolutions = Arc::new(AtomicUsize::new(0));
     let client_resolutions = Arc::new(AtomicUsize::new(0));
     let accepted_lanes = Arc::new(AtomicUsize::new(0));
+    let observer = RecordingObserver::default();
 
     let server = tokio::spawn(
         vox::serve_listener(
@@ -95,11 +135,13 @@ async fn exercise_authenticated_echo(
             CountingAcceptor::new(EchoDispatcher::new(EchoService), accepted_lanes.clone()),
         )
         .identity_resolver(require_endpoint(client_id, server_resolutions.clone()))
+        .observer(observer.clone())
         .run(),
     );
 
     let client = vox::initiator(IrohLinkSource::new(client_endpoint.clone(), server_addr))
         .identity_resolver(require_endpoint(server_id, client_resolutions.clone()))
+        .observer(observer.clone())
         .establish::<EchoClient>()
         .await
         .expect("establish authenticated Vox connection");
@@ -109,6 +151,8 @@ async fn exercise_authenticated_echo(
     assert_eq!(server_resolutions.load(Ordering::SeqCst), 1);
     assert_eq!(client_resolutions.load(Ordering::SeqCst), 1);
     assert_eq!(accepted_lanes.load(Ordering::SeqCst), 1);
+    assert_eq!(observer.public_key_identities.load(Ordering::SeqCst), 2);
+    assert_eq!(observer.successful_requests.load(Ordering::SeqCst), 1);
 
     drop(client);
     server.abort();
@@ -117,6 +161,7 @@ async fn exercise_authenticated_echo(
 // r[verify transport.iroh.link]
 // r[verify transport.iroh.alpn]
 // r[verify transport.iroh.evidence]
+// r[verify transport.iroh.observability]
 #[tokio::test]
 async fn direct_path_runs_typed_vox_call_with_endpoint_identity() {
     let server_endpoint = Endpoint::builder(presets::Minimal)
@@ -142,7 +187,38 @@ async fn direct_path_runs_typed_vox_call_with_endpoint_identity() {
     client_endpoint.close().await;
 }
 
+// r[verify transport.iroh.alpn]
+#[tokio::test]
+async fn incompatible_alpn_never_enters_vox_transport() {
+    let server_endpoint = Endpoint::builder(presets::Minimal)
+        .alpns(vec![b"not-vox/1".to_vec()])
+        .bind()
+        .await
+        .expect("bind incompatible server endpoint");
+    let client_endpoint = Endpoint::builder(presets::Minimal)
+        .bind()
+        .await
+        .expect("bind client endpoint");
+    let server_addr = server_endpoint.addr();
+    let accept_endpoint = server_endpoint.clone();
+    let accept = tokio::spawn(async move {
+        let incoming = accept_endpoint.accept().await.expect("incoming connection");
+        incoming.accept().expect("accept incoming connection").await
+    });
+
+    let mut source = IrohLinkSource::new(client_endpoint.clone(), server_addr);
+    let result = tokio::time::timeout(Duration::from_secs(5), source.next_link())
+        .await
+        .expect("ALPN rejection did not arrive");
+    assert!(result.is_err());
+
+    accept.abort();
+    client_endpoint.close().await;
+    server_endpoint.close().await;
+}
+
 // r[verify transport.iroh.path-equivalence]
+// r[verify transport.iroh.observability]
 #[tokio::test]
 async fn forced_relay_path_preserves_typed_call_and_endpoint_identity() {
     let (relay_map, relay_url, _relay_server) = iroh::test_utils::run_relay_server()

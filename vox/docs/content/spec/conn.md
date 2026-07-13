@@ -87,6 +87,13 @@ top of it.
 > Iroh connection, and transport failures MUST remain distinguishable from
 > ordinary end-of-stream.
 
+> r[transport.iroh.observability]
+>
+> Vox connections carried by Iroh MUST retain the ordinary `VoxObserver`
+> establishment, identity-resolution, driver, channel, and close events.
+> Transport tracing SHOULD identify dial, accept, and failure phases using a
+> redacted EndpointId representation and MUST NOT log secret-key material.
+
 > r[transport.stream.local]
 >
 > Vox provides a `LocalLink` abstraction that uses named pipes on Windows and
