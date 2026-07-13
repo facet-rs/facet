@@ -96,6 +96,8 @@ pub enum ConfigValue {
     Object(Sourced<ObjectMap>),
     /// An enum value (subcommand or enum field in config).
     Enum(Sourced<EnumValue>),
+    /// An explicit outer `Some(...)` marker for nested option deserialization.
+    ExplicitSome(Sourced<Box<ConfigValue>>),
 }
 
 pub trait ConfigValueVisitor {
@@ -129,6 +131,16 @@ impl ConfigValue {
                     path.pop();
                 }
             }
+            ConfigValue::Enum(e) => {
+                for (key, value) in &e.value.fields {
+                    path.push(key.clone());
+                    value.visit(visitor, path);
+                    path.pop();
+                }
+            }
+            ConfigValue::ExplicitSome(sourced) => {
+                sourced.value.visit(visitor, path);
+            }
             _ => {}
         }
         visitor.exit_value(path, self);
@@ -159,6 +171,9 @@ impl ConfigValue {
                     path.pop();
                 }
             }
+            ConfigValue::ExplicitSome(sourced) => {
+                sourced.value.visit_mut(visitor, path);
+            }
             _ => {}
         }
     }
@@ -174,6 +189,7 @@ impl ConfigValue {
             ConfigValue::Array(s) => s.span,
             ConfigValue::Object(s) => s.span,
             ConfigValue::Enum(s) => s.span,
+            ConfigValue::ExplicitSome(s) => s.span,
         }
     }
 
@@ -188,6 +204,7 @@ impl ConfigValue {
             ConfigValue::Array(s) => &mut s.span,
             ConfigValue::Object(s) => &mut s.span,
             ConfigValue::Enum(s) => &mut s.span,
+            ConfigValue::ExplicitSome(s) => &mut s.span,
         }
     }
 
@@ -202,6 +219,7 @@ impl ConfigValue {
             ConfigValue::Array(s) => s.provenance.as_ref(),
             ConfigValue::Object(s) => s.provenance.as_ref(),
             ConfigValue::Enum(s) => s.provenance.as_ref(),
+            ConfigValue::ExplicitSome(s) => s.provenance.as_ref(),
         }
     }
 
@@ -285,6 +303,10 @@ impl ConfigValue {
                     value.set_file_provenance_recursive(file, &key_path);
                 }
             }
+            ConfigValue::ExplicitSome(s) => {
+                s.set_file_provenance(file.clone(), path);
+                s.value.set_file_provenance_recursive(file, path);
+            }
         }
     }
 
@@ -340,6 +362,31 @@ impl ConfigValue {
 mod tests {
     use super::*;
     use facet_core::Facet;
+
+    #[derive(Default)]
+    struct RecordingVisitor {
+        paths: Vec<String>,
+    }
+
+    impl ConfigValueVisitor for RecordingVisitor {
+        fn enter_value(&mut self, path: &Path, _value: &ConfigValue) {
+            self.paths.push(path.join("."));
+        }
+    }
+
+    #[test]
+    fn test_visit_recurses_into_enum_fields() {
+        let value = cv_object([(
+            "command",
+            cv_enum("Run", [("dry_run", cv_bool(true))]),
+        )]);
+
+        let mut visitor = RecordingVisitor::default();
+        let mut path = Path::default();
+        value.visit(&mut visitor, &mut path);
+
+        assert_eq!(visitor.paths, vec!["", "command", "command.dry_run"]);
+    }
 
     #[test]
     fn test_unit_is_scalar() {

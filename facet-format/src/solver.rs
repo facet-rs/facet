@@ -118,6 +118,7 @@ pub fn solve_variant<'de>(
                     expecting_value = false;
                 }
             }
+            ParseEventKind::OptionSome => {}
         }
     };
 
