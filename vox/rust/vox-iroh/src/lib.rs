@@ -112,6 +112,7 @@ impl IrohLinkSource {
     }
 }
 
+// r[impl transport.iroh.observability]
 impl LinkSource for IrohLinkSource {
     type Link = IrohLink;
 
