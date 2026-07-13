@@ -1,0 +1,9 @@
+// Rung 076 — two demands of one fetch hit the network once.
+#[test]
+fn fetch_memoized() -> Stream<Check> {
+    let reg = fixture_registry();
+    let a = fetch(reg.url("tokio-1.52.3.crate"));
+    let b = fetch(reg.url("tokio-1.52.3.crate"));
+    yield expect_eq(a, b);
+    yield fetched(1);
+}

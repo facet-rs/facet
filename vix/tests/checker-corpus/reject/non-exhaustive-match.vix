@@ -1,0 +1,10 @@
+enum Mode {
+    A,
+    B,
+}
+
+fn main(m: Mode) -> Int {
+    match m {
+        Mode::A => 1,
+    }
+}

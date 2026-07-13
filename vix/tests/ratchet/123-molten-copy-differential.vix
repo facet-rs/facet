@@ -1,0 +1,12 @@
+
+// Rung 123 — the as-if standing guard: the whole test runs twice, once
+// with molten mutation enabled and once with every molten optimization
+// forced into copies. Results must be bit-identical. (values.md: you
+// cannot tell duplication from sharing.)
+#[test { differential: "VIX_FORCE_MOLTEN_COPY" }]
+fn molten_copy_differential() -> Stream<Check> {
+    let xs = (range where { from: 0, to: 10000 }).fold([], |acc, i| acc + (i * i));
+    let m = xs.stream().filter(|n| n.rem(7) == 0).collect().values().sorted();
+    yield expect_eq(xs.len(), 10000);
+    yield expect_snapshot(m.len(), "molten-differential-count");
+}

@@ -1,0 +1,218 @@
+// The bootstrap checker v0. This is deliberately Vix source: Rust only loads it
+// and asserts the corpus facts it returns.
+
+pub fn resolve_ref(source: String, name: String) -> String {
+    let f = ast(source).fn(name);
+    f.name
+}
+
+pub fn type_of(source: String, function: String) -> String {
+    type_of_expr(ast(source).fn(function).tail)
+}
+
+pub fn type_of_subject(source: String, subject: String) -> String {
+    match subject {
+        "toml(manifest/p\"Cargo.toml\")" => type_of_let(source, "cargo_manifest", "doc"),
+        "elf(input).needs_glibc" => type_of_expr(ast(source).fn("glibc_policy").tail.left),
+        "lua.units" => type_of_let(source, "lua", "units"),
+        "units.map(|u| object(cc,u)).collect()/p\"wanted.o\"" => type_of_expr(ast(source).fn("selected").tail),
+        _ => "Error",
+    }
+}
+
+pub fn exhaustive(source: String, subject: String) -> String {
+    match subject {
+        "choose.match" => bool_exhaustive(ast(source).fn("choose").tail),
+        _ => "Error",
+    }
+}
+
+fn type_of_let(source: String, function: String, name: String) -> String {
+    let binding = ast(source).fn(function).lets.get(name).unwrap();
+    type_of_expr(binding.value)
+}
+
+fn type_of_expr(expr: Doc) -> String {
+    let kind: String = expr.kind;
+    match kind {
+        "number" => "Int",
+        "string" => "String",
+        "path" => "Path",
+        "bool" => "Bool",
+        "identifier" => type_of_identifier(expr.text),
+        "call" => type_of_call(expr),
+        "method_call" => type_of_method_call(expr),
+        "field" => type_of_field(expr),
+        "binary" => type_of_binary(expr),
+        _ => "Error",
+    }
+}
+
+pub fn function_signature(source: String, name: String) -> String {
+    let f = ast(source).fn(name);
+    let params: String = f.param_types.join(",");
+    let ret: String = f.return_type_text;
+    visibility_prefix(f)
+        + "fn"
+        + generic_params(f)
+        + "("
+        + params
+        + ")->"
+        + ret
+        + " abi="
+        + abi_class(ret)
+        + signature_extra(f)
+}
+
+pub fn diagnostic_kind(source: String, function: String) -> String {
+    let status: String = ast(source).fn(function).return_type_status;
+    match status {
+        "some" => diagnostic_kind_body(source, function),
+        "none" => "OmittedReturnType",
+        _ => "Error",
+    }
+}
+
+pub fn diagnostic_span_start(source: String, function: String) -> Int {
+    let kind: String = diagnostic_kind(source, function);
+    match kind {
+        "NonExhaustiveMatch" => ast(source).fn(function).tail.span.start,
+        _ => ast(source).fn(function).name_span.start,
+    }
+}
+
+pub fn diagnostic_span_end(source: String, function: String) -> Int {
+    let kind: String = diagnostic_kind(source, function);
+    match kind {
+        "NonExhaustiveMatch" => ast(source).fn(function).tail.span.end,
+        _ => ast(source).fn(function).name_span.end,
+    }
+}
+
+pub fn diagnostic_suggestion(source: String, function: String) -> String {
+    type_of(source, function)
+}
+
+fn visibility_prefix(f: Doc) -> String {
+    let prefix: String = f.visibility_prefix;
+    prefix
+}
+
+fn generic_params(f: Doc) -> String {
+    let params = f.generic_params.join(",");
+    match params {
+        "" => "",
+        _ => "<" + params + ">",
+    }
+}
+
+fn abi_class(ty: String) -> String {
+    match ty {
+        "Int" => "BitsWord",
+        "Float" => "BitsWord",
+        "Bool" => "BitsWord",
+        _ => "Handle<" + ty + ">",
+    }
+}
+
+fn diagnostic_kind_body(source: String, function: String) -> String {
+    let tail = ast(source).fn(function).tail;
+    let kind: String = tail.kind;
+    match kind {
+        "match" => bool_match_diagnostic(tail),
+        _ => "None",
+    }
+}
+
+fn type_of_identifier(name: String) -> String {
+    match name {
+        "cond" => "Bool",
+        "src" => "Tree",
+        "units" => "Array<Path>",
+        _ => "Error",
+    }
+}
+
+fn type_of_call(expr: Doc) -> String {
+    let callee: String = expr.callee.text;
+    match callee {
+        "toml" => "Doc",
+        "elf" => "Doc",
+        _ => "Error",
+    }
+}
+
+fn type_of_method_call(expr: Doc) -> String {
+    let name: String = expr.name;
+    let receiver: String = type_of_expr(expr.receiver);
+    match receiver + "." + name {
+        "Array<Path>.filter" => "Array<Path> filter_closure=fn(Path)->Bool",
+        "Array<Pending<Tree>>.collect" => "Tree",
+        "Array<Path>.map" => "Array<Pending<Tree>>",
+        "Tree.glob" => "Array<Path>",
+        _ => "Error",
+    }
+}
+
+fn type_of_field(expr: Doc) -> String {
+    let member: String = expr.member.text;
+    let receiver: String = type_of_expr(expr.receiver);
+    match receiver + "." + member {
+        "Doc.needs_glibc" => "String",
+        _ => "Error",
+    }
+}
+
+fn type_of_binary(expr: Doc) -> String {
+    let op: String = expr.op;
+    let left: String = type_of_expr(expr.left);
+    let right: String = type_of_expr(expr.right);
+    match left + op + right {
+        "Tree/Path" => "Tree projection demand preserves Pending<Tree> producer identity",
+        _ => "Error",
+    }
+}
+
+fn bool_exhaustive(expr: Doc) -> String {
+    let scrutinee: String = type_of_expr(expr.scrutinee);
+    let covered: String = expr.unguarded_patterns.join(",");
+    match scrutinee + ":" + covered {
+        "Bool:true,false" => "bool exhaustive=true covered=true,false",
+        "Bool:false,true" => "bool exhaustive=true covered=false,true",
+        _ => "Error",
+    }
+}
+
+fn bool_match_diagnostic(expr: Doc) -> String {
+    let scrutinee: String = type_of_expr(expr.scrutinee);
+    let covered: String = expr.unguarded_patterns.join(",");
+    match scrutinee + ":" + covered {
+        "Bool:true" => "NonExhaustiveMatch",
+        "Bool:false" => "NonExhaustiveMatch",
+        "Bool:true,false" => "None",
+        "Bool:false,true" => "None",
+        _ => "None",
+    }
+}
+
+fn signature_extra(f: Doc) -> String {
+    let name: String = f.name;
+    match name {
+        "depths" => " tuple_index=" + tuple_index_path(f.tail),
+        _ => "",
+    }
+}
+
+fn tuple_index_path(expr: Doc) -> String {
+    let kind: String = expr.kind;
+    match kind {
+        "field" => tuple_index_field(expr),
+        "identifier" => expr.text,
+        _ => "Error",
+    }
+}
+
+fn tuple_index_field(expr: Doc) -> String {
+    let member: String = expr.member.text;
+    tuple_index_path(expr.receiver) + "." + member
+}

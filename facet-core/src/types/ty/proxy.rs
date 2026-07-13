@@ -7,8 +7,6 @@
 //! - You need custom validation during deserialization
 
 use crate::{PtrConst, PtrMut, PtrUninit, Shape};
-
-#[cfg(feature = "alloc")]
 use alloc::string::String;
 
 /// Function type for proxy deserialization: converts FROM proxy type INTO target type.
@@ -19,7 +17,6 @@ use alloc::string::String;
 ///
 /// On success, returns `Ok(PtrMut)` pointing to the initialized target value.
 /// On failure, returns `Err(String)` with an error message.
-#[cfg(feature = "alloc")]
 pub type ProxyConvertInFn =
     unsafe fn(proxy_ptr: PtrConst, target_ptr: PtrUninit) -> Result<PtrMut, String>;
 
@@ -31,7 +28,6 @@ pub type ProxyConvertInFn =
 ///
 /// On success, returns `Ok(PtrMut)` pointing to the initialized proxy value.
 /// On failure, returns `Err(String)` with an error message.
-#[cfg(feature = "alloc")]
 pub type ProxyConvertOutFn =
     unsafe fn(target_ptr: PtrConst, proxy_ptr: PtrUninit) -> Result<PtrMut, String>;
 
@@ -61,7 +57,6 @@ pub type ProxyConvertOutFn =
 ///     convert_out: Self::__facet_proxy_convert_out,
 /// }
 /// ```
-#[cfg(feature = "alloc")]
 #[derive(Clone, Copy)]
 pub struct ProxyDef {
     /// The shape of the proxy type.
@@ -78,7 +73,6 @@ pub struct ProxyDef {
     pub convert_out: ProxyConvertOutFn,
 }
 
-#[cfg(feature = "alloc")]
 impl core::fmt::Debug for ProxyDef {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("ProxyDef")
@@ -113,7 +107,6 @@ impl core::fmt::Debug for ProxyDef {
 ///     parameter: Parameter,
 /// }
 /// ```
-#[cfg(feature = "alloc")]
 #[derive(Clone, Copy, Debug)]
 pub struct FormatProxy {
     /// The format namespace (e.g., "xml", "json").

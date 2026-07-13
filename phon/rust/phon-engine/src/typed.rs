@@ -2811,7 +2811,7 @@ mod tests {
     fn owned_vec_u32_roundtrips_and_matches_dynamic() {
         // Root type: List<u32> / Vec<u32>.
         let list = Schema {
-            id: SchemaId(1),
+            id: SchemaId::from_raw(1),
             type_params: Vec::new(),
             kind: SchemaKind::List {
                 element: SchemaRef::concrete(primitive_id(Primitive::U32)),
@@ -2819,7 +2819,7 @@ mod tests {
         };
         let reg = Registry::new([list]);
 
-        let desc = vec_u32_descriptor(SchemaId(1));
+        let desc = vec_u32_descriptor(SchemaId::from_raw(1));
 
         let values = [1u32, 2, 999, 0xDEAD_BEEF];
 
@@ -2828,7 +2828,7 @@ mod tests {
         for &v in &values {
             arr.push(Value::from(v));
         }
-        let dyn_bytes = compact::to_bytes(&Value::from(arr), SchemaId(1), &reg).unwrap();
+        let dyn_bytes = compact::to_bytes(&Value::from(arr), SchemaId::from_raw(1), &reg).unwrap();
 
         // Typed encode of a real Vec<u32> must produce identical bytes.
         let v: Vec<u32> = values.to_vec();
@@ -2862,7 +2862,7 @@ mod tests {
 
     #[test]
     fn padded_record_lowers_to_scalar_run_and_roundtrips() {
-        let schema = SchemaId(1);
+        let schema = SchemaId::from_raw(1);
         let reg = Registry::new([padded_scalars_schema(schema)]);
         let desc = padded_scalars_descriptor(schema);
         let no_blocks = HashMap::new();
@@ -2923,7 +2923,7 @@ mod tests {
 
     #[test]
     fn typed_lowering_roundtrips_through_canonical_weavy_ir() {
-        let schema = SchemaId(1);
+        let schema = SchemaId::from_raw(1);
         let reg = Registry::new([padded_scalars_schema(schema)]);
         let desc = padded_scalars_descriptor(schema);
         let no_blocks = HashMap::new();
@@ -2948,7 +2948,7 @@ mod tests {
     // r[verify type-system.rust-subset]
     // r[verify exec.jit-optional]
     fn native_int_memops_roundtrip_and_reject_out_of_range_values() {
-        let schema = SchemaId(1);
+        let schema = SchemaId::from_raw(1);
         let reg = Registry::new([narrow_native_int_schema(schema)]);
         let desc = narrow_native_int_descriptor(schema);
         let no_blocks = HashMap::new();
@@ -3030,28 +3030,28 @@ mod tests {
     fn decode_compat_rejects_list_set_kind_mismatch() {
         let element = SchemaRef::concrete(primitive_id(Primitive::U32));
         let writer = Schema {
-            id: SchemaId(1),
+            id: SchemaId::from_raw(1),
             type_params: Vec::new(),
             kind: SchemaKind::Set {
                 element: element.clone(),
             },
         };
         let reader = Schema {
-            id: SchemaId(2),
+            id: SchemaId::from_raw(2),
             type_params: Vec::new(),
             kind: SchemaKind::List { element },
         };
         let reg = Registry::new([writer, reader]);
-        let desc = vec_u32_descriptor(SchemaId(2));
+        let desc = vec_u32_descriptor(SchemaId::from_raw(2));
         let no_blocks = HashMap::new();
 
-        let typed = lower_decode(SchemaId(1), &desc, &no_blocks, &reg);
+        let typed = lower_decode(SchemaId::from_raw(1), &desc, &no_blocks, &reg);
         assert!(
             matches!(typed, Err(CompactError::Incompatible(_))),
             "typed compat accepted Set writer for List reader: {typed:?}"
         );
 
-        let dynamic = crate::plan::build_plan(SchemaId(1), SchemaId(2), &reg);
+        let dynamic = crate::plan::build_plan(SchemaId::from_raw(1), SchemaId::from_raw(2), &reg);
         assert!(
             matches!(dynamic, Err(CompactError::Incompatible(_))),
             "dynamic compat unexpectedly accepted Set writer for List reader"

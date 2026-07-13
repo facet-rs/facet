@@ -1,0 +1,20 @@
+[package]
+name = "arborium-vix"
+version = "0.1.0"
+description = "Arborium-compatible tree-sitter grammar for the vix language (experimental)"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+tree-sitter-language = "0.1"
+
+[dev-dependencies]
+# The arborium fork of the tree-sitter runtime — same `links = "tree-sitter"`
+# the rest of the workspace already resolves to (via tree-sitter-styx), and
+# the runtime dodeca parses with.
+tree-sitter = { package = "arborium-tree-sitter", version = "2.18" }
+
+[build-dependencies]
+cc = "1"

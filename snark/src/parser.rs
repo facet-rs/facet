@@ -1,32 +1,28 @@
-//! Tree-sitter-style parser generator and LR/GLR runtime scaffolding.
+//! Tree-sitter-style parser generator and LR/GLR execution scaffolding.
 //!
 //! This module is the final-shape parser lane. It is deliberately table- and
-//! runtime-oriented: validated grammar facts become normalized productions,
-//! lexical modes, LR actions, GLR metadata, tree plans, and traceable runtime
+//! execution-oriented: validated grammar facts become normalized productions,
+//! lexical modes, LR actions, GLR metadata, tree plans, and traceable execution
 //! state. It is not a recursive recognizer and it never consumes generated
 //! Tree-sitter implementation files.
 
-#[cfg(any(test, feature = "weavy-lowering"))]
-use std::sync::{Mutex, OnceLock};
 use std::{
-    cell::RefCell,
     collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
     error::Error,
     fmt,
+    sync::Arc,
 };
 
-use regex::{Regex, RegexSet};
-
 use crate::{
-    corpus::{SexpChild, SexpNode, SexpValue},
     lexical::{LexicalFacts, TerminalKind},
-    runtime_input::{ByteOffset, ByteRange, PointBytes, PointRange, Row, Utf8ColumnBytes},
+    runtime_input::{ByteRange, PointRange},
     validated::{
         AliasId, AutoCloseRule as ValidatedAutoCloseRule, FieldId, GrammarExpr, GrammarExprId,
         PrecedenceAssoc, PrecedenceEntry as ValidatedPrecedenceEntry, ReservedSetId, RuleId,
         StaticPrecedenceValue, SymbolRef, ValidatedGrammar, VisibleNodeKind,
     },
 };
+use smallvec::SmallVec;
 
 macro_rules! id_type {
     ($name:ident, $doc:literal) => {
@@ -66,9 +62,8 @@ id_type!(LexModeId, "Lexical mode id derived from parser states.");
 id_type!(ConflictId, "Declared or generated conflict id.");
 id_type!(ItemSetId, "LR item-set id.");
 id_type!(StackVersionId, "GLR stack-version id.");
-id_type!(ReducedBranchId, "Reduced parser branch id.");
 id_type!(GraphStackNodeId, "GLR graph-stack node id.");
-id_type!(TreeNodeId, "Runtime tree node id.");
+id_type!(TreeNodeId, "Parser tree node id.");
 id_type!(TraceEventId, "Structured parser trace event id.");
 id_type!(InternalSymbolId, "Internal parser sentinel symbol id.");
 id_type!(ReservedContextId, "Reserved-word context id.");
@@ -97,8 +92,8 @@ pub enum ParserGenerationStage {
     Productions,
     /// LR item sets and action/goto tables have been generated.
     Tables,
-    /// Runtime tree, scanner, recovery, and query plans have been attached.
-    RuntimePlans,
+    /// Tree, scanner, recovery, and query plans have been attached.
+    ExecutionPlans,
 }
 
 /// Parser-generator input after validated grammar facts enter the parser lane.
@@ -134,7 +129,7 @@ impl ParserGrammar {
     ///
     /// This is not production lowering. The next parser-generator phase must
     /// flatten `ValidatedGrammar` expressions into [`Production`] rows before
-    /// item sets or runtime execution are valid.
+    /// item sets or parser execution are valid.
     pub fn seed_from_validated(grammar: &ValidatedGrammar, lexical: &LexicalFacts) -> Self {
         Self::seed(grammar, lexical)
     }
@@ -749,10 +744,10 @@ impl ParserGrammar {
             .filter(|production| production.lhs == nonterminal)
         {
             for step in &production.steps {
-                if let ParserSymbol::Nonterminal(child) = step.symbol {
-                    if inline.get(child.get() as usize).copied().unwrap_or(false) {
-                        self.visit_inline_rule(child, inline, visit)?;
-                    }
+                if let ParserSymbol::Nonterminal(child) = step.symbol
+                    && inline.get(child.get() as usize).copied().unwrap_or(false)
+                {
+                    self.visit_inline_rule(child, inline, visit)?;
                 }
             }
         }
@@ -781,7 +776,8 @@ fn ids_from_flags(flags: &[bool]) -> Vec<NonterminalId> {
     flags
         .iter()
         .enumerate()
-        .filter_map(|(index, flag)| flag.then(|| NonterminalId::from_index(index)))
+        .filter(|(_, flag)| **flag)
+        .map(|(index, _)| NonterminalId::from_index(index))
         .collect()
 }
 
@@ -827,7 +823,7 @@ fn seed_terminal_symbols(
             TerminalKind::Pattern => ParserTerminalKind::Pattern,
             TerminalKind::AutoClose => ParserTerminalKind::AutoClose,
         };
-        let flags = normalized_regex_flags(terminal.flags.as_deref());
+        let flags = crate::lex_match::normalized_regex_flags(terminal.flags.as_deref());
         let spelling_key = match terminal.kind {
             TerminalKind::AutoClose => format!("{}#{}", terminal.spelling, terminal.expr.get()),
             TerminalKind::String | TerminalKind::Pattern => terminal.spelling.clone(),
@@ -945,7 +941,7 @@ fn direct_public_literal_name(grammar: &ValidatedGrammar, expr: GrammarExprId) -
         | GrammarExpr::PatternToken { .. }
         | GrammarExpr::Until { .. }
         | GrammarExpr::Nested { .. }
-        | GrammarExpr::AutoClose { .. }
+        | GrammarExpr::AutoClose(_)
         | GrammarExpr::Symbol(_)
         | GrammarExpr::Choice(_)
         | GrammarExpr::Seq(_)
@@ -1319,7 +1315,7 @@ impl<'a> ProductionNormalizer<'a> {
             | GrammarExpr::PatternToken { .. }
             | GrammarExpr::Until { .. }
             | GrammarExpr::Nested { .. }
-            | GrammarExpr::AutoClose { .. } => {
+            | GrammarExpr::AutoClose(_) => {
                 Ok(vec![SequenceDraft::single(self.terminal_symbol(expr)?)])
             }
             GrammarExpr::Token(_) | GrammarExpr::ImmediateToken(_) => {
@@ -1826,7 +1822,7 @@ pub enum ParserSymbol {
 }
 
 /// Lookahead key in an action table.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum LookaheadSymbol {
     /// Normal lexical terminal.
@@ -2597,21 +2593,16 @@ pub enum StaticPrecedence {
 }
 
 /// Production associativity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Associativity {
     /// No associativity override.
+    #[default]
     None,
     /// Left associative.
     Left,
     /// Right associative.
     Right,
-}
-
-impl Default for Associativity {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 /// Reserved-word context.
@@ -2659,7 +2650,7 @@ impl ValidSymbolSet {
 }
 
 /// LR item.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct LrItem {
     production: ProductionId,
     dot: usize,
@@ -2684,7 +2675,7 @@ impl LrItem {
 }
 
 /// Set of lookahead terminal/external/EOF symbols.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct LookaheadSet {
     symbols: Vec<LookaheadSymbol>,
 }
@@ -2694,13 +2685,6 @@ impl LookaheadSet {
     pub fn symbols(&self) -> &[LookaheadSymbol] {
         &self.symbols
     }
-
-    fn merge(&mut self, symbols: &[LookaheadSymbol]) -> bool {
-        let old_len = self.symbols.len();
-        self.symbols.extend_from_slice(symbols);
-        self.symbols = sorted_lookaheads(std::mem::take(&mut self.symbols));
-        self.symbols.len() != old_len
-    }
 }
 
 /// One LR item set.
@@ -2708,6 +2692,12 @@ impl LookaheadSet {
 pub struct ItemSet {
     id: ItemSetId,
     items: Vec<LrItem>,
+    /// Each item's lookahead set as `width` interned bitwords, packed in `items`
+    /// order. Lets goto grouping OR lookaheads straight into the successor arena
+    /// instead of re-interning `items[..].lookahead.symbols()` — the symbols were
+    /// themselves just materialized from these bits.
+    width: usize,
+    lookahead_words: Vec<u64>,
 }
 
 impl ItemSet {
@@ -2942,6 +2932,13 @@ struct LrTableBuilder<'a> {
     grammar: &'a ParserGrammar,
     productions_by_lhs: Vec<Vec<ProductionId>>,
     first: FirstFacts,
+    /// Dense LR-item indexing: `(prod, dot)` maps to `item_base[prod] + dot`, a single
+    /// `u32` in `0..item_count`. Lets the closure use flat arrays/flags instead of
+    /// hashing `(prod, dot)` tuples. `item_key[dense] == (prod, dot)`, and because the
+    /// mapping is monotonic, dense order *is* `(prod, dot)` order (canonical for dedup).
+    item_base: Vec<u32>,
+    item_key: Vec<(ProductionId, usize)>,
+    item_count: usize,
 }
 
 impl<'a> LrTableBuilder<'a> {
@@ -2970,11 +2967,32 @@ impl<'a> LrTableBuilder<'a> {
             ));
         }
         let first = FirstFacts::new(grammar, item_preparation.graph());
+        let mut item_base = Vec::with_capacity(grammar.productions.len());
+        let mut item_key = Vec::new();
+        let mut count = 0u32;
+        for production in &grammar.productions {
+            item_base.push(count);
+            // dot ranges 0..=steps.len() (a complete item has dot == steps.len()).
+            for dot in 0..=production.steps.len() {
+                item_key.push((production.id, dot));
+            }
+            count += production.steps.len() as u32 + 1;
+        }
+        let item_count = count as usize;
         Ok(Self {
             grammar,
             productions_by_lhs,
             first,
+            item_base,
+            item_key,
+            item_count,
         })
+    }
+
+    /// Dense LR-item index for `(production, dot)`.
+    #[inline]
+    fn dense(&self, production: ProductionId, dot: usize) -> u32 {
+        self.item_base[production.get() as usize] + dot as u32
     }
 
     fn build(&self) -> Result<ParseTable, ParserTableBuildError> {
@@ -2991,25 +3009,66 @@ impl<'a> LrTableBuilder<'a> {
         })
     }
 
+    /// Words per lookahead bitset: the frozen lookahead universe rounded up to u64s.
+    fn lookahead_width(&self) -> usize {
+        self.first.interner.from_index.len().div_ceil(64).max(1)
+    }
+
     fn item_sets(&self) -> (Vec<ItemSet>, Vec<ItemTransition>) {
         let mut item_sets = Vec::new();
-        let mut item_set_keys = BTreeMap::<ItemSetKey, ItemSetId>::new();
+        let mut item_set_keys = FxHashMap::<u64, Vec<ItemSetId>>::default();
+        let mut sigs: Vec<Vec<u64>> = Vec::new();
+        let mut pool: Vec<ItemMap> = Vec::new();
+        let mut sig_buf: Vec<u64> = Vec::new();
+        let mut order_buf: Vec<u32> = Vec::new();
+        let mut scratch = ClosureScratch {
+            queued: vec![false; self.item_count],
+            ..ClosureScratch::default()
+        };
+        let interner = &self.first.interner;
+        let width = self.lookahead_width();
+        let item_count = self.item_count;
         let mut transitions = Vec::new();
         let mut queue = VecDeque::new();
-        let mut start_items = ItemMap::default();
+        let mut start_items = take_map(&mut pool, width, item_count);
         for production in &self.productions_by_lhs[self.grammar.start.get() as usize] {
-            start_items.insert(*production, 0, &[LookaheadSymbol::Eof]);
+            start_items.insert(
+                self.dense(*production, 0),
+                &[LookaheadSymbol::Eof],
+                interner,
+            );
         }
-        let start_items = self.closure(start_items.into_items());
-        let start = push_item_set(&mut item_sets, &mut item_set_keys, start_items, &mut queue);
+        let start_items = self.closure(start_items, &mut scratch);
+        let start = push_item_set(
+            &mut item_sets,
+            &mut item_set_keys,
+            &mut sigs,
+            &mut pool,
+            &mut sig_buf,
+            &mut order_buf,
+            &self.item_key,
+            start_items,
+            interner,
+            &mut queue,
+        );
         debug_assert_eq!(start.get(), 0);
 
         while let Some(from) = queue.pop_front() {
-            let grouped = self.group_goto_items(&item_sets[from.get() as usize]);
+            let grouped = self.group_goto_items(&item_sets[from.get() as usize], &mut pool);
             for (symbol, items) in grouped {
-                let target_items = self.closure(items);
-                let to =
-                    push_item_set(&mut item_sets, &mut item_set_keys, target_items, &mut queue);
+                let target_items = self.closure(items, &mut scratch);
+                let to = push_item_set(
+                    &mut item_sets,
+                    &mut item_set_keys,
+                    &mut sigs,
+                    &mut pool,
+                    &mut sig_buf,
+                    &mut order_buf,
+                    &self.item_key,
+                    target_items,
+                    interner,
+                    &mut queue,
+                );
                 transitions.push(ItemTransition { from, symbol, to });
             }
         }
@@ -3017,57 +3076,86 @@ impl<'a> LrTableBuilder<'a> {
         (item_sets, transitions)
     }
 
-    fn closure(&self, items: Vec<LrItem>) -> Vec<LrItem> {
-        let mut map = ItemMap::from_items(items);
-        loop {
-            let snapshot = map.clone().into_items();
-            let mut changed = false;
-            for item in snapshot {
-                let production = &self.grammar.productions[item.production.get() as usize];
-                let Some(step) = production.steps.get(item.dot) else {
-                    continue;
-                };
-                let ParserSymbol::Nonterminal(nonterminal) = step.symbol else {
-                    continue;
-                };
-                let lookaheads = self.lookahead_after_dot(production, item.dot, &item.lookahead);
-                for production in &self.productions_by_lhs[nonterminal.get() as usize] {
-                    changed |= map.insert(*production, 0, &lookaheads);
-                }
-            }
-            if !changed {
-                return map.into_items();
+    fn closure(&self, mut map: ItemMap, scratch: &mut ClosureScratch) -> ItemMap {
+        // Worklist fixpoint: (re)process an item only when its lookahead set actually
+        // grew, so the work is proportional to real propagation instead of
+        // items × rounds (the old loop re-scanned and re-collected every key each
+        // pass — ~1.5s of BTreeMap churn on gingembre). Inserts only ever target
+        // (production, 0), so only those items can grow and get re-queued. All scratch
+        // buffers are reused across closures (via the caller's ClosureScratch) so the
+        // whole loop is allocation-free after warmup.
+        scratch.worklist.clear();
+        // `queued` is all-false here (self-clearing across closures). Seed from the
+        // items already in the map.
+        for &dense in &map.present {
+            if !scratch.queued[dense as usize] {
+                scratch.queued[dense as usize] = true;
+                scratch.worklist.push_back(dense);
             }
         }
+        while let Some(dense) = scratch.worklist.pop_front() {
+            scratch.queued[dense as usize] = false;
+            let (production_id, dot) = self.item_key[dense as usize];
+            let production = &self.grammar.productions[production_id.get() as usize];
+            let Some(step) = production.steps.get(dot) else {
+                continue;
+            };
+            let ParserSymbol::Nonterminal(nonterminal) = step.symbol else {
+                continue;
+            };
+            // `first` = FIRST(steps after the dot), extended by the item's own lookahead
+            // (`fallback`) only when that suffix is entirely nullable. Both suffix facts
+            // are precomputed, so this is a bitset copy plus at most one OR — no suffix
+            // walk. The whole loop is bitwise OR — no Vec, no interning, no sort.
+            let production_index = production_id.get() as usize;
+            scratch.first.clear();
+            scratch
+                .first
+                .or_from(&self.first.suffix_first[production_index][dot]);
+            if self.first.suffix_nullable[production_index][dot] {
+                scratch.fallback.clear();
+                if let Some(current) = map.words_of(dense) {
+                    scratch.fallback.or_from_slice(current);
+                }
+                scratch.first.or_from(&scratch.fallback);
+            }
+            for target in &self.productions_by_lhs[nonterminal.get() as usize] {
+                let target_dense = self.dense(*target, 0);
+                if map.or_into(target_dense, &scratch.first)
+                    && !scratch.queued[target_dense as usize]
+                {
+                    scratch.queued[target_dense as usize] = true;
+                    scratch.worklist.push_back(target_dense);
+                }
+            }
+        }
+        map
     }
 
-    fn lookahead_after_dot(
+    fn group_goto_items(
         &self,
-        production: &Production,
-        dot: usize,
-        current: &LookaheadSet,
-    ) -> Vec<LookaheadSymbol> {
-        self.first
-            .first_of_steps(&production.steps[dot + 1..], current.symbols())
-    }
-
-    fn group_goto_items(&self, item_set: &ItemSet) -> BTreeMap<ParserSymbol, Vec<LrItem>> {
+        item_set: &ItemSet,
+        pool: &mut Vec<ItemMap>,
+    ) -> BTreeMap<ParserSymbol, ItemMap> {
+        let width = self.lookahead_width();
+        let item_count = self.item_count;
         let mut grouped = BTreeMap::<ParserSymbol, ItemMap>::new();
-        for item in &item_set.items {
+        for (index, item) in item_set.items.iter().enumerate() {
             let production = &self.grammar.productions[item.production.get() as usize];
             let Some(step) = production.steps.get(item.dot) else {
                 continue;
             };
-            grouped.entry(step.symbol).or_default().insert(
-                item.production,
-                item.dot + 1,
-                item.lookahead.symbols(),
-            );
+            let dense = self.dense(item.production, item.dot + 1);
+            // The item's lookahead is already interned in `item_set.lookahead_words`
+            // (packed in `items` order) — OR those bits straight in, no re-interning.
+            let base = index * item_set.width;
+            let words = &item_set.lookahead_words[base..base + item_set.width];
+            grouped
+                .entry(step.symbol)
+                .or_insert_with(|| take_map(pool, width, item_count))
+                .or_into_words(dense, words);
         }
         grouped
-            .into_iter()
-            .map(|(symbol, items)| (symbol, items.into_items()))
-            .collect()
     }
 
     fn parse_states(
@@ -3126,11 +3214,7 @@ impl<'a> LrTableBuilder<'a> {
                             repetition: false,
                         },
                     ),
-                    ParserSymbol::Internal(internal) => push_action(
-                        &mut entries,
-                        LookaheadSymbol::ErrorRecovery(internal),
-                        ParseAction::Recover,
-                    ),
+                    ParserSymbol::Internal(_) => {}
                 }
             }
             for lookahead in self.extra_lookaheads() {
@@ -3211,10 +3295,10 @@ impl<'a> LrTableBuilder<'a> {
             let Some(step) = production.steps.get(item.dot) else {
                 continue;
             };
-            if step.symbol == symbol {
-                if let Some(lookahead) = lookahead_for_step(step) {
-                    lookaheads.push((lookahead, step.static_precedence.clone()));
-                }
+            if step.symbol == symbol
+                && let Some(lookahead) = lookahead_for_step(step)
+            {
+                lookaheads.push((lookahead, step.static_precedence.clone()));
             }
         }
         lookaheads.sort();
@@ -3245,50 +3329,265 @@ impl<'a> LrTableBuilder<'a> {
     }
 }
 
-type ItemSetKey = Vec<(ProductionId, usize, Vec<LookaheadSymbol>)>;
-
+/// Builder-local dense index of the lookahead symbols seen while closing one item
+/// set. Lets `ItemMap` store lookahead sets as bitsets keyed by index, so a merge is
+/// a bitwise OR instead of re-sorting a `Vec` on every insert — which was ~90% of
+/// `ParseTable::from_grammar` on heavy grammars (`LookaheadSet::merge` re-sorted the
+/// whole set on each of the many LR-closure merges).
 #[derive(Debug, Clone, Default)]
+struct LookaheadInterner {
+    to_index: FxHashMap<LookaheadSymbol, u32>,
+    from_index: Vec<LookaheadSymbol>,
+}
+
+impl LookaheadInterner {
+    fn intern(&mut self, symbol: LookaheadSymbol) -> u32 {
+        if let Some(&index) = self.to_index.get(&symbol) {
+            return index;
+        }
+        let index = self.from_index.len() as u32;
+        self.from_index.push(symbol);
+        self.to_index.insert(symbol, index);
+        index
+    }
+
+    /// Index of an already-interned symbol. The interner is fully populated with every
+    /// possible lookahead symbol (all FIRST sets, every step lookahead, and EOF) before
+    /// the closure runs, so this never misses during table construction.
+    fn index_of(&self, symbol: LookaheadSymbol) -> u32 {
+        self.to_index
+            .get(&symbol)
+            .copied()
+            .expect("lookahead symbol should be pre-interned")
+    }
+}
+
+/// Growable bitset over interned lookahead indices.
+#[derive(Debug, Clone, Default)]
+struct LookaheadBitset {
+    words: Vec<u64>,
+}
+
+impl LookaheadBitset {
+    /// Set the bit for `index`; returns whether it was newly set (i.e. the set grew).
+    fn set(&mut self, index: u32) -> bool {
+        let word = index as usize / 64;
+        let bit = 1u64 << (index % 64);
+        if word >= self.words.len() {
+            self.words.resize(word + 1, 0);
+        }
+        let newly = self.words[word] & bit == 0;
+        self.words[word] |= bit;
+        newly
+    }
+
+    /// OR `other` into `self`; returns whether `self` gained any bit.
+    fn or_from(&mut self, other: &LookaheadBitset) -> bool {
+        self.or_from_slice(&other.words)
+    }
+
+    /// OR raw words (e.g. an arena row) into `self`; returns whether `self` grew.
+    fn or_from_slice(&mut self, other: &[u64]) -> bool {
+        if other.len() > self.words.len() {
+            self.words.resize(other.len(), 0);
+        }
+        let mut grew = false;
+        for (word, &incoming) in self.words.iter_mut().zip(other) {
+            grew |= incoming & !*word != 0;
+            *word |= incoming;
+        }
+        grew
+    }
+
+    /// Clear all bits, keeping the allocation for reuse.
+    fn clear(&mut self) {
+        self.words.clear();
+    }
+}
+
+/// Reusable scratch for the LR closure fixpoint, threaded across closures so the
+/// worklist/queue and FIRST bitsets are allocated once for the whole build instead
+/// of per item set.
+#[derive(Default)]
+struct ClosureScratch {
+    /// `queued[dense]` = item is on the worklist. Self-clearing: every set flag is
+    /// cleared when its item is popped, so the whole array is false between closures
+    /// and needs no reset. Sized to the builder's `item_count`.
+    queued: Vec<bool>,
+    worklist: std::collections::VecDeque<u32>,
+    fallback: LookaheadBitset,
+    first: LookaheadBitset,
+}
+
+/// One LR item set under construction, dense-indexed. Every lookahead set is exactly
+/// `width` u64 words (the lookahead universe is frozen), so all rows live in one flat
+/// arena: dense item `d` at `(row_of[d] - 1) * width`. `row_of` (0 = absent) and the
+/// `present` list are keyed by the dense item index — no `(prod, dot)` hashing in the
+/// closure hot loop.
+#[derive(Debug, Clone)]
 struct ItemMap {
-    items: BTreeMap<(ProductionId, usize), LookaheadSet>,
+    width: usize,
+    row_of: Vec<u32>,
+    present: Vec<u32>,
+    words: Vec<u64>,
 }
 
 impl ItemMap {
-    fn from_items(items: Vec<LrItem>) -> Self {
-        let mut map = Self::default();
-        for item in items {
-            map.insert(item.production, item.dot, item.lookahead.symbols());
+    fn new(width: usize, item_count: usize) -> Self {
+        Self {
+            width: width.max(1),
+            row_of: vec![0; item_count],
+            present: Vec::new(),
+            words: Vec::new(),
         }
-        map
     }
 
+    /// Clear for reuse from the pool, keeping allocations — only touched rows reset.
+    fn reset(&mut self) {
+        for &dense in &self.present {
+            self.row_of[dense as usize] = 0;
+        }
+        self.present.clear();
+        self.words.clear();
+    }
+
+    /// Byte offset of dense item `dense`'s row, appending a zeroed row if new.
+    fn row_base(&mut self, dense: u32) -> usize {
+        let slot = self.row_of[dense as usize];
+        if slot != 0 {
+            return (slot as usize - 1) * self.width;
+        }
+        let base = self.words.len();
+        self.words.resize(base + self.width, 0);
+        self.row_of[dense as usize] = (base / self.width) as u32 + 1;
+        self.present.push(dense);
+        base
+    }
+
+    /// The row words for dense item `dense`, if present.
+    fn words_of(&self, dense: u32) -> Option<&[u64]> {
+        let slot = self.row_of[dense as usize];
+        if slot == 0 {
+            return None;
+        }
+        let base = (slot as usize - 1) * self.width;
+        Some(&self.words[base..base + self.width])
+    }
+
+    /// Symbol-keyed insert for seeding and goto grouping (not the closure hot loop).
+    /// The interner is frozen, so this is a pure lookup + bit set.
     fn insert(
         &mut self,
-        production: ProductionId,
-        dot: usize,
+        dense: u32,
         lookaheads: &[LookaheadSymbol],
+        interner: &LookaheadInterner,
     ) -> bool {
-        self.items
-            .entry((production, dot))
-            .or_default()
-            .merge(lookaheads)
+        let base = self.row_base(dense);
+        let mut changed = false;
+        for &symbol in lookaheads {
+            let index = interner.index_of(symbol) as usize;
+            let word = base + index / 64;
+            let bit = 1u64 << (index % 64);
+            changed |= self.words[word] & bit == 0;
+            self.words[word] |= bit;
+        }
+        changed
     }
 
-    fn into_items(self) -> Vec<LrItem> {
-        self.items
-            .into_iter()
-            .map(|((production, dot), lookahead)| LrItem {
+    /// Bitset OR into an item's lookahead set — the LR-closure hot path. `bits` holds
+    /// at most `width` words (indices are interned `< universe`). Returns whether the
+    /// set grew.
+    fn or_into(&mut self, dense: u32, bits: &LookaheadBitset) -> bool {
+        self.or_into_words(dense, &bits.words)
+    }
+
+    /// OR packed lookahead words (e.g. a stored `ItemSet`'s row) into item `dense`.
+    fn or_into_words(&mut self, dense: u32, words: &[u64]) -> bool {
+        let base = self.row_base(dense);
+        let mut grew = false;
+        for (offset, &incoming) in words.iter().enumerate() {
+            let word = base + offset;
+            grew |= incoming & !self.words[word] != 0;
+            self.words[word] |= incoming;
+        }
+        grew
+    }
+
+    /// Present dense indices sorted into `order` — dense order *is* (prod, dot) order,
+    /// so this is the canonical iteration order for both dedup and materialization.
+    fn sorted_present(&self, order: &mut Vec<u32>) {
+        order.clear();
+        order.extend_from_slice(&self.present);
+        order.sort_unstable();
+    }
+
+    /// Materialize this item set into canonical `Vec<LrItem>` (symbols) plus the same
+    /// lookaheads packed as `width` bitwords per item, in the same order. Only
+    /// genuinely-new states reach here (borrows so the map can be recycled).
+    fn materialize(
+        &self,
+        item_key: &[(ProductionId, usize)],
+        interner: &LookaheadInterner,
+    ) -> (Vec<LrItem>, Vec<u64>) {
+        let mut order = Vec::with_capacity(self.present.len());
+        self.sorted_present(&mut order);
+        let mut items = Vec::with_capacity(order.len());
+        let mut packed = Vec::with_capacity(order.len() * self.width);
+        for &dense in &order {
+            let (production, dot) = item_key[dense as usize];
+            let base = (self.row_of[dense as usize] as usize - 1) * self.width;
+            let words = &self.words[base..base + self.width];
+            packed.extend_from_slice(words);
+            // Ascending bit index = symbol order (the interner is built sorted),
+            // so the lookahead set materializes already sorted with no sort.
+            let mut symbols = Vec::new();
+            for (word_index, &word) in words.iter().enumerate() {
+                let mut bits = word;
+                while bits != 0 {
+                    let index = word_index * 64 + bits.trailing_zeros() as usize;
+                    symbols.push(interner.from_index[index]);
+                    bits &= bits - 1;
+                }
+            }
+            items.push(LrItem {
                 production,
                 dot,
-                lookahead,
-            })
-            .collect()
+                lookahead: LookaheadSet { symbols },
+            });
+        }
+        (items, packed)
+    }
+
+    /// Write this item set's dense canonical dedup key into `sig` (cleared first),
+    /// using `order` as scratch: the sorted dense indices (already (prod, dot) order,
+    /// each uniquely encoding the item) plus each item's lookahead words with trailing
+    /// zero words trimmed. Cheap to hash/compare; both buffers reused across item sets.
+    fn write_signature(&self, order: &mut Vec<u32>, sig: &mut Vec<u64>) {
+        self.sorted_present(order);
+        sig.clear();
+        for &dense in order.iter() {
+            let base = (self.row_of[dense as usize] as usize - 1) * self.width;
+            let words = &self.words[base..base + self.width];
+            let end = words.iter().rposition(|&w| w != 0).map_or(0, |i| i + 1);
+            sig.push(u64::from(dense));
+            sig.push(end as u64);
+            sig.extend_from_slice(&words[..end]);
+        }
     }
 }
 
 #[derive(Debug, Clone)]
 struct FirstFacts {
-    nullable: Vec<bool>,
     first: Vec<Vec<LookaheadSymbol>>,
+    /// Shared, frozen index of every possible lookahead symbol. Built once so the LR
+    /// closure works entirely in bitsets (no per-symbol interning in the hot loop).
+    interner: LookaheadInterner,
+    /// Per (production, dot): FIRST(steps[dot+1..]) as a bitset, and whether that
+    /// suffix is entirely nullable (so the item's own lookahead — the "fallback" —
+    /// joins it). Both are grammar-static, so the closure hot loop just copies the
+    /// cached bitset and maybe ORs the fallback instead of re-walking the suffix.
+    suffix_first: Vec<Vec<LookaheadBitset>>,
+    suffix_nullable: Vec<Vec<bool>>,
 }
 
 impl FirstFacts {
@@ -3306,17 +3605,86 @@ impl FirstFacts {
                 changed |= extend_lookaheads(&mut first[lhs], &symbols);
             }
             if !changed {
-                return Self { nullable, first };
+                break;
             }
         }
-    }
 
-    fn first_of_steps(
-        &self,
-        steps: &[ProductionStep],
-        fallback: &[LookaheadSymbol],
-    ) -> Vec<LookaheadSymbol> {
-        first_of_steps_with_tables(steps, &self.nullable, &self.first, fallback)
+        // Freeze a complete lookahead interner: every FIRST-set symbol, every step's
+        // lookahead terminal, and EOF — every symbol the closure can ever place in a
+        // lookahead set — so `index_of` never misses and the loop needs no interning.
+        // Intern in LookaheadSymbol order (via a sorted set) so a bitset's ascending
+        // index order IS symbol order — materialized lookahead sets come out sorted with
+        // no per-item sort (which dominated the table build outside the closure).
+        let mut all_symbols = std::collections::BTreeSet::new();
+        for symbols in &first {
+            all_symbols.extend(symbols.iter().copied());
+        }
+        all_symbols.insert(LookaheadSymbol::Eof);
+        for production in &grammar.productions {
+            for step in &production.steps {
+                if let Some(symbol) = lookahead_for_step(step) {
+                    all_symbols.insert(symbol);
+                }
+            }
+        }
+        let mut interner = LookaheadInterner::default();
+        for symbol in all_symbols {
+            interner.intern(symbol);
+        }
+        let first_bits: Vec<LookaheadBitset> = first
+            .iter()
+            .map(|symbols| {
+                let mut bits = LookaheadBitset::default();
+                for &symbol in symbols {
+                    bits.set(interner.index_of(symbol));
+                }
+                bits
+            })
+            .collect();
+
+        // Precompute FIRST(steps[dot+1..]) per (production, dot) — the static part of
+        // the closure's lookahead computation — so the hot loop never re-walks a suffix.
+        let mut suffix_first = Vec::with_capacity(grammar.productions.len());
+        let mut suffix_nullable = Vec::with_capacity(grammar.productions.len());
+        for production in &grammar.productions {
+            let steps = &production.steps;
+            let mut per_dot_first = Vec::with_capacity(steps.len());
+            let mut per_dot_nullable = Vec::with_capacity(steps.len());
+            for dot in 0..steps.len() {
+                let mut bits = LookaheadBitset::default();
+                let mut all_nullable = true;
+                for step in &steps[dot + 1..] {
+                    match lookahead_for_step(step) {
+                        Some(symbol) => {
+                            bits.set(interner.index_of(symbol));
+                            all_nullable = false;
+                            break;
+                        }
+                        None => {
+                            let ParserSymbol::Nonterminal(nonterminal) = step.symbol else {
+                                unreachable!("non-lookahead parser symbol should be nonterminal");
+                            };
+                            bits.or_from(&first_bits[nonterminal.get() as usize]);
+                            if !nullable[nonterminal.get() as usize] {
+                                all_nullable = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+                per_dot_first.push(bits);
+                per_dot_nullable.push(all_nullable);
+            }
+            suffix_first.push(per_dot_first);
+            suffix_nullable.push(per_dot_nullable);
+        }
+
+        Self {
+            first,
+            interner,
+            suffix_first,
+            suffix_nullable,
+        }
     }
 }
 
@@ -3328,13 +3696,17 @@ fn productions_by_lhs(grammar: &ParserGrammar) -> Vec<Vec<ProductionId>> {
     by_lhs
 }
 
-fn first_of_steps_with_tables(
+/// Append FIRST(`steps`) — falling through to `fallback` once every step is nullable
+/// — to `out`, WITHOUT sorting or deduping. Callers dedup either via a bitset (the LR
+/// closure) or a final `sorted_lookaheads` (the wrapper below). Allocation-free given
+/// a reused `out`, which is the whole point on the closure hot path.
+fn first_of_steps_with_tables_into(
     steps: &[ProductionStep],
     nullable: &[bool],
     first: &[Vec<LookaheadSymbol>],
     fallback: &[LookaheadSymbol],
-) -> Vec<LookaheadSymbol> {
-    let mut out = Vec::new();
+    out: &mut Vec<LookaheadSymbol>,
+) {
     for step in steps {
         match lookahead_for_step(step) {
             Some(
@@ -3345,20 +3717,30 @@ fn first_of_steps_with_tables(
                 | LookaheadSymbol::ErrorRecovery(_)),
             ) => {
                 out.push(lookahead);
-                return sorted_lookaheads(out);
+                return;
             }
             None => {
                 let ParserSymbol::Nonterminal(nonterminal) = step.symbol else {
                     unreachable!("non-lookahead parser symbol should be nonterminal");
                 };
-                extend_lookaheads(&mut out, &first[nonterminal.get() as usize]);
+                out.extend_from_slice(&first[nonterminal.get() as usize]);
                 if !nullable[nonterminal.get() as usize] {
-                    return sorted_lookaheads(out);
+                    return;
                 }
             }
         }
     }
-    extend_lookaheads(&mut out, fallback);
+    out.extend_from_slice(fallback);
+}
+
+fn first_of_steps_with_tables(
+    steps: &[ProductionStep],
+    nullable: &[bool],
+    first: &[Vec<LookaheadSymbol>],
+    fallback: &[LookaheadSymbol],
+) -> Vec<LookaheadSymbol> {
+    let mut out = Vec::new();
+    first_of_steps_with_tables_into(steps, nullable, first, fallback, &mut out);
     sorted_lookaheads(out)
 }
 
@@ -3375,29 +3757,137 @@ fn lookahead_for_step(step: &ProductionStep) -> Option<LookaheadSymbol> {
     }
 }
 
+/// Pull a cleared `ItemMap` from the pool (buffers retained) or make a fresh one.
+fn take_map(pool: &mut Vec<ItemMap>, width: usize, item_count: usize) -> ItemMap {
+    match pool.pop() {
+        Some(mut map) => {
+            map.width = width.max(1);
+            map
+        }
+        None => ItemMap::new(width, item_count),
+    }
+}
+
+/// Return a consumed `ItemMap` to the pool, keeping its allocations so the next item
+/// set reuses them (no realloc after warmup).
+fn recycle_map(pool: &mut Vec<ItemMap>, mut map: ItemMap) {
+    map.reset();
+    pool.push(map);
+}
+
+#[allow(clippy::too_many_arguments)]
 fn push_item_set(
     item_sets: &mut Vec<ItemSet>,
-    item_set_keys: &mut BTreeMap<ItemSetKey, ItemSetId>,
-    items: Vec<LrItem>,
+    item_set_index: &mut FxHashMap<u64, Vec<ItemSetId>>,
+    sigs: &mut Vec<Vec<u64>>,
+    pool: &mut Vec<ItemMap>,
+    sig: &mut Vec<u64>,
+    order: &mut Vec<u32>,
+    item_key: &[(ProductionId, usize)],
+    map: ItemMap,
+    interner: &LookaheadInterner,
     queue: &mut VecDeque<ItemSetId>,
 ) -> ItemSetId {
-    let key = item_set_key(&items);
-    if let Some(id) = item_set_keys.get(&key).copied() {
-        return id;
+    // Dedup identical LR item sets (state merging) on a dense bitset *signature* —
+    // the sorted (prod, dot) keys plus their lookahead words — hashed to bucket and
+    // compared word-for-word only within a bucket. Crucially we dedup *before*
+    // materializing `Vec<LrItem>`: most goto targets are duplicates of existing
+    // states, so building their symbol vecs was pure waste. Only a genuinely-new
+    // state pays materialization (and a sig clone); either way the map's buffers go
+    // back to the pool and the sig/keys scratch is reused.
+    map.write_signature(order, sig);
+    let hash = hash_signature(sig);
+    let bucket = item_set_index.entry(hash).or_default();
+    for &existing in bucket.iter() {
+        if sigs[existing.get() as usize] == *sig {
+            recycle_map(pool, map);
+            return existing;
+        }
     }
     let id = ItemSetId::from_index(item_sets.len());
-    item_set_keys.insert(key, id);
-    item_sets.push(ItemSet { id, items });
+    bucket.push(id);
+    let width = map.width;
+    let (items, lookahead_words) = map.materialize(item_key, interner);
+    item_sets.push(ItemSet {
+        id,
+        items,
+        width,
+        lookahead_words,
+    });
+    sigs.push(sig.clone());
+    recycle_map(pool, map);
     queue.push_back(id);
     id
 }
 
-fn item_set_key(items: &[LrItem]) -> ItemSetKey {
-    items
-        .iter()
-        .map(|item| (item.production, item.dot, item.lookahead.symbols.clone()))
-        .collect()
+fn hash_signature(sig: &[u64]) -> u64 {
+    use std::hash::Hasher;
+    let mut hasher = FxHasher::default();
+    for &word in sig {
+        hasher.write_u64(word);
+    }
+    hasher.finish()
 }
+
+/// Cheap non-cryptographic hasher (FxHash-style) for LR item-set dedup. SipHash's
+/// per-state cost dominated the table build; this is a rotate/xor/multiply mixer.
+#[derive(Default)]
+struct FxHasher {
+    hash: u64,
+}
+
+impl FxHasher {
+    const SEED: u64 = 0x51_7c_c1_b7_27_22_0a_95;
+
+    #[inline]
+    fn add(&mut self, word: u64) {
+        self.hash = (self.hash.rotate_left(5) ^ word).wrapping_mul(Self::SEED);
+    }
+}
+
+impl std::hash::Hasher for FxHasher {
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.hash
+    }
+    #[inline]
+    fn write_u64(&mut self, i: u64) {
+        self.add(i);
+    }
+    #[inline]
+    fn write_u32(&mut self, i: u32) {
+        self.add(u64::from(i));
+    }
+    #[inline]
+    fn write_usize(&mut self, i: usize) {
+        self.add(i as u64);
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        let mut chunks = bytes.chunks_exact(8);
+        for chunk in chunks.by_ref() {
+            self.add(u64::from_le_bytes(chunk.try_into().unwrap()));
+        }
+        for &byte in chunks.remainder() {
+            self.add(u64::from(byte));
+        }
+    }
+}
+
+/// `BuildHasher` for `FxHasher` so the closure's item map/queue can be plain hash
+/// collections keyed on integer ids — O(1) with no ordered-tree node splits/memmoves
+/// (which dominated the closure after the materialization cut). Deterministic (no
+/// random seed), so table builds stay reproducible.
+#[derive(Default, Clone)]
+struct BuildFxHasher;
+
+impl std::hash::BuildHasher for BuildFxHasher {
+    type Hasher = FxHasher;
+    fn build_hasher(&self) -> FxHasher {
+        FxHasher::default()
+    }
+}
+
+type FxHashMap<K, V> = std::collections::HashMap<K, V, BuildFxHasher>;
 
 fn sorted_lookaheads(mut symbols: Vec<LookaheadSymbol>) -> Vec<LookaheadSymbol> {
     symbols.sort();
@@ -3745,93 +4235,10 @@ impl TableConflict {
     }
 }
 
-/// Reduced named-node parser used to drive corpus S-expression oracles.
-///
-/// This is the first executable LR slice: it consumes Snark-generated parser
-/// tables and emits the named-node subset of Tree-sitter corpus S-expressions
-/// currently supported by this reduced oracle. It is not the final recoverable,
-/// incremental, field/atom-complete GLR runtime.
-pub struct ReducedParser<'a> {
-    #[cfg(test)]
-    grammar: &'a ValidatedGrammar,
-    parser: &'a ParserGrammar,
-    table: &'a ParseTable,
-    external_scanner: Option<&'a dyn ReducedExternalScanner>,
-    runtime_plan: RuntimePlanRef<'a>,
-    #[cfg(test)]
-    regex_patterns: HashMap<(String, Option<String>), Option<Regex>>,
-    lex_cache: RefCell<HashMap<LexCacheKey, Result<ReducedToken, ReducedParseError>>>,
-    lex_mode_cache:
-        RefCell<HashMap<LexModeCacheKey, Result<Vec<ReducedTokenCandidate>, ReducedParseError>>>,
-}
-
-#[derive(Debug)]
-enum RuntimePlanRef<'a> {
-    Owned(RuntimeParserPlan),
-    Borrowed(&'a RuntimeParserPlan),
-}
-
-impl RuntimePlanRef<'_> {
-    fn get(&self) -> &RuntimeParserPlan {
-        match self {
-            Self::Owned(plan) => plan,
-            Self::Borrowed(plan) => plan,
-        }
-    }
-}
-
-/// Reusable runtime parser setup for a prepared grammar/table.
-///
-/// This carries the grammar-derived lexer automata and first-set facts that are
-/// expensive to rebuild for every parse. It is intentionally tied to the
-/// grammar/table pair used to construct it; callers must keep those inputs
-/// stable while reusing the plan.
-#[derive(Debug)]
-pub struct RuntimeParserPlan {
-    first: Option<FirstFacts>,
-    compiled_lex_modes: Vec<CompiledLexMode>,
-}
-
-impl RuntimeParserPlan {
-    /// Build a reusable runtime plan over validated grammar facts and a parse table.
-    pub fn new(
-        grammar: &ValidatedGrammar,
-        parser: &ParserGrammar,
-        table: &ParseTable,
-    ) -> Result<Self, ReducedParseError> {
-        if parser.stage() != ParserGenerationStage::Productions {
-            return Err(ReducedParseError::new(ReducedParseErrorKind::WrongStage {
-                stage: parser.stage(),
-            }));
-        }
-        let first = parser
-            .item_preparation
-            .as_ref()
-            .map(|item_preparation| FirstFacts::new(parser, item_preparation.graph()));
-        let compiled_lex_modes = compile_lex_modes(grammar, parser, table);
-        Ok(Self {
-            first,
-            compiled_lex_modes,
-        })
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct LexCacheKey {
-    state: ParseStateId,
-    byte_position: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct LexModeCacheKey {
-    mode: LexModeId,
-    byte_position: usize,
-}
-
 #[derive(Debug, Clone)]
 pub(crate) struct CompiledLexMode {
     pub(crate) terminals: Vec<CompiledLexTerminal>,
-    pub(crate) direct_pattern_set: Option<CompiledLexPatternSet>,
+    pub(crate) external_count: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -3842,22 +4249,12 @@ pub(crate) struct CompiledLexTerminal {
     pub(crate) literal: bool,
     pub(crate) lexical_precedence: i32,
     pub(crate) implicit_precedence: i32,
-    pub(crate) direct_pattern_index: Option<usize>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct CompiledLexPatternSet {
-    pub(crate) regex_set: RegexSet,
-    pub(crate) terminal_indices: Vec<usize>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) enum CompiledTerminalMatcher {
     Expr(CompiledLexExpr),
-    UnsupportedTerminal {
-        terminal: TerminalId,
-        spelling: String,
-    },
+    UnsupportedTerminal { terminal: TerminalId },
 }
 
 #[derive(Debug, Clone)]
@@ -3865,9 +4262,9 @@ pub(crate) enum CompiledLexExpr {
     Blank,
     String(String),
     Pattern(CompiledLexPattern),
-    Until { markers: Vec<String> },
+    Until(CompiledUntilMatcher),
     Nested { open: String, close: String },
-    AutoClose(AutoCloseSpec),
+    AutoClose(Box<AutoCloseSpec>),
     Seq(Vec<CompiledLexExpr>),
     Choice(Vec<CompiledLexExpr>),
     Repeat(Box<CompiledLexExpr>),
@@ -3875,12 +4272,9 @@ pub(crate) enum CompiledLexExpr {
     UnsupportedSymbol(GrammarExprId),
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct CompiledLexPattern {
-    pub(crate) source: String,
-    flags: Option<String>,
-    regex: Option<Regex>,
-}
+pub(crate) type CompiledLexPattern = crate::lex_match::CompiledPattern;
+
+pub(crate) type CompiledUntilMatcher = crate::lex_match::CompiledUntilMatcher;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AutoCloseSpec {
@@ -3903,24 +4297,24 @@ pub(crate) struct AutoCloseRuleSpec {
     pub(crate) closed_by_tags: Vec<String>,
 }
 
-/// External scanner host used by the reduced parser oracle.
-pub trait ReducedExternalScanner {
+/// External scanner host used by Weavy parser execution.
+pub trait ExternalScannerHost {
     /// Try to scan one external token for a branch-local parser state.
     fn scan(
         &self,
-        request: ReducedExternalScan<'_>,
-    ) -> Result<Option<ReducedExternalScanResult>, ReducedParseError>;
+        request: ExternalScanRequest<'_>,
+    ) -> Result<Option<ExternalScanResult>, ParserExecutionError>;
 }
 
-/// Result of one reduced external scanner call.
+/// Result of one external scanner host call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ReducedExternalScanResult {
+pub struct ExternalScanResult {
     end_byte: usize,
     before: Option<ScannerSnapshotId>,
     after: Option<ScannerSnapshotId>,
 }
 
-impl ReducedExternalScanResult {
+impl ExternalScanResult {
     /// Build a scanner result for a token ending at `end_byte`.
     pub const fn new(end_byte: usize) -> Self {
         Self {
@@ -3959,7 +4353,7 @@ impl ReducedExternalScanResult {
 
 /// Branch-local external scanner request.
 #[derive(Debug, Clone, Copy)]
-pub struct ReducedExternalScan<'a> {
+pub struct ExternalScanRequest<'a> {
     state: ParseStateId,
     external: ExternalId,
     external_symbol: &'a ExternalSymbol,
@@ -3969,8 +4363,7 @@ pub struct ReducedExternalScan<'a> {
     scanner_snapshot: Option<ScannerSnapshotId>,
 }
 
-impl ReducedExternalScan<'_> {
-    #[cfg(feature = "weavy-lowering")]
+impl ExternalScanRequest<'_> {
     pub(crate) const fn new<'a>(
         state: ParseStateId,
         external: ExternalId,
@@ -3979,8 +4372,8 @@ impl ReducedExternalScan<'_> {
         input: &'a str,
         byte_position: usize,
         scanner_snapshot: Option<ScannerSnapshotId>,
-    ) -> ReducedExternalScan<'a> {
-        ReducedExternalScan {
+    ) -> ExternalScanRequest<'a> {
+        ExternalScanRequest {
             state,
             external,
             external_symbol,
@@ -4027,1474 +4420,17 @@ impl ReducedExternalScan<'_> {
     }
 }
 
-/// Successful reduced parse plus branch/conflict evidence.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReducedParseReport {
-    tree: SexpNode,
-    accepted_count: usize,
-    failure_count: usize,
-    max_live_branches: usize,
-    conflict_steps: Vec<ReducedConflictStep>,
-    branch_parents: Vec<ReducedBranchParent>,
-    branch_results: Vec<ReducedBranchResult>,
-}
-
-impl ReducedParseReport {
-    /// Reduced Tree-sitter-style S-expression tree.
-    pub const fn tree(&self) -> &SexpNode {
-        &self.tree
-    }
-
-    /// Number of accepted branches before identical-tree coalescing.
-    pub const fn accepted_count(&self) -> usize {
-        self.accepted_count
-    }
-
-    /// Number of branch failures observed while exploring the table.
-    pub const fn failure_count(&self) -> usize {
-        self.failure_count
-    }
-
-    /// Maximum number of queued live branches observed.
-    pub const fn max_live_branches(&self) -> usize {
-        self.max_live_branches
-    }
-
-    /// Multi-action table cells reached during branch execution.
-    pub fn conflict_steps(&self) -> &[ReducedConflictStep] {
-        &self.conflict_steps
-    }
-
-    /// Parent links for branches created by runtime forks.
-    pub fn branch_parents(&self) -> &[ReducedBranchParent] {
-        &self.branch_parents
-    }
-
-    /// Final accepted/failed outcomes by branch id.
-    pub fn branch_results(&self) -> &[ReducedBranchResult] {
-        &self.branch_results
-    }
-
-    /// Final outcomes for a branch or any descendant branch.
-    pub fn branch_descendant_results(&self, branch: ReducedBranchId) -> Vec<ReducedBranchResult> {
-        self.branch_results
-            .iter()
-            .copied()
-            .filter(|result| self.branch_descends_from(result.branch, branch))
-            .collect()
-    }
-
-    fn branch_descends_from(&self, mut branch: ReducedBranchId, ancestor: ReducedBranchId) -> bool {
-        loop {
-            if branch == ancestor {
-                return true;
-            }
-            let Some(parent) = self
-                .branch_parents
-                .iter()
-                .find(|link| link.branch == branch)
-                .and_then(|link| link.parent)
-            else {
-                return false;
-            };
-            branch = parent;
-        }
-    }
-}
-
-/// One multi-action table cell reached by the reduced parser.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReducedConflictStep {
-    /// Branch that reached this conflict.
-    pub branch: ReducedBranchId,
-    /// Parse state containing the conflict.
-    pub state: ParseStateId,
-    /// Input byte offset before selecting the conflicted action.
-    pub byte_position: usize,
-    /// Lookahead that selected the conflicted action cell.
-    pub lookahead: LookaheadSymbol,
-    /// Actions explored from this cell.
-    pub actions: Vec<ParseAction>,
-    /// Outcome produced by each explored action.
-    pub outcomes: Vec<ReducedConflictActionOutcome>,
-}
-
-/// Parent link for a branch created by a runtime fork.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ReducedBranchParent {
-    /// Child branch id.
-    pub branch: ReducedBranchId,
-    /// Parent branch id. The initial branch has no parent.
-    pub parent: Option<ReducedBranchId>,
-}
-
-/// Final outcome for one reduced parser branch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ReducedBranchResult {
-    /// Branch that reached a terminal outcome.
-    pub branch: ReducedBranchId,
-    /// Terminal branch outcome.
-    pub outcome: ReducedBranchFinalOutcome,
-}
-
-/// Terminal branch outcome in the reduced parser.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum ReducedBranchFinalOutcome {
-    /// Branch accepted the input and produced the report tree.
-    Accepted,
-    /// Branch failed or was retired.
-    Failed,
-}
-
-/// Outcome for one action in a conflicted action cell.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ReducedConflictActionOutcome {
-    /// Action selected from the conflicted cell.
-    pub action: ParseAction,
-    /// Immediate result of applying the action.
-    pub result: ReducedConflictActionResult,
-}
-
-/// Immediate result of applying one conflicted action.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum ReducedConflictActionResult {
-    /// Action produced a live branch for later input.
-    Branch(ReducedBranchId),
-    /// Action accepted immediately.
-    Accepted(ReducedBranchId),
-    /// Action failed immediately.
-    Failed(ReducedBranchId),
-}
-
-impl<'a> ReducedParser<'a> {
-    /// Build a reduced parser over validated grammar facts and generated tables.
-    pub fn new(
-        grammar: &'a ValidatedGrammar,
-        parser: &'a ParserGrammar,
-        table: &'a ParseTable,
-    ) -> Result<Self, ReducedParseError> {
-        let runtime_plan = RuntimeParserPlan::new(grammar, parser, table)?;
-        Self::with_runtime_plan(grammar, parser, table, RuntimePlanRef::Owned(runtime_plan))
-    }
-
-    fn with_runtime_plan(
-        grammar: &'a ValidatedGrammar,
-        parser: &'a ParserGrammar,
-        table: &'a ParseTable,
-        runtime_plan: RuntimePlanRef<'a>,
-    ) -> Result<Self, ReducedParseError> {
-        if parser.stage() != ParserGenerationStage::Productions {
-            return Err(ReducedParseError::new(ReducedParseErrorKind::WrongStage {
-                stage: parser.stage(),
-            }));
-        }
-        #[cfg(not(test))]
-        let _ = grammar;
-        Ok(Self {
-            #[cfg(test)]
-            grammar,
-            parser,
-            table,
-            external_scanner: None,
-            runtime_plan,
-            #[cfg(test)]
-            regex_patterns: compile_regex_patterns(grammar, parser),
-            lex_cache: RefCell::new(HashMap::new()),
-            lex_mode_cache: RefCell::new(HashMap::new()),
-        })
-    }
-
-    /// Build a reduced parser that borrows a reusable runtime plan.
-    pub fn new_with_plan(
-        grammar: &'a ValidatedGrammar,
-        parser: &'a ParserGrammar,
-        table: &'a ParseTable,
-        runtime_plan: &'a RuntimeParserPlan,
-    ) -> Result<Self, ReducedParseError> {
-        Self::with_runtime_plan(
-            grammar,
-            parser,
-            table,
-            RuntimePlanRef::Borrowed(runtime_plan),
-        )
-    }
-
-    /// Attach a reduced external scanner host.
-    pub fn with_external_scanner(mut self, scanner: &'a dyn ReducedExternalScanner) -> Self {
-        self.external_scanner = Some(scanner);
-        self
-    }
-
-    /// Parse one input into a reduced Tree-sitter-style S-expression node.
-    pub fn parse(&self, input: &str) -> Result<SexpNode, ReducedParseError> {
-        self.parse_with_report(input).map(|report| report.tree)
-    }
-
-    /// Parse one input and return branch/conflict evidence for oracle tests.
-    pub fn parse_with_report(&self, input: &str) -> Result<ReducedParseReport, ReducedParseError> {
-        self.clear_lex_cache();
-        let mut branches = VecDeque::from([ReducedBranch {
-            id: ReducedBranchId::from_index(0),
-            stack: vec![ReducedStackEntry {
-                state: ParseStateId::from_index(0),
-                fragment: None,
-                extra: false,
-            }],
-            byte_position: 0,
-            scanner_snapshot: None,
-            trace: Vec::new(),
-        }]);
-        let mut accepted = Vec::<(SexpNode, Vec<ReducedTraceStep>)>::new();
-        let mut failures = Vec::<ReducedParseError>::new();
-        let mut conflict_steps = Vec::new();
-        let mut branch_parents = vec![ReducedBranchParent {
-            branch: ReducedBranchId::from_index(0),
-            parent: None,
-        }];
-        let mut branch_results = Vec::new();
-        let mut next_branch_index = 1usize;
-        let mut step_count = 0usize;
-        let step_limit = self.reduced_step_limit(input);
-        let mut max_live_branches = branches.len();
-
-        while let Some(branch) = branches.pop_front() {
-            step_count += 1;
-            if step_count > step_limit {
-                return Err(
-                    ReducedParseError::new(ReducedParseErrorKind::BranchStepLimit {
-                        limit: step_limit,
-                    })
-                    .with_trace(branch.trace),
-                );
-            }
-
-            for outcome in self.step_branch(
-                branch,
-                input,
-                &mut conflict_steps,
-                &mut branch_parents,
-                &mut next_branch_index,
-            ) {
-                match outcome {
-                    ReducedStepOutcome::Branch(branch) => branches.push_back(branch),
-                    ReducedStepOutcome::Accepted {
-                        branch,
-                        node,
-                        trace,
-                    } => {
-                        branch_results.push(ReducedBranchResult {
-                            branch,
-                            outcome: ReducedBranchFinalOutcome::Accepted,
-                        });
-                        accepted.push((node, trace));
-                    }
-                    ReducedStepOutcome::Failed { branch, error } => {
-                        branch_results.push(ReducedBranchResult {
-                            branch,
-                            outcome: ReducedBranchFinalOutcome::Failed,
-                        });
-                        failures.push(error);
-                    }
-                }
-            }
-            max_live_branches = max_live_branches.max(branches.len());
-        }
-
-        let Some((first_node, first_trace)) = accepted.first().cloned() else {
-            return Err(select_reduced_failure(failures).unwrap_or_else(|| {
-                ReducedParseError::new(ReducedParseErrorKind::NoViableBranch { failure_count: 0 })
-            }));
-        };
-        if accepted.iter().all(|(node, _)| *node == first_node) {
-            return Ok(ReducedParseReport {
-                tree: first_node,
-                accepted_count: accepted.len(),
-                failure_count: failures.len(),
-                max_live_branches,
-                conflict_steps,
-                branch_parents,
-                branch_results,
-            });
-        }
-
-        Err(
-            ReducedParseError::new(ReducedParseErrorKind::AmbiguousParse {
-                accepted_count: accepted.len(),
-                accepted: accepted.iter().map(|(node, _)| node.to_sexp()).collect(),
-            })
-            .with_trace(first_trace),
-        )
-    }
-
-    fn parse_state(&self, state: ParseStateId) -> Result<&ParseState, ReducedParseError> {
-        self.table
-            .states()
-            .get(state.get() as usize)
-            .ok_or_else(|| ReducedParseError::new(ReducedParseErrorKind::MissingState { state }))
-    }
-
-    fn clear_lex_cache(&self) {
-        self.lex_cache.borrow_mut().clear();
-        self.lex_mode_cache.borrow_mut().clear();
-    }
-
-    fn reduced_step_limit(&self, input: &str) -> usize {
-        let input_budget = input.len().saturating_mul(4096);
-        let table_budget = self.table.states().len().saturating_mul(64);
-        10_000usize.max(input_budget.saturating_add(table_budget))
-    }
-
-    fn reduced_recovery_step_limit(&self, input: &str) -> usize {
-        let input_budget = input.len().saturating_mul(96);
-        let table_budget = self.table.states().len().saturating_mul(64);
-        10_000usize
-            .max(input_budget.saturating_add(table_budget))
-            .min(500_000)
-    }
-
-    fn step_branch(
-        &self,
-        branch: ReducedBranch,
-        input: &str,
-        conflict_steps: &mut Vec<ReducedConflictStep>,
-        branch_parents: &mut Vec<ReducedBranchParent>,
-        next_branch_index: &mut usize,
-    ) -> Vec<ReducedStepOutcome> {
-        let source_branch = branch.id;
-        let state = match branch.stack.last() {
-            Some(entry) => entry.state,
-            None => {
-                return vec![ReducedStepOutcome::Failed {
-                    branch: source_branch,
-                    error: ReducedParseError::new(ReducedParseErrorKind::EmptyStack)
-                        .with_trace(branch.trace),
-                }];
-            }
-        };
-        let state_row = match self.parse_state(state) {
-            Ok(state_row) => state_row,
-            Err(error) => {
-                return vec![ReducedStepOutcome::Failed {
-                    branch: source_branch,
-                    error: error.with_trace(branch.trace),
-                }];
-            }
-        };
-        let token = match self.lex(
-            state_row,
-            input,
-            branch.byte_position,
-            branch.scanner_snapshot,
-        ) {
-            Ok(token) => token,
-            Err(error) => {
-                return vec![ReducedStepOutcome::Failed {
-                    branch: source_branch,
-                    error: error.with_trace(branch.trace),
-                }];
-            }
-        };
-        let Some(entry) = state_row
-            .entries()
-            .iter()
-            .find(|entry| entry.lookahead() == token.lookahead)
-        else {
-            return vec![ReducedStepOutcome::Failed {
-                branch: source_branch,
-                error: ReducedParseError::new(ReducedParseErrorKind::NoAction {
-                    state,
-                    lookahead: token.lookahead,
-                    byte_position: branch.byte_position,
-                })
-                .with_trace(branch.trace),
-            }];
-        };
-
-        let is_conflict = entry.actions().len() > 1;
-        let mut conflict_outcomes = Vec::new();
-        let conflict_byte_position = branch.byte_position;
-
-        let mut outcomes = Vec::new();
-        for action in entry.actions() {
-            let mut branch = branch.clone();
-            if is_conflict {
-                let child = ReducedBranchId::from_index(*next_branch_index);
-                *next_branch_index += 1;
-                branch.id = child;
-                branch_parents.push(ReducedBranchParent {
-                    branch: child,
-                    parent: Some(source_branch),
-                });
-            }
-            branch.trace.push(ReducedTraceStep {
-                state,
-                byte_position: branch.byte_position,
-                lookahead: token.lookahead,
-                action: *action,
-            });
-            let outcome = self.apply_action(branch, token, *action, input);
-            if is_conflict {
-                conflict_outcomes.push(ReducedConflictActionOutcome {
-                    action: *action,
-                    result: match &outcome {
-                        ReducedStepOutcome::Branch(branch) => {
-                            ReducedConflictActionResult::Branch(branch.id)
-                        }
-                        ReducedStepOutcome::Accepted { branch, .. } => {
-                            ReducedConflictActionResult::Accepted(*branch)
-                        }
-                        ReducedStepOutcome::Failed { branch, .. } => {
-                            ReducedConflictActionResult::Failed(*branch)
-                        }
-                    },
-                });
-            }
-            outcomes.push(outcome);
-        }
-
-        if is_conflict {
-            conflict_steps.push(ReducedConflictStep {
-                branch: source_branch,
-                state,
-                byte_position: conflict_byte_position,
-                lookahead: token.lookahead,
-                actions: entry.actions().to_vec(),
-                outcomes: conflict_outcomes,
-            });
-        }
-        outcomes
-    }
-
-    fn apply_action(
-        &self,
-        mut branch: ReducedBranch,
-        token: ReducedToken,
-        action: ParseAction,
-        input: &str,
-    ) -> ReducedStepOutcome {
-        match action {
-            ParseAction::Shift { state, .. } => {
-                branch.byte_position = token.end;
-                branch.commit_scanner_snapshot(token);
-                branch.stack.push(ReducedStackEntry {
-                    state,
-                    fragment: Some(ReducedFragment::Hidden(Vec::new())),
-                    extra: false,
-                });
-                ReducedStepOutcome::Branch(branch)
-            }
-            ParseAction::ShiftExtra => {
-                branch.byte_position = token.end;
-                branch.commit_scanner_snapshot(token);
-                if let Some(fragment) = self.extra_fragment(token.lookahead) {
-                    let Some(state) = branch.stack.last().map(|entry| entry.state) else {
-                        return ReducedStepOutcome::Failed {
-                            branch: branch.id,
-                            error: ReducedParseError::new(ReducedParseErrorKind::EmptyStack)
-                                .with_trace(branch.trace),
-                        };
-                    };
-                    branch.stack.push(ReducedStackEntry {
-                        state,
-                        fragment: Some(fragment),
-                        extra: true,
-                    });
-                }
-                ReducedStepOutcome::Branch(branch)
-            }
-            ParseAction::Reduce {
-                production,
-                metadata,
-                symbol,
-                child_count,
-                ..
-            } => {
-                let reduction = match self.reduce_fragment(
-                    production,
-                    metadata,
-                    child_count,
-                    &mut branch.stack,
-                    false,
-                ) {
-                    Ok(reduction) => reduction,
-                    Err(error) => {
-                        return ReducedStepOutcome::Failed {
-                            branch: branch.id,
-                            error: error.with_trace(branch.trace),
-                        };
-                    }
-                };
-                let head_state = match branch.stack.last() {
-                    Some(entry) => entry.state,
-                    None => {
-                        return ReducedStepOutcome::Failed {
-                            branch: branch.id,
-                            error: ReducedParseError::new(ReducedParseErrorKind::EmptyStack)
-                                .with_trace(branch.trace),
-                        };
-                    }
-                };
-                let goto_state = match self.goto_state(head_state, symbol) {
-                    Ok(state) => state,
-                    Err(error) => {
-                        return ReducedStepOutcome::Failed {
-                            branch: branch.id,
-                            error: error.with_trace(branch.trace),
-                        };
-                    }
-                };
-                branch.stack.push(ReducedStackEntry {
-                    state: goto_state,
-                    fragment: Some(reduction.fragment),
-                    extra: false,
-                });
-                for fragment in reduction.trailing_extras {
-                    branch.stack.push(ReducedStackEntry {
-                        state: goto_state,
-                        fragment: Some(fragment),
-                        extra: true,
-                    });
-                }
-                ReducedStepOutcome::Branch(branch)
-            }
-            ParseAction::Accept {
-                production,
-                metadata,
-                child_count,
-                ..
-            } => {
-                if token.lookahead != LookaheadSymbol::Eof || branch.byte_position != input.len() {
-                    return ReducedStepOutcome::Failed {
-                        branch: branch.id,
-                        error: ReducedParseError::new(ReducedParseErrorKind::TrailingInput {
-                            byte_position: branch.byte_position,
-                        })
-                        .with_trace(branch.trace),
-                    };
-                }
-                let reduction = match self.reduce_fragment(
-                    production,
-                    metadata,
-                    child_count,
-                    &mut branch.stack,
-                    true,
-                ) {
-                    Ok(reduction) => reduction,
-                    Err(error) => {
-                        return ReducedStepOutcome::Failed {
-                            branch: branch.id,
-                            error: error.with_trace(branch.trace),
-                        };
-                    }
-                };
-                match reduction.fragment {
-                    ReducedFragment::Node(node) => {
-                        let node = match self.finish_accepted_root(node, &mut branch.stack) {
-                            Ok(node) => node,
-                            Err(error) => {
-                                return ReducedStepOutcome::Failed {
-                                    branch: branch.id,
-                                    error: error.with_trace(branch.trace),
-                                };
-                            }
-                        };
-                        ReducedStepOutcome::Accepted {
-                            branch: branch.id,
-                            node,
-                            trace: branch.trace,
-                        }
-                    }
-                    ReducedFragment::Hidden(_) => ReducedStepOutcome::Failed {
-                        branch: branch.id,
-                        error: ReducedParseError::new(ReducedParseErrorKind::AcceptedHiddenRoot)
-                            .with_trace(branch.trace),
-                    },
-                }
-            }
-            ParseAction::Recover => {
-                let state = branch
-                    .stack
-                    .last()
-                    .map(|entry| entry.state)
-                    .unwrap_or(ParseStateId::from_index(0));
-                ReducedStepOutcome::Failed {
-                    branch: branch.id,
-                    error: ReducedParseError::new(ReducedParseErrorKind::UnsupportedRecovery {
-                        state,
-                    })
-                    .with_trace(branch.trace),
-                }
-            }
-        }
-    }
-
-    fn lex(
-        &self,
-        state: &ParseState,
-        input: &str,
-        byte_position: usize,
-        scanner_snapshot: Option<ScannerSnapshotId>,
-    ) -> Result<ReducedToken, ReducedParseError> {
-        if byte_position == input.len() {
-            return Ok(ReducedToken {
-                lookahead: LookaheadSymbol::Eof,
-                end: byte_position,
-                inspected_end: byte_position,
-                scanner: None,
-            });
-        }
-        let mode = self
-            .table
-            .lexical_modes()
-            .get(state.lex_mode().get() as usize)
-            .ok_or_else(|| {
-                ReducedParseError::new(ReducedParseErrorKind::MissingLexMode {
-                    mode: state.lex_mode(),
-                })
-            })?;
-        if !mode.externals().is_empty() {
-            return self.lex_uncached(state, mode, input, byte_position, scanner_snapshot);
-        }
-        let key = LexCacheKey {
-            state: state.id(),
-            byte_position,
-        };
-        if let Some(cached) = self.lex_cache.borrow().get(&key).cloned() {
-            return cached;
-        }
-        let result = self.lex_uncached(state, mode, input, byte_position, scanner_snapshot);
-        self.lex_cache.borrow_mut().insert(key, result.clone());
-        result
-    }
-
-    fn lex_uncached(
-        &self,
-        state: &ParseState,
-        mode: &LexMode,
-        input: &str,
-        byte_position: usize,
-        scanner_snapshot: Option<ScannerSnapshotId>,
-    ) -> Result<ReducedToken, ReducedParseError> {
-        let mut best = None::<ReducedTokenCandidate>;
-        let mut best_rejected = None::<ReducedTokenCandidate>;
-        for candidate in self.match_terminal_candidates_for_mode(mode, input, byte_position)? {
-            let terminal = match candidate.lookahead {
-                LookaheadSymbol::Terminal(terminal) => terminal,
-                LookaheadSymbol::ReservedWord { terminal, .. } => terminal,
-                LookaheadSymbol::External(_) => {
-                    push_reduced_candidate(&mut best_rejected, candidate);
-                    continue;
-                }
-                LookaheadSymbol::Eof | LookaheadSymbol::ErrorRecovery(_) => {
-                    push_reduced_candidate(&mut best_rejected, candidate);
-                    continue;
-                }
-            };
-            let Some(lookahead) = self.lookahead_for_terminal(state, terminal) else {
-                push_reduced_candidate(&mut best_rejected, candidate);
-                continue;
-            };
-            push_reduced_candidate(
-                &mut best,
-                ReducedTokenCandidate {
-                    lookahead,
-                    extra: self.lookahead_shifts_only_extra(state, lookahead),
-                    ..candidate
-                },
-            );
-        }
-        if let Some(candidate) = best {
-            best_rejected = best_rejected.filter(|rejected| {
-                reduced_candidate_order(*rejected, candidate) == ReducedCandidateOrder::Greater
-            });
-        }
-        for external in mode.externals() {
-            let Some(scanner_result) = self.match_external(
-                state,
-                mode,
-                *external,
-                input,
-                byte_position,
-                scanner_snapshot,
-            )?
-            else {
-                continue;
-            };
-            let candidate = ReducedTokenCandidate {
-                lookahead: LookaheadSymbol::External(*external),
-                end: scanner_result.end_byte(),
-                inspected_end: scanner_result.end_byte(),
-                extra: false,
-                external: true,
-                immediate: false,
-                literal: true,
-                lexical_precedence: 0,
-                implicit_precedence: 0,
-                scanner: Some(scanner_result),
-            };
-            if !state
-                .entries()
-                .iter()
-                .any(|entry| entry.lookahead() == candidate.lookahead)
-            {
-                push_reduced_candidate(&mut best_rejected, candidate);
-                continue;
-            }
-            push_reduced_candidate(&mut best, candidate);
-        }
-        if let Some(candidate) = best {
-            return Ok(ReducedToken {
-                lookahead: candidate.lookahead,
-                end: candidate.end,
-                inspected_end: candidate.inspected_end,
-                scanner: candidate.scanner,
-            });
-        }
-        if let Some(rejected) = best_rejected {
-            return Err(ReducedParseError::new(ReducedParseErrorKind::NoAction {
-                state: state.id(),
-                lookahead: rejected.lookahead,
-                byte_position,
-            }));
-        }
-        Err(ReducedParseError::new(ReducedParseErrorKind::NoToken {
-            state: state.id(),
-            byte_position,
-            expected: self.mode_token_spellings(mode).into_iter().collect(),
-        }))
-    }
-
-    fn match_terminal_candidates_for_mode(
-        &self,
-        mode: &LexMode,
-        input: &str,
-        byte_position: usize,
-    ) -> Result<Vec<ReducedTokenCandidate>, ReducedParseError> {
-        let key = LexModeCacheKey {
-            mode: mode.id(),
-            byte_position,
-        };
-        if let Some(cached) = self.lex_mode_cache.borrow().get(&key).cloned() {
-            return cached;
-        }
-        let result = self.match_terminal_candidates_for_mode_uncached(mode, input, byte_position);
-        self.lex_mode_cache.borrow_mut().insert(key, result.clone());
-        result
-    }
-
-    fn match_terminal_candidates_for_mode_uncached(
-        &self,
-        mode: &LexMode,
-        input: &str,
-        byte_position: usize,
-    ) -> Result<Vec<ReducedTokenCandidate>, ReducedParseError> {
-        let mut candidates = Vec::new();
-        let compiled_mode = &self.runtime_plan.get().compiled_lex_modes[mode.id().get() as usize];
-        let direct_pattern_ends =
-            self.match_compiled_direct_pattern_set(compiled_mode, input, byte_position)?;
-        for terminal_row in &compiled_mode.terminals {
-            let Some(match_) = self.match_compiled_terminal_with_set(
-                terminal_row,
-                input,
-                byte_position,
-                &direct_pattern_ends,
-            )?
-            else {
-                continue;
-            };
-            if match_.end == byte_position {
-                continue;
-            }
-            candidates.push(ReducedTokenCandidate {
-                lookahead: LookaheadSymbol::Terminal(terminal_row.terminal),
-                end: match_.end,
-                inspected_end: match_.inspected_end,
-                extra: false,
-                external: false,
-                immediate: terminal_row.immediate,
-                literal: terminal_row.literal,
-                lexical_precedence: terminal_row.lexical_precedence,
-                implicit_precedence: terminal_row.implicit_precedence,
-                scanner: None,
-            });
-        }
-        Ok(candidates)
-    }
-
-    fn lookahead_for_terminal(
-        &self,
-        state: &ParseState,
-        terminal: TerminalId,
-    ) -> Option<LookaheadSymbol> {
-        state
-            .entries()
-            .iter()
-            .find_map(|entry| match entry.lookahead() {
-                LookaheadSymbol::Terminal(candidate) if candidate == terminal => {
-                    Some(entry.lookahead())
-                }
-                LookaheadSymbol::ReservedWord {
-                    terminal: candidate,
-                    ..
-                } if candidate == terminal => Some(entry.lookahead()),
-                _ => None,
-            })
-    }
-
-    fn mode_token_spellings(&self, mode: &LexMode) -> Vec<String> {
-        let mut spellings: Vec<String> = mode
-            .terminals()
-            .iter()
-            .map(|terminal| self.parser.symbols.terminals[terminal.get() as usize].spelling())
-            .map(str::to_owned)
-            .collect();
-        spellings.extend(mode.externals().iter().map(|external| {
-            self.parser.symbols.externals[external.get() as usize]
-                .name()
-                .unwrap_or("<anonymous-external>")
-                .to_owned()
-        }));
-        spellings
-    }
-
-    #[cfg(test)]
-    fn match_terminal(
-        &self,
-        terminal: &TerminalSymbol,
-        input: &str,
-        byte_position: usize,
-    ) -> Result<Option<usize>, ReducedParseError> {
-        match terminal.kind() {
-            ParserTerminalKind::String => Ok(input[byte_position..]
-                .starts_with(terminal.spelling())
-                .then_some(byte_position + terminal.spelling().len())),
-            ParserTerminalKind::Pattern => {
-                Ok(self.match_pattern(terminal.spelling(), terminal.flags(), input, byte_position))
-            }
-            ParserTerminalKind::AutoClose => Ok(None),
-            ParserTerminalKind::Token | ParserTerminalKind::ImmediateToken => {
-                let Some(root) = terminal.lexical_root() else {
-                    return Err(ReducedParseError::new(
-                        ReducedParseErrorKind::UnsupportedTerminal {
-                            terminal: terminal.id(),
-                            spelling: terminal.spelling().to_owned(),
-                        },
-                    ));
-                };
-                let (GrammarExpr::Token(content) | GrammarExpr::ImmediateToken(content)) =
-                    self.grammar.expr(root)
-                else {
-                    return Err(ReducedParseError::new(
-                        ReducedParseErrorKind::UnsupportedTerminal {
-                            terminal: terminal.id(),
-                            spelling: terminal.spelling().to_owned(),
-                        },
-                    ));
-                };
-                self.match_lexical_expr(*content, input, byte_position)
-            }
-        }
-    }
-
-    fn match_compiled_terminal(
-        &self,
-        terminal: &CompiledLexTerminal,
-        input: &str,
-        byte_position: usize,
-    ) -> Result<Option<LexMatch>, ReducedParseError> {
-        match &terminal.matcher {
-            CompiledTerminalMatcher::Expr(expr) => {
-                self.match_compiled_lex_expr(expr, input, byte_position)
-            }
-            CompiledTerminalMatcher::UnsupportedTerminal { terminal, spelling } => Err(
-                ReducedParseError::new(ReducedParseErrorKind::UnsupportedTerminal {
-                    terminal: *terminal,
-                    spelling: spelling.clone(),
-                }),
-            ),
-        }
-    }
-
-    fn match_compiled_terminal_with_set(
-        &self,
-        terminal: &CompiledLexTerminal,
-        input: &str,
-        byte_position: usize,
-        direct_pattern_ends: &[Option<LexMatch>],
-    ) -> Result<Option<LexMatch>, ReducedParseError> {
-        if let Some(set_index) = terminal.direct_pattern_index {
-            return Ok(direct_pattern_ends.get(set_index).copied().flatten());
-        }
-        self.match_compiled_terminal(terminal, input, byte_position)
-    }
-
-    fn match_compiled_direct_pattern_set(
-        &self,
-        mode: &CompiledLexMode,
-        input: &str,
-        byte_position: usize,
-    ) -> Result<Vec<Option<LexMatch>>, ReducedParseError> {
-        let Some(pattern_set) = &mode.direct_pattern_set else {
-            return Ok(Vec::new());
-        };
-        let mut ends = vec![None; pattern_set.terminal_indices.len()];
-        let Some(haystack) = input.get(byte_position..) else {
-            return Ok(ends);
-        };
-        let matches = pattern_set.regex_set.matches(haystack);
-        for set_index in matches.iter() {
-            let terminal_index = pattern_set.terminal_indices[set_index];
-            let terminal = &mode.terminals[terminal_index];
-            ends[set_index] = self.match_compiled_terminal(terminal, input, byte_position)?;
-        }
-        Ok(ends)
-    }
-
-    fn match_compiled_lex_expr(
-        &self,
-        expr: &CompiledLexExpr,
-        input: &str,
-        byte_position: usize,
-    ) -> Result<Option<LexMatch>, ReducedParseError> {
-        match expr {
-            CompiledLexExpr::Blank => Ok(Some(LexMatch::new(byte_position, byte_position))),
-            CompiledLexExpr::String(value) => Ok(input[byte_position..]
-                .starts_with(value)
-                .then_some(LexMatch::new(
-                    byte_position + value.len(),
-                    byte_position + value.len(),
-                ))),
-            CompiledLexExpr::Pattern(pattern) => {
-                Ok(match_compiled_pattern(pattern, input, byte_position))
-            }
-            CompiledLexExpr::Until { markers } => Ok(match_until_markers_with_inspection(
-                markers.iter().map(String::as_str),
-                input,
-                byte_position,
-            )),
-            CompiledLexExpr::Nested { open, close } => Ok(match_nested_delimiters_with_inspection(
-                open,
-                close,
-                input,
-                byte_position,
-            )),
-            CompiledLexExpr::AutoClose(_) => Ok(None),
-            CompiledLexExpr::Seq(members) => {
-                let mut position = byte_position;
-                let mut inspected_end = byte_position;
-                for member in members {
-                    let Some(match_) = self.match_compiled_lex_expr(member, input, position)?
-                    else {
-                        return Ok(None);
-                    };
-                    position = match_.end;
-                    inspected_end = inspected_end.max(match_.inspected_end);
-                }
-                Ok(Some(LexMatch::new(position, inspected_end)))
-            }
-            CompiledLexExpr::Choice(members) => {
-                let mut best = None::<LexMatch>;
-                for member in members {
-                    if let Some(match_) =
-                        self.match_compiled_lex_expr(member, input, byte_position)?
-                        && best.is_none_or(|best| match_.end > best.end)
-                    {
-                        best = Some(match_);
-                    }
-                }
-                Ok(best)
-            }
-            CompiledLexExpr::Repeat(content) => {
-                let mut position = byte_position;
-                let mut inspected_end = byte_position;
-                while let Some(match_) = self.match_compiled_lex_expr(content, input, position)? {
-                    inspected_end = inspected_end.max(match_.inspected_end);
-                    if match_.end == position {
-                        break;
-                    }
-                    position = match_.end;
-                }
-                Ok(Some(LexMatch::new(position, inspected_end)))
-            }
-            CompiledLexExpr::Repeat1(content) => {
-                let Some(first) = self.match_compiled_lex_expr(content, input, byte_position)?
-                else {
-                    return Ok(None);
-                };
-                let mut position = first.end;
-                let mut inspected_end = first.inspected_end;
-                if position == byte_position {
-                    return Ok(None);
-                }
-                while let Some(match_) = self.match_compiled_lex_expr(content, input, position)? {
-                    inspected_end = inspected_end.max(match_.inspected_end);
-                    if match_.end == position {
-                        break;
-                    }
-                    position = match_.end;
-                }
-                Ok(Some(LexMatch::new(position, inspected_end)))
-            }
-            CompiledLexExpr::UnsupportedSymbol(expr) => Err(ReducedParseError::new(
-                ReducedParseErrorKind::UnsupportedLexicalSymbol { expr: *expr },
-            )),
-        }
-    }
-
-    fn match_external(
-        &self,
-        state: &ParseState,
-        mode: &LexMode,
-        external: ExternalId,
-        input: &str,
-        byte_position: usize,
-        scanner_snapshot: Option<ScannerSnapshotId>,
-    ) -> Result<Option<ReducedExternalScanResult>, ReducedParseError> {
-        let Some(scanner) = self.external_scanner else {
-            return Err(ReducedParseError::new(
-                ReducedParseErrorKind::UnsupportedExternalScanner {
-                    state: state.id(),
-                    external_count: mode.externals().len(),
-                },
-            ));
-        };
-        let external_row = &self.parser.symbols.externals[external.get() as usize];
-        let valid_symbols = mode
-            .valid_symbols()
-            .map(|valid_symbols| &self.table.valid_symbol_sets()[valid_symbols.get() as usize]);
-        scanner.scan(ReducedExternalScan {
-            state: state.id(),
-            external,
-            external_symbol: external_row,
-            valid_symbols,
-            input,
-            byte_position,
-            scanner_snapshot,
-        })
-    }
-
-    #[cfg(test)]
-    fn match_lexical_expr(
-        &self,
-        expr: GrammarExprId,
-        input: &str,
-        byte_position: usize,
-    ) -> Result<Option<usize>, ReducedParseError> {
-        self.match_lexical_expr_inner(expr, input, byte_position, &mut Vec::new())
-    }
-
-    #[cfg(test)]
-    fn match_lexical_expr_inner(
-        &self,
-        expr: GrammarExprId,
-        input: &str,
-        byte_position: usize,
-        rule_stack: &mut Vec<RuleId>,
-    ) -> Result<Option<usize>, ReducedParseError> {
-        match self.grammar.expr(expr) {
-            GrammarExpr::Blank => Ok(Some(byte_position)),
-            GrammarExpr::StringToken(value) => Ok(input[byte_position..]
-                .starts_with(value)
-                .then_some(byte_position + value.len())),
-            GrammarExpr::PatternToken { value, flags } => {
-                Ok(self.match_pattern(value, flags.as_deref(), input, byte_position))
-            }
-            GrammarExpr::Until { markers } => Ok(match_until_markers(
-                markers.iter().map(String::as_str),
-                input,
-                byte_position,
-            )),
-            GrammarExpr::Nested { open, close } => {
-                Ok(match_nested_delimiters(open, close, input, byte_position))
-            }
-            GrammarExpr::AutoClose { .. } => Ok(None),
-            GrammarExpr::Token(content)
-            | GrammarExpr::ImmediateToken(content)
-            | GrammarExpr::Field { content, .. }
-            | GrammarExpr::Prec { content, .. }
-            | GrammarExpr::PrecDynamic { content, .. }
-            | GrammarExpr::Alias { content, .. }
-            | GrammarExpr::Reserved { content, .. } => {
-                self.match_lexical_expr_inner(*content, input, byte_position, rule_stack)
-            }
-            GrammarExpr::Choice(members) => {
-                let mut best = None;
-                for member in members {
-                    if let Some(end) =
-                        self.match_lexical_expr_inner(*member, input, byte_position, rule_stack)?
-                    {
-                        if best.is_none_or(|best| end > best) {
-                            best = Some(end);
-                        }
-                    }
-                }
-                Ok(best)
-            }
-            GrammarExpr::Seq(members) => {
-                let mut position = byte_position;
-                for member in members {
-                    let Some(end) =
-                        self.match_lexical_expr_inner(*member, input, position, rule_stack)?
-                    else {
-                        return Ok(None);
-                    };
-                    position = end;
-                }
-                Ok(Some(position))
-            }
-            GrammarExpr::Repeat(content) => {
-                let mut position = byte_position;
-                while let Some(end) =
-                    self.match_lexical_expr_inner(*content, input, position, rule_stack)?
-                {
-                    if end == position {
-                        break;
-                    }
-                    position = end;
-                }
-                Ok(Some(position))
-            }
-            GrammarExpr::Repeat1(content) => {
-                let Some(mut position) =
-                    self.match_lexical_expr_inner(*content, input, byte_position, rule_stack)?
-                else {
-                    return Ok(None);
-                };
-                if position == byte_position {
-                    return Ok(None);
-                }
-                while let Some(end) =
-                    self.match_lexical_expr_inner(*content, input, position, rule_stack)?
-                {
-                    if end == position {
-                        break;
-                    }
-                    position = end;
-                }
-                Ok(Some(position))
-            }
-            GrammarExpr::Symbol(SymbolRef::Rule(rule)) => {
-                if rule_stack.contains(rule) {
-                    return Err(ReducedParseError::new(
-                        ReducedParseErrorKind::UnsupportedLexicalSymbol { expr },
-                    ));
-                }
-                rule_stack.push(*rule);
-                let result = self.match_lexical_expr_inner(
-                    self.grammar.rule(*rule).expr(),
-                    input,
-                    byte_position,
-                    rule_stack,
-                );
-                rule_stack.pop();
-                result
-            }
-            GrammarExpr::Symbol(SymbolRef::External(_)) => Err(ReducedParseError::new(
-                ReducedParseErrorKind::UnsupportedLexicalSymbol { expr },
-            )),
-        }
-    }
-
-    #[cfg(test)]
-    fn match_pattern(
-        &self,
-        pattern: &str,
-        flags: Option<&str>,
-        input: &str,
-        byte_position: usize,
-    ) -> Option<usize> {
-        if regex_flags_are_empty(flags)
-            && let Some(result) = match_known_pattern(pattern, input, byte_position)
-        {
-            return result;
-        }
-        self.match_regex_leaf(pattern, flags, input, byte_position)
-    }
-
-    #[cfg(test)]
-    fn match_regex_leaf(
-        &self,
-        pattern: &str,
-        flags: Option<&str>,
-        input: &str,
-        byte_position: usize,
-    ) -> Option<usize> {
-        let haystack = input.get(byte_position..)?;
-        let key = (pattern.to_owned(), normalized_regex_flags(flags));
-        let regex = self.regex_patterns.get(&key)?.as_ref()?;
-        regex
-            .find(haystack)
-            .filter(|match_| match_.start() == 0)
-            .map(|match_| byte_position + match_.end())
-    }
-
-    fn lookahead_shifts_only_extra(&self, state: &ParseState, lookahead: LookaheadSymbol) -> bool {
-        state
-            .entries()
-            .iter()
-            .find(|entry| entry.lookahead() == lookahead)
-            .is_some_and(|entry| {
-                entry
-                    .actions()
-                    .iter()
-                    .all(|action| matches!(action, ParseAction::ShiftExtra))
-            })
-    }
-
-    fn reduce_fragment(
-        &self,
-        production: ProductionId,
-        metadata: ProductionMetadataId,
-        child_count: usize,
-        stack: &mut Vec<ReducedStackEntry>,
-        include_trailing_extras: bool,
-    ) -> Result<ReducedReduction, ReducedParseError> {
-        let production_row = &self.parser.productions[production.get() as usize];
-        let metadata_row = &self.parser.production_metadata[metadata.get() as usize];
-        let mut children = Vec::new();
-        let mut trailing_extras = Vec::new();
-        if !include_trailing_extras {
-            while stack.last().is_some_and(|entry| entry.extra) {
-                let entry = stack
-                    .pop()
-                    .ok_or_else(|| ReducedParseError::new(ReducedParseErrorKind::EmptyStack))?;
-                let Some(fragment) = entry.fragment else {
-                    return Err(ReducedParseError::new(ReducedParseErrorKind::EmptyStack));
-                };
-                trailing_extras.push(fragment);
-            }
-            trailing_extras.reverse();
-        }
-        let mut popped = Vec::new();
-        let mut remaining_children = child_count;
-        while remaining_children > 0 {
-            let entry = stack
-                .pop()
-                .ok_or_else(|| ReducedParseError::new(ReducedParseErrorKind::EmptyStack))?;
-            let Some(fragment) = entry.fragment else {
-                return Err(ReducedParseError::new(ReducedParseErrorKind::EmptyStack));
-            };
-            if !entry.extra {
-                remaining_children -= 1;
-            }
-            popped.push((entry.extra, fragment));
-        }
-        popped.reverse();
-        let mut steps = production_row.steps().iter();
-        for (extra, fragment) in popped {
-            let mut step_children = fragment.into_children();
-            if !extra {
-                let Some(step) = steps.next() else {
-                    return Err(ReducedParseError::new(ReducedParseErrorKind::EmptyStack));
-                };
-                if let (Some(alias), Some(true)) = (step.alias(), step.alias_named()) {
-                    let alias_name = self.parser.aliases[alias.get() as usize].value.clone();
-                    if step_children.is_empty() {
-                        step_children.push(SexpChild {
-                            field: None,
-                            value: SexpValue::Node(SexpNode {
-                                kind: alias_name,
-                                children: Vec::new(),
-                            }),
-                        });
-                    } else {
-                        for child in &mut step_children {
-                            if let SexpValue::Node(node) = &mut child.value {
-                                node.kind.clone_from(&alias_name);
-                            }
-                        }
-                    }
-                }
-            }
-            children.extend(step_children);
-        }
-
-        if let Some(public_node) = metadata_row.public_node() {
-            let kind = self.parser.public_node_kinds[public_node.get() as usize]
-                .name()
-                .to_owned();
-            Ok(ReducedReduction {
-                fragment: ReducedFragment::Node(SexpNode { kind, children }),
-                trailing_extras,
-            })
-        } else {
-            Ok(ReducedReduction {
-                fragment: ReducedFragment::Hidden(children),
-                trailing_extras,
-            })
-        }
-    }
-
-    fn extra_fragment(&self, lookahead: LookaheadSymbol) -> Option<ReducedFragment> {
-        let first = self.runtime_plan.get().first.as_ref()?;
-        for extra in &self.parser.extra_roots {
-            let ParserSymbol::Nonterminal(nonterminal) = extra.symbol else {
-                continue;
-            };
-            if !first.first[nonterminal.get() as usize].contains(&lookahead) {
-                continue;
-            }
-            let Some(kind) = self
-                .parser
-                .public_node_kinds
-                .iter()
-                .find(|kind| kind.source() == PublicNodeKindSource::Rule(nonterminal))
-            else {
-                continue;
-            };
-            let kind = kind.name().to_owned();
-            return Some(ReducedFragment::Node(SexpNode {
-                kind,
-                children: Vec::new(),
-            }));
-        }
-        None
-    }
-
-    fn finish_accepted_root(
-        &self,
-        mut node: SexpNode,
-        stack: &mut Vec<ReducedStackEntry>,
-    ) -> Result<SexpNode, ReducedParseError> {
-        let mut leading_children = Vec::new();
-        for entry in stack.drain(..) {
-            match (entry.extra, entry.fragment) {
-                (_, None) => {}
-                (true, Some(fragment)) => leading_children.extend(fragment.into_children()),
-                (false, Some(_)) => {
-                    return Err(ReducedParseError::new(
-                        ReducedParseErrorKind::UnreducedStackEntry { state: entry.state },
-                    ));
-                }
-            }
-        }
-        if !leading_children.is_empty() {
-            leading_children.extend(node.children);
-            node.children = leading_children;
-        }
-        Ok(node)
-    }
-
-    fn goto_state(
-        &self,
-        state: ParseStateId,
-        nonterminal: NonterminalId,
-    ) -> Result<ParseStateId, ReducedParseError> {
-        let state_row = self.parse_state(state)?;
-        state_row
-            .gotos()
-            .iter()
-            .find(|goto| goto.nonterminal() == nonterminal)
-            .map(GotoEntry::state)
-            .ok_or_else(|| {
-                ReducedParseError::new(ReducedParseErrorKind::MissingGoto { state, nonterminal })
-            })
-    }
-}
-
 #[cfg(test)]
 const ASCII_IDENTIFIER_PATTERN: &str = "[A-Za-z_][A-Za-z0-9_]*";
-const GINGEMBRE_IDENTIFIER_PATTERN: &str = "(?!if\\b|elif\\b|else\\b|endif\\b|for\\b|endfor\\b|set\\b|endset\\b|block\\b|endblock\\b|extends\\b|include\\b|import\\b|macro\\b|endmacro\\b|break\\b|continue\\b|as\\b|in\\b|is\\b|not\\b|and\\b|or\\b|true\\b|True\\b|false\\b|False\\b|none\\b|None\\b)[A-Za-z_][A-Za-z0-9_]*";
-
 #[cfg(test)]
-pub(crate) fn match_pattern(pattern: &str, input: &str, byte_position: usize) -> Option<usize> {
-    match_pattern_with_flags(pattern, None, input, byte_position)
-}
-
-#[cfg(any(test, feature = "weavy-lowering"))]
-pub(crate) fn match_pattern_with_flags(
-    pattern: &str,
-    flags: Option<&str>,
-    input: &str,
-    byte_position: usize,
-) -> Option<usize> {
-    if regex_flags_are_empty(flags)
-        && let Some(result) = match_known_pattern(pattern, input, byte_position)
-    {
-        return result;
-    }
-    match_cached_regex_leaf(pattern, flags, input, byte_position)
-}
-
-fn match_known_pattern(pattern: &str, input: &str, byte_position: usize) -> Option<Option<usize>> {
-    match pattern {
-        "-?(\\d)*n\\s*(\\+\\s*\\d+)?" => {
-            Some(match_css_nth_functional_notation(input, byte_position))
-        }
-        GINGEMBRE_IDENTIFIER_PATTERN => Some(match_gingembre_identifier(input, byte_position)),
-        "[0-9a-fA-F]{1,6}\\s?" => Some(match_css_hex_escape_tail(input, byte_position)),
-        ".*" => Some(match_json_line_comment_tail(input, byte_position)),
-        "[^*]*\\*+([^/*][^*]*\\*+)*" => Some(match_json_block_comment_body(input, byte_position)),
-        "(--|-?[a-zA-Z_\\xA0-\\xFF])[a-zA-Z0-9-_\\xA0-\\xFF]*" => {
-            Some(match_css_identifier(input, byte_position))
-        }
-        "and\\b" => Some(match_ascii_keyword(input, byte_position, "and")),
-        "in\\b" => Some(match_ascii_keyword(input, byte_position, "in")),
-        "is\\b" => Some(match_ascii_keyword(input, byte_position, "is")),
-        "not\\b" => Some(match_ascii_keyword(input, byte_position, "not")),
-        "or\\b" => Some(match_ascii_keyword(input, byte_position, "or")),
-        _ => None,
-    }
-}
-
-#[cfg(test)]
-fn compile_regex_patterns(
-    grammar: &ValidatedGrammar,
-    parser: &ParserGrammar,
-) -> HashMap<(String, Option<String>), Option<Regex>> {
-    let mut patterns = HashMap::new();
-    for (_, expr) in grammar.expressions() {
-        if let GrammarExpr::PatternToken { value, flags } = expr {
-            let key = (value.clone(), normalized_regex_flags(flags.as_deref()));
-            patterns
-                .entry(key)
-                .or_insert_with(|| compile_regex_leaf(value, flags.as_deref()));
-        }
-    }
-    for terminal in &parser.symbols.terminals {
-        if terminal.kind() == ParserTerminalKind::Pattern {
-            let key = (
-                terminal.spelling().to_owned(),
-                normalized_regex_flags(terminal.flags()),
-            );
-            patterns
-                .entry(key)
-                .or_insert_with(|| compile_regex_leaf(terminal.spelling(), terminal.flags()));
-        }
-    }
-    patterns
-}
+const GINGEMBRE_IDENTIFIER_PATTERN: &str = crate::lex_match::GINGEMBRE_IDENTIFIER_PATTERN;
 
 fn compile_pattern(pattern: &str, flags: Option<&str>) -> CompiledLexPattern {
-    CompiledLexPattern {
-        source: pattern.to_owned(),
-        flags: normalized_regex_flags(flags),
-        regex: compile_regex_leaf(pattern, flags),
-    }
+    crate::lex_match::compile_pattern(pattern, flags)
 }
 
-pub(crate) fn match_compiled_pattern(
-    pattern: &CompiledLexPattern,
-    input: &str,
-    byte_position: usize,
-) -> Option<LexMatch> {
-    if pattern.flags.is_none()
-        && let Some(result) = match_known_pattern(&pattern.source, input, byte_position)
-    {
-        return result.map(|end| LexMatch::new(end, pattern_inspected_end(input, end)));
-    }
-    let haystack = input.get(byte_position..)?;
-    pattern
-        .regex
-        .as_ref()?
-        .find(haystack)
-        .filter(|match_| match_.start() == 0)
-        .map(|match_| {
-            let end = byte_position + match_.end();
-            LexMatch::new(end, pattern_inspected_end(input, end))
-        })
+fn compile_until_markers(markers: &[String]) -> CompiledUntilMatcher {
+    crate::lex_match::compile_until_markers(markers)
 }
 
 pub(crate) fn compile_lex_modes(
@@ -5502,54 +4438,30 @@ pub(crate) fn compile_lex_modes(
     parser: &ParserGrammar,
     table: &ParseTable,
 ) -> Vec<CompiledLexMode> {
+    let mut terminal_cache = vec![None; parser.symbols.terminals.len()];
     table
         .lexical_modes()
         .iter()
         .map(|mode| {
-            let mut terminals = mode
+            let terminals = mode
                 .terminals()
                 .iter()
                 .map(|terminal| {
-                    let terminal_row = &parser.symbols.terminals[terminal.get() as usize];
-                    compile_lex_terminal(grammar, terminal_row)
+                    let terminal_index = terminal.get() as usize;
+                    terminal_cache[terminal_index]
+                        .get_or_insert_with(|| {
+                            let terminal_row = &parser.symbols.terminals[terminal_index];
+                            compile_lex_terminal(grammar, terminal_row)
+                        })
+                        .clone()
                 })
                 .collect::<Vec<_>>();
-            let direct_pattern_set = compile_direct_pattern_set(&mut terminals);
             CompiledLexMode {
                 terminals,
-                direct_pattern_set,
+                external_count: mode.externals().len(),
             }
         })
         .collect()
-}
-
-fn compile_direct_pattern_set(
-    terminals: &mut [CompiledLexTerminal],
-) -> Option<CompiledLexPatternSet> {
-    let mut regex_sources = Vec::new();
-    let mut terminal_indices = Vec::new();
-    for (terminal_index, terminal) in terminals.iter().enumerate() {
-        let CompiledTerminalMatcher::Expr(CompiledLexExpr::Pattern(pattern)) = &terminal.matcher
-        else {
-            continue;
-        };
-        let Some(regex) = &pattern.regex else {
-            continue;
-        };
-        regex_sources.push(regex.as_str().to_owned());
-        terminal_indices.push(terminal_index);
-    }
-    if regex_sources.is_empty() {
-        return None;
-    }
-    let regex_set = RegexSet::new(&regex_sources).ok()?;
-    for (set_index, terminal_index) in terminal_indices.iter().copied().enumerate() {
-        terminals[terminal_index].direct_pattern_index = Some(set_index);
-    }
-    Some(CompiledLexPatternSet {
-        regex_set,
-        terminal_indices,
-    })
 }
 
 fn compile_lex_terminal(
@@ -5563,7 +4475,6 @@ fn compile_lex_terminal(
         literal: terminal.kind() == ParserTerminalKind::String,
         lexical_precedence: terminal_lexical_completion_precedence(grammar, terminal),
         implicit_precedence: terminal_lexical_implicit_precedence(grammar, terminal),
-        direct_pattern_index: None,
     }
 }
 
@@ -5579,41 +4490,29 @@ fn compile_terminal_matcher(
             compile_pattern(terminal.spelling(), terminal.flags()),
         )),
         ParserTerminalKind::AutoClose => match grammar.expr(terminal.source_expr()) {
-            GrammarExpr::AutoClose {
-                tag,
-                open,
-                close,
-                closed_by,
-                open_node,
-                close_node,
-                tag_name_node,
-                start_prefix,
-                end_prefix,
-                closed_by_tags,
-                rules,
-            } => CompiledTerminalMatcher::Expr(CompiledLexExpr::AutoClose(AutoCloseSpec {
-                tag: tag.clone(),
-                open: open.clone(),
-                close: close.clone(),
-                closed_by: closed_by.clone(),
-                open_node: open_node.clone(),
-                close_node: close_node.clone(),
-                tag_name_node: tag_name_node.clone(),
-                start_prefix: start_prefix.clone(),
-                end_prefix: end_prefix.clone(),
-                closed_by_tags: closed_by_tags.clone(),
-                rules: compile_auto_close_rules(rules),
-            })),
+            GrammarExpr::AutoClose(spec) => {
+                CompiledTerminalMatcher::Expr(CompiledLexExpr::AutoClose(Box::new(AutoCloseSpec {
+                    tag: spec.tag.clone(),
+                    open: spec.open.clone(),
+                    close: spec.close.clone(),
+                    closed_by: spec.closed_by.clone(),
+                    open_node: spec.open_node.clone(),
+                    close_node: spec.close_node.clone(),
+                    tag_name_node: spec.tag_name_node.clone(),
+                    start_prefix: spec.start_prefix.clone(),
+                    end_prefix: spec.end_prefix.clone(),
+                    closed_by_tags: spec.closed_by_tags.clone(),
+                    rules: compile_auto_close_rules(&spec.rules),
+                })))
+            }
             _ => CompiledTerminalMatcher::UnsupportedTerminal {
                 terminal: terminal.id(),
-                spelling: terminal.spelling().to_owned(),
             },
         },
         ParserTerminalKind::Token | ParserTerminalKind::ImmediateToken => {
             let Some(root) = terminal.lexical_root() else {
                 return CompiledTerminalMatcher::UnsupportedTerminal {
                     terminal: terminal.id(),
-                    spelling: terminal.spelling().to_owned(),
                 };
             };
             let (GrammarExpr::Token(content) | GrammarExpr::ImmediateToken(content)) =
@@ -5621,7 +4520,6 @@ fn compile_terminal_matcher(
             else {
                 return CompiledTerminalMatcher::UnsupportedTerminal {
                     terminal: terminal.id(),
-                    spelling: terminal.spelling().to_owned(),
                 };
             };
             CompiledTerminalMatcher::Expr(compile_lex_expr(grammar, *content))
@@ -5647,6 +4545,10 @@ fn compile_auto_close_rules(rules: &[ValidatedAutoCloseRule]) -> Vec<AutoCloseRu
         .collect()
 }
 
+fn normalize_auto_close_tag(tag: &str) -> String {
+    tag.to_ascii_lowercase()
+}
+
 fn compile_lex_expr_inner(
     grammar: &ValidatedGrammar,
     expr: GrammarExprId,
@@ -5658,38 +4560,24 @@ fn compile_lex_expr_inner(
         GrammarExpr::PatternToken { value, flags } => {
             CompiledLexExpr::Pattern(compile_pattern(value, flags.as_deref()))
         }
-        GrammarExpr::Until { markers } => CompiledLexExpr::Until {
-            markers: markers.clone(),
-        },
+        GrammarExpr::Until { markers } => CompiledLexExpr::Until(compile_until_markers(markers)),
         GrammarExpr::Nested { open, close } => CompiledLexExpr::Nested {
             open: open.clone(),
             close: close.clone(),
         },
-        GrammarExpr::AutoClose {
-            tag,
-            open,
-            close,
-            closed_by,
-            open_node,
-            close_node,
-            tag_name_node,
-            start_prefix,
-            end_prefix,
-            closed_by_tags,
-            rules,
-        } => CompiledLexExpr::AutoClose(AutoCloseSpec {
-            tag: tag.clone(),
-            open: open.clone(),
-            close: close.clone(),
-            closed_by: closed_by.clone(),
-            open_node: open_node.clone(),
-            close_node: close_node.clone(),
-            tag_name_node: tag_name_node.clone(),
-            start_prefix: start_prefix.clone(),
-            end_prefix: end_prefix.clone(),
-            closed_by_tags: closed_by_tags.clone(),
-            rules: compile_auto_close_rules(rules),
-        }),
+        GrammarExpr::AutoClose(spec) => CompiledLexExpr::AutoClose(Box::new(AutoCloseSpec {
+            tag: spec.tag.clone(),
+            open: spec.open.clone(),
+            close: spec.close.clone(),
+            closed_by: spec.closed_by.clone(),
+            open_node: spec.open_node.clone(),
+            close_node: spec.close_node.clone(),
+            tag_name_node: spec.tag_name_node.clone(),
+            start_prefix: spec.start_prefix.clone(),
+            end_prefix: spec.end_prefix.clone(),
+            closed_by_tags: spec.closed_by_tags.clone(),
+            rules: compile_auto_close_rules(&spec.rules),
+        })),
         GrammarExpr::Token(content)
         | GrammarExpr::ImmediateToken(content)
         | GrammarExpr::Field { content, .. }
@@ -5785,7 +4673,7 @@ fn lexical_expr_completion_precedence(
         | GrammarExpr::PatternToken { .. }
         | GrammarExpr::Until { .. }
         | GrammarExpr::Nested { .. }
-        | GrammarExpr::AutoClose { .. }
+        | GrammarExpr::AutoClose(_)
         | GrammarExpr::Symbol(SymbolRef::External(_)) => None,
     }
 }
@@ -5814,7 +4702,7 @@ fn lexical_expr_implicit_precedence(
         GrammarExpr::PatternToken { .. }
         | GrammarExpr::Until { .. }
         | GrammarExpr::Nested { .. }
-        | GrammarExpr::AutoClose { .. } => 0,
+        | GrammarExpr::AutoClose(_) => 0,
         GrammarExpr::ImmediateToken(content) => {
             lexical_expr_implicit_precedence(grammar, *content, rule_stack) + 1
         }
@@ -5845,445 +4733,6 @@ fn lexical_expr_implicit_precedence(
     }
 }
 
-#[cfg(any(test, feature = "weavy-lowering"))]
-pub(crate) fn match_until_markers<'a>(
-    markers: impl IntoIterator<Item = &'a str>,
-    input: &str,
-    byte_position: usize,
-) -> Option<usize> {
-    match_until_markers_with_inspection(markers, input, byte_position).map(|match_| match_.end)
-}
-
-fn match_until_markers_with_inspection<'a>(
-    markers: impl IntoIterator<Item = &'a str>,
-    input: &str,
-    byte_position: usize,
-) -> Option<LexMatch> {
-    let haystack = input.get(byte_position..)?;
-    let markers = markers
-        .into_iter()
-        .filter(|marker| !marker.is_empty())
-        .collect::<Vec<_>>();
-    if markers.iter().any(|marker| haystack.starts_with(*marker)) {
-        return None;
-    }
-    let end_and_marker_len = markers
-        .iter()
-        .filter_map(|marker| haystack.find(*marker).map(|offset| (offset, marker.len())))
-        .min()
-        .map_or((input.len() - byte_position, 0), |pair| pair);
-    let end = byte_position + end_and_marker_len.0;
-    let inspected_end = end + end_and_marker_len.1;
-    (end > byte_position).then_some(LexMatch::new(end, inspected_end))
-}
-
-#[cfg(any(test, feature = "weavy-lowering"))]
-pub(crate) fn match_nested_delimiters(
-    open: &str,
-    close: &str,
-    input: &str,
-    byte_position: usize,
-) -> Option<usize> {
-    match_nested_delimiters_with_inspection(open, close, input, byte_position)
-        .map(|match_| match_.end)
-}
-
-fn match_nested_delimiters_with_inspection(
-    open: &str,
-    close: &str,
-    input: &str,
-    byte_position: usize,
-) -> Option<LexMatch> {
-    if open.is_empty() || close.is_empty() {
-        return None;
-    }
-    let haystack = input.get(byte_position..)?;
-    if !haystack.starts_with(open) {
-        return None;
-    }
-    let mut position = byte_position + open.len();
-    let mut depth = 1usize;
-    while position < input.len() {
-        let rest = input.get(position..)?;
-        if rest.starts_with(close) {
-            position += close.len();
-            depth -= 1;
-            if depth == 0 {
-                return Some(LexMatch::new(position, position));
-            }
-            continue;
-        }
-        if rest.starts_with(open) {
-            position += open.len();
-            depth += 1;
-            continue;
-        }
-        position += rest.chars().next()?.len_utf8();
-    }
-    Some(LexMatch::new(input.len(), input.len()))
-}
-
-fn pattern_inspected_end(input: &str, end: usize) -> usize {
-    if end >= input.len() {
-        return input.len();
-    }
-    input[end..]
-        .chars()
-        .next()
-        .map_or(end, |ch| end + ch.len_utf8())
-}
-
-#[cfg(any(test, feature = "weavy-lowering"))]
-fn match_cached_regex_leaf(
-    pattern: &str,
-    flags: Option<&str>,
-    input: &str,
-    byte_position: usize,
-) -> Option<usize> {
-    let haystack = input.get(byte_position..)?;
-    let regex = cached_regex(pattern, flags)?;
-    regex
-        .find(haystack)
-        .filter(|match_| match_.start() == 0)
-        .map(|match_| byte_position + match_.end())
-}
-
-#[cfg(any(test, feature = "weavy-lowering"))]
-fn cached_regex(pattern: &str, flags: Option<&str>) -> Option<Regex> {
-    static CACHE: OnceLock<Mutex<HashMap<(String, Option<String>), Option<Regex>>>> =
-        OnceLock::new();
-    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let key = (pattern.to_owned(), normalized_regex_flags(flags));
-
-    {
-        let cache = cache.lock().expect("regex cache poisoned");
-        if let Some(regex) = cache.get(&key) {
-            return regex.clone();
-        }
-    }
-
-    let compiled = compile_regex_leaf(pattern, flags);
-    let mut cache = cache.lock().expect("regex cache poisoned");
-    let entry = cache.entry(key).or_insert_with(|| compiled.clone());
-    entry.clone()
-}
-
-fn compile_regex_leaf(pattern: &str, flags: Option<&str>) -> Option<Regex> {
-    Regex::new(&anchored_regex_source(pattern, flags)?).ok()
-}
-
-fn anchored_regex_source(pattern: &str, flags: Option<&str>) -> Option<String> {
-    let body = rust_regex_source(pattern);
-    let flags = rust_regex_flags(flags)?;
-    Some(if flags.is_empty() {
-        format!("\\A(?:{})", body)
-    } else {
-        format!("\\A(?{}:{})", flags, body)
-    })
-}
-
-fn normalized_regex_flags(flags: Option<&str>) -> Option<String> {
-    flags.filter(|flags| !flags.is_empty()).map(str::to_owned)
-}
-
-#[cfg(any(test, feature = "weavy-lowering"))]
-fn regex_flags_are_empty(flags: Option<&str>) -> bool {
-    flags.is_none_or(str::is_empty)
-}
-
-fn rust_regex_flags(flags: Option<&str>) -> Option<String> {
-    let mut rust_flags = String::new();
-    for flag in flags.unwrap_or("").chars() {
-        match flag {
-            'i' | 'm' | 's' if !rust_flags.contains(flag) => rust_flags.push(flag),
-            'i' | 'm' | 's' | 'u' | 'g' | 'y' | 'd' => {}
-            _ => return None,
-        }
-    }
-    Some(rust_flags)
-}
-
-fn rust_regex_source(pattern: &str) -> String {
-    let mut out = String::with_capacity(pattern.len());
-    let mut chars = pattern.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch != '\\' {
-            out.push(ch);
-            continue;
-        }
-
-        let Some(escaped) = chars.next() else {
-            out.push('\\');
-            break;
-        };
-
-        if escaped == '/' {
-            out.push('/');
-            continue;
-        }
-
-        if escaped == 'u' {
-            let mut hex = String::with_capacity(4);
-            for _ in 0..4 {
-                let Some(hex_ch) = chars.peek().copied().filter(|ch| ch.is_ascii_hexdigit()) else {
-                    out.push('\\');
-                    out.push('u');
-                    out.push_str(&hex);
-                    out.extend(chars);
-                    return out;
-                };
-                chars.next();
-                hex.push(hex_ch);
-            }
-            out.push_str("\\u{");
-            out.push_str(&hex);
-            out.push('}');
-            continue;
-        }
-
-        out.push('\\');
-        out.push(escaped);
-    }
-    out
-}
-
-fn match_ascii_keyword(input: &str, byte_position: usize, keyword: &str) -> Option<usize> {
-    if !input[byte_position..].starts_with(keyword) {
-        return None;
-    }
-    let end = byte_position + keyword.len();
-    if input[end..]
-        .as_bytes()
-        .first()
-        .is_some_and(|byte| *byte == b'_' || byte.is_ascii_alphanumeric())
-    {
-        return None;
-    }
-    Some(end)
-}
-
-fn match_gingembre_identifier(input: &str, byte_position: usize) -> Option<usize> {
-    let end = match_ascii_identifier(input, byte_position)?;
-    let word = &input[byte_position..end];
-    if is_gingembre_keyword(word) {
-        return None;
-    }
-    Some(end)
-}
-
-fn match_ascii_identifier(input: &str, byte_position: usize) -> Option<usize> {
-    let bytes = input[byte_position..].as_bytes();
-    let first = bytes.first().copied()?;
-    if first != b'_' && !first.is_ascii_alphabetic() {
-        return None;
-    }
-    let len = bytes
-        .iter()
-        .take_while(|byte| **byte == b'_' || byte.is_ascii_alphanumeric())
-        .count();
-    Some(byte_position + len)
-}
-
-fn is_gingembre_keyword(word: &str) -> bool {
-    matches!(
-        word,
-        "if" | "elif"
-            | "else"
-            | "endif"
-            | "for"
-            | "endfor"
-            | "set"
-            | "endset"
-            | "block"
-            | "endblock"
-            | "extends"
-            | "include"
-            | "import"
-            | "macro"
-            | "endmacro"
-            | "break"
-            | "continue"
-            | "as"
-            | "in"
-            | "is"
-            | "not"
-            | "and"
-            | "or"
-            | "true"
-            | "True"
-            | "false"
-            | "False"
-            | "none"
-            | "None"
-    )
-}
-
-fn match_json_line_comment_tail(input: &str, byte_position: usize) -> Option<usize> {
-    Some(
-        input[byte_position..]
-            .find(['\n', '\r'])
-            .map_or(input.len(), |offset| byte_position + offset),
-    )
-}
-
-fn match_json_block_comment_body(input: &str, byte_position: usize) -> Option<usize> {
-    input[byte_position..]
-        .find("*/")
-        .map(|offset| byte_position + offset + 1)
-}
-
-fn match_while(
-    input: &str,
-    byte_position: usize,
-    predicate: impl Fn(char) -> bool,
-    min_chars: usize,
-) -> Option<usize> {
-    let mut position = byte_position;
-    let mut count = 0usize;
-    for ch in input[byte_position..].chars() {
-        if !predicate(ch) {
-            break;
-        }
-        position += ch.len_utf8();
-        count += 1;
-    }
-    (count >= min_chars).then_some(position)
-}
-
-fn match_css_identifier(input: &str, byte_position: usize) -> Option<usize> {
-    let rest = &input[byte_position..];
-    if rest.starts_with("--") {
-        let mut position = byte_position + 2;
-        while let Some(ch) = input[position..]
-            .chars()
-            .next()
-            .filter(|ch| css_ident_continue(*ch))
-        {
-            position += ch.len_utf8();
-        }
-        return Some(position);
-    }
-    let mut chars = rest.char_indices();
-    let (first_offset, first) = chars.next()?;
-    debug_assert_eq!(first_offset, 0);
-    let mut position = byte_position;
-    if first == '-' {
-        position += first.len_utf8();
-        let next = input[position..].chars().next()?;
-        if !css_ident_start(next) {
-            return None;
-        }
-        position += next.len_utf8();
-    } else if css_ident_start(first) {
-        position += first.len_utf8();
-    } else {
-        return None;
-    }
-    while let Some(ch) = input[position..]
-        .chars()
-        .next()
-        .filter(|ch| css_ident_continue(*ch))
-    {
-        position += ch.len_utf8();
-    }
-    Some(position)
-}
-
-fn match_css_hex_escape_tail(input: &str, byte_position: usize) -> Option<usize> {
-    let mut position = byte_position;
-    let mut count = 0usize;
-    while count < 6 {
-        let Some(ch) = input[position..]
-            .chars()
-            .next()
-            .filter(|ch| ch.is_ascii_hexdigit())
-        else {
-            break;
-        };
-        position += ch.len_utf8();
-        count += 1;
-    }
-    if count == 0 {
-        return None;
-    }
-    if let Some(ch) = input[position..]
-        .chars()
-        .next()
-        .filter(|ch| ch.is_whitespace())
-    {
-        position += ch.len_utf8();
-    }
-    Some(position)
-}
-
-fn match_css_nth_functional_notation(input: &str, byte_position: usize) -> Option<usize> {
-    let mut position = byte_position;
-    if input[position..].starts_with('-') {
-        position += '-'.len_utf8();
-    }
-    while let Some(ch) = input[position..]
-        .chars()
-        .next()
-        .filter(|ch| ch.is_ascii_digit())
-    {
-        position += ch.len_utf8();
-    }
-    if !input[position..].starts_with('n') {
-        return None;
-    }
-    position += 'n'.len_utf8();
-    position = skip_pattern_whitespace(input, position);
-    if input[position..].starts_with('+') {
-        position += '+'.len_utf8();
-        position = skip_pattern_whitespace(input, position);
-        let digits = match_while(input, position, |ch| ch.is_ascii_digit(), 1)?;
-        position = digits;
-    }
-    Some(position)
-}
-
-fn css_ident_start(ch: char) -> bool {
-    ch.is_ascii_alphabetic() || ch == '_' || !ch.is_ascii()
-}
-
-fn css_ident_continue(ch: char) -> bool {
-    css_ident_start(ch) || ch.is_ascii_digit() || ch == '-'
-}
-
-fn skip_pattern_whitespace(input: &str, byte_position: usize) -> usize {
-    let mut position = byte_position;
-    while let Some(ch) = input[position..]
-        .chars()
-        .next()
-        .filter(|ch| ch.is_whitespace())
-    {
-        position += ch.len_utf8();
-    }
-    position
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ReducedToken {
-    lookahead: LookaheadSymbol,
-    end: usize,
-    inspected_end: usize,
-    scanner: Option<ReducedExternalScanResult>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ReducedTokenCandidate {
-    lookahead: LookaheadSymbol,
-    end: usize,
-    inspected_end: usize,
-    extra: bool,
-    external: bool,
-    immediate: bool,
-    literal: bool,
-    lexical_precedence: i32,
-    implicit_precedence: i32,
-    scanner: Option<ReducedExternalScanResult>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct LexMatch {
     pub(crate) end: usize,
@@ -6291,145 +4740,9 @@ pub(crate) struct LexMatch {
 }
 
 impl LexMatch {
-    const fn new(end: usize, inspected_end: usize) -> Self {
+    pub(crate) const fn new(end: usize, inspected_end: usize) -> Self {
         Self { end, inspected_end }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ReducedCandidateOrder {
-    Less,
-    Equal,
-    Greater,
-}
-
-fn reduced_candidate_order(
-    left: ReducedTokenCandidate,
-    right: ReducedTokenCandidate,
-) -> ReducedCandidateOrder {
-    if left.immediate && !left.extra && right.extra {
-        return ReducedCandidateOrder::Greater;
-    }
-    if left.extra && right.immediate && !right.extra {
-        return ReducedCandidateOrder::Less;
-    }
-    if left.end == right.end && left.external && !right.external {
-        return ReducedCandidateOrder::Greater;
-    }
-    if left.end == right.end && !left.external && right.external {
-        return ReducedCandidateOrder::Less;
-    }
-    match left.lexical_precedence.cmp(&right.lexical_precedence) {
-        std::cmp::Ordering::Greater => return ReducedCandidateOrder::Greater,
-        std::cmp::Ordering::Less => return ReducedCandidateOrder::Less,
-        std::cmp::Ordering::Equal => {}
-    }
-    match left.end.cmp(&right.end) {
-        std::cmp::Ordering::Greater => ReducedCandidateOrder::Greater,
-        std::cmp::Ordering::Less => ReducedCandidateOrder::Less,
-        std::cmp::Ordering::Equal if left.external && !right.external => {
-            ReducedCandidateOrder::Greater
-        }
-        std::cmp::Ordering::Equal if !left.external && right.external => {
-            ReducedCandidateOrder::Less
-        }
-        std::cmp::Ordering::Equal if left.implicit_precedence > right.implicit_precedence => {
-            ReducedCandidateOrder::Greater
-        }
-        std::cmp::Ordering::Equal if left.implicit_precedence < right.implicit_precedence => {
-            ReducedCandidateOrder::Less
-        }
-        std::cmp::Ordering::Equal if left.literal && !right.literal => {
-            ReducedCandidateOrder::Greater
-        }
-        std::cmp::Ordering::Equal if !left.literal && right.literal => ReducedCandidateOrder::Less,
-        std::cmp::Ordering::Equal => ReducedCandidateOrder::Equal,
-    }
-}
-
-fn push_reduced_candidate(
-    candidate_slot: &mut Option<ReducedTokenCandidate>,
-    candidate: ReducedTokenCandidate,
-) {
-    match candidate_slot {
-        Some(current)
-            if reduced_candidate_order(*current, candidate) != ReducedCandidateOrder::Less => {}
-        _ => *candidate_slot = Some(candidate),
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ReducedBranch {
-    id: ReducedBranchId,
-    stack: Vec<ReducedStackEntry>,
-    byte_position: usize,
-    scanner_snapshot: Option<ScannerSnapshotId>,
-    trace: Vec<ReducedTraceStep>,
-}
-
-impl ReducedBranch {
-    fn commit_scanner_snapshot(&mut self, token: ReducedToken) {
-        if let Some(scanner) = token.scanner {
-            self.scanner_snapshot = scanner.after();
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum ReducedStepOutcome {
-    Branch(ReducedBranch),
-    Accepted {
-        branch: ReducedBranchId,
-        node: SexpNode,
-        trace: Vec<ReducedTraceStep>,
-    },
-    Failed {
-        branch: ReducedBranchId,
-        error: ReducedParseError,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ReducedStackEntry {
-    state: ParseStateId,
-    fragment: Option<ReducedFragment>,
-    extra: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum ReducedFragment {
-    Hidden(Vec<SexpChild>),
-    Node(SexpNode),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ReducedReduction {
-    fragment: ReducedFragment,
-    trailing_extras: Vec<ReducedFragment>,
-}
-
-impl ReducedFragment {
-    fn into_children(self) -> Vec<SexpChild> {
-        match self {
-            Self::Hidden(children) => children,
-            Self::Node(node) => vec![SexpChild {
-                field: None,
-                value: SexpValue::Node(node),
-            }],
-        }
-    }
-}
-
-/// First runtime stack/tree parser over generated Snark parse tables.
-///
-/// This runtime executes the same grammar-derived action table as
-/// [`ReducedParser`], but keeps branch ids in the runtime `StackVersionId`
-/// domain and records tree construction through `TreeNodeId` plus structured
-/// `TraceEvent` / `TreeEvent` rows before normalizing the accepted runtime tree
-/// to the corpus S-expression view.
-pub struct RuntimeParser<'a> {
-    reduced: ReducedParser<'a>,
-    recovery_step_limit: Option<usize>,
 }
 
 /// Byte edit shape used by Tree-sitter-style incremental reparsing.
@@ -6437,13 +4750,13 @@ pub struct RuntimeParser<'a> {
 /// `start_byte..old_end_byte` names the replaced range in the previous input.
 /// `start_byte..new_end_byte` names the replacement range in the new input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RuntimeInputEdit {
+pub struct ParserInputEdit {
     start_byte: usize,
     old_end_byte: usize,
     new_end_byte: usize,
 }
 
-impl RuntimeInputEdit {
+impl ParserInputEdit {
     /// Build a byte edit descriptor.
     pub const fn new(start_byte: usize, old_end_byte: usize, new_end_byte: usize) -> Self {
         Self {
@@ -6473,7 +4786,7 @@ impl RuntimeInputEdit {
         &self,
         old_input: &str,
         new_input: &str,
-    ) -> Result<(), ReducedParseError> {
+    ) -> Result<(), ParserExecutionError> {
         let valid_order =
             self.start_byte <= self.old_end_byte && self.start_byte <= self.new_end_byte;
         let valid_bounds =
@@ -6490,8 +4803,8 @@ impl RuntimeInputEdit {
         if valid_context {
             Ok(())
         } else {
-            Err(ReducedParseError::new(
-                ReducedParseErrorKind::InvalidInputEdit {
+            Err(ParserExecutionError::new(
+                ParserExecutionErrorKind::InvalidInputEdit {
                     start_byte: self.start_byte,
                     old_end_byte: self.old_end_byte,
                     new_end_byte: self.new_end_byte,
@@ -6503,2439 +4816,1057 @@ impl RuntimeInputEdit {
     }
 }
 
-/// Persistent runtime parse session for the incremental parser seam.
-///
-/// This session preserves the previous input and accepted report, then builds a
-/// conservative index of reusable named-node subtrees for reparses. Full parses
-/// remain the differential oracle for reuse tests.
-pub struct RuntimeParseSession<'a> {
-    parser: RuntimeParser<'a>,
-    last_input: Option<String>,
-    last_report: Option<RuntimeParseReport>,
+/// Lossless-enough parse tree projection for CST/AST consumers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedCstNode {
+    kind: Arc<str>,
+    symbol: Option<ParserSymbol>,
+    field: Option<Arc<str>>,
+    node: Option<TreeNodeId>,
+    bytes: ByteRange,
+    points: PointRange,
+    named: bool,
+    visible: bool,
+    extra: bool,
+    text: Option<ResolvedCstText>,
+    children: Vec<Self>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct RuntimeReuseKey {
-    byte_position: usize,
-    entry_state: ParseStateId,
-    scanner_snapshot: Option<ScannerSnapshotId>,
+#[derive(Clone)]
+struct ResolvedCstText {
+    source: Arc<str>,
+    bytes: ByteRange,
+}
+
+impl ResolvedCstText {
+    fn as_str(&self) -> Option<&str> {
+        source_slice(&self.source, self.bytes)
+    }
+}
+
+impl fmt::Debug for ResolvedCstText {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.as_str() {
+            Some(text) => f.debug_tuple("ResolvedCstText").field(&text).finish(),
+            None => f.debug_tuple("ResolvedCstText").field(&self.bytes).finish(),
+        }
+    }
+}
+
+impl PartialEq for ResolvedCstText {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl Eq for ResolvedCstText {}
+
+impl ResolvedCstNode {
+    /// Node or terminal kind.
+    pub fn kind(&self) -> &str {
+        &self.kind
+    }
+
+    /// Parser symbol for terminal leaves, if this node came from a shifted token.
+    pub const fn symbol(&self) -> Option<ParserSymbol> {
+        self.symbol
+    }
+
+    /// Field name attached by the grammar, when known.
+    pub fn field(&self) -> Option<&str> {
+        self.field.as_deref()
+    }
+
+    /// Parse tree node id, when this item materialized a tree node.
+    pub const fn node(&self) -> Option<TreeNodeId> {
+        self.node
+    }
+
+    /// Source byte range.
+    pub const fn bytes(&self) -> ByteRange {
+        self.bytes
+    }
+
+    /// Source point range.
+    pub const fn points(&self) -> PointRange {
+        self.points
+    }
+
+    /// Whether this item is named in public traversal.
+    pub const fn named(&self) -> bool {
+        self.named
+    }
+
+    /// Whether this item is visible in public traversal.
+    pub const fn visible(&self) -> bool {
+        self.visible
+    }
+
+    /// Whether this item came from an extra token/node.
+    pub const fn extra(&self) -> bool {
+        self.extra
+    }
+
+    /// Source text for terminal leaves.
+    pub fn text(&self) -> Option<&str> {
+        self.text.as_ref().and_then(ResolvedCstText::as_str)
+    }
+
+    /// Child items, including anonymous terminals.
+    pub fn children(&self) -> &[Self] {
+        &self.children
+    }
+}
+
+/// Minimal recursive node view needed by typed AST/lowering materializers.
+pub trait ParseNode: Sized {
+    /// Node or terminal kind.
+    fn kind(&self) -> &str;
+
+    /// Whether this item is named in public traversal.
+    fn named(&self) -> bool;
+
+    /// Source text for terminal leaves.
+    fn text(&self) -> Option<&str>;
+
+    /// Ordered child items.
+    fn children(&self) -> &[Self];
+
+    /// Half-open source byte range `[start, end)`.
+    fn byte_range(&self) -> (usize, usize);
+}
+
+impl ParseNode for ResolvedCstNode {
+    fn kind(&self) -> &str {
+        self.kind()
+    }
+
+    fn named(&self) -> bool {
+        self.named()
+    }
+
+    fn text(&self) -> Option<&str> {
+        self.text()
+    }
+
+    fn children(&self) -> &[Self] {
+        self.children()
+    }
+
+    fn byte_range(&self) -> (usize, usize) {
+        let bytes = self.bytes();
+        (bytes.start().get() as usize, bytes.end().get() as usize)
+    }
+}
+
+/// Arena-backed resolved CST with anonymous terminals and source ranges preserved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedCstTree {
+    source: Arc<str>,
+    roots: Vec<usize>,
+    items: Vec<ResolvedCstItem>,
+}
+
+/// Borrowed handle into a [`ResolvedCstTree`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ResolvedCstTreeNode<'a> {
+    tree: &'a ResolvedCstTree,
+    index: usize,
+}
+
+impl ResolvedCstTree {
+    /// Number of materialized items in this tree.
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    /// Whether this tree has no items.
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    /// Number of root items.
+    pub fn root_count(&self) -> usize {
+        self.roots.len()
+    }
+
+    /// Single root item, when this tree has exactly one root.
+    pub fn root(&self) -> Option<ResolvedCstTreeNode<'_>> {
+        let [index] = self.roots.as_slice() else {
+            return None;
+        };
+        Some(ResolvedCstTreeNode {
+            tree: self,
+            index: *index,
+        })
+    }
+
+    /// Root items in source order.
+    pub fn roots(&self) -> impl ExactSizeIterator<Item = ResolvedCstTreeNode<'_>> + '_ {
+        self.roots
+            .iter()
+            .copied()
+            .map(|index| ResolvedCstTreeNode { tree: self, index })
+    }
+
+    /// Kind for the public root projection.
+    pub fn root_kind(&self) -> Option<&str> {
+        match self.roots.as_slice() {
+            [] => None,
+            [index] => Some(self.items[*index].kind.as_ref()),
+            _ => Some("ROOT"),
+        }
+    }
+
+    /// Materialize this arena tree into the owned recursive compatibility shape.
+    pub fn to_owned_node(&self) -> Option<ResolvedCstNode> {
+        if self.roots.is_empty() {
+            return None;
+        }
+        if self.roots.len() == 1 {
+            return Some(build_resolved_node(
+                self.roots[0],
+                &self.items,
+                &self.source,
+            ));
+        }
+
+        let first = self.roots[0];
+        let last = self.roots[self.roots.len() - 1];
+        let bytes = ByteRange::new(
+            self.items[first].bytes.start(),
+            self.items[last].bytes.end(),
+        )
+        .ok()?;
+        let points = PointRange::new(
+            self.items[first].points.start(),
+            self.items[last].points.end(),
+        )
+        .ok()?;
+        Some(ResolvedCstNode {
+            kind: "ROOT".into(),
+            symbol: None,
+            field: None,
+            node: None,
+            bytes,
+            points,
+            named: true,
+            visible: true,
+            extra: false,
+            text: None,
+            children: self
+                .roots
+                .iter()
+                .copied()
+                .map(|root| build_resolved_node(root, &self.items, &self.source))
+                .collect(),
+        })
+    }
+}
+
+impl<'a> ResolvedCstTreeNode<'a> {
+    fn item(&self) -> &'a ResolvedCstItem {
+        &self.tree.items[self.index]
+    }
+
+    /// Node or terminal kind.
+    pub fn kind(&self) -> &'a str {
+        self.item().kind.as_ref()
+    }
+
+    /// Parser symbol for terminal leaves, if this node came from a shifted token.
+    pub fn symbol(&self) -> Option<ParserSymbol> {
+        self.item().symbol
+    }
+
+    /// Field name attached by the grammar, when known.
+    pub fn field(&self) -> Option<&'a str> {
+        self.item().field.as_deref()
+    }
+
+    /// Parse tree node id, when this item materialized a tree node.
+    pub fn node(&self) -> Option<TreeNodeId> {
+        self.item().node
+    }
+
+    /// Source byte range.
+    pub fn bytes(&self) -> ByteRange {
+        self.item().bytes
+    }
+
+    /// Source point range.
+    pub fn points(&self) -> PointRange {
+        self.item().points
+    }
+
+    /// Whether this item is named in public traversal.
+    pub fn named(&self) -> bool {
+        self.item().named
+    }
+
+    /// Whether this item is visible in public traversal.
+    pub fn visible(&self) -> bool {
+        self.item().visible
+    }
+
+    /// Whether this item came from an extra token/node.
+    pub fn extra(&self) -> bool {
+        self.item().extra
+    }
+
+    /// Source text for terminal leaves.
+    pub fn text(&self) -> Option<&'a str> {
+        self.item()
+            .has_text
+            .then(|| source_slice(&self.tree.source, self.item().bytes))
+            .flatten()
+    }
+
+    /// Child items in source order.
+    pub fn children(&self) -> impl ExactSizeIterator<Item = ResolvedCstTreeNode<'a>> + '_ {
+        self.item()
+            .children
+            .iter()
+            .copied()
+            .map(|index| ResolvedCstTreeNode {
+                tree: self.tree,
+                index,
+            })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct RuntimeReusableNode {
-    tree: SexpNode,
-    source_node: TreeNodeId,
-    symbol: NonterminalId,
-    entry_state: ParseStateId,
-    entry_scanner_snapshot: Option<ScannerSnapshotId>,
-    exit_scanner_snapshot: Option<ScannerSnapshotId>,
-    start_byte: usize,
-    end_byte: usize,
-    lookahead_end_byte: usize,
-    contains_error: bool,
-    tree_events: Vec<TreeEvent>,
+struct ResolvedCstItem {
+    kind: Arc<str>,
+    symbol: Option<ParserSymbol>,
+    field: Option<Arc<str>>,
+    node: Option<TreeNodeId>,
+    bytes: ByteRange,
+    points: PointRange,
+    named: bool,
+    visible: bool,
+    extra: bool,
+    has_text: bool,
+    order: usize,
+    children: ResolvedCstChildren,
+}
+
+type ResolvedCstChildren = SmallVec<[usize; 4]>;
+
+pub(crate) struct ResolvedCstBuilder<'a> {
+    parser: &'a ParserGrammar,
+    input: &'a str,
+    source: Arc<str>,
+    names: ResolvedCstNames,
+    field_by_child: Vec<Option<Arc<str>>>,
+    item_indices_by_node: Vec<SmallVec<[usize; 1]>>,
+    items: Vec<ResolvedCstItem>,
+    roots: Vec<usize>,
 }
 
 #[derive(Debug, Clone)]
-struct RuntimeReuseIndex {
-    nodes: HashMap<RuntimeReuseKey, RuntimeReusableNode>,
+pub(crate) struct ResolvedCstNames {
+    fields: Vec<Arc<str>>,
+    public_nodes: Vec<Arc<str>>,
+    aliases: Vec<Arc<str>>,
+    terminals: Vec<Arc<str>>,
+    nonterminals: Vec<Arc<str>>,
+    externals: Vec<Option<Arc<str>>>,
+    eof: Arc<str>,
+    error: Arc<str>,
+    missing: Arc<str>,
+    recovery: Arc<str>,
 }
 
-impl RuntimeReuseIndex {
-    fn from_report(report: &RuntimeParseReport, edit: RuntimeInputEdit) -> Self {
-        let delta = edit.new_end_byte as isize - edit.old_end_byte as isize;
-        let mut nodes = HashMap::<RuntimeReuseKey, RuntimeReusableNode>::new();
-        for node in report.reusable_nodes.iter().filter(|node| {
-            !node.contains_error
-                && edit
-                    .reuse_position(node.start_byte, node.end_byte)
-                    .is_some()
-        }) {
-            let Some((start_byte, end_byte)) = edit.reuse_position(node.start_byte, node.end_byte)
-            else {
-                continue;
-            };
-            let reusable_before_edit =
-                node.end_byte <= edit.start_byte && node.lookahead_end_byte <= edit.start_byte;
-            let reusable_after_edit = node.start_byte >= edit.old_end_byte;
-            if !reusable_before_edit && !reusable_after_edit {
-                continue;
-            }
-            let lookahead_end_byte = if node.start_byte >= edit.old_end_byte {
-                shift_byte(node.lookahead_end_byte, edit.old_end_byte, delta)
-            } else {
-                node.lookahead_end_byte
-            };
-            let tree_events = node
-                .tree_events
-                .iter()
-                .cloned()
-                .map(|event| shift_tree_event_bytes(event, edit, delta))
-                .collect();
-            let shifted = RuntimeReusableNode {
-                start_byte,
-                end_byte,
-                lookahead_end_byte,
-                tree_events,
-                ..node.clone()
-            };
-            let key = RuntimeReuseKey {
-                byte_position: shifted.start_byte,
-                entry_state: shifted.entry_state,
-                scanner_snapshot: shifted.entry_scanner_snapshot,
-            };
-            nodes
-                .entry(key)
-                .and_modify(|current| {
-                    if shifted.end_byte > current.end_byte {
-                        *current = shifted.clone();
-                    }
-                })
-                .or_insert(shifted);
-        }
-        Self { nodes }
-    }
-
-    fn get(
-        &self,
-        byte_position: usize,
-        entry_state: ParseStateId,
-        scanner_snapshot: Option<ScannerSnapshotId>,
-    ) -> Option<&RuntimeReusableNode> {
-        self.nodes.get(&RuntimeReuseKey {
-            byte_position,
-            entry_state,
-            scanner_snapshot,
-        })
-    }
-}
-
-fn shift_byte(byte: usize, old_end_byte: usize, delta: isize) -> usize {
-    if byte >= old_end_byte {
-        byte.saturating_add_signed(delta)
-    } else {
-        byte
-    }
-}
-
-fn shift_byte_range(bytes: ByteRange, old_end_byte: usize, delta: isize) -> ByteRange {
-    let start = shift_byte(bytes.start().get() as usize, old_end_byte, delta);
-    let end = shift_byte(bytes.end().get() as usize, old_end_byte, delta);
-    ByteRange::new(
-        ByteOffset::new(u32::try_from(start).expect("shifted runtime byte offset fits u32")),
-        ByteOffset::new(u32::try_from(end).expect("shifted runtime byte offset fits u32")),
-    )
-    .expect("shifted runtime byte range is ordered")
-}
-
-fn shift_tree_event_bytes(event: TreeEvent, edit: RuntimeInputEdit, delta: isize) -> TreeEvent {
-    let shift = |bytes| shift_byte_range(bytes, edit.old_end_byte, delta);
-    match event {
-        TreeEvent::Token {
-            version,
-            symbol,
-            lookahead,
-            bytes,
-            points,
-            extra,
-            named,
-            keyword,
-        } => TreeEvent::Token {
-            version,
-            symbol,
-            lookahead,
-            bytes: shift(bytes),
-            points,
-            extra,
-            named,
-            keyword,
-        },
-        TreeEvent::Reduce {
-            version,
-            production,
-            metadata,
-            node,
-            bytes,
-            points,
-        } => TreeEvent::Reduce {
-            version,
-            production,
-            metadata,
-            node,
-            bytes: shift(bytes),
-            points,
-        },
-        TreeEvent::Missing {
-            version,
-            symbol,
-            bytes,
-            points,
-        } => TreeEvent::Missing {
-            version,
-            symbol,
-            bytes: shift(bytes),
-            points,
-        },
-        TreeEvent::Error {
-            version,
-            node,
-            bytes,
-            points,
-            error_cost,
-        } => TreeEvent::Error {
-            version,
-            node,
-            bytes: shift(bytes),
-            points,
-            error_cost,
-        },
-        TreeEvent::CloseNode {
-            version,
-            node,
-            public_node,
-            bytes,
-            points,
-        } => TreeEvent::CloseNode {
-            version,
-            node,
-            public_node,
-            bytes: shift(bytes),
-            points,
-        },
-        TreeEvent::ReuseNode {
-            version,
-            node,
-            bytes,
-            points,
-            scanner_snapshot,
-        } => TreeEvent::ReuseNode {
-            version,
-            node,
-            bytes: shift(bytes),
-            points,
-            scanner_snapshot,
-        },
-        TreeEvent::Alias {
-            version,
-            node,
-            alias,
-            named,
-            structural_index,
-            bytes,
-            points,
-        } => TreeEvent::Alias {
-            version,
-            node,
-            alias,
-            named,
-            structural_index,
-            bytes: shift(bytes),
-            points,
-        },
-        TreeEvent::OpenNode { .. } | TreeEvent::Field { .. } => event,
-    }
-}
-
-impl<'a> RuntimeParseSession<'a> {
-    /// Start a persistent runtime parse session.
-    pub const fn new(parser: RuntimeParser<'a>) -> Self {
+impl ResolvedCstNames {
+    pub(crate) fn from_parser(parser: &ParserGrammar) -> Self {
         Self {
-            parser,
-            last_input: None,
-            last_report: None,
-        }
-    }
-
-    /// Last input accepted by this session.
-    pub fn last_input(&self) -> Option<&str> {
-        self.last_input.as_deref()
-    }
-
-    /// Last report accepted by this session.
-    pub const fn last_report(&self) -> Option<&RuntimeParseReport> {
-        self.last_report.as_ref()
-    }
-
-    /// Parse a full input and make it the new session baseline.
-    pub fn parse_compact(
-        &mut self,
-        input: impl Into<String>,
-    ) -> Result<&RuntimeParseReport, ReducedParseError> {
-        let input = input.into();
-        let report = self.parser.parse_compact_with_report(&input)?;
-        self.last_input = Some(input);
-        self.last_report = Some(report);
-        Ok(self
-            .last_report
-            .as_ref()
-            .expect("session report was just installed"))
-    }
-
-    /// Reparse after an edit and make the new input the session baseline.
-    ///
-    /// This is the stable API seam for incremental reuse. It validates that the
-    /// edit describes the old and new inputs, builds a conservative reusable-node
-    /// index from the previous accepted report, and reparses with full-parse tree
-    /// equivalence as the oracle.
-    pub fn reparse_compact(
-        &mut self,
-        edit: RuntimeInputEdit,
-        new_input: impl Into<String>,
-    ) -> Result<&RuntimeParseReport, ReducedParseError> {
-        let new_input = new_input.into();
-        let report = if let (Some(old_input), Some(last_report)) =
-            (self.last_input.as_deref(), self.last_report.as_ref())
-        {
-            self.parser
-                .reparse_compact_with_report(old_input, last_report, edit, &new_input)?
-        } else {
-            self.parser.parse_compact_with_report(&new_input)?
-        };
-        self.last_input = Some(new_input);
-        self.last_report = Some(report);
-        Ok(self
-            .last_report
-            .as_ref()
-            .expect("session report was just installed"))
-    }
-
-    /// Parse a full input with recovery and make it the new session baseline.
-    pub fn parse_recovering_compact(
-        &mut self,
-        input: impl Into<String>,
-    ) -> Result<&RuntimeParseReport, ReducedParseError> {
-        let input = input.into();
-        let report = self.parser.parse_recovering_compact_with_report(&input)?;
-        self.last_input = Some(input);
-        self.last_report = Some(report);
-        Ok(self
-            .last_report
-            .as_ref()
-            .expect("session report was just installed"))
-    }
-
-    /// Reparse after an edit with recovery and make the new input the session baseline.
-    pub fn reparse_recovering_compact(
-        &mut self,
-        edit: RuntimeInputEdit,
-        new_input: impl Into<String>,
-    ) -> Result<&RuntimeParseReport, ReducedParseError> {
-        let new_input = new_input.into();
-        let report = if let (Some(old_input), Some(last_report)) =
-            (self.last_input.as_deref(), self.last_report.as_ref())
-        {
-            self.parser.reparse_recovering_compact_with_report(
-                old_input,
-                last_report,
-                edit,
-                &new_input,
-            )?
-        } else {
-            self.parser
-                .parse_recovering_compact_with_report(&new_input)?
-        };
-        self.last_input = Some(new_input);
-        self.last_report = Some(report);
-        Ok(self
-            .last_report
-            .as_ref()
-            .expect("session report was just installed"))
-    }
-}
-
-impl RuntimeInputEdit {
-    fn reuse_position(&self, start_byte: usize, end_byte: usize) -> Option<(usize, usize)> {
-        if self.old_end_byte == self.start_byte {
-            if start_byte < self.start_byte && self.start_byte <= end_byte {
-                return None;
-            }
-            if start_byte >= self.start_byte {
-                let delta = self.new_end_byte as isize - self.old_end_byte as isize;
-                return Some((
-                    shift_byte(start_byte, self.old_end_byte, delta),
-                    shift_byte(end_byte, self.old_end_byte, delta),
-                ));
-            }
-            return Some((start_byte, end_byte));
-        } else if start_byte < self.old_end_byte && self.start_byte < end_byte {
-            return None;
-        }
-        let delta = self.new_end_byte as isize - self.old_end_byte as isize;
-        Some((
-            shift_byte(start_byte, self.old_end_byte, delta),
-            shift_byte(end_byte, self.old_end_byte, delta),
-        ))
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RuntimeRecoveryMode {
-    Strict,
-    SkipInvalidInput,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RuntimeTraceDetail {
-    Full,
-    Lineage,
-}
-
-fn push_full_runtime_trace(
-    trace_events: &mut Vec<TraceEvent>,
-    detail: RuntimeTraceDetail,
-    event: TraceEvent,
-) {
-    if detail == RuntimeTraceDetail::Full {
-        trace_events.push(event);
-    }
-}
-
-impl<'a> RuntimeParser<'a> {
-    /// Build a runtime parser over validated grammar facts and generated tables.
-    pub fn new(
-        grammar: &'a ValidatedGrammar,
-        parser: &'a ParserGrammar,
-        table: &'a ParseTable,
-    ) -> Result<Self, ReducedParseError> {
-        Ok(Self {
-            reduced: ReducedParser::new(grammar, parser, table)?,
-            recovery_step_limit: None,
-        })
-    }
-
-    /// Build a runtime parser that borrows a reusable runtime plan.
-    pub fn new_with_plan(
-        grammar: &'a ValidatedGrammar,
-        parser: &'a ParserGrammar,
-        table: &'a ParseTable,
-        runtime_plan: &'a RuntimeParserPlan,
-    ) -> Result<Self, ReducedParseError> {
-        Ok(Self {
-            reduced: ReducedParser::new_with_plan(grammar, parser, table, runtime_plan)?,
-            recovery_step_limit: None,
-        })
-    }
-
-    /// Attach a reduced external scanner host for this first runtime slice.
-    pub fn with_external_scanner(mut self, scanner: &'a dyn ReducedExternalScanner) -> Self {
-        self.reduced = self.reduced.with_external_scanner(scanner);
-        self
-    }
-
-    /// Bound recovery branch execution for latency-sensitive callers.
-    pub fn with_recovery_step_limit(mut self, limit: usize) -> Self {
-        self.recovery_step_limit = Some(limit);
-        self
-    }
-
-    /// Parse one input and return runtime stack/tree evidence.
-    pub fn parse_with_report(&self, input: &str) -> Result<RuntimeParseReport, ReducedParseError> {
-        self.parse_with_report_mode(input, RuntimeRecoveryMode::Strict, RuntimeTraceDetail::Full)
-    }
-
-    /// Parse one input, retaining only trace events needed for accepted lineage filtering.
-    pub fn parse_compact_with_report(
-        &self,
-        input: &str,
-    ) -> Result<RuntimeParseReport, ReducedParseError> {
-        self.parse_with_report_mode(
-            input,
-            RuntimeRecoveryMode::Strict,
-            RuntimeTraceDetail::Lineage,
-        )
-    }
-
-    /// Parse one input, preserving recoverable error ranges as `ERROR` nodes.
-    pub fn parse_recovering_with_report(
-        &self,
-        input: &str,
-    ) -> Result<RuntimeParseReport, ReducedParseError> {
-        self.parse_with_report_mode(
-            input,
-            RuntimeRecoveryMode::SkipInvalidInput,
-            RuntimeTraceDetail::Full,
-        )
-    }
-
-    /// Parse with recovery, retaining only trace events needed for accepted lineage filtering.
-    pub fn parse_recovering_compact_with_report(
-        &self,
-        input: &str,
-    ) -> Result<RuntimeParseReport, ReducedParseError> {
-        self.parse_with_report_mode(
-            input,
-            RuntimeRecoveryMode::SkipInvalidInput,
-            RuntimeTraceDetail::Lineage,
-        )
-    }
-
-    /// Reparse one edited input using an accepted report from the previous input
-    /// as the reusable-subtree source.
-    pub fn reparse_compact_with_report(
-        &self,
-        old_input: &str,
-        previous_report: &RuntimeParseReport,
-        edit: RuntimeInputEdit,
-        new_input: &str,
-    ) -> Result<RuntimeParseReport, ReducedParseError> {
-        edit.validate_against(old_input, new_input)?;
-        let reuse_index = RuntimeReuseIndex::from_report(previous_report, edit);
-        self.parse_compact_with_reuse_index(new_input, &reuse_index)
-    }
-
-    /// Reparse one edited input with recovery using an accepted report from the
-    /// previous input as the reusable-subtree source.
-    pub fn reparse_recovering_compact_with_report(
-        &self,
-        old_input: &str,
-        previous_report: &RuntimeParseReport,
-        edit: RuntimeInputEdit,
-        new_input: &str,
-    ) -> Result<RuntimeParseReport, ReducedParseError> {
-        edit.validate_against(old_input, new_input)?;
-        let reuse_index = RuntimeReuseIndex::from_report(previous_report, edit);
-        self.parse_recovering_compact_with_reuse_index(new_input, &reuse_index)
-    }
-
-    fn parse_with_report_mode(
-        &self,
-        input: &str,
-        recovery: RuntimeRecoveryMode,
-        trace_detail: RuntimeTraceDetail,
-    ) -> Result<RuntimeParseReport, ReducedParseError> {
-        self.parse_with_report_mode_reuse(input, recovery, trace_detail, None)
-    }
-
-    fn parse_compact_with_reuse_index(
-        &self,
-        input: &str,
-        reuse_index: &RuntimeReuseIndex,
-    ) -> Result<RuntimeParseReport, ReducedParseError> {
-        self.parse_with_report_mode_reuse(
-            input,
-            RuntimeRecoveryMode::Strict,
-            RuntimeTraceDetail::Lineage,
-            Some(reuse_index),
-        )
-    }
-
-    fn parse_recovering_compact_with_reuse_index(
-        &self,
-        input: &str,
-        reuse_index: &RuntimeReuseIndex,
-    ) -> Result<RuntimeParseReport, ReducedParseError> {
-        self.parse_with_report_mode_reuse(
-            input,
-            RuntimeRecoveryMode::SkipInvalidInput,
-            RuntimeTraceDetail::Lineage,
-            Some(reuse_index),
-        )
-    }
-
-    fn parse_with_report_mode_reuse(
-        &self,
-        input: &str,
-        recovery: RuntimeRecoveryMode,
-        trace_detail: RuntimeTraceDetail,
-        reuse_index: Option<&RuntimeReuseIndex>,
-    ) -> Result<RuntimeParseReport, ReducedParseError> {
-        self.reduced.clear_lex_cache();
-        let mut tree_store = RuntimeTreeStore::default();
-        let mut trace_events = Vec::new();
-        let mut tree_events = Vec::new();
-        push_full_runtime_trace(
-            &mut trace_events,
-            trace_detail,
-            TraceEvent::ParseStart {
-                id: TraceEventId::from_index(0),
-                state: ParseStateId::from_index(0),
-            },
-        );
-        let initial_state_enter_id = next_trace_id(&trace_events);
-        push_full_runtime_trace(
-            &mut trace_events,
-            trace_detail,
-            TraceEvent::StateEnter {
-                id: initial_state_enter_id,
-                version: StackVersionId::from_index(0),
-                state: ParseStateId::from_index(0),
-            },
-        );
-        let line_index = InputLineIndex::new(input);
-
-        let initial_branch = RuntimeBranch {
-            version: StackVersionId::from_index(0),
-            stack: vec![RuntimeStackEntry {
-                state: ParseStateId::from_index(0),
-                fragment: None,
-                extra: false,
-                end_byte: 0,
-            }],
-            byte_position: 0,
-            scanner_snapshot: None,
-            auto_close_stack: Vec::new(),
-            error_cost: 0,
-            trace: Vec::new(),
-            tree_events: Vec::new(),
-            reusable_nodes: Vec::new(),
-        };
-        let mut queued_recovery_costs = HashMap::new();
-        if recovery == RuntimeRecoveryMode::SkipInvalidInput {
-            queued_recovery_costs.insert(RuntimeBranchKey::from_branch(&initial_branch), 0);
-        }
-        let mut branches = VecDeque::from([initial_branch]);
-        let mut accepted = Vec::<(
-            StackVersionId,
-            SexpNode,
-            Vec<ReducedTraceStep>,
-            u32,
-            Vec<TreeEvent>,
-            Vec<RuntimeReusableNode>,
-        )>::new();
-        let mut failures = Vec::<ReducedParseError>::new();
-        let mut next_version_index = 1usize;
-        let mut next_lookahead_index = 0usize;
-        let mut step_count = 0usize;
-        let step_limit = match recovery {
-            RuntimeRecoveryMode::Strict => self.reduced.reduced_step_limit(input),
-            RuntimeRecoveryMode::SkipInvalidInput => self
-                .recovery_step_limit
-                .unwrap_or_else(|| self.reduced.reduced_recovery_step_limit(input)),
-        };
-        let mut max_live_versions = branches.len();
-
-        while let Some(branch) = branches.pop_front() {
-            if recovery == RuntimeRecoveryMode::SkipInvalidInput {
-                let key = RuntimeBranchKey::from_branch(&branch);
-                if queued_recovery_costs
-                    .get(&key)
-                    .is_some_and(|best_cost| branch.error_cost > *best_cost)
-                {
-                    push_full_runtime_trace(
-                        &mut trace_events,
-                        trace_detail,
-                        TraceEvent::GlrRetire {
-                            version: branch.version,
-                            reason: BranchRetireReason::Dominated,
-                        },
-                    );
-                    continue;
-                }
-            }
-            step_count += 1;
-            if step_count > step_limit {
-                push_full_runtime_trace(
-                    &mut trace_events,
-                    trace_detail,
-                    TraceEvent::GlrRetire {
-                        version: branch.version,
-                        reason: BranchRetireReason::Limit,
-                    },
-                );
-                trace_events.push(TraceEvent::ParseFinish {
-                    id: next_trace_id(&trace_events),
-                    outcome: ParseOutcome::Failed,
-                });
-                return Err(
-                    ReducedParseError::new(ReducedParseErrorKind::BranchStepLimit {
-                        limit: step_limit,
-                    })
-                    .with_trace(branch.trace),
-                );
-            }
-
-            for outcome in self.step_runtime_branch(
-                branch,
-                input,
-                &line_index,
-                &mut tree_store,
-                &mut trace_events,
-                &mut tree_events,
-                &mut next_version_index,
-                &mut next_lookahead_index,
-                recovery,
-                trace_detail,
-                reuse_index,
-            ) {
-                match outcome {
-                    RuntimeStepOutcome::Branch(branch) => enqueue_runtime_branch(
-                        branch,
-                        recovery,
-                        trace_detail,
-                        &mut queued_recovery_costs,
-                        &mut trace_events,
-                        &mut branches,
-                    ),
-                    RuntimeStepOutcome::Accepted {
-                        version,
-                        node,
-                        trace,
-                        error_cost,
-                        tree_events,
-                        reusable_nodes,
-                    } => {
-                        push_full_runtime_trace(
-                            &mut trace_events,
-                            trace_detail,
-                            TraceEvent::GlrRetire {
-                                version,
-                                reason: BranchRetireReason::Accepted,
-                            },
-                        );
-                        accepted.push((
-                            version,
-                            node,
-                            trace,
-                            error_cost,
-                            tree_events,
-                            reusable_nodes,
-                        ));
-                    }
-                    RuntimeStepOutcome::Failed { version, error } => {
-                        push_full_runtime_trace(
-                            &mut trace_events,
-                            trace_detail,
-                            TraceEvent::GlrRetire {
-                                version,
-                                reason: BranchRetireReason::NoAction,
-                            },
-                        );
-                        failures.push(error);
-                    }
-                }
-            }
-            max_live_versions = max_live_versions.max(branches.len());
-        }
-
-        let Some(min_error_cost) = accepted
-            .iter()
-            .map(|(_, _, _, error_cost, _, _)| *error_cost)
-            .min()
-        else {
-            trace_events.push(TraceEvent::ParseFinish {
-                id: next_trace_id(&trace_events),
-                outcome: ParseOutcome::Failed,
-            });
-            return Err(select_reduced_failure(failures).unwrap_or_else(|| {
-                ReducedParseError::new(ReducedParseErrorKind::NoViableBranch { failure_count: 0 })
-            }));
-        };
-        let best_accepted = accepted
-            .iter()
-            .filter(|(_, _, _, error_cost, _, _)| *error_cost == min_error_cost)
-            .collect::<Vec<_>>();
-        let Some((
-            first_version,
-            first_node,
-            first_trace,
-            _,
-            first_tree_events,
-            first_reusable_nodes,
-        )) = best_accepted.first().map(|accepted| (*accepted).clone())
-        else {
-            unreachable!("accepted branches have a minimum recovery cost");
-        };
-        if best_accepted
-            .iter()
-            .all(|(_, node, _, _, _, _)| *node == first_node)
-        {
-            let accepted_tree_events = if trace_detail == RuntimeTraceDetail::Full {
-                tree_events_for_version_lineage(first_version, &trace_events, &tree_events)
-            } else {
-                first_tree_events.clone()
-            };
-            let reusable_nodes =
-                mark_reusable_nodes_with_errors(first_reusable_nodes, &accepted_tree_events);
-            trace_events.push(TraceEvent::ParseFinish {
-                id: next_trace_id(&trace_events),
-                outcome: if min_error_cost == 0 {
-                    ParseOutcome::Accepted
-                } else {
-                    ParseOutcome::Recovered
-                },
-            });
-            return Ok(RuntimeParseReport {
-                tree: first_node,
-                tree_store,
-                reusable_nodes,
-                trace_events,
-                tree_events: if trace_detail == RuntimeTraceDetail::Full {
-                    tree_events
-                } else {
-                    first_tree_events
-                },
-                accepted_version: first_version,
-                accepted_count: best_accepted.len(),
-                failure_count: failures.len(),
-                max_live_versions,
-            });
-        }
-
-        trace_events.push(TraceEvent::ParseFinish {
-            id: next_trace_id(&trace_events),
-            outcome: ParseOutcome::Failed,
-        });
-        Err(
-            ReducedParseError::new(ReducedParseErrorKind::AmbiguousParse {
-                accepted_count: best_accepted.len(),
-                accepted: best_accepted
-                    .iter()
-                    .map(|(_, node, _, _, _, _)| node.to_sexp())
-                    .collect(),
-            })
-            .with_trace(first_trace),
-        )
-    }
-
-    fn step_runtime_branch(
-        &self,
-        branch: RuntimeBranch,
-        input: &str,
-        line_index: &InputLineIndex,
-        tree_store: &mut RuntimeTreeStore,
-        trace_events: &mut Vec<TraceEvent>,
-        tree_events: &mut Vec<TreeEvent>,
-        next_version_index: &mut usize,
-        next_lookahead_index: &mut usize,
-        recovery: RuntimeRecoveryMode,
-        trace_detail: RuntimeTraceDetail,
-        reuse_index: Option<&RuntimeReuseIndex>,
-    ) -> Vec<RuntimeStepOutcome> {
-        let source_version = branch.version;
-        let state = match branch.stack.last() {
-            Some(entry) => entry.state,
-            None => {
-                return vec![RuntimeStepOutcome::Failed {
-                    version: source_version,
-                    error: ReducedParseError::new(ReducedParseErrorKind::EmptyStack)
-                        .with_trace(branch.trace),
-                }];
-            }
-        };
-        let state_row = match self.reduced.parse_state(state) {
-            Ok(state_row) => state_row,
-            Err(error) => {
-                return vec![RuntimeStepOutcome::Failed {
-                    version: source_version,
-                    error: error.with_trace(branch.trace),
-                }];
-            }
-        };
-        if let Some(reuse_index) = reuse_index
-            && let Some(branch) = self.try_reuse_runtime_node(
-                branch.clone(),
-                reuse_index,
-                input,
-                line_index,
-                tree_store,
-                trace_events,
-                tree_events,
-                trace_detail,
-            )
-        {
-            return vec![RuntimeStepOutcome::Branch(branch)];
-        }
-        let token = match self
-            .runtime_auto_close_token(state_row, &branch, input)
-            .map(Ok)
-            .unwrap_or_else(|| {
-                self.reduced.lex(
-                    state_row,
-                    input,
-                    branch.byte_position,
-                    branch.scanner_snapshot,
-                )
-            }) {
-            Ok(token) => token,
-            Err(error) => {
-                if recovery == RuntimeRecoveryMode::SkipInvalidInput
-                    && matches!(error.kind(), ReducedParseErrorKind::NoToken { .. })
-                    && input[branch.byte_position..].starts_with(['{', '}'])
-                    && let Some(branch) = self.recover_runtime_to_viable_stack(
-                        branch.clone(),
-                        input,
-                        trace_events,
-                        trace_detail,
-                    )
-                {
-                    return vec![RuntimeStepOutcome::Branch(branch)];
-                }
-                if recovery == RuntimeRecoveryMode::SkipInvalidInput
-                    && matches!(error.kind(), ReducedParseErrorKind::NoToken { .. })
-                    && let Some(branch) = self.recover_runtime_no_token(
-                        branch.clone(),
-                        input,
-                        line_index,
-                        tree_store,
-                        trace_events,
-                        tree_events,
-                        trace_detail,
-                    )
-                {
-                    return vec![RuntimeStepOutcome::Branch(branch)];
-                }
-                return vec![RuntimeStepOutcome::Failed {
-                    version: source_version,
-                    error: error.with_trace(branch.trace),
-                }];
-            }
-        };
-        let lookahead = LookaheadTokenId::from_index(*next_lookahead_index);
-        *next_lookahead_index += 1;
-        push_full_runtime_trace(
-            trace_events,
-            trace_detail,
-            TraceEvent::Lex {
-                version: source_version,
-                mode: state_row.lex_mode(),
-                lookahead,
-            },
-        );
-        if let LookaheadSymbol::External(_) = token.lookahead {
-            let mode = &self.reduced.table.lexical_modes()[state_row.lex_mode().get() as usize];
-            if let Some(valid_symbols) = mode.valid_symbols() {
-                let scanner = token.scanner;
-                push_full_runtime_trace(
-                    trace_events,
-                    trace_detail,
-                    TraceEvent::ExternalScanner {
-                        version: source_version,
-                        valid_symbols,
-                        before: scanner.and_then(|scanner| scanner.before()),
-                        after: scanner.and_then(|scanner| scanner.after()),
-                        result: Some(lookahead),
-                    },
-                );
-            }
-        }
-        let Some(entry) = state_row
-            .entries()
-            .iter()
-            .find(|entry| entry.lookahead() == token.lookahead)
-        else {
-            if recovery == RuntimeRecoveryMode::SkipInvalidInput
-                && let Some(branch) = self.recover_runtime_to_action_state(
-                    branch.clone(),
-                    token.lookahead,
-                    trace_events,
-                    trace_detail,
-                )
-            {
-                return vec![RuntimeStepOutcome::Branch(branch)];
-            }
-            return vec![RuntimeStepOutcome::Failed {
-                version: source_version,
-                error: ReducedParseError::new(ReducedParseErrorKind::NoAction {
-                    state,
-                    lookahead: token.lookahead,
-                    byte_position: branch.byte_position,
-                })
-                .with_trace(branch.trace),
-            }];
-        };
-
-        if entry.actions().len() > 1 {
-            let branches = (0..entry.actions().len())
-                .map(|_| {
-                    let version = StackVersionId::from_index(*next_version_index);
-                    *next_version_index += 1;
-                    version
-                })
-                .collect::<Vec<_>>();
-            let conflict = self.conflict_id(state, token.lookahead, entry.actions());
-            trace_events.push(TraceEvent::GlrSplit {
-                source: source_version,
-                conflict,
-                branches: branches.clone(),
-            });
-            let action_count = entry.actions().len();
-            let mut branch_slot = Some(branch);
-            let mut outcomes = Vec::with_capacity(action_count);
-            for (index, (action, version)) in entry.actions().iter().zip(branches).enumerate() {
-                let mut branch = if index + 1 == action_count {
-                    branch_slot
-                        .take()
-                        .expect("last split arm consumes source branch")
-                } else {
-                    branch_slot
-                        .as_ref()
-                        .expect("source branch remains until last split arm")
-                        .clone()
-                };
-                branch.version = version;
-                branch.trace.push(ReducedTraceStep {
-                    state,
-                    byte_position: branch.byte_position,
-                    lookahead: token.lookahead,
-                    action: *action,
-                });
-                outcomes.push(self.apply_runtime_action(
-                    branch,
-                    token,
-                    lookahead,
-                    *action,
-                    input,
-                    line_index,
-                    tree_store,
-                    trace_events,
-                    tree_events,
-                    trace_detail,
-                ));
-            }
-            return outcomes;
-        }
-
-        let action = entry.actions()[0];
-        let mut branch = branch;
-        branch.trace.push(ReducedTraceStep {
-            state,
-            byte_position: branch.byte_position,
-            lookahead: token.lookahead,
-            action,
-        });
-        vec![self.apply_runtime_action(
-            branch,
-            token,
-            lookahead,
-            action,
-            input,
-            line_index,
-            tree_store,
-            trace_events,
-            tree_events,
-            trace_detail,
-        )]
-    }
-
-    fn try_reuse_runtime_node(
-        &self,
-        mut branch: RuntimeBranch,
-        reuse_index: &RuntimeReuseIndex,
-        input: &str,
-        line_index: &InputLineIndex,
-        tree_store: &mut RuntimeTreeStore,
-        trace_events: &mut Vec<TraceEvent>,
-        tree_events: &mut Vec<TreeEvent>,
-        trace_detail: RuntimeTraceDetail,
-    ) -> Option<RuntimeBranch> {
-        let entry_state = branch.stack.last().map(|entry| entry.state)?;
-        let reusable =
-            reuse_index.get(branch.byte_position, entry_state, branch.scanner_snapshot)?;
-        let goto_state = self.reduced.goto_state(entry_state, reusable.symbol).ok()?;
-        let node = tree_store.push(reusable.tree.clone());
-        let (bytes, points) =
-            input_ranges(input, line_index, reusable.start_byte, reusable.end_byte);
-        let tree_event = TreeEvent::ReuseNode {
-            version: branch.version,
-            node,
-            bytes,
-            points,
-            scanner_snapshot: reusable.entry_scanner_snapshot,
-        };
-        let replayed_events = replay_reused_tree_events(
-            reusable,
-            branch.version,
-            node,
-            input,
-            line_index,
-            tree_store,
-        );
-        if trace_detail == RuntimeTraceDetail::Full {
-            tree_events.push(tree_event.clone());
-            tree_events.extend(replayed_events.clone());
-            trace_events.push(TraceEvent::Tree(tree_event));
-        } else {
-            branch.tree_events.push(tree_event);
-            branch.tree_events.extend(replayed_events.clone());
-        }
-        push_full_runtime_trace(
-            trace_events,
-            trace_detail,
-            TraceEvent::StateEnter {
-                id: next_trace_id(trace_events),
-                version: branch.version,
-                state: goto_state,
-            },
-        );
-        branch.stack.push(RuntimeStackEntry {
-            state: goto_state,
-            fragment: Some(RuntimeFragment::Node {
-                node,
-                start_byte: reusable.start_byte,
-                end_byte: reusable.end_byte,
-                lookahead_end_byte: reusable.lookahead_end_byte,
-                start_scanner_snapshot: reusable.entry_scanner_snapshot,
-            }),
-            extra: false,
-            end_byte: reusable.end_byte,
-        });
-        branch.byte_position = reusable.end_byte;
-        branch.scanner_snapshot = reusable.exit_scanner_snapshot;
-        branch.reusable_nodes.push(RuntimeReusableNode {
-            tree: reusable.tree.clone(),
-            source_node: node,
-            symbol: reusable.symbol,
-            entry_state,
-            entry_scanner_snapshot: reusable.entry_scanner_snapshot,
-            exit_scanner_snapshot: reusable.exit_scanner_snapshot,
-            start_byte: reusable.start_byte,
-            end_byte: reusable.end_byte,
-            lookahead_end_byte: reusable.lookahead_end_byte,
-            contains_error: false,
-            tree_events: replayed_events,
-        });
-        Some(branch)
-    }
-
-    fn runtime_auto_close_token(
-        &self,
-        state: &ParseState,
-        branch: &RuntimeBranch,
-        input: &str,
-    ) -> Option<ReducedToken> {
-        let open_tag = branch.auto_close_stack.last()?;
-        let mode = self
-            .reduced
-            .table
-            .lexical_modes()
-            .get(state.lex_mode().get() as usize)?;
-        let compiled_mode = self
-            .reduced
-            .runtime_plan
-            .get()
-            .compiled_lex_modes
-            .get(mode.id().get() as usize)?;
-        for terminal in mode.terminals() {
-            let Some(lookahead) = self.reduced.lookahead_for_terminal(state, *terminal) else {
-                continue;
-            };
-            if !state
-                .entries()
+            fields: parser
+                .fields
                 .iter()
-                .any(|entry| entry.lookahead() == lookahead)
-            {
-                continue;
-            }
-            let Some(terminal_row) = compiled_mode
+                .map(|field| Arc::<str>::from(field.name()))
+                .collect(),
+            public_nodes: parser
+                .public_node_kinds
+                .iter()
+                .map(|kind| Arc::<str>::from(kind.name()))
+                .collect(),
+            aliases: parser
+                .aliases
+                .iter()
+                .map(|alias| Arc::<str>::from(alias.value()))
+                .collect(),
+            terminals: parser
+                .symbols
                 .terminals
                 .iter()
-                .find(|row| row.terminal == *terminal)
-            else {
-                continue;
-            };
-            let CompiledTerminalMatcher::Expr(CompiledLexExpr::AutoClose(spec)) =
-                &terminal_row.matcher
-            else {
-                continue;
-            };
-            if auto_close_closed_by_tags(spec, open_tag).is_none() {
-                continue;
-            }
-            let marker_len = auto_close_trigger_len(spec, open_tag, input, branch.byte_position)?;
-            return Some(ReducedToken {
-                lookahead,
-                end: branch.byte_position,
-                inspected_end: branch.byte_position + marker_len,
-                scanner: None,
-            });
-        }
-        None
-    }
-
-    fn update_auto_close_stack(
-        &self,
-        branch: &mut RuntimeBranch,
-        token: ReducedToken,
-        input: &str,
-    ) {
-        let LookaheadSymbol::Terminal(terminal) = token.lookahead else {
-            return;
-        };
-        if let Some(spec) = self.auto_close_spec_for_terminal(terminal) {
-            if branch
-                .auto_close_stack
-                .last()
-                .is_some_and(|tag| auto_close_has_rule_for_tag(spec, tag))
-            {
-                branch.auto_close_stack.pop();
-            }
-            return;
-        }
-        let start = branch.byte_position;
-        let Some(text) = input.get(start..token.end) else {
-            return;
-        };
-        for spec in self.auto_close_specs() {
-            if spec.close.as_deref() == Some(text) {
-                if branch.auto_close_stack.last() == Some(&spec.tag) {
-                    branch.auto_close_stack.pop();
-                }
-                return;
-            }
-            if spec.open.as_deref() == Some(text) {
-                branch.auto_close_stack.push(spec.tag.clone());
-                return;
-            }
-        }
-    }
-
-    fn update_auto_close_stack_for_reduction(
-        &self,
-        branch: &mut RuntimeBranch,
-        fragment: &RuntimeFragment,
-        tree_store: &RuntimeTreeStore,
-        input: &str,
-    ) {
-        let RuntimeFragment::Node {
-            node,
-            start_byte,
-            end_byte,
-            ..
-        } = fragment
-        else {
-            return;
-        };
-        let reduced_node = tree_store.node(*node);
-        for spec in self.auto_close_specs() {
-            if spec.open_node.as_deref() == Some(reduced_node.kind.as_str())
-                && auto_close_node_has_tag_name_child(reduced_node, spec)
-            {
-                let Some(tag) = scan_auto_close_tag_in_range(
-                    input,
-                    *start_byte,
-                    *end_byte,
-                    spec.start_prefix.as_deref().unwrap_or("<"),
-                ) else {
-                    continue;
-                };
-                branch.auto_close_stack.push(tag);
-                return;
-            }
-            if spec.close_node.as_deref() == Some(reduced_node.kind.as_str())
-                && auto_close_node_has_tag_name_child(reduced_node, spec)
-            {
-                let end_prefix = spec.end_prefix.as_deref().unwrap_or("</");
-                let Some(tag) =
-                    scan_auto_close_tag_in_range(input, *start_byte, *end_byte, end_prefix)
-                else {
-                    continue;
-                };
-                if branch.auto_close_stack.last() == Some(&tag) {
-                    branch.auto_close_stack.pop();
-                }
-                return;
-            }
-        }
-    }
-
-    fn auto_close_spec_for_terminal(&self, terminal: TerminalId) -> Option<&AutoCloseSpec> {
-        self.reduced
-            .runtime_plan
-            .get()
-            .compiled_lex_modes
-            .iter()
-            .flat_map(|mode| mode.terminals.iter())
-            .find_map(|row| {
-                if row.terminal != terminal {
-                    return None;
-                }
-                match &row.matcher {
-                    CompiledTerminalMatcher::Expr(CompiledLexExpr::AutoClose(spec)) => Some(spec),
-                    _ => None,
-                }
-            })
-    }
-
-    fn auto_close_specs(&self) -> impl Iterator<Item = &AutoCloseSpec> {
-        self.reduced
-            .runtime_plan
-            .get()
-            .compiled_lex_modes
-            .iter()
-            .flat_map(|mode| mode.terminals.iter())
-            .filter_map(|row| match &row.matcher {
-                CompiledTerminalMatcher::Expr(CompiledLexExpr::AutoClose(spec)) => Some(spec),
-                _ => None,
-            })
-    }
-
-    fn apply_runtime_action(
-        &self,
-        mut branch: RuntimeBranch,
-        token: ReducedToken,
-        lookahead: LookaheadTokenId,
-        action: ParseAction,
-        input: &str,
-        line_index: &InputLineIndex,
-        tree_store: &mut RuntimeTreeStore,
-        trace_events: &mut Vec<TraceEvent>,
-        tree_events: &mut Vec<TreeEvent>,
-        trace_detail: RuntimeTraceDetail,
-    ) -> RuntimeStepOutcome {
-        match action {
-            ParseAction::Shift { state, .. } => {
-                let start = branch.byte_position;
-                let start_scanner_snapshot = branch.scanner_snapshot;
-                self.update_auto_close_stack(&mut branch, token, input);
-                branch.byte_position = token.end;
-                branch.commit_scanner_snapshot(token);
-                let (bytes, points) = input_ranges(input, line_index, start, token.end);
-                let tree_event = TreeEvent::Token {
-                    version: branch.version,
-                    symbol: lookahead_parser_symbol(token.lookahead),
-                    lookahead,
-                    bytes,
-                    points,
-                    extra: false,
-                    named: false,
-                    keyword: KeywordStatus::Unchecked,
-                };
-                if trace_detail == RuntimeTraceDetail::Full {
-                    tree_events.push(tree_event.clone());
-                    trace_events.push(TraceEvent::Tree(tree_event));
-                } else {
-                    branch.tree_events.push(tree_event);
-                }
-                push_full_runtime_trace(
-                    trace_events,
-                    trace_detail,
-                    TraceEvent::Shift {
-                        version: branch.version,
-                        lookahead,
-                        state,
-                    },
-                );
-                push_full_runtime_trace(
-                    trace_events,
-                    trace_detail,
-                    TraceEvent::StateEnter {
-                        id: next_trace_id(trace_events),
-                        version: branch.version,
-                        state,
-                    },
-                );
-                branch.stack.push(RuntimeStackEntry {
-                    state,
-                    fragment: Some(RuntimeFragment::Hidden {
-                        children: Vec::new(),
-                        visible_nodes: Vec::new(),
-                        start_byte: start,
-                        end_byte: token.end,
-                        lookahead_end_byte: token.inspected_end,
-                        start_scanner_snapshot,
-                    }),
-                    extra: false,
-                    end_byte: token.end,
-                });
-                RuntimeStepOutcome::Branch(branch)
-            }
-            ParseAction::ShiftExtra => {
-                let start = branch.byte_position;
-                let start_scanner_snapshot = branch.scanner_snapshot;
-                branch.byte_position = token.end;
-                branch.commit_scanner_snapshot(token);
-                let fragment = if trace_detail == RuntimeTraceDetail::Full {
-                    self.runtime_extra_fragment(
-                        branch.version,
-                        token.lookahead,
-                        tree_store,
-                        tree_events,
-                        input,
-                        line_index,
-                        start,
-                        token.end,
-                        token.inspected_end,
-                        start_scanner_snapshot,
-                    )
-                } else {
-                    self.runtime_extra_fragment(
-                        branch.version,
-                        token.lookahead,
-                        tree_store,
-                        &mut branch.tree_events,
-                        input,
-                        line_index,
-                        start,
-                        token.end,
-                        token.inspected_end,
-                        start_scanner_snapshot,
-                    )
-                };
-                if let Some(fragment) = fragment {
-                    let Some(state) = branch.stack.last().map(|entry| entry.state) else {
-                        return RuntimeStepOutcome::Failed {
-                            version: branch.version,
-                            error: ReducedParseError::new(ReducedParseErrorKind::EmptyStack)
-                                .with_trace(branch.trace),
-                        };
-                    };
-                    branch.stack.push(RuntimeStackEntry {
-                        state,
-                        fragment: Some(fragment),
-                        extra: true,
-                        end_byte: token.end,
-                    });
-                }
-                RuntimeStepOutcome::Branch(branch)
-            }
-            ParseAction::Reduce {
-                production,
-                metadata,
-                symbol,
-                child_count,
-                ..
-            } => {
-                let reduction = match if trace_detail == RuntimeTraceDetail::Full {
-                    self.runtime_reduce_fragment(
-                        branch.version,
-                        production,
-                        metadata,
-                        child_count,
-                        &mut branch.stack,
-                        tree_store,
-                        tree_events,
-                        input,
-                        line_index,
-                        false,
-                    )
-                } else {
-                    self.runtime_reduce_fragment(
-                        branch.version,
-                        production,
-                        metadata,
-                        child_count,
-                        &mut branch.stack,
-                        tree_store,
-                        &mut branch.tree_events,
-                        input,
-                        line_index,
-                        false,
-                    )
-                } {
-                    Ok(reduction) => reduction,
-                    Err(error) => {
-                        return RuntimeStepOutcome::Failed {
-                            version: branch.version,
-                            error: error.with_trace(branch.trace),
-                        };
-                    }
-                };
-                push_full_runtime_trace(
-                    trace_events,
-                    trace_detail,
-                    TraceEvent::Reduce {
-                        version: branch.version,
-                        production,
-                        metadata,
-                    },
-                );
-                let head_state = match branch.stack.last() {
-                    Some(entry) => entry.state,
-                    None => {
-                        return RuntimeStepOutcome::Failed {
-                            version: branch.version,
-                            error: ReducedParseError::new(ReducedParseErrorKind::EmptyStack)
-                                .with_trace(branch.trace),
-                        };
-                    }
-                };
-                let goto_state = match self.reduced.goto_state(head_state, symbol) {
-                    Ok(state) => state,
-                    Err(error) => {
-                        return RuntimeStepOutcome::Failed {
-                            version: branch.version,
-                            error: error.with_trace(branch.trace),
-                        };
-                    }
-                };
-                let (_start_byte, end_byte) = reduction.fragment.byte_range();
-                self.update_auto_close_stack_for_reduction(
-                    &mut branch,
-                    &reduction.fragment,
-                    tree_store,
-                    input,
-                );
-                if let RuntimeFragment::Node {
-                    node,
-                    start_byte,
-                    end_byte,
-                    lookahead_end_byte,
-                    start_scanner_snapshot,
-                } = &reduction.fragment
-                    && start_byte < end_byte
-                {
-                    branch.reusable_nodes.push(RuntimeReusableNode {
-                        tree: tree_store.node(*node).clone(),
-                        source_node: *node,
-                        symbol,
-                        entry_state: head_state,
-                        entry_scanner_snapshot: *start_scanner_snapshot,
-                        exit_scanner_snapshot: branch.scanner_snapshot,
-                        start_byte: *start_byte,
-                        end_byte: *end_byte,
-                        lookahead_end_byte: *lookahead_end_byte,
-                        contains_error: false,
-                        tree_events: subtree_tree_events(
-                            if trace_detail == RuntimeTraceDetail::Full {
-                                tree_events
-                            } else {
-                                &branch.tree_events
-                            },
-                            *start_byte,
-                            *end_byte,
-                            *node,
-                        ),
-                    });
-                }
-                branch.stack.push(RuntimeStackEntry {
-                    state: goto_state,
-                    fragment: Some(reduction.fragment),
-                    extra: false,
-                    end_byte,
-                });
-                for fragment in reduction.trailing_extras {
-                    let (_, end_byte) = fragment.byte_range();
-                    branch.stack.push(RuntimeStackEntry {
-                        state: goto_state,
-                        fragment: Some(fragment),
-                        extra: true,
-                        end_byte,
-                    });
-                }
-                push_full_runtime_trace(
-                    trace_events,
-                    trace_detail,
-                    TraceEvent::StateEnter {
-                        id: next_trace_id(trace_events),
-                        version: branch.version,
-                        state: goto_state,
-                    },
-                );
-                RuntimeStepOutcome::Branch(branch)
-            }
-            ParseAction::Accept {
-                production,
-                metadata,
-                child_count,
-                ..
-            } => {
-                if token.lookahead != LookaheadSymbol::Eof || branch.byte_position != input.len() {
-                    return RuntimeStepOutcome::Failed {
-                        version: branch.version,
-                        error: ReducedParseError::new(ReducedParseErrorKind::TrailingInput {
-                            byte_position: branch.byte_position,
-                        })
-                        .with_trace(branch.trace),
-                    };
-                }
-                let reduction = match if trace_detail == RuntimeTraceDetail::Full {
-                    self.runtime_reduce_fragment(
-                        branch.version,
-                        production,
-                        metadata,
-                        child_count,
-                        &mut branch.stack,
-                        tree_store,
-                        tree_events,
-                        input,
-                        line_index,
-                        true,
-                    )
-                } else {
-                    self.runtime_reduce_fragment(
-                        branch.version,
-                        production,
-                        metadata,
-                        child_count,
-                        &mut branch.stack,
-                        tree_store,
-                        &mut branch.tree_events,
-                        input,
-                        line_index,
-                        true,
-                    )
-                } {
-                    Ok(reduction) => reduction,
-                    Err(error) => {
-                        return RuntimeStepOutcome::Failed {
-                            version: branch.version,
-                            error: error.with_trace(branch.trace),
-                        };
-                    }
-                };
-                push_full_runtime_trace(
-                    trace_events,
-                    trace_detail,
-                    TraceEvent::Reduce {
-                        version: branch.version,
-                        production,
-                        metadata,
-                    },
-                );
-                match reduction.fragment {
-                    RuntimeFragment::Node {
-                        node,
-                        start_byte: _,
-                        end_byte: _,
-                        lookahead_end_byte: _,
-                        ..
-                    } => {
-                        let root =
-                            match self.finish_runtime_root(node, &mut branch.stack, tree_store) {
-                                Ok(node) => node,
-                                Err(error) => {
-                                    return RuntimeStepOutcome::Failed {
-                                        version: branch.version,
-                                        error: error.with_trace(branch.trace),
-                                    };
-                                }
-                            };
-                        RuntimeStepOutcome::Accepted {
-                            version: branch.version,
-                            node: root,
-                            trace: branch.trace,
-                            error_cost: branch.error_cost,
-                            tree_events: branch.tree_events,
-                            reusable_nodes: branch.reusable_nodes,
+                .map(|terminal| {
+                    let name = match terminal.kind() {
+                        ParserTerminalKind::String | ParserTerminalKind::AutoClose => {
+                            terminal.spelling()
                         }
-                    }
-                    RuntimeFragment::Hidden { .. } => RuntimeStepOutcome::Failed {
-                        version: branch.version,
-                        error: ReducedParseError::new(ReducedParseErrorKind::AcceptedHiddenRoot)
-                            .with_trace(branch.trace),
-                    },
-                }
-            }
-            ParseAction::Recover => {
-                let state = branch
-                    .stack
-                    .last()
-                    .map(|entry| entry.state)
-                    .unwrap_or(ParseStateId::from_index(0));
-                push_full_runtime_trace(
-                    trace_events,
-                    trace_detail,
-                    TraceEvent::Recover {
-                        version: branch.version,
-                        state,
-                    },
-                );
-                RuntimeStepOutcome::Failed {
-                    version: branch.version,
-                    error: ReducedParseError::new(ReducedParseErrorKind::UnsupportedRecovery {
-                        state,
-                    })
-                    .with_trace(branch.trace),
-                }
-            }
-        }
-    }
-
-    fn recover_runtime_to_viable_stack(
-        &self,
-        mut branch: RuntimeBranch,
-        input: &str,
-        trace_events: &mut Vec<TraceEvent>,
-        trace_detail: RuntimeTraceDetail,
-    ) -> Option<RuntimeBranch> {
-        if self.reduced.external_scanner.is_some() || branch.stack.len() <= 1 {
-            return None;
-        }
-        let original_len = branch.stack.len();
-        for len in (1..original_len).rev() {
-            let state = branch.stack[len - 1].state;
-            let state_row = self.reduced.parse_state(state).ok()?;
-            if self
-                .reduced
-                .lex(
-                    state_row,
-                    input,
-                    branch.byte_position,
-                    branch.scanner_snapshot,
-                )
-                .is_ok()
-            {
-                branch.stack.truncate(len);
-                branch.error_cost = branch
-                    .error_cost
-                    .saturating_add(u32::try_from(original_len - len).unwrap_or(u32::MAX));
-                push_full_runtime_trace(
-                    trace_events,
-                    trace_detail,
-                    TraceEvent::Recover {
-                        version: branch.version,
-                        state,
-                    },
-                );
-                return Some(branch);
-            }
-        }
-        None
-    }
-
-    fn recover_runtime_to_action_state(
-        &self,
-        mut branch: RuntimeBranch,
-        lookahead: LookaheadSymbol,
-        trace_events: &mut Vec<TraceEvent>,
-        trace_detail: RuntimeTraceDetail,
-    ) -> Option<RuntimeBranch> {
-        let original_len = branch.stack.len();
-        if original_len <= 1 {
-            return None;
-        }
-        for len in (1..original_len).rev() {
-            let state = branch.stack[len - 1].state;
-            let state_row = self.reduced.parse_state(state).ok()?;
-            if state_row
-                .entries()
+                        ParserTerminalKind::Pattern
+                        | ParserTerminalKind::Token
+                        | ParserTerminalKind::ImmediateToken => terminal
+                            .public_names()
+                            .first()
+                            .map(String::as_str)
+                            .unwrap_or_else(|| terminal.spelling()),
+                    };
+                    Arc::<str>::from(name)
+                })
+                .collect(),
+            nonterminals: parser
+                .symbols
+                .nonterminals
                 .iter()
-                .any(|entry| entry.lookahead() == lookahead)
-            {
-                branch.stack.truncate(len);
-                branch.error_cost = branch
-                    .error_cost
-                    .saturating_add(u32::try_from(original_len - len).unwrap_or(u32::MAX));
-                push_full_runtime_trace(
-                    trace_events,
-                    trace_detail,
-                    TraceEvent::Recover {
-                        version: branch.version,
-                        state,
-                    },
-                );
-                return Some(branch);
-            }
+                .map(|nonterminal| Arc::<str>::from(nonterminal.name()))
+                .collect(),
+            externals: parser
+                .symbols
+                .externals
+                .iter()
+                .map(|external| external.name().map(Arc::<str>::from))
+                .collect(),
+            eof: Arc::<str>::from("EOF"),
+            error: Arc::<str>::from("ERROR"),
+            missing: Arc::<str>::from("MISSING"),
+            recovery: Arc::<str>::from("RECOVERY"),
         }
-        None
     }
 
-    fn recover_runtime_no_token(
-        &self,
-        mut branch: RuntimeBranch,
-        input: &str,
-        line_index: &InputLineIndex,
-        tree_store: &mut RuntimeTreeStore,
-        trace_events: &mut Vec<TraceEvent>,
-        tree_events: &mut Vec<TreeEvent>,
-        trace_detail: RuntimeTraceDetail,
-    ) -> Option<RuntimeBranch> {
-        let state = branch.stack.last().map(|entry| entry.state)?;
-        let start_byte = branch.byte_position;
-        let end_byte = runtime_recovery_end(input, start_byte)?;
-        let node = tree_store.push(SexpNode {
-            kind: "ERROR".to_owned(),
-            children: Vec::new(),
-        });
-        let (bytes, points) = input_ranges(input, line_index, start_byte, end_byte);
-        push_full_runtime_trace(
-            trace_events,
-            trace_detail,
-            TraceEvent::Recover {
-                version: branch.version,
-                state,
-            },
-        );
-        let tree_event = TreeEvent::Error {
-            version: branch.version,
-            node,
-            bytes,
-            points,
-            error_cost: u32::try_from(end_byte - start_byte).unwrap_or(u32::MAX),
-        };
-        if trace_detail == RuntimeTraceDetail::Full {
-            tree_events.push(tree_event);
-        } else {
-            branch.tree_events.push(tree_event);
+    #[cfg(test)]
+    pub(crate) fn empty_for_tests() -> Self {
+        Self {
+            fields: Vec::new(),
+            public_nodes: Vec::new(),
+            aliases: Vec::new(),
+            terminals: Vec::new(),
+            nonterminals: Vec::new(),
+            externals: Vec::new(),
+            eof: Arc::<str>::from("EOF"),
+            error: Arc::<str>::from("ERROR"),
+            missing: Arc::<str>::from("MISSING"),
+            recovery: Arc::<str>::from("RECOVERY"),
         }
-        branch.error_cost = branch
-            .error_cost
-            .saturating_add(u32::try_from(end_byte - start_byte).unwrap_or(u32::MAX));
-        branch.stack.push(RuntimeStackEntry {
-            state,
-            fragment: Some(RuntimeFragment::Node {
+    }
+}
+
+impl<'a> ResolvedCstBuilder<'a> {
+    pub(crate) fn with_capacity(
+        parser: &'a ParserGrammar,
+        input: &'a str,
+        capacity: usize,
+    ) -> Self {
+        Self::with_node_capacity(parser, input, capacity, 0)
+    }
+
+    pub(crate) fn with_node_capacity(
+        parser: &'a ParserGrammar,
+        input: &'a str,
+        capacity: usize,
+        node_capacity: usize,
+    ) -> Self {
+        Self::with_names_and_node_capacity(
+            parser,
+            input,
+            capacity,
+            node_capacity,
+            ResolvedCstNames::from_parser(parser),
+        )
+    }
+
+    pub(crate) fn with_names_and_node_capacity(
+        parser: &'a ParserGrammar,
+        input: &'a str,
+        capacity: usize,
+        node_capacity: usize,
+        names: ResolvedCstNames,
+    ) -> Self {
+        let mut item_indices_by_node = Vec::with_capacity(node_capacity);
+        item_indices_by_node.resize_with(node_capacity, SmallVec::new);
+        Self {
+            parser,
+            input,
+            source: Arc::<str>::from(input),
+            names,
+            field_by_child: vec![None; node_capacity],
+            item_indices_by_node,
+            items: Vec::with_capacity(capacity),
+            roots: Vec::new(),
+        }
+    }
+
+    pub(crate) fn push(&mut self, event: &TreeEvent) {
+        let order = self.items.len();
+        match event {
+            TreeEvent::Field {
+                child: Some(child),
+                field,
+                ..
+            } => {
+                if let Some(name) = self.field_name(*field) {
+                    self.attach_field(*child, name);
+                }
+            }
+            TreeEvent::Token {
+                symbol,
+                bytes,
+                points,
+                extra,
+                named,
+                ..
+            } => {
+                self.push_item(ResolvedCstItem {
+                    kind: self.token_symbol_kind(*symbol, *bytes),
+                    symbol: Some(*symbol),
+                    field: None,
+                    node: None,
+                    bytes: *bytes,
+                    points: *points,
+                    named: *named,
+                    visible: true,
+                    extra: *extra,
+                    has_text: true,
+                    order,
+                    children: SmallVec::new(),
+                });
+            }
+            TreeEvent::Reduce {
                 node,
-                start_byte,
-                end_byte,
-                lookahead_end_byte: end_byte,
-                start_scanner_snapshot: branch.scanner_snapshot,
-            }),
-            extra: true,
-            end_byte,
-        });
-        branch.byte_position = end_byte;
-        Some(branch)
-    }
-
-    fn runtime_reduce_fragment(
-        &self,
-        version: StackVersionId,
-        production: ProductionId,
-        metadata: ProductionMetadataId,
-        child_count: usize,
-        stack: &mut Vec<RuntimeStackEntry>,
-        tree_store: &mut RuntimeTreeStore,
-        tree_events: &mut Vec<TreeEvent>,
-        input: &str,
-        line_index: &InputLineIndex,
-        include_trailing_extras: bool,
-    ) -> Result<RuntimeReduction, ReducedParseError> {
-        let production_row = &self.reduced.parser.productions[production.get() as usize];
-        let metadata_row = &self.reduced.parser.production_metadata[metadata.get() as usize];
-        let mut children = Vec::new();
-        let mut visible_nodes = Vec::new();
-        let mut trailing_extras = Vec::new();
-        if !include_trailing_extras {
-            while stack.last().is_some_and(|entry| entry.extra) {
-                let entry = stack
-                    .pop()
-                    .ok_or_else(|| ReducedParseError::new(ReducedParseErrorKind::EmptyStack))?;
-                let Some(fragment) = entry.fragment else {
-                    return Err(ReducedParseError::new(ReducedParseErrorKind::EmptyStack));
-                };
-                trailing_extras.push(fragment);
-            }
-            trailing_extras.reverse();
-        }
-        let mut popped = Vec::new();
-        let mut remaining_children = child_count;
-        while remaining_children > 0 {
-            let entry = stack
-                .pop()
-                .ok_or_else(|| ReducedParseError::new(ReducedParseErrorKind::EmptyStack))?;
-            let Some(fragment) = entry.fragment else {
-                return Err(ReducedParseError::new(ReducedParseErrorKind::EmptyStack));
-            };
-            if !entry.extra {
-                remaining_children -= 1;
-            }
-            popped.push((entry.extra, fragment));
-        }
-        popped.reverse();
-        let start_byte = popped
-            .first()
-            .map(|(_, fragment)| fragment.byte_range().0)
-            .unwrap_or_else(|| stack.last().map(|entry| entry.end_byte).unwrap_or(0));
-        let end_byte = popped
-            .last()
-            .map(|(_, fragment)| fragment.byte_range().1)
-            .unwrap_or(start_byte);
-        let lookahead_end_byte = popped
-            .iter()
-            .map(|(_, fragment)| fragment.lookahead_end_byte())
-            .max()
-            .unwrap_or(end_byte);
-        let start_scanner_snapshot = popped
-            .first()
-            .map(|(_, fragment)| fragment.start_scanner_snapshot())
-            .unwrap_or(None);
-        let mut steps = production_row.steps().iter();
-        let mut structural_index = 0usize;
-        let mut field_events = Vec::new();
-        for (extra, fragment) in popped {
-            let alias_range = fragment.byte_range();
-            let mut step_visible_nodes = fragment.visible_nodes().to_vec();
-            let mut field_child = fragment.single_visible_node();
-            let mut step_children = fragment.into_children(tree_store);
-            if !extra {
-                let Some(step) = steps.next() else {
-                    return Err(ReducedParseError::new(ReducedParseErrorKind::EmptyStack));
-                };
-                if let (Some(alias), Some(named)) = (step.alias(), step.alias_named()) {
-                    let alias_name = self.reduced.parser.aliases[alias.get() as usize]
-                        .value
-                        .clone();
-                    if named {
-                        if step_children.is_empty() {
-                            step_children.push(SexpChild {
-                                field: None,
-                                value: SexpValue::Node(SexpNode {
-                                    kind: alias_name.clone(),
-                                    children: Vec::new(),
-                                }),
-                            });
-                        } else {
-                            for child in &mut step_children {
-                                if let SexpValue::Node(node) = &mut child.value {
-                                    node.kind.clone_from(&alias_name);
-                                }
-                            }
-                        }
-                    }
-                    let alias_node = tree_store.push(SexpNode {
-                        kind: alias_name,
-                        children: Vec::new(),
-                    });
-                    let (bytes, points) =
-                        input_ranges(input, line_index, alias_range.0, alias_range.1);
-                    tree_events.push(TreeEvent::Alias {
-                        version,
-                        node: alias_node,
-                        alias,
-                        named,
-                        structural_index,
-                        bytes,
-                        points,
-                    });
-                    if named {
-                        field_child = Some(alias_node);
-                        step_visible_nodes.clear();
-                        step_visible_nodes.push(alias_node);
-                    }
-                }
-                if let Some(field) = step.field() {
-                    field_events.push((structural_index, field, field_child));
-                }
-                structural_index += 1;
-            }
-            visible_nodes.extend(step_visible_nodes);
-            children.extend(step_children);
-        }
-
-        if let Some(public_node) = metadata_row.public_node() {
-            let kind = self.reduced.parser.public_node_kinds[public_node.get() as usize]
-                .name()
-                .to_owned();
-            let node = tree_store.push(SexpNode { kind, children });
-            let (bytes, points) = input_ranges(input, line_index, start_byte, end_byte);
-            let event = TreeEvent::Reduce {
-                version,
-                production,
                 metadata,
+                bytes,
+                points,
+                ..
+            } => {
+                if let Some(public_node) =
+                    self.parser.production_metadata[metadata.get() as usize].public_node()
+                {
+                    self.push_item(ResolvedCstItem {
+                        kind: self.public_node_kind(public_node),
+                        symbol: None,
+                        field: self.field_for_node(*node),
+                        node: Some(*node),
+                        bytes: *bytes,
+                        points: *points,
+                        named: true,
+                        visible: true,
+                        extra: false,
+                        has_text: false,
+                        order,
+                        children: SmallVec::new(),
+                    });
+                }
+            }
+            TreeEvent::CloseNode {
+                node,
+                public_node: Some(public_node),
+                bytes,
+                points,
+                ..
+            } => {
+                self.push_item(ResolvedCstItem {
+                    kind: self.public_node_kind(*public_node),
+                    symbol: None,
+                    field: self.field_for_node(*node),
+                    node: Some(*node),
+                    bytes: *bytes,
+                    points: *points,
+                    named: true,
+                    visible: true,
+                    extra: true,
+                    has_text: false,
+                    order,
+                    children: SmallVec::new(),
+                });
+            }
+            TreeEvent::Error {
                 node,
                 bytes,
                 points,
-            };
-            tree_events.push(event);
-            for (structural_index, field, child) in field_events {
-                tree_events.push(TreeEvent::Field {
-                    version,
-                    node,
-                    child,
-                    field,
-                    structural_index,
+                ..
+            } => {
+                self.push_item(ResolvedCstItem {
+                    kind: Arc::clone(&self.names.error),
+                    symbol: None,
+                    field: self.field_for_node(*node),
+                    node: Some(*node),
+                    bytes: *bytes,
+                    points: *points,
+                    named: true,
+                    visible: true,
+                    extra: false,
+                    has_text: false,
+                    order,
+                    children: SmallVec::new(),
                 });
             }
-            Ok(RuntimeReduction {
-                fragment: RuntimeFragment::Node {
-                    node,
-                    start_byte,
-                    end_byte,
-                    lookahead_end_byte,
-                    start_scanner_snapshot,
-                },
-                trailing_extras,
-            })
-        } else {
-            Ok(RuntimeReduction {
-                fragment: RuntimeFragment::Hidden {
-                    children,
-                    visible_nodes,
-                    start_byte,
-                    end_byte,
-                    lookahead_end_byte,
-                    start_scanner_snapshot,
-                },
-                trailing_extras,
-            })
+            TreeEvent::Missing {
+                symbol,
+                bytes,
+                points,
+                ..
+            } => {
+                self.push_item(ResolvedCstItem {
+                    kind: self.symbol_kind(*symbol, None),
+                    symbol: Some(*symbol),
+                    field: None,
+                    node: None,
+                    bytes: *bytes,
+                    points: *points,
+                    named: false,
+                    visible: true,
+                    extra: false,
+                    has_text: false,
+                    order,
+                    children: SmallVec::new(),
+                });
+            }
+            TreeEvent::Alias {
+                node,
+                alias,
+                named,
+                bytes,
+                points,
+                ..
+            } => {
+                self.push_item(ResolvedCstItem {
+                    kind: self.alias_kind(*alias),
+                    symbol: None,
+                    field: self.field_for_node(*node),
+                    node: Some(*node),
+                    bytes: *bytes,
+                    points: *points,
+                    named: *named,
+                    visible: true,
+                    extra: false,
+                    has_text: false,
+                    order,
+                    children: SmallVec::new(),
+                });
+            }
+            TreeEvent::OpenNode { .. }
+            | TreeEvent::Field { child: None, .. }
+            | TreeEvent::CloseNode {
+                public_node: None, ..
+            }
+            | TreeEvent::ReuseNode { .. } => {}
         }
     }
 
-    fn runtime_extra_fragment(
-        &self,
-        version: StackVersionId,
-        lookahead: LookaheadSymbol,
-        tree_store: &mut RuntimeTreeStore,
-        tree_events: &mut Vec<TreeEvent>,
-        input: &str,
-        line_index: &InputLineIndex,
-        start_byte: usize,
-        end_byte: usize,
-        lookahead_end_byte: usize,
-        start_scanner_snapshot: Option<ScannerSnapshotId>,
-    ) -> Option<RuntimeFragment> {
-        let ReducedFragment::Node(node) = self.reduced.extra_fragment(lookahead)? else {
+    pub(crate) fn finish(mut self) -> Option<ResolvedCstNode> {
+        if self.items.is_empty() {
             return None;
-        };
-        let public_node = self
-            .reduced
-            .parser
-            .public_node_kinds
-            .iter()
-            .find(|kind| kind.name() == node.kind)
-            .map(PublicNodeKind::id);
-        let node = tree_store.push(node);
-        let (bytes, points) = input_ranges(input, line_index, start_byte, end_byte);
-        tree_events.push(TreeEvent::CloseNode {
-            version,
-            node,
-            public_node,
+        }
+
+        self.normalize_resolved_children();
+        let roots = std::mem::take(&mut self.roots);
+        if roots.is_empty() {
+            return None;
+        }
+        if roots.len() == 1 {
+            return Some(build_resolved_node(roots[0], &self.items, &self.source));
+        }
+
+        let first = roots[0];
+        let last = roots[roots.len() - 1];
+        let bytes = ByteRange::new(
+            self.items[first].bytes.start(),
+            self.items[last].bytes.end(),
+        )
+        .ok()?;
+        let points = PointRange::new(
+            self.items[first].points.start(),
+            self.items[last].points.end(),
+        )
+        .ok()?;
+        Some(ResolvedCstNode {
+            kind: "ROOT".into(),
+            symbol: None,
+            field: None,
+            node: None,
             bytes,
             points,
-        });
-        Some(RuntimeFragment::Node {
-            node,
-            start_byte,
-            end_byte,
-            lookahead_end_byte,
-            start_scanner_snapshot,
+            named: true,
+            visible: true,
+            extra: false,
+            text: None,
+            children: roots
+                .into_iter()
+                .map(|root| build_resolved_node(root, &self.items, &self.source))
+                .collect(),
         })
     }
 
-    fn finish_runtime_root(
-        &self,
-        node: TreeNodeId,
-        stack: &mut Vec<RuntimeStackEntry>,
-        tree_store: &RuntimeTreeStore,
-    ) -> Result<SexpNode, ReducedParseError> {
-        let mut root = tree_store.node(node).clone();
-        let mut leading_children = Vec::new();
-        for entry in stack.drain(..) {
-            match (entry.extra, entry.fragment) {
-                (_, None) => {}
-                (true, Some(fragment)) => {
-                    leading_children.extend(fragment.into_children(tree_store));
-                }
-                (false, Some(_)) => {
-                    return Err(ReducedParseError::new(
-                        ReducedParseErrorKind::UnreducedStackEntry { state: entry.state },
-                    ));
+    pub(crate) fn finish_tree(mut self) -> Option<ResolvedCstTree> {
+        if self.items.is_empty() {
+            return None;
+        }
+
+        self.normalize_resolved_children();
+        let roots = std::mem::take(&mut self.roots);
+        if roots.is_empty() {
+            return None;
+        }
+        Some(ResolvedCstTree {
+            source: self.source,
+            roots,
+            items: self.items,
+        })
+    }
+
+    fn attach_field(&mut self, node: TreeNodeId, name: Arc<str>) {
+        let slot = self.ensure_node_slot(node);
+        self.field_by_child[slot] = Some(name.clone());
+        for index in &self.item_indices_by_node[slot] {
+            self.items[*index].field = Some(name.clone());
+        }
+    }
+
+    fn push_item(&mut self, item: ResolvedCstItem) {
+        let node = item.node;
+        let index = self.items.len();
+        self.items.push(item);
+        if let Some(node) = node {
+            let slot = self.ensure_node_slot(node);
+            self.item_indices_by_node[slot].push(index);
+        }
+        self.attach_item_to_roots(index);
+    }
+
+    fn attach_item_to_roots(&mut self, item_index: usize) {
+        if self.items[item_index].node.is_none() {
+            let insert_at = self.root_insert_position(item_index);
+            self.roots.insert(insert_at, item_index);
+            return;
+        }
+
+        if let Some(last) = self.roots.last().copied()
+            && resolved_item_contains(&self.items[item_index], &self.items[last])
+        {
+            let mut first_child = self.roots.len() - 1;
+            while first_child > 0
+                && resolved_item_contains(
+                    &self.items[item_index],
+                    &self.items[self.roots[first_child - 1]],
+                )
+            {
+                first_child -= 1;
+            }
+            self.items[item_index].children = self.roots.drain(first_child..).collect();
+            self.roots.push(item_index);
+            return;
+        }
+
+        let parent_start = self.items[item_index].bytes.start().get();
+        let parent_end = self.items[item_index].bytes.end().get();
+        let mut first_child = self
+            .roots
+            .partition_point(|root| self.items[*root].bytes.start().get() < parent_start);
+        while first_child < self.roots.len()
+            && self.items[self.roots[first_child]].bytes.start().get() <= parent_end
+            && !resolved_item_contains(
+                &self.items[item_index],
+                &self.items[self.roots[first_child]],
+            )
+        {
+            first_child += 1;
+        }
+
+        let mut after_children = first_child;
+        while after_children < self.roots.len()
+            && resolved_item_contains(
+                &self.items[item_index],
+                &self.items[self.roots[after_children]],
+            )
+        {
+            after_children += 1;
+        }
+
+        if first_child == after_children {
+            let insert_at = self.root_insert_position(item_index);
+            self.roots.insert(insert_at, item_index);
+            return;
+        }
+
+        self.items[item_index].children = self.roots.drain(first_child..after_children).collect();
+        self.roots.insert(first_child, item_index);
+    }
+
+    fn root_insert_position(&self, item_index: usize) -> usize {
+        let key = resolved_item_order_key(&self.items[item_index]);
+        if self
+            .roots
+            .last()
+            .is_none_or(|root| resolved_item_order_key(&self.items[*root]) < key)
+        {
+            return self.roots.len();
+        }
+        self.roots
+            .partition_point(|root| resolved_item_order_key(&self.items[*root]) < key)
+    }
+
+    fn normalize_resolved_children(&mut self) {
+        self.roots = attach_resolved_children_from_ranges(&mut self.items);
+        sort_resolved_children(&mut self.roots, &self.items);
+        for index in 0..self.items.len() {
+            let mut children = std::mem::take(&mut self.items[index].children);
+            sort_resolved_children(&mut children, &self.items);
+            self.items[index].children = children;
+        }
+    }
+
+    fn ensure_node_slot(&mut self, node: TreeNodeId) -> usize {
+        let slot = node.get() as usize;
+        if slot >= self.field_by_child.len() {
+            self.field_by_child.resize_with(slot + 1, || None);
+        }
+        if slot >= self.item_indices_by_node.len() {
+            self.item_indices_by_node
+                .resize_with(slot + 1, SmallVec::new);
+        }
+        slot
+    }
+
+    fn field_for_node(&self, node: TreeNodeId) -> Option<Arc<str>> {
+        self.field_by_child
+            .get(node.get() as usize)
+            .and_then(Clone::clone)
+    }
+
+    fn field_name(&self, field: FieldId) -> Option<Arc<str>> {
+        self.names.fields.get(field.get() as usize).cloned()
+    }
+
+    fn public_node_kind(&self, public_node: PublicNodeKindId) -> Arc<str> {
+        self.names
+            .public_nodes
+            .get(public_node.get() as usize)
+            .cloned()
+            .unwrap_or_else(|| {
+                Arc::<str>::from(self.parser.public_node_kinds[public_node.get() as usize].name())
+            })
+    }
+
+    fn alias_kind(&self, alias: AliasId) -> Arc<str> {
+        self.names
+            .aliases
+            .get(alias.get() as usize)
+            .cloned()
+            .unwrap_or_else(|| Arc::<str>::from(self.parser.aliases[alias.get() as usize].value()))
+    }
+
+    fn token_symbol_kind(&self, symbol: ParserSymbol, bytes: ByteRange) -> Arc<str> {
+        if let ParserSymbol::External(external) = symbol {
+            return self
+                .names
+                .externals
+                .get(external.get() as usize)
+                .and_then(Clone::clone)
+                .unwrap_or_else(|| {
+                    Arc::<str>::from(source_slice(self.input, bytes).unwrap_or("<external>"))
+                });
+        }
+
+        self.symbol_kind(symbol, None)
+    }
+
+    fn symbol_kind(&self, symbol: ParserSymbol, token_text: Option<&str>) -> Arc<str> {
+        match symbol {
+            ParserSymbol::Terminal(terminal) => {
+                self.names.terminals[terminal.get() as usize].clone()
+            }
+            ParserSymbol::Nonterminal(nonterminal) => {
+                self.names.nonterminals[nonterminal.get() as usize].clone()
+            }
+            ParserSymbol::External(external) => self
+                .names
+                .externals
+                .get(external.get() as usize)
+                .and_then(Clone::clone)
+                .unwrap_or_else(|| Arc::<str>::from(token_text.unwrap_or("<external>"))),
+            ParserSymbol::Eof => Arc::clone(&self.names.eof),
+            ParserSymbol::Internal(internal) => {
+                match self.parser.symbols.internal[internal.get() as usize].kind() {
+                    InternalSymbolKind::Error => Arc::clone(&self.names.error),
+                    InternalSymbolKind::Missing => Arc::clone(&self.names.missing),
+                    InternalSymbolKind::Recovery => Arc::clone(&self.names.recovery),
                 }
             }
         }
-        if !leading_children.is_empty() {
-            leading_children.extend(root.children);
-            root.children = leading_children;
-        }
-        Ok(root)
-    }
-
-    fn conflict_id(
-        &self,
-        state: ParseStateId,
-        lookahead: LookaheadSymbol,
-        actions: &[ParseAction],
-    ) -> ConflictId {
-        self.reduced
-            .table
-            .conflicts()
-            .iter()
-            .find(|conflict| {
-                conflict.state() == state
-                    && conflict.lookahead() == lookahead
-                    && conflict.actions() == actions
-            })
-            .map(TableConflict::id)
-            .unwrap_or_else(|| ConflictId::from_index(0))
     }
 }
 
-fn runtime_recovery_end(input: &str, start_byte: usize) -> Option<usize> {
-    if start_byte >= input.len() {
-        return None;
-    }
-    if input[start_byte..].starts_with(['{', '}']) {
-        return None;
-    }
-    let mut end = start_byte;
-    for ch in input[start_byte..].chars() {
-        let previous_end = end;
-        end += ch.len_utf8();
-        if ch == '}' {
-            return Some(if previous_end == start_byte {
-                end
-            } else {
-                previous_end
-            });
-        }
-        if matches!(ch, ';' | '\n') {
-            return Some(end);
-        }
-    }
-    (end > start_byte).then_some(end)
+fn resolved_item_contains(parent: &ResolvedCstItem, child: &ResolvedCstItem) -> bool {
+    parent.order > child.order
+        && parent.bytes.start() <= child.bytes.start()
+        && child.bytes.end() <= parent.bytes.end()
 }
 
-/// Runtime parse result with structured stack/tree evidence.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RuntimeParseReport {
-    tree: SexpNode,
-    tree_store: RuntimeTreeStore,
-    reusable_nodes: Vec<RuntimeReusableNode>,
-    trace_events: Vec<TraceEvent>,
-    tree_events: Vec<TreeEvent>,
-    accepted_version: StackVersionId,
-    accepted_count: usize,
-    failure_count: usize,
-    max_live_versions: usize,
+fn resolved_item_order_key(item: &ResolvedCstItem) -> (u32, u32, usize) {
+    (item.bytes.start().get(), item.bytes.end().get(), item.order)
 }
 
-impl RuntimeParseReport {
-    /// Corpus-normalized accepted runtime tree.
-    pub const fn tree(&self) -> &SexpNode {
-        &self.tree
+fn attach_resolved_children_from_ranges(items: &mut [ResolvedCstItem]) -> Vec<usize> {
+    let parents = resolved_parent_slots_by_range_sort(items);
+    let mut child_counts = vec![0usize; items.len()];
+    let mut root_count = 0usize;
+    for parent in &parents {
+        if let Some(parent) = parent {
+            child_counts[*parent] += 1;
+        } else {
+            root_count += 1;
+        }
     }
 
-    /// Structured parser trace events emitted during runtime execution.
-    pub fn trace_events(&self) -> &[TraceEvent] {
-        &self.trace_events
+    for item in items.iter_mut() {
+        item.children.clear();
+    }
+    for (item, child_count) in items.iter_mut().zip(child_counts) {
+        item.children.reserve(child_count);
     }
 
-    /// Runtime tree events emitted during runtime execution.
-    pub fn tree_events(&self) -> &[TreeEvent] {
-        &self.tree_events
+    let mut roots = Vec::<usize>::with_capacity(root_count);
+    for (child, parent) in parents.into_iter().enumerate() {
+        if let Some(parent) = parent {
+            items[parent].children.push(child);
+        } else {
+            roots.push(child);
+        }
     }
+    roots
+}
 
-    /// Stack version whose accepted tree was returned as the corpus projection.
-    pub const fn accepted_version(&self) -> StackVersionId {
-        self.accepted_version
-    }
-
-    /// Tree events emitted by the accepted branch lineage.
-    pub fn accepted_tree_events(&self) -> Vec<TreeEvent> {
-        tree_events_for_version_lineage(
-            self.accepted_version,
-            &self.trace_events,
-            &self.tree_events,
+fn resolved_parent_slots_by_range_sort(items: &[ResolvedCstItem]) -> Vec<Option<usize>> {
+    let mut indices = (0..items.len()).collect::<Vec<_>>();
+    indices.sort_unstable_by_key(|index| {
+        let item = &items[*index];
+        (
+            item.bytes.start().get(),
+            std::cmp::Reverse(item.bytes.end().get()),
+            std::cmp::Reverse(item.order),
+            std::cmp::Reverse(*index),
         )
-    }
+    });
 
-    /// Number of accepted runtime branches before identical-tree coalescing.
-    pub const fn accepted_count(&self) -> usize {
-        self.accepted_count
-    }
-
-    /// Number of branch failures observed while exploring the runtime table.
-    pub const fn failure_count(&self) -> usize {
-        self.failure_count
-    }
-
-    /// Maximum number of queued live runtime stack versions observed.
-    pub const fn max_live_versions(&self) -> usize {
-        self.max_live_versions
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct RuntimeBranch {
-    version: StackVersionId,
-    stack: Vec<RuntimeStackEntry>,
-    byte_position: usize,
-    scanner_snapshot: Option<ScannerSnapshotId>,
-    auto_close_stack: Vec<String>,
-    error_cost: u32,
-    trace: Vec<ReducedTraceStep>,
-    tree_events: Vec<TreeEvent>,
-    reusable_nodes: Vec<RuntimeReusableNode>,
-}
-
-impl RuntimeBranch {
-    fn commit_scanner_snapshot(&mut self, token: ReducedToken) {
-        if let Some(scanner) = token.scanner {
-            self.scanner_snapshot = scanner.after();
+    let mut parents = vec![None; items.len()];
+    let mut ancestors = Vec::<usize>::new();
+    for child in indices {
+        while let Some(parent) = ancestors.last().copied() {
+            if resolved_item_contains(&items[parent], &items[child]) {
+                break;
+            }
+            ancestors.pop();
+        }
+        parents[child] = ancestors.last().copied();
+        if items[child].node.is_some() {
+            ancestors.push(child);
         }
     }
+
+    #[cfg(debug_assertions)]
+    if items.len() <= 4096 {
+        debug_assert_eq!(parents, resolved_parent_slots_quadratic(items));
+    }
+
+    parents
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct RuntimeBranchKey {
-    byte_position: usize,
-    scanner_snapshot: Option<ScannerSnapshotId>,
-    auto_close_stack: Vec<String>,
-    stack: Vec<ParseStateId>,
-}
-
-impl RuntimeBranchKey {
-    fn from_branch(branch: &RuntimeBranch) -> Self {
-        Self {
-            byte_position: branch.byte_position,
-            scanner_snapshot: branch.scanner_snapshot,
-            auto_close_stack: branch.auto_close_stack.clone(),
-            stack: branch.stack.iter().map(|entry| entry.state).collect(),
+#[cfg(debug_assertions)]
+fn resolved_parent_slots_quadratic(items: &[ResolvedCstItem]) -> Vec<Option<usize>> {
+    let mut parents = vec![None; items.len()];
+    for (child, parent_slot) in parents.iter_mut().enumerate() {
+        let mut best = None::<(usize, usize, usize)>;
+        for parent in 0..items.len() {
+            if parent == child
+                || items[parent].node.is_none()
+                || !resolved_item_contains(&items[parent], &items[child])
+            {
+                continue;
+            }
+            let key = (
+                resolved_item_len(&items[parent]),
+                items[parent].order,
+                parent,
+            );
+            if best.is_none_or(|best| key < best) {
+                best = Some(key);
+            }
         }
+        *parent_slot = best.map(|(_, _, parent)| parent);
+    }
+    parents
+}
+
+#[cfg(debug_assertions)]
+fn resolved_item_len(item: &ResolvedCstItem) -> usize {
+    item.bytes.end().get() as usize - item.bytes.start().get() as usize
+}
+
+fn build_resolved_node(
+    index: usize,
+    items: &[ResolvedCstItem],
+    source: &Arc<str>,
+) -> ResolvedCstNode {
+    let item = &items[index];
+    ResolvedCstNode {
+        kind: item.kind.clone(),
+        symbol: item.symbol,
+        field: item.field.clone(),
+        node: item.node,
+        bytes: item.bytes,
+        points: item.points,
+        named: item.named,
+        visible: item.visible,
+        extra: item.extra,
+        text: item.has_text.then(|| ResolvedCstText {
+            source: Arc::clone(source),
+            bytes: item.bytes,
+        }),
+        children: item
+            .children
+            .iter()
+            .copied()
+            .map(|child| build_resolved_node(child, items, source))
+            .collect(),
     }
 }
 
-fn enqueue_runtime_branch(
-    branch: RuntimeBranch,
-    recovery: RuntimeRecoveryMode,
-    trace_detail: RuntimeTraceDetail,
-    queued_recovery_costs: &mut HashMap<RuntimeBranchKey, u32>,
-    trace_events: &mut Vec<TraceEvent>,
-    branches: &mut VecDeque<RuntimeBranch>,
-) {
-    if recovery == RuntimeRecoveryMode::Strict {
-        branches.push_back(branch);
+fn sort_resolved_children(children: &mut [usize], items: &[ResolvedCstItem]) {
+    if children.len() < 2 {
         return;
     }
-    let key = RuntimeBranchKey::from_branch(&branch);
-    match queued_recovery_costs.get(&key).copied() {
-        Some(best_cost) if branch.error_cost > best_cost => {
-            push_full_runtime_trace(
-                trace_events,
-                trace_detail,
-                TraceEvent::GlrRetire {
-                    version: branch.version,
-                    reason: BranchRetireReason::Dominated,
-                },
-            );
-        }
-        Some(best_cost) if branch.error_cost == best_cost => push_full_runtime_trace(
-            trace_events,
-            trace_detail,
-            TraceEvent::GlrRetire {
-                version: branch.version,
-                reason: BranchRetireReason::Dominated,
-            },
-        ),
-        _ => {
-            queued_recovery_costs.insert(key, branch.error_cost);
-            branches.push_back(branch);
-        }
-    }
+    children.sort_unstable_by_key(|child| {
+        let item = &items[*child];
+        (item.bytes.start().get(), item.bytes.end().get(), item.order)
+    });
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum RuntimeStepOutcome {
-    Branch(RuntimeBranch),
-    Accepted {
-        version: StackVersionId,
-        node: SexpNode,
-        trace: Vec<ReducedTraceStep>,
-        error_cost: u32,
-        tree_events: Vec<TreeEvent>,
-        reusable_nodes: Vec<RuntimeReusableNode>,
-    },
-    Failed {
-        version: StackVersionId,
-        error: ReducedParseError,
-    },
+fn source_slice(input: &str, bytes: ByteRange) -> Option<&str> {
+    let start = bytes.start().get() as usize;
+    let end = bytes.end().get() as usize;
+    input.get(start..end)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct RuntimeStackEntry {
-    state: ParseStateId,
-    fragment: Option<RuntimeFragment>,
-    extra: bool,
-    end_byte: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum RuntimeFragment {
-    Hidden {
-        children: Vec<SexpChild>,
-        visible_nodes: Vec<TreeNodeId>,
-        start_byte: usize,
-        end_byte: usize,
-        lookahead_end_byte: usize,
-        start_scanner_snapshot: Option<ScannerSnapshotId>,
-    },
-    Node {
-        node: TreeNodeId,
-        start_byte: usize,
-        end_byte: usize,
-        lookahead_end_byte: usize,
-        start_scanner_snapshot: Option<ScannerSnapshotId>,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct RuntimeReduction {
-    fragment: RuntimeFragment,
-    trailing_extras: Vec<RuntimeFragment>,
-}
-
-impl RuntimeFragment {
-    fn visible_nodes(&self) -> &[TreeNodeId] {
-        match self {
-            Self::Hidden { visible_nodes, .. } => visible_nodes,
-            Self::Node { node, .. } => std::slice::from_ref(node),
-        }
-    }
-
-    fn single_visible_node(&self) -> Option<TreeNodeId> {
-        let visible_nodes = self.visible_nodes();
-        if visible_nodes.len() == 1 {
-            Some(visible_nodes[0])
-        } else {
-            None
-        }
-    }
-
-    fn into_children(self, tree_store: &RuntimeTreeStore) -> Vec<SexpChild> {
-        match self {
-            Self::Hidden { children, .. } => children,
-            Self::Node { node, .. } => vec![SexpChild {
-                field: None,
-                value: SexpValue::Node(tree_store.node(node).clone()),
-            }],
-        }
-    }
-
-    const fn byte_range(&self) -> (usize, usize) {
-        match self {
-            Self::Hidden {
-                start_byte,
-                end_byte,
-                ..
-            }
-            | Self::Node {
-                start_byte,
-                end_byte,
-                ..
-            } => (*start_byte, *end_byte),
-        }
-    }
-
-    const fn lookahead_end_byte(&self) -> usize {
-        match self {
-            Self::Hidden {
-                lookahead_end_byte, ..
-            }
-            | Self::Node {
-                lookahead_end_byte, ..
-            } => *lookahead_end_byte,
-        }
-    }
-
-    const fn start_scanner_snapshot(&self) -> Option<ScannerSnapshotId> {
-        match self {
-            Self::Hidden {
-                start_scanner_snapshot,
-                ..
-            }
-            | Self::Node {
-                start_scanner_snapshot,
-                ..
-            } => *start_scanner_snapshot,
-        }
-    }
-}
-
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-struct RuntimeTreeStore {
-    nodes: Vec<SexpNode>,
-}
-
-impl RuntimeTreeStore {
-    fn push(&mut self, node: SexpNode) -> TreeNodeId {
-        let id = TreeNodeId::from_index(self.nodes.len());
-        self.nodes.push(node);
-        id
-    }
-
-    fn node(&self, id: TreeNodeId) -> &SexpNode {
-        &self.nodes[id.get() as usize]
-    }
-}
-
-pub(crate) fn auto_close_trigger_len(
-    spec: &AutoCloseSpec,
-    open_tag: &str,
-    input: &str,
-    byte_position: usize,
-) -> Option<usize> {
-    let literal_trigger = spec
-        .closed_by
-        .iter()
-        .filter(|marker| input[byte_position..].starts_with(marker.as_str()))
-        .map(String::len)
-        .max();
-    let tag_trigger = spec
-        .start_prefix
-        .as_deref()
-        .and_then(|prefix| scan_auto_close_tag(input, byte_position, prefix))
-        .and_then(|(tag, end_byte)| {
-            auto_close_closed_by_tags(spec, open_tag)?
-                .iter()
-                .any(|closed_by| normalize_auto_close_tag(closed_by) == tag)
-                .then_some(end_byte - byte_position)
-        });
-    literal_trigger.max(tag_trigger)
-}
-
-fn auto_close_closed_by_tags<'a>(spec: &'a AutoCloseSpec, open_tag: &str) -> Option<&'a [String]> {
-    let open_tag = normalize_auto_close_tag(open_tag);
-    if let Some(rule) = spec.rules.iter().find(|rule| rule.tag == open_tag) {
-        return Some(&rule.closed_by_tags);
-    }
-    (normalize_auto_close_tag(&spec.tag) == open_tag).then_some(&spec.closed_by_tags)
-}
-
-pub(crate) fn auto_close_has_rule_for_tag(spec: &AutoCloseSpec, open_tag: &str) -> bool {
-    auto_close_closed_by_tags(spec, open_tag).is_some()
-}
-
-pub(crate) fn scan_auto_close_tag_in_range(
-    input: &str,
-    start_byte: usize,
-    end_byte: usize,
-    prefix: &str,
-) -> Option<String> {
-    let (tag, tag_end) = scan_auto_close_tag(input, start_byte, prefix)?;
-    (tag_end <= end_byte).then_some(tag)
-}
-
-fn scan_auto_close_tag(input: &str, byte_position: usize, prefix: &str) -> Option<(String, usize)> {
-    let after_prefix = byte_position.checked_add(prefix.len())?;
-    if !input[byte_position..].starts_with(prefix) {
-        return None;
-    }
-    if prefix == "<" && input[after_prefix..].starts_with('/') {
-        return None;
-    }
-    let tag_start = after_prefix;
-    let tag_end = ascii_tag_name_end(input, tag_start);
-    (tag_end > tag_start).then(|| {
-        (
-            normalize_auto_close_tag(&input[tag_start..tag_end]),
-            tag_end,
-        )
-    })
-}
-
-fn ascii_tag_name_end(input: &str, byte_position: usize) -> usize {
-    input[byte_position..]
-        .char_indices()
-        .find_map(|(offset, ch)| {
-            (!(ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == ':'))
-                .then_some(byte_position + offset)
-        })
-        .unwrap_or(input.len())
-}
-
-fn normalize_auto_close_tag(tag: &str) -> String {
-    tag.to_ascii_lowercase()
-}
-
-pub(crate) fn auto_close_node_has_tag_name_child(node: &SexpNode, spec: &AutoCloseSpec) -> bool {
-    let Some(tag_name_node) = &spec.tag_name_node else {
-        return true;
-    };
-    sexp_node_has_child_kind(node, tag_name_node)
-}
-
-fn sexp_node_has_child_kind(node: &SexpNode, kind: &str) -> bool {
-    node.children.iter().any(|child| match &child.value {
-        SexpValue::Node(child) => child.kind == kind || sexp_node_has_child_kind(child, kind),
-        SexpValue::Atom(_) => false,
-    })
-}
-
-fn next_trace_id(events: &[TraceEvent]) -> TraceEventId {
-    TraceEventId::from_index(events.len())
-}
-
-pub(crate) fn tree_events_for_version_lineage(
+pub(crate) fn visit_tree_events_for_version_lineage(
     accepted_version: StackVersionId,
     trace_events: &[TraceEvent],
     tree_events: &[TreeEvent],
-) -> Vec<TreeEvent> {
+    mut visit: impl FnMut(&TreeEvent),
+) {
+    if trace_events.is_empty() {
+        for event in tree_events {
+            visit(event);
+        }
+        return;
+    }
     let lineage = stack_version_lineage(accepted_version, trace_events);
-    tree_events
+    for event in tree_events
         .iter()
         .filter(|event| lineage.contains(&event.version()))
-        .cloned()
-        .collect()
+    {
+        visit(event);
+    }
 }
 
 fn stack_version_lineage(
@@ -8960,497 +5891,27 @@ fn stack_version_lineage(
     lineage
 }
 
-fn mark_reusable_nodes_with_errors(
-    mut nodes: Vec<RuntimeReusableNode>,
-    tree_events: &[TreeEvent],
-) -> Vec<RuntimeReusableNode> {
-    let error_ranges = tree_events
-        .iter()
-        .filter_map(|event| match event {
-            TreeEvent::Error { bytes, .. } | TreeEvent::Missing { bytes, .. } => {
-                Some((bytes.start().get() as usize, bytes.end().get() as usize))
-            }
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    if error_ranges.is_empty() {
-        return nodes;
-    }
-    for node in &mut nodes {
-        node.contains_error = error_ranges.iter().any(|(start, end)| {
-            node.start_byte <= *start && *end <= node.end_byte && *start < *end
-        });
-    }
-    nodes
-}
-
-fn subtree_tree_events(
-    tree_events: &[TreeEvent],
-    start_byte: usize,
-    end_byte: usize,
-    root_node: TreeNodeId,
-) -> Vec<TreeEvent> {
-    let mut nodes = BTreeSet::from([root_node]);
-    for event in tree_events {
-        if let Some((start, end)) = tree_event_byte_range(event)
-            && start_byte <= start
-            && end <= end_byte
-            && let Some(node) = tree_event_node(event)
-        {
-            nodes.insert(node);
-        }
-    }
-
-    tree_events
-        .iter()
-        .filter(|event| match event {
-            TreeEvent::Field { node, child, .. } => {
-                nodes.contains(node) && child.is_none_or(|child| nodes.contains(&child))
-            }
-            _ => tree_event_byte_range(event)
-                .is_some_and(|(start, end)| start_byte <= start && end <= end_byte),
-        })
-        .cloned()
-        .collect()
-}
-
-fn replay_reused_tree_events(
-    reusable: &RuntimeReusableNode,
-    version: StackVersionId,
-    root_node: TreeNodeId,
-    input: &str,
-    line_index: &InputLineIndex,
-    tree_store: &mut RuntimeTreeStore,
-) -> Vec<TreeEvent> {
-    let mut node_map = BTreeMap::from([(reusable.source_node, root_node)]);
-    reusable
-        .tree_events
-        .iter()
-        .map(|event| {
-            replay_reused_tree_event(event, version, input, line_index, tree_store, &mut node_map)
-        })
-        .collect()
-}
-
-fn replay_reused_tree_event(
-    event: &TreeEvent,
-    version: StackVersionId,
-    input: &str,
-    line_index: &InputLineIndex,
-    tree_store: &mut RuntimeTreeStore,
-    node_map: &mut BTreeMap<TreeNodeId, TreeNodeId>,
-) -> TreeEvent {
-    let repoint = |bytes: ByteRange| {
-        input_ranges(
-            input,
-            line_index,
-            bytes.start().get() as usize,
-            bytes.end().get() as usize,
-        )
-    };
-    match event {
-        TreeEvent::OpenNode {
-            node,
-            symbol,
-            visible,
-            named,
-            ..
-        } => TreeEvent::OpenNode {
-            version,
-            node: remap_reused_node(*node, tree_store, node_map),
-            symbol: *symbol,
-            visible: *visible,
-            named: *named,
-        },
-        TreeEvent::Token {
-            symbol,
-            lookahead,
-            bytes,
-            extra,
-            named,
-            keyword,
-            ..
-        } => {
-            let (bytes, points) = repoint(*bytes);
-            TreeEvent::Token {
-                version,
-                symbol: *symbol,
-                lookahead: *lookahead,
-                bytes,
-                points,
-                extra: *extra,
-                named: *named,
-                keyword: *keyword,
-            }
-        }
-        TreeEvent::Reduce {
-            production,
-            metadata,
-            node,
-            bytes,
-            ..
-        } => {
-            let (bytes, points) = repoint(*bytes);
-            TreeEvent::Reduce {
-                version,
-                production: *production,
-                metadata: *metadata,
-                node: remap_reused_node(*node, tree_store, node_map),
-                bytes,
-                points,
-            }
-        }
-        TreeEvent::Missing { symbol, bytes, .. } => {
-            let (bytes, points) = repoint(*bytes);
-            TreeEvent::Missing {
-                version,
-                symbol: *symbol,
-                bytes,
-                points,
-            }
-        }
-        TreeEvent::Error {
-            node,
-            bytes,
-            error_cost,
-            ..
-        } => {
-            let (bytes, points) = repoint(*bytes);
-            TreeEvent::Error {
-                version,
-                node: remap_reused_node(*node, tree_store, node_map),
-                bytes,
-                points,
-                error_cost: *error_cost,
-            }
-        }
-        TreeEvent::CloseNode {
-            node,
-            public_node,
-            bytes,
-            ..
-        } => {
-            let (bytes, points) = repoint(*bytes);
-            TreeEvent::CloseNode {
-                version,
-                node: remap_reused_node(*node, tree_store, node_map),
-                public_node: *public_node,
-                bytes,
-                points,
-            }
-        }
-        TreeEvent::ReuseNode {
-            node,
-            bytes,
-            scanner_snapshot,
-            ..
-        } => {
-            let (bytes, points) = repoint(*bytes);
-            TreeEvent::ReuseNode {
-                version,
-                node: remap_reused_node(*node, tree_store, node_map),
-                bytes,
-                points,
-                scanner_snapshot: *scanner_snapshot,
-            }
-        }
-        TreeEvent::Field {
-            node,
-            child,
-            field,
-            structural_index,
-            ..
-        } => TreeEvent::Field {
-            version,
-            node: remap_reused_node(*node, tree_store, node_map),
-            child: child.map(|child| remap_reused_node(child, tree_store, node_map)),
-            field: *field,
-            structural_index: *structural_index,
-        },
-        TreeEvent::Alias {
-            node,
-            alias,
-            named,
-            structural_index,
-            bytes,
-            ..
-        } => {
-            let (bytes, points) = repoint(*bytes);
-            TreeEvent::Alias {
-                version,
-                node: remap_reused_node(*node, tree_store, node_map),
-                alias: *alias,
-                named: *named,
-                structural_index: *structural_index,
-                bytes,
-                points,
-            }
-        }
-    }
-}
-
-fn remap_reused_node(
-    node: TreeNodeId,
-    tree_store: &mut RuntimeTreeStore,
-    node_map: &mut BTreeMap<TreeNodeId, TreeNodeId>,
-) -> TreeNodeId {
-    if let Some(remapped) = node_map.get(&node) {
-        *remapped
-    } else {
-        let remapped = tree_store.push(SexpNode {
-            kind: "__reused_event_node".to_owned(),
-            children: Vec::new(),
-        });
-        node_map.insert(node, remapped);
-        remapped
-    }
-}
-
-fn tree_event_byte_range(event: &TreeEvent) -> Option<(usize, usize)> {
-    match event {
-        TreeEvent::Token { bytes, .. }
-        | TreeEvent::Reduce { bytes, .. }
-        | TreeEvent::Missing { bytes, .. }
-        | TreeEvent::Error { bytes, .. }
-        | TreeEvent::CloseNode { bytes, .. }
-        | TreeEvent::ReuseNode { bytes, .. }
-        | TreeEvent::Alias { bytes, .. } => {
-            Some((bytes.start().get() as usize, bytes.end().get() as usize))
-        }
-        TreeEvent::OpenNode { .. } | TreeEvent::Field { .. } => None,
-    }
-}
-
-const fn tree_event_node(event: &TreeEvent) -> Option<TreeNodeId> {
-    match event {
-        TreeEvent::OpenNode { node, .. }
-        | TreeEvent::Reduce { node, .. }
-        | TreeEvent::Error { node, .. }
-        | TreeEvent::CloseNode { node, .. }
-        | TreeEvent::ReuseNode { node, .. }
-        | TreeEvent::Alias { node, .. } => Some(*node),
-        TreeEvent::Token { .. } | TreeEvent::Missing { .. } | TreeEvent::Field { .. } => None,
-    }
-}
-
-fn lookahead_parser_symbol(lookahead: LookaheadSymbol) -> ParserSymbol {
-    match lookahead {
-        LookaheadSymbol::Terminal(terminal) | LookaheadSymbol::ReservedWord { terminal, .. } => {
-            ParserSymbol::Terminal(terminal)
-        }
-        LookaheadSymbol::External(external) => ParserSymbol::External(external),
-        LookaheadSymbol::Eof => ParserSymbol::Eof,
-        LookaheadSymbol::ErrorRecovery(internal) => ParserSymbol::Internal(internal),
-    }
-}
-
-struct InputLineIndex {
-    line_starts: Vec<usize>,
-}
-
-impl InputLineIndex {
-    fn new(input: &str) -> Self {
-        let mut line_starts = vec![0];
-        for (byte, ch) in input.char_indices() {
-            if ch == '\n' {
-                line_starts.push(byte + ch.len_utf8());
-            }
-        }
-        Self { line_starts }
-    }
-
-    fn point_at(&self, input: &str, byte: usize) -> PointBytes {
-        let byte = byte.min(input.len());
-        let row = self
-            .line_starts
-            .partition_point(|line_start| *line_start <= byte)
-            .saturating_sub(1);
-        let line_start = self.line_starts[row];
-        PointBytes::new(
-            Row::new(u32::try_from(row).expect("runtime row fits u32")),
-            Utf8ColumnBytes::new(
-                u32::try_from(byte - line_start).expect("runtime UTF-8 column fits u32"),
-            ),
-        )
-    }
-}
-
-fn input_ranges(
-    input: &str,
-    line_index: &InputLineIndex,
-    start: usize,
-    end: usize,
-) -> (ByteRange, PointRange) {
-    let start = start.min(input.len());
-    let end = end.min(input.len()).max(start);
-    let bytes = ByteRange::new(
-        ByteOffset::new(u32::try_from(start).expect("runtime byte offset fits u32")),
-        ByteOffset::new(u32::try_from(end).expect("runtime byte offset fits u32")),
-    )
-    .expect("runtime byte range is ordered");
-    let points = PointRange::new(
-        line_index.point_at(input, start),
-        line_index.point_at(input, end),
-    )
-    .expect("runtime point range is ordered");
-    (bytes, points)
-}
-
-fn select_reduced_failure(failures: Vec<ReducedParseError>) -> Option<ReducedParseError> {
-    let failure_count = failures.len();
-    failures
-        .into_iter()
-        .max_by_key(|error| {
-            error
-                .trace
-                .last()
-                .map(|step| (step.byte_position, error.trace.len()))
-                .unwrap_or((0, 0))
-        })
-        .or_else(|| {
-            Some(ReducedParseError::new(
-                ReducedParseErrorKind::NoViableBranch { failure_count },
-            ))
-        })
-}
-
-/// Error produced by the reduced parser slice.
+/// Error produced by parser input/scanner support.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReducedParseError {
-    kind: ReducedParseErrorKind,
-    trace: Vec<ReducedTraceStep>,
+pub struct ParserExecutionError {
+    kind: ParserExecutionErrorKind,
 }
 
-impl ReducedParseError {
-    fn new(kind: ReducedParseErrorKind) -> Self {
-        Self {
-            kind,
-            trace: Vec::new(),
-        }
+impl ParserExecutionError {
+    fn new(kind: ParserExecutionErrorKind) -> Self {
+        Self { kind }
     }
 
     /// Error kind.
-    pub const fn kind(&self) -> &ReducedParseErrorKind {
+    pub const fn kind(&self) -> &ParserExecutionErrorKind {
         &self.kind
     }
-
-    fn with_trace(mut self, trace: Vec<ReducedTraceStep>) -> Self {
-        self.trace = trace;
-        self
-    }
-
-    /// Reduced parser trace collected before the failure.
-    pub fn trace(&self) -> &[ReducedTraceStep] {
-        &self.trace
-    }
 }
 
-/// One selected action in the reduced parser trace.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ReducedTraceStep {
-    /// Parse state before selecting the action.
-    pub state: ParseStateId,
-    /// Input byte offset before selecting the action.
-    pub byte_position: usize,
-    /// Lookahead selected by the lexical mode.
-    pub lookahead: LookaheadSymbol,
-    /// Action explored by the reduced parser branch.
-    pub action: ParseAction,
-}
-
-impl fmt::Display for ReducedParseError {
+impl fmt::Display for ParserExecutionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.kind {
-            ReducedParseErrorKind::WrongStage { stage } => {
-                write!(f, "parser grammar is at stage {stage:?}, not Productions")
-            }
-            ReducedParseErrorKind::EmptyStack => write!(f, "reduced parser stack was empty"),
-            ReducedParseErrorKind::MissingState { state } => {
-                write!(f, "parse state {} is missing", state.get())
-            }
-            ReducedParseErrorKind::MissingLexMode { mode } => {
-                write!(f, "lexical mode {} is missing", mode.get())
-            }
-            ReducedParseErrorKind::NoToken {
-                state,
-                byte_position,
-                expected,
-            } => write!(
-                f,
-                "state {} could not lex a token at byte {}; expected one of {:?}",
-                state.get(),
-                byte_position,
-                expected
-            ),
-            ReducedParseErrorKind::NoAction {
-                state,
-                lookahead,
-                byte_position,
-            } => write!(
-                f,
-                "state {} has no action for {lookahead:?} at byte {}",
-                state.get(),
-                byte_position
-            ),
-            ReducedParseErrorKind::AmbiguousAction {
-                state,
-                lookahead,
-                action_count,
-            } => write!(
-                f,
-                "state {} has {} actions for {lookahead:?}",
-                state.get(),
-                action_count
-            ),
-            ReducedParseErrorKind::UnsupportedExternalScanner {
-                state,
-                external_count,
-            } => write!(
-                f,
-                "state {} requires {} external scanner candidates",
-                state.get(),
-                external_count
-            ),
-            ReducedParseErrorKind::UnsupportedTerminal { terminal, spelling } => write!(
-                f,
-                "terminal {} is not supported by the reduced parser: {spelling}",
-                terminal.get()
-            ),
-            ReducedParseErrorKind::UnsupportedLexicalSymbol { expr } => write!(
-                f,
-                "lexical expression {} contains a symbol reference unsupported by this slice",
-                expr.get()
-            ),
-            ReducedParseErrorKind::MissingGoto { state, nonterminal } => write!(
-                f,
-                "state {} has no goto for nonterminal {}",
-                state.get(),
-                nonterminal.get()
-            ),
-            ReducedParseErrorKind::TrailingInput { byte_position } => {
-                write!(f, "input remains after byte {byte_position}")
-            }
-            ReducedParseErrorKind::AcceptedHiddenRoot => {
-                write!(f, "accepted parse did not produce a visible root node")
-            }
-            ReducedParseErrorKind::UnreducedStackEntry { state } => write!(
-                f,
-                "accepted parse left an unreduced stack entry in state {}",
-                state.get()
-            ),
-            ReducedParseErrorKind::UnsupportedRecovery { state } => {
-                write!(f, "state {} requires recovery", state.get())
-            }
-            ReducedParseErrorKind::NoViableBranch { failure_count } => {
-                write!(
-                    f,
-                    "all reduced parser branches failed ({failure_count} failures)"
-                )
-            }
-            ReducedParseErrorKind::BranchStepLimit { limit } => {
-                write!(f, "reduced parser exceeded branch step limit {limit}")
-            }
-            ReducedParseErrorKind::InvalidInputEdit {
+            ParserExecutionErrorKind::InvalidInputEdit {
                 start_byte,
                 old_end_byte,
                 new_end_byte,
@@ -9460,120 +5921,16 @@ impl fmt::Display for ReducedParseError {
                 f,
                 "invalid input edit start={start_byte} old_end={old_end_byte} new_end={new_end_byte} for old input length {old_input_len} and new input length {new_input_len}"
             ),
-            ReducedParseErrorKind::AmbiguousParse {
-                accepted_count,
-                accepted,
-            } => write!(
-                f,
-                "reduced parser accepted {accepted_count} different reduced trees: {accepted:?}"
-            ),
         }
     }
 }
 
-impl Error for ReducedParseError {}
+impl Error for ParserExecutionError {}
 
-/// Reduced parser error kind.
+/// Parser input/scanner support error kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum ReducedParseErrorKind {
-    /// Parser grammar is not in the required stage.
-    WrongStage {
-        /// Current stage.
-        stage: ParserGenerationStage,
-    },
-    /// Runtime stack became empty.
-    EmptyStack,
-    /// Parse state id was missing.
-    MissingState {
-        /// Missing state.
-        state: ParseStateId,
-    },
-    /// Lexical mode id was missing.
-    MissingLexMode {
-        /// Missing lexical mode.
-        mode: LexModeId,
-    },
-    /// No token candidate matched the input.
-    NoToken {
-        /// Current state.
-        state: ParseStateId,
-        /// Current byte offset.
-        byte_position: usize,
-        /// Terminal spellings accepted by the state's lexical mode.
-        expected: Vec<String>,
-    },
-    /// No parse action existed for a lookahead.
-    NoAction {
-        /// Current state.
-        state: ParseStateId,
-        /// Lookahead.
-        lookahead: LookaheadSymbol,
-        /// Current byte offset.
-        byte_position: usize,
-    },
-    /// The action cell requires GLR/conflict support.
-    AmbiguousAction {
-        /// Current state.
-        state: ParseStateId,
-        /// Lookahead.
-        lookahead: LookaheadSymbol,
-        /// Number of actions in the cell.
-        action_count: usize,
-    },
-    /// The current state needs external scanner execution.
-    UnsupportedExternalScanner {
-        /// Current state.
-        state: ParseStateId,
-        /// External scanner candidates in the state.
-        external_count: usize,
-    },
-    /// The reduced parser cannot match this terminal.
-    UnsupportedTerminal {
-        /// Terminal id.
-        terminal: TerminalId,
-        /// Terminal spelling.
-        spelling: String,
-    },
-    /// The reduced lexical evaluator does not execute symbol references.
-    UnsupportedLexicalSymbol {
-        /// Source expression id.
-        expr: GrammarExprId,
-    },
-    /// No goto entry existed for a reduction.
-    MissingGoto {
-        /// State after popping reduced children.
-        state: ParseStateId,
-        /// Reduced nonterminal.
-        nonterminal: NonterminalId,
-    },
-    /// Accept was reached before all bytes were consumed.
-    TrailingInput {
-        /// Remaining byte offset.
-        byte_position: usize,
-    },
-    /// Accept did not produce a visible root.
-    AcceptedHiddenRoot,
-    /// Accept left a non-extra stack entry outside the accepted root.
-    UnreducedStackEntry {
-        /// State carried by the leftover stack entry.
-        state: ParseStateId,
-    },
-    /// Recovery is outside this reduced parser slice.
-    UnsupportedRecovery {
-        /// Current state.
-        state: ParseStateId,
-    },
-    /// No branch accepted the input.
-    NoViableBranch {
-        /// Number of branch failures observed.
-        failure_count: usize,
-    },
-    /// Reduced branch execution exceeded its guard.
-    BranchStepLimit {
-        /// Step limit that was exceeded.
-        limit: usize,
-    },
+pub enum ParserExecutionErrorKind {
     /// Incremental edit coordinates did not describe the old and new inputs.
     InvalidInputEdit {
         /// Shared edit start byte.
@@ -9586,13 +5943,6 @@ pub enum ReducedParseErrorKind {
         old_input_len: usize,
         /// New input byte length.
         new_input_len: usize,
-    },
-    /// More than one distinct reduced tree was accepted.
-    AmbiguousParse {
-        /// Number of accepted branches.
-        accepted_count: usize,
-        /// Accepted reduced S-expression projections.
-        accepted: Vec<String>,
     },
 }
 
@@ -9673,11 +6023,9 @@ pub enum ParseAction {
         /// Dynamic precedence attached to the reduced subtree.
         dynamic_precedence: i32,
     },
-    /// Enter generated error recovery.
-    Recover,
 }
 
-/// GLR runtime table facts that are not specific to one stack version.
+/// GLR table facts that are not specific to one stack version.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GlrPlan {
     conflicts: Vec<ConflictPlan>,
@@ -9760,7 +6108,7 @@ impl BranchRanking {
         self.dynamic_precedence
     }
 
-    /// Runtime progress count used as a stable branch-ranking tiebreaker.
+    /// Branch progress count used as a stable branch-ranking tiebreaker.
     pub const fn progress(&self) -> u32 {
         self.progress
     }
@@ -9771,7 +6119,7 @@ impl BranchRanking {
     }
 }
 
-/// Runtime tree operation emitted by parser actions.
+/// Tree operation emitted by parser actions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TreeEvent {
@@ -9779,7 +6127,7 @@ pub enum TreeEvent {
     OpenNode {
         /// Stack version that emitted this tree event.
         version: StackVersionId,
-        /// Runtime tree node.
+        /// Parser tree node.
         node: TreeNodeId,
         /// Public or internal symbol.
         symbol: ParserSymbol,
@@ -9815,7 +6163,7 @@ pub enum TreeEvent {
         production: ProductionId,
         /// Reduced production metadata.
         metadata: ProductionMetadataId,
-        /// Runtime tree node.
+        /// Parser tree node.
         node: TreeNodeId,
         /// Byte range.
         bytes: ByteRange,
@@ -9837,7 +6185,7 @@ pub enum TreeEvent {
     Error {
         /// Stack version that emitted this tree event.
         version: StackVersionId,
-        /// Runtime tree node.
+        /// Parser tree node.
         node: TreeNodeId,
         /// Byte range.
         bytes: ByteRange,
@@ -9850,7 +6198,7 @@ pub enum TreeEvent {
     CloseNode {
         /// Stack version that emitted this tree event.
         version: StackVersionId,
-        /// Runtime tree node.
+        /// Parser tree node.
         node: TreeNodeId,
         /// Public node kind, when this close event materializes a visible node.
         public_node: Option<PublicNodeKindId>,
@@ -9863,7 +6211,7 @@ pub enum TreeEvent {
     ReuseNode {
         /// Stack version that emitted this tree event.
         version: StackVersionId,
-        /// Runtime tree node.
+        /// Parser tree node.
         node: TreeNodeId,
         /// Byte range.
         bytes: ByteRange,
@@ -9876,20 +6224,20 @@ pub enum TreeEvent {
     Field {
         /// Stack version that emitted this tree event.
         version: StackVersionId,
-        /// Parent runtime tree node.
+        /// Parent parser tree node.
         node: TreeNodeId,
-        /// Visible child runtime tree node, when the fielded step emitted one.
+        /// Visible child parser tree node, when the fielded step emitted one.
         child: Option<TreeNodeId>,
         /// Field id.
         field: FieldId,
         /// Structural child index.
         structural_index: usize,
     },
-    /// An alias emitted or renamed a runtime tree node at a structural child index.
+    /// An alias emitted or renamed a parser tree node at a structural child index.
     Alias {
         /// Stack version that emitted this tree event.
         version: StackVersionId,
-        /// Runtime tree node carrying the alias.
+        /// Parser tree node carrying the alias.
         node: TreeNodeId,
         /// Alias id.
         alias: AliasId,
@@ -10087,10 +6435,13 @@ pub enum PredicateOutcome {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::OnceLock;
+
     use super::*;
     use crate::{
         corpus::{SexpChild, SexpNode, SexpValue},
         grammar::RawGrammarJson,
+        lex_match::{match_pattern, match_pattern_with_flags},
         lexical::LexicalFacts,
         validated::ValidatedGrammar,
     };
@@ -10522,7 +6873,7 @@ extras (
 "#
     }
 
-    fn authored_gingembre_runtime_fixture() -> (ValidatedGrammar, ParserGrammar, ParseTable) {
+    fn authored_gingembre_parser_fixture() -> (ValidatedGrammar, ParserGrammar, ParseTable) {
         use facet_styx::RenderError;
 
         let source = authored_gingembre_styx();
@@ -10538,6 +6889,27 @@ extras (
         (validated, parser, table)
     }
 
+    fn authored_gingembre_weavy_fixture() -> &'static (
+        ValidatedGrammar,
+        ParserGrammar,
+        ParseTable,
+        crate::lower::weavy::WeavyParsePlan,
+    ) {
+        static FIXTURE: OnceLock<(
+            ValidatedGrammar,
+            ParserGrammar,
+            ParseTable,
+            crate::lower::weavy::WeavyParsePlan,
+        )> = OnceLock::new();
+
+        FIXTURE.get_or_init(|| {
+            let (validated, parser, table) = authored_gingembre_parser_fixture();
+            let plan =
+                crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
+            (validated, parser, table, plan)
+        })
+    }
+
     fn gingembre_named_projection(input: &str) -> SexpNode {
         let parse = gingembre_syntax::parse(input);
         assert!(
@@ -10545,8 +6917,7 @@ extras (
             "gingembre parser reported errors for {input:?}: {:?}",
             parse.errors
         );
-        let root = gingembre_node_projection(parse.syntax()).unwrap();
-        root
+        gingembre_node_projection(parse.syntax()).unwrap()
     }
 
     fn gingembre_node_projection(node: &gingembre_syntax::ResolvedNode) -> Option<SexpNode> {
@@ -10574,7 +6945,7 @@ extras (
         let children = node
             .children()
             .filter_map(|child| {
-                gingembre_node_projection(&child).map(|node| SexpChild {
+                gingembre_node_projection(child).map(|node| SexpChild {
                     field: None,
                     value: SexpValue::Node(node),
                 })
@@ -10586,18 +6957,80 @@ extras (
         })
     }
 
-    fn assert_styx_authored_gingembre_runtime(input: &str, expected_sexp: &str) {
-        let (validated, parser, table) = authored_gingembre_runtime_fixture();
-        let report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_with_report(input)
-            .unwrap();
+    fn assert_styx_authored_gingembre_parse(input: &str, expected_sexp: &str) {
+        let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let tree =
+            crate::lower::weavy::parse_prepared_weavy_tree(plan, parser, table, input).unwrap();
         let expected = gingembre_named_projection(input);
 
-        rediff::assert_same!(report.tree(), &expected);
+        rediff::assert_same!(&tree, &expected);
         assert_eq!(expected.to_sexp(), expected_sexp);
-        assert_eq!(report.accepted_count(), 1);
-        assert_eq!(report.failure_count(), 0);
+    }
+
+    fn collect_resolved_terminal_texts<'a>(node: &'a ResolvedCstNode, texts: &mut Vec<&'a str>) {
+        if let Some(text) = node.text() {
+            texts.push(text);
+        }
+        for child in node.children() {
+            collect_resolved_terminal_texts(child, texts);
+        }
+    }
+
+    fn resolved_terminal_texts(node: &ResolvedCstNode) -> Vec<&str> {
+        let mut texts = Vec::new();
+        collect_resolved_terminal_texts(node, &mut texts);
+        texts
+    }
+
+    fn test_resolved_range(start: u32, end: u32) -> (ByteRange, PointRange) {
+        use crate::runtime_input::{ByteOffset, PointBytes, Row, Utf8ColumnBytes};
+
+        let bytes = ByteRange::new(ByteOffset::new(start), ByteOffset::new(end)).unwrap();
+        let points = PointRange::new(
+            PointBytes::new(Row::new(0), Utf8ColumnBytes::new(start)),
+            PointBytes::new(Row::new(0), Utf8ColumnBytes::new(end)),
+        )
+        .unwrap();
+        (bytes, points)
+    }
+
+    fn test_resolved_item(
+        kind: &str,
+        node: Option<TreeNodeId>,
+        start: u32,
+        end: u32,
+        order: usize,
+    ) -> ResolvedCstItem {
+        let (bytes, points) = test_resolved_range(start, end);
+        ResolvedCstItem {
+            kind: Arc::<str>::from(kind),
+            symbol: None,
+            field: None,
+            node,
+            bytes,
+            points,
+            named: node.is_some(),
+            visible: true,
+            extra: false,
+            has_text: false,
+            order,
+            children: SmallVec::new(),
+        }
+    }
+
+    #[test]
+    fn resolved_cst_attachment_handles_interleaved_event_order_roots() {
+        let mut items = vec![
+            test_resolved_item("child", None, 0, 1, 0),
+            test_resolved_item("later_sibling", None, 5, 6, 1),
+            test_resolved_item("parent", Some(TreeNodeId::from_index(0)), 0, 2, 2),
+        ];
+
+        let mut roots = attach_resolved_children_from_ranges(&mut items);
+        sort_resolved_children(&mut roots, &items);
+
+        assert_eq!(items[2].children.as_slice(), &[0]);
+        assert_eq!(roots, vec![2, 1]);
     }
 
     fn assert_styx_authored_gingembre_rejects_like_gingembre(input: &str) {
@@ -10607,10 +7040,8 @@ extras (
             "gingembre unexpectedly accepted {input:?}"
         );
 
-        let (validated, parser, table) = authored_gingembre_runtime_fixture();
-        let result = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_with_report(input);
+        let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let result = crate::lower::weavy::parse_prepared_weavy_tree(plan, parser, table, input);
         assert!(result.is_err(), "snark unexpectedly accepted {input:?}");
     }
 
@@ -10693,35 +7124,93 @@ extras (
 
     #[test]
     fn parses_styx_authored_gingembre_interpolation_like_gingembre() {
-        assert_styx_authored_gingembre_runtime("{{ x }}", "(template (interpolation (var_ref)))");
+        assert_styx_authored_gingembre_parse("{{ x }}", "(template (interpolation (var_ref)))");
     }
 
     #[test]
     fn parses_styx_authored_gingembre_trim_interpolation_like_gingembre() {
-        assert_styx_authored_gingembre_runtime("{{- x -}}", "(template (interpolation (var_ref)))");
+        assert_styx_authored_gingembre_parse("{{- x -}}", "(template (interpolation (var_ref)))");
+    }
+
+    #[test]
+    fn accepted_resolved_tree_preserves_anonymous_gingembre_delimiters() {
+        let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let input = "{{- x -}}";
+        let tree =
+            crate::lower::weavy::parse_prepared_weavy_resolved_tree(plan, parser, table, input)
+                .unwrap();
+        let texts = resolved_terminal_texts(&tree);
+
+        assert_eq!(tree.kind(), "template");
+        assert!(texts.contains(&"{{-"), "resolved terminals: {texts:?}");
+        assert!(texts.contains(&"-}}"), "resolved terminals: {texts:?}");
+    }
+
+    #[test]
+    fn accepted_resolved_tree_preserves_anonymous_gingembre_operators() {
+        let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let input = "{{ 1 + 2 * 3 }}";
+        let tree =
+            crate::lower::weavy::parse_prepared_weavy_resolved_tree(plan, parser, table, input)
+                .unwrap();
+        let texts = resolved_terminal_texts(&tree);
+
+        assert_eq!(tree.kind(), "template");
+        assert!(texts.contains(&"+"), "resolved terminals: {texts:?}");
+        assert!(texts.contains(&"*"), "resolved terminals: {texts:?}");
+    }
+    #[test]
+    fn prepared_weavy_resolved_tree_preserves_anonymous_gingembre_operators() {
+        let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let input = "{{ 1 + 2 * 3 }}";
+        let tree =
+            crate::lower::weavy::parse_prepared_weavy_resolved_tree(plan, parser, table, input)
+                .unwrap();
+        let texts = resolved_terminal_texts(&tree);
+
+        assert_eq!(tree.kind(), "template");
+        assert!(texts.contains(&"+"), "resolved terminals: {texts:?}");
+        assert!(texts.contains(&"*"), "resolved terminals: {texts:?}");
+    }
+
+    #[test]
+    fn prepared_weavy_resolved_cst_materializes_like_resolved_tree() {
+        let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let input = "{{ 1 + 2 * 3 }}";
+        let tree =
+            crate::lower::weavy::parse_prepared_weavy_resolved_tree(plan, parser, table, input)
+                .unwrap();
+        let arena =
+            crate::lower::weavy::parse_prepared_weavy_resolved_cst(plan, parser, table, input)
+                .unwrap();
+        let report = crate::lower::weavy::parse_prepared_weavy_resolved_cst_report(
+            plan, parser, table, input,
+        )
+        .unwrap();
+
+        assert_eq!(arena.root_kind(), Some("template"));
+        assert_eq!(arena.to_owned_node(), Some(tree.clone()));
+        assert_eq!(report.tree().to_owned_node(), Some(tree));
+        assert!(report.lexer_stats().lex_call_count > 0);
+        assert!(report.snark_stats().intrinsic_count > 0);
+        assert_eq!(
+            report.execution_lane(),
+            crate::lower::weavy::WeavyParseExecutionLane::Direct
+        );
     }
 
     #[test]
     fn parses_styx_authored_gingembre_literals_like_gingembre() {
-        assert_styx_authored_gingembre_runtime(
-            "{{ true }}",
-            "(template (interpolation (literal)))",
-        );
-        assert_styx_authored_gingembre_runtime(
-            "{{ none }}",
-            "(template (interpolation (literal)))",
-        );
-        assert_styx_authored_gingembre_runtime("{{ 42 }}", "(template (interpolation (literal)))");
-        assert_styx_authored_gingembre_runtime(
-            "{{ 1.25 }}",
-            "(template (interpolation (literal)))",
-        );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse("{{ true }}", "(template (interpolation (literal)))");
+        assert_styx_authored_gingembre_parse("{{ none }}", "(template (interpolation (literal)))");
+        assert_styx_authored_gingembre_parse("{{ 42 }}", "(template (interpolation (literal)))");
+        assert_styx_authored_gingembre_parse("{{ 1.25 }}", "(template (interpolation (literal)))");
+        assert_styx_authored_gingembre_parse(
             r#"{{ "x" }}"#,
             "(template (interpolation (literal)))",
         );
-        assert_styx_authored_gingembre_runtime("{{ 'x' }}", "(template (interpolation (literal)))");
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse("{{ 'x' }}", "(template (interpolation (literal)))");
+        assert_styx_authored_gingembre_parse(
             r#"{{ "a\"b" }}"#,
             "(template (interpolation (literal)))",
         );
@@ -10743,7 +7232,7 @@ extras (
 
     #[test]
     fn parses_styx_authored_gingembre_field_access_like_gingembre() {
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ user.name }}",
             "(template (interpolation (field_expr (var_ref))))",
         );
@@ -10751,7 +7240,7 @@ extras (
 
     #[test]
     fn parses_styx_authored_gingembre_call_arguments_like_gingembre() {
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ greet(user.name, suffix) }}",
             "(template (interpolation (call_expr (var_ref) (arg_list (arg (field_expr (var_ref))) (arg (var_ref))))))",
         );
@@ -10759,15 +7248,15 @@ extras (
 
     #[test]
     fn parses_styx_authored_gingembre_call_arg_shapes_like_gingembre() {
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ greet() }}",
             "(template (interpolation (call_expr (var_ref) (arg_list))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ greet(suffix,) }}",
             "(template (interpolation (call_expr (var_ref) (arg_list (arg (var_ref))))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ greet(name=user.name) }}",
             "(template (interpolation (call_expr (var_ref) (arg_list (kw_arg (field_expr (var_ref)))))))",
         );
@@ -10775,15 +7264,15 @@ extras (
 
     #[test]
     fn parses_styx_authored_gingembre_index_postfix_like_gingembre() {
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ items[1] }}",
             "(template (interpolation (index_expr (var_ref) (literal))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ items[1].name }}",
             "(template (interpolation (field_expr (index_expr (var_ref) (literal)))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ fetch()[0] }}",
             "(template (interpolation (index_expr (call_expr (var_ref) (arg_list)) (literal))))",
         );
@@ -10791,15 +7280,15 @@ extras (
 
     #[test]
     fn parses_styx_authored_gingembre_optional_postfix_like_gingembre() {
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ user? }}",
             "(template (interpolation (optional_expr (var_ref))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ user?.name }}",
             "(template (interpolation (field_expr (optional_expr (var_ref)))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ fetch()[0]? | default(none) }}",
             "(template (interpolation (filter_expr (optional_expr (index_expr (call_expr (var_ref) (arg_list)) (literal))) (arg_list (arg (literal))))))",
         );
@@ -10807,17 +7296,17 @@ extras (
 
     #[test]
     fn parses_styx_authored_gingembre_compound_primaries_like_gingembre() {
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ (a + b) * c }}",
             "(template (interpolation (binary_expr (paren_expr (binary_expr (var_ref) (var_ref))) (var_ref))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ [1, user.name, none,] }}",
             "(template (interpolation (list_lit (literal) (field_expr (var_ref)) (literal))))",
         );
-        assert_styx_authored_gingembre_runtime("{{ [] }}", "(template (interpolation (list_lit)))");
-        assert_styx_authored_gingembre_runtime("{{ {} }}", "(template (interpolation (dict_lit)))");
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse("{{ [] }}", "(template (interpolation (list_lit)))");
+        assert_styx_authored_gingembre_parse("{{ {} }}", "(template (interpolation (dict_lit)))");
+        assert_styx_authored_gingembre_parse(
             r#"{{ {"name": user.name, "ok": true,} }}"#,
             "(template (interpolation (dict_lit (literal) (field_expr (var_ref)) (literal) (literal))))",
         );
@@ -10825,39 +7314,39 @@ extras (
 
     #[test]
     fn parses_styx_authored_gingembre_binary_precedence_like_gingembre() {
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ a + b * c }}",
             "(template (interpolation (binary_expr (var_ref) (binary_expr (var_ref) (var_ref)))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ a * b + c }}",
             "(template (interpolation (binary_expr (binary_expr (var_ref) (var_ref)) (var_ref))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ a + b + c }}",
             "(template (interpolation (binary_expr (binary_expr (var_ref) (var_ref)) (var_ref))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ a - b ~ c }}",
             "(template (interpolation (binary_expr (binary_expr (var_ref) (var_ref)) (var_ref))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ a / b % c }}",
             "(template (interpolation (binary_expr (binary_expr (var_ref) (var_ref)) (var_ref))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ a ** b ** c }}",
             "(template (interpolation (binary_expr (var_ref) (binary_expr (var_ref) (var_ref)))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ a or b and c }}",
             "(template (interpolation (binary_expr (var_ref) (binary_expr (var_ref) (var_ref)))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ a == b + c }}",
             "(template (interpolation (binary_expr (var_ref) (binary_expr (var_ref) (var_ref)))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ a not in xs }}",
             "(template (interpolation (binary_expr (var_ref) (var_ref))))",
         );
@@ -10865,27 +7354,27 @@ extras (
 
     #[test]
     fn parses_styx_authored_gingembre_filters_and_tests_like_gingembre() {
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ name | upper }}",
             "(template (interpolation (filter_expr (var_ref))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ items | slice(0, 2) }}",
             "(template (interpolation (filter_expr (var_ref) (arg_list (arg (literal)) (arg (literal))))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ value | default(fallback) is not none }}",
             "(template (interpolation (test_expr (filter_expr (var_ref) (arg_list (arg (var_ref)))))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ value is none or fallback }}",
             "(template (interpolation (binary_expr (test_expr (var_ref)) (var_ref))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ a + b is sameas(c) }}",
             "(template (interpolation (test_expr (binary_expr (var_ref) (var_ref)) (arg_list (arg (var_ref))))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ name | upper ** power }}",
             "(template (interpolation (binary_expr (filter_expr (var_ref)) (var_ref))))",
         );
@@ -10893,204 +7382,113 @@ extras (
 
     #[test]
     fn parses_styx_authored_gingembre_unary_precedence_like_gingembre() {
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ not a and b }}",
             "(template (interpolation (binary_expr (unary_expr (var_ref)) (var_ref))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ not a == b }}",
             "(template (interpolation (unary_expr (binary_expr (var_ref) (var_ref)))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ a * -b }}",
             "(template (interpolation (binary_expr (var_ref) (unary_expr (var_ref)))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ -a ** b }}",
             "(template (interpolation (unary_expr (binary_expr (var_ref) (var_ref)))))",
         );
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn parses_styx_authored_gingembre_call_arguments_through_weavy_runtime() {
         let input = "{{ greet(user.name, suffix) }}";
-        let (validated, parser, table) = authored_gingembre_runtime_fixture();
-        let runtime_report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_with_report(input)
-            .unwrap();
-        let plan = crate::lower::weavy::lower_reduced_parser(&parser, &table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
-            &plan, &validated, &parser, &table, input,
-        )
-        .unwrap();
+        let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let tree =
+            crate::lower::weavy::parse_prepared_weavy_tree(plan, parser, table, input).unwrap();
 
-        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
-        rediff::assert_same!(weavy_report.tree(), &gingembre_named_projection(input));
+        rediff::assert_same!(&tree, &gingembre_named_projection(input));
         assert_eq!(
-            weavy_report.tree().to_sexp(),
+            tree.to_sexp(),
             "(template (interpolation (call_expr (var_ref) (arg_list (arg (field_expr (var_ref))) (arg (var_ref))))))"
         );
-        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
-        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
-        assert!(weavy_report.stats().block_call_count > 0);
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn parses_styx_authored_gingembre_index_postfix_through_weavy_runtime() {
         let input = "{{ items[1].name }}";
-        let (validated, parser, table) = authored_gingembre_runtime_fixture();
-        let runtime_report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_with_report(input)
-            .unwrap();
-        let plan = crate::lower::weavy::lower_reduced_parser(&parser, &table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
-            &plan, &validated, &parser, &table, input,
-        )
-        .unwrap();
+        let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let tree =
+            crate::lower::weavy::parse_prepared_weavy_tree(plan, parser, table, input).unwrap();
 
-        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
-        rediff::assert_same!(weavy_report.tree(), &gingembre_named_projection(input));
+        rediff::assert_same!(&tree, &gingembre_named_projection(input));
         assert_eq!(
-            weavy_report.tree().to_sexp(),
+            tree.to_sexp(),
             "(template (interpolation (field_expr (index_expr (var_ref) (literal)))))"
         );
-        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
-        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
-        assert!(weavy_report.stats().block_call_count > 0);
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn parses_styx_authored_gingembre_optional_postfix_through_weavy_runtime() {
         let input = "{{ fetch()[0]? | default(none) }}";
-        let (validated, parser, table) = authored_gingembre_runtime_fixture();
-        let runtime_report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_with_report(input)
-            .unwrap();
-        let plan = crate::lower::weavy::lower_reduced_parser(&parser, &table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
-            &plan, &validated, &parser, &table, input,
-        )
-        .unwrap();
+        let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let tree =
+            crate::lower::weavy::parse_prepared_weavy_tree(plan, parser, table, input).unwrap();
 
-        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
-        rediff::assert_same!(weavy_report.tree(), &gingembre_named_projection(input));
+        rediff::assert_same!(&tree, &gingembre_named_projection(input));
         assert_eq!(
-            weavy_report.tree().to_sexp(),
+            tree.to_sexp(),
             "(template (interpolation (filter_expr (optional_expr (index_expr (call_expr (var_ref) (arg_list)) (literal))) (arg_list (arg (literal))))))"
         );
-        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
-        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
-        assert!(weavy_report.stats().block_call_count > 0);
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn parses_styx_authored_gingembre_compound_primaries_through_weavy_runtime() {
         let input = r#"{{ {"name": user.name, "ok": true,} }}"#;
-        let (validated, parser, table) = authored_gingembre_runtime_fixture();
-        let runtime_report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_with_report(input)
-            .unwrap();
-        let plan = crate::lower::weavy::lower_reduced_parser(&parser, &table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
-            &plan, &validated, &parser, &table, input,
-        )
-        .unwrap();
+        let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let tree =
+            crate::lower::weavy::parse_prepared_weavy_tree(plan, parser, table, input).unwrap();
 
-        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
-        rediff::assert_same!(weavy_report.tree(), &gingembre_named_projection(input));
+        rediff::assert_same!(&tree, &gingembre_named_projection(input));
         assert_eq!(
-            weavy_report.tree().to_sexp(),
+            tree.to_sexp(),
             "(template (interpolation (dict_lit (literal) (field_expr (var_ref)) (literal) (literal))))"
         );
-        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
-        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
-        assert!(weavy_report.stats().block_call_count > 0);
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn parses_styx_authored_gingembre_filters_and_tests_through_weavy_runtime() {
         let input = "{{ value | default(fallback) is not none }}";
-        let (validated, parser, table) = authored_gingembre_runtime_fixture();
-        let runtime_report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_with_report(input)
-            .unwrap();
-        let plan = crate::lower::weavy::lower_reduced_parser(&parser, &table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
-            &plan, &validated, &parser, &table, input,
-        )
-        .unwrap();
+        let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let tree =
+            crate::lower::weavy::parse_prepared_weavy_tree(plan, parser, table, input).unwrap();
 
-        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
-        rediff::assert_same!(weavy_report.tree(), &gingembre_named_projection(input));
+        rediff::assert_same!(&tree, &gingembre_named_projection(input));
         assert_eq!(
-            weavy_report.tree().to_sexp(),
+            tree.to_sexp(),
             "(template (interpolation (test_expr (filter_expr (var_ref) (arg_list (arg (var_ref)))))))"
         );
-        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
-        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
-        assert!(weavy_report.stats().block_call_count > 0);
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn parses_styx_authored_gingembre_unary_precedence_through_weavy_runtime() {
         let input = "{{ not a == b }}";
-        let (validated, parser, table) = authored_gingembre_runtime_fixture();
-        let runtime_report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_with_report(input)
-            .unwrap();
-        let plan = crate::lower::weavy::lower_reduced_parser(&parser, &table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
-            &plan, &validated, &parser, &table, input,
-        )
-        .unwrap();
+        let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let tree =
+            crate::lower::weavy::parse_prepared_weavy_tree(plan, parser, table, input).unwrap();
 
-        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
-        rediff::assert_same!(weavy_report.tree(), &gingembre_named_projection(input));
+        rediff::assert_same!(&tree, &gingembre_named_projection(input));
         assert_eq!(
-            weavy_report.tree().to_sexp(),
+            tree.to_sexp(),
             "(template (interpolation (unary_expr (binary_expr (var_ref) (var_ref)))))"
         );
-        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
-        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
-        assert!(weavy_report.stats().block_call_count > 0);
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn parses_styx_authored_gingembre_binary_precedence_through_weavy_runtime() {
         let input = "{{ a + b * c }}";
-        let (validated, parser, table) = authored_gingembre_runtime_fixture();
-        let runtime_report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_with_report(input)
-            .unwrap();
-        let plan = crate::lower::weavy::lower_reduced_parser(&parser, &table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
-            &plan, &validated, &parser, &table, input,
-        )
-        .unwrap();
+        let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let tree =
+            crate::lower::weavy::parse_prepared_weavy_tree(plan, parser, table, input).unwrap();
 
-        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
-        rediff::assert_same!(weavy_report.tree(), &gingembre_named_projection(input));
+        rediff::assert_same!(&tree, &gingembre_named_projection(input));
         assert_eq!(
-            weavy_report.tree().to_sexp(),
+            tree.to_sexp(),
             "(template (interpolation (binary_expr (var_ref) (binary_expr (var_ref) (var_ref)))))"
         );
-        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
-        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
-        assert!(weavy_report.stats().block_call_count > 0);
     }
 
     #[test]
@@ -11214,10 +7612,7 @@ extras (
                 .len(),
             1
         );
-        assert_eq!(
-            grammar.alias_sequences()[alias_sequence.get() as usize].entries()[0].named(),
-            true
-        );
+        assert!(grammar.alias_sequences()[alias_sequence.get() as usize].entries()[0].named());
         assert!(matches!(
             grammar.provenances()[item_metadata.provenance().unwrap().get() as usize].source(),
             ProvenanceSource::GrammarRule { .. }
@@ -11463,12 +7858,12 @@ extras (
         assert!(table.item_sets()[0].items().iter().any(|item| {
             item.production() == ProductionId::from_index(0)
                 && item.dot() == 0
-                && item.lookahead().symbols() == &[LookaheadSymbol::Eof]
+                && item.lookahead().symbols() == [LookaheadSymbol::Eof]
         }));
         assert!(table.item_sets()[0].items().iter().any(|item| {
             item.production() == ProductionId::from_index(1)
                 && item.dot() == 0
-                && item.lookahead().symbols() == &[LookaheadSymbol::Eof]
+                && item.lookahead().symbols() == [LookaheadSymbol::Eof]
         }));
         assert!(table.transitions().iter().any(|transition| {
             transition.from() == ItemSetId::from_index(0)
@@ -11560,7 +7955,7 @@ extras (
         assert!(table.item_sets()[0].items().iter().any(|item| {
             item.production() == ProductionId::from_index(1)
                 && item.dot() == 0
-                && item.lookahead().symbols() == &[LookaheadSymbol::Terminal(semicolon)]
+                && item.lookahead().symbols() == [LookaheadSymbol::Terminal(semicolon)]
         }));
     }
 
@@ -11677,7 +8072,7 @@ extras (
     }
 
     #[test]
-    fn compiled_lexer_matches_interpreted_terminal_matcher() {
+    fn weavy_lexer_matches_expected_terminal_matches() {
         let (validated, parser, table) = prepared_with_validated(
             r##"{
               "name": "mini",
@@ -11722,24 +8117,46 @@ extras (
               }
             }"##,
         );
-        let reduced = ReducedParser::new(&validated, &parser, &table).unwrap();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
         let input = "=> abc ab3bz yxy q";
+        let byte_positions = [0usize, 3, 7, 8, 14, 18];
 
-        for terminal in parser.symbols.terminals() {
-            let compiled = compile_lex_terminal(&validated, terminal);
-            for byte_position in [0usize, 3, 7, 8, 14, 18] {
-                let interpreted = reduced.match_terminal(terminal, input, byte_position);
-                let compiled = reduced
-                    .match_compiled_terminal(&compiled, input, byte_position)
-                    .map(|result| result.map(|match_| match_.end));
-                assert_eq!(
-                    compiled,
-                    interpreted,
-                    "terminal `{}` at byte {byte_position}",
-                    terminal.spelling()
-                );
-            }
-        }
+        let observed = parser
+            .symbols
+            .terminals()
+            .iter()
+            .map(|terminal| {
+                Ok((
+                    terminal.kind(),
+                    terminal.spelling().to_owned(),
+                    weavy_terminal_ends(&plan, terminal, input, &byte_positions)?,
+                ))
+            })
+            .collect::<Result<Vec<_>, crate::lower::weavy::WeavyParseError>>()
+            .unwrap();
+
+        assert!(observed.contains(&(
+            ParserTerminalKind::String,
+            "=>".to_owned(),
+            vec![Some(2), None, None, None, None, None],
+        )));
+        assert!(observed.contains(&(
+            ParserTerminalKind::Pattern,
+            "[a-z]+".to_owned(),
+            vec![None, Some(6), Some(9), Some(9), Some(16), None],
+        )));
+        assert!(
+            observed
+                .iter()
+                .any(|(kind, _, ends)| *kind == ParserTerminalKind::Token
+                    && *ends == vec![None, None, Some(12), None, None, None])
+        );
+        assert!(
+            observed
+                .iter()
+                .any(|(kind, _, ends)| *kind == ParserTerminalKind::Token
+                    && *ends == vec![None, None, None, None, Some(16), None])
+        );
     }
 
     fn auto_close_fixture() -> (ValidatedGrammar, ParserGrammar, ParseTable) {
@@ -11858,93 +8275,39 @@ extras (
             }"##,
         )
     }
-
     #[test]
-    fn runtime_inserts_declarative_auto_close_tokens() {
+    fn weavy_runtime_inserts_declarative_auto_close_tokens() {
         let (validated, parser, table) = auto_close_fixture();
-        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
-        let report = runtime.parse_with_report("<p>one<p>two</p>").unwrap();
-
-        assert_eq!(
-            report.tree().to_sexp(),
-            "(source_file (element (text)) (element (text)))"
-        );
-        assert_eq!(report.accepted_count(), 1);
-        assert_eq!(report.failure_count(), 0);
-    }
-
-    #[test]
-    fn runtime_inserts_node_driven_declarative_auto_close_tokens() {
-        let (validated, parser, table) = auto_close_node_fixture();
-        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
-        let report = runtime.parse_with_report("<p>one<div>two</div>").unwrap();
-
-        assert_eq!(
-            report.tree().to_sexp(),
-            "(document (element (start_tag (tag_name)) (text)) (element (start_tag (tag_name)) (text) (end_tag (tag_name))))"
-        );
-        assert_eq!(report.accepted_count(), 1);
-        assert_eq!(report.failure_count(), 0);
-    }
-
-    #[cfg(feature = "weavy-lowering")]
-    #[test]
-    fn runtime_inserts_declarative_auto_close_tokens_through_weavy_runtime() {
-        let (validated, parser, table) = auto_close_fixture();
-        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
-        let runtime_report = runtime.parse_with_report("<p>one<p>two</p>").unwrap();
-        let plan = crate::lower::weavy::lower_reduced_parser(&parser, &table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
+        let tree = crate::lower::weavy::parse_prepared_weavy_tree(
             &plan,
-            &validated,
             &parser,
             &table,
             "<p>one<p>two</p>",
         )
         .unwrap();
 
-        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
         assert_eq!(
-            weavy_report.tree().to_sexp(),
+            tree.to_sexp(),
             "(source_file (element (text)) (element (text)))"
         );
-        assert_eq!(
-            weavy_report.accepted_count(),
-            runtime_report.accepted_count()
-        );
-        assert_eq!(weavy_report.failure_count(), runtime_report.failure_count());
-        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
-        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
-    fn runtime_inserts_node_driven_declarative_auto_close_tokens_through_weavy_runtime() {
+    fn weavy_runtime_inserts_node_driven_declarative_auto_close_tokens() {
         let (validated, parser, table) = auto_close_node_fixture();
-        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
-        let runtime_report = runtime.parse_with_report("<p>one<div>two</div>").unwrap();
-        let plan = crate::lower::weavy::lower_reduced_parser(&parser, &table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
+        let tree = crate::lower::weavy::parse_prepared_weavy_tree(
             &plan,
-            &validated,
             &parser,
             &table,
             "<p>one<div>two</div>",
         )
         .unwrap();
 
-        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
         assert_eq!(
-            weavy_report.tree().to_sexp(),
+            tree.to_sexp(),
             "(document (element (start_tag (tag_name)) (text)) (element (start_tag (tag_name)) (text) (end_tag (tag_name))))"
         );
-        assert_eq!(
-            weavy_report.accepted_count(),
-            runtime_report.accepted_count()
-        );
-        assert_eq!(weavy_report.failure_count(), runtime_report.failure_count());
-        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
-        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
     }
 
     fn flagged_regex_fixture() -> (ValidatedGrammar, ParserGrammar, ParseTable) {
@@ -12066,9 +8429,8 @@ extras (
         )
     }
 
-    fn reused_byte_ranges(report: &RuntimeParseReport) -> Vec<(usize, usize)> {
-        report
-            .tree_events()
+    fn reused_byte_ranges_from_events(events: &[TreeEvent]) -> Vec<(usize, usize)> {
+        events
             .iter()
             .filter_map(|event| match event {
                 TreeEvent::ReuseNode { bytes, .. } => {
@@ -12078,258 +8440,262 @@ extras (
             })
             .collect()
     }
+    fn weavy_reused_byte_ranges(
+        report: &crate::lower::weavy::WeavyParseReport,
+    ) -> Vec<(usize, usize)> {
+        reused_byte_ranges_from_events(report.tree_events())
+    }
 
-    #[test]
-    fn runtime_lexer_preserves_regex_flags() {
-        let (validated, parser, table) = flagged_regex_fixture();
-        let reduced = ReducedParser::new(&validated, &parser, &table).unwrap();
-        let input = "ABCXYZ";
-
-        for terminal in parser.symbols.terminals() {
-            let compiled = compile_lex_terminal(&validated, terminal);
-            for byte_position in [0usize, 3] {
-                let interpreted = reduced.match_terminal(terminal, input, byte_position);
-                let compiled = reduced
-                    .match_compiled_terminal(&compiled, input, byte_position)
-                    .map(|result| result.map(|match_| match_.end));
-                assert_eq!(
-                    compiled,
-                    interpreted,
-                    "terminal `{}` at byte {byte_position}",
-                    terminal.spelling()
-                );
-            }
+    fn weavy_terminal_end(
+        plan: &crate::lower::weavy::WeavyParsePlan,
+        terminal: &TerminalSymbol,
+        input: &str,
+        byte_position: usize,
+    ) -> Result<Option<usize>, crate::lower::weavy::WeavyParseError> {
+        match plan.match_terminal_for_tests(terminal.id(), input, byte_position) {
+            Ok(result) => Ok(result.map(|match_| match_.end)),
+            Err(crate::lower::weavy::WeavyParseError::MissingTerminal { .. }) => Ok(None),
+            Err(error) => Err(error),
         }
+    }
 
-        let report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_with_report(input)
-            .unwrap();
-        assert_eq!(
-            report.tree().to_sexp(),
-            "(source_file (insensitive) (wrapped))"
-        );
-        assert_eq!(report.accepted_count(), 1);
-        assert_eq!(report.failure_count(), 0);
+    fn weavy_terminal_ends(
+        plan: &crate::lower::weavy::WeavyParsePlan,
+        terminal: &TerminalSymbol,
+        input: &str,
+        byte_positions: &[usize],
+    ) -> Result<Vec<Option<usize>>, crate::lower::weavy::WeavyParseError> {
+        byte_positions
+            .iter()
+            .map(|byte_position| weavy_terminal_end(plan, terminal, input, *byte_position))
+            .collect()
     }
 
     #[test]
-    fn runtime_parser_can_reuse_compiled_runtime_plan() {
+    fn weavy_lexer_preserves_regex_flags() {
         let (validated, parser, table) = flagged_regex_fixture();
-        let plan = RuntimeParserPlan::new(&validated, &parser, &table).unwrap();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
         let input = "ABCXYZ";
-        let fresh = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_compact_with_report(input)
+        let byte_positions = [0usize, 3];
+        let insensitive = parser
+            .symbols
+            .terminals()
+            .iter()
+            .find(|terminal| {
+                terminal.kind() == ParserTerminalKind::Pattern
+                    && terminal.spelling() == "abc"
+                    && terminal.flags() == Some("i")
+            })
             .unwrap();
-        let reused = RuntimeParser::new_with_plan(&validated, &parser, &table, &plan)
-            .unwrap()
-            .parse_compact_with_report(input)
+        let wrapped = parser
+            .symbols
+            .terminals()
+            .iter()
+            .find(|terminal| terminal.kind() == ParserTerminalKind::Token)
             .unwrap();
 
-        rediff::assert_same!(reused.tree(), fresh.tree());
-        assert_eq!(reused.trace_events(), fresh.trace_events());
-        assert_eq!(reused.tree_events(), fresh.tree_events());
+        assert_eq!(
+            weavy_terminal_ends(&plan, insensitive, input, &byte_positions).unwrap(),
+            vec![Some(3), None]
+        );
+        assert_eq!(
+            weavy_terminal_ends(&plan, wrapped, input, &byte_positions).unwrap(),
+            vec![None, Some(6)]
+        );
     }
-
     #[test]
-    fn runtime_parse_session_reparse_matches_full_parse_oracle() {
+    fn weavy_runtime_parse_session_reparse_matches_full_parse_oracle() {
         let (validated, parser, table) = flagged_regex_fixture();
-        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
-        let mut session = RuntimeParseSession::new(runtime);
-        let first = session.parse_compact("ABCXYZ").unwrap().clone();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
+        let mut session = crate::lower::weavy::WeavyParseSession::new(&plan, &parser, &table);
+        let first = session.parse("ABCXYZ").unwrap().clone();
         assert_eq!(
             first.tree().to_sexp(),
             "(source_file (insensitive) (wrapped))"
         );
+        assert!(first.trace_events().is_empty());
         assert_eq!(session.last_input(), Some("ABCXYZ"));
 
-        let edit = RuntimeInputEdit::new(0, 3, 3);
-        let reparsed = session.reparse_compact(edit, "abcXYZ").unwrap().clone();
-        let scratch = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_compact_with_report("abcXYZ")
-            .unwrap();
+        let edit = ParserInputEdit::new(0, 3, 3);
+        let reparsed = session.reparse(edit, "abcXYZ").unwrap().clone();
+        let scratch =
+            crate::lower::weavy::parse_prepared_weavy_tree(&plan, &parser, &table, "abcXYZ")
+                .unwrap();
 
-        rediff::assert_same!(reparsed.tree(), scratch.tree());
+        rediff::assert_same!(reparsed.tree(), &scratch);
+        assert!(reparsed.trace_events().is_empty());
         assert!(
             reparsed
                 .tree_events()
                 .iter()
                 .any(|event| matches!(event, TreeEvent::ReuseNode { .. })),
-            "incremental reparse should reuse at least one accepted subtree"
+            "Weavy incremental reparse should reuse at least one accepted subtree"
         );
-        assert_eq!(reused_byte_ranges(&reparsed), vec![(3, 6)]);
+        assert_eq!(weavy_reused_byte_ranges(&reparsed), vec![(3, 6)]);
         assert_eq!(session.last_input(), Some("abcXYZ"));
     }
-
     #[test]
-    fn runtime_parse_session_does_not_reuse_node_that_peeked_into_edit() {
+    fn weavy_runtime_parse_session_does_not_reuse_node_that_peeked_into_edit() {
         let (validated, parser, table) = flagged_regex_fixture();
-        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
-        let mut session = RuntimeParseSession::new(runtime);
-        session.parse_compact("ABCXYZ").unwrap();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
+        let mut session = crate::lower::weavy::WeavyParseSession::new(&plan, &parser, &table);
+        session.parse("ABCXYZ").unwrap();
 
-        let edit = RuntimeInputEdit::new(3, 6, 6);
-        let reparsed = session.reparse_compact(edit, "ABCxyz").unwrap().clone();
-        let scratch = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_compact_with_report("ABCxyz")
-            .unwrap();
+        let edit = ParserInputEdit::new(3, 6, 6);
+        let reparsed = session.reparse(edit, "ABCxyz").unwrap().clone();
+        let scratch =
+            crate::lower::weavy::parse_prepared_weavy_tree(&plan, &parser, &table, "ABCxyz")
+                .unwrap();
 
-        rediff::assert_same!(reparsed.tree(), scratch.tree());
+        rediff::assert_same!(reparsed.tree(), &scratch);
         assert!(
             !reparsed
                 .tree_events()
                 .iter()
                 .any(|event| matches!(event, TreeEvent::ReuseNode { .. })),
-            "node that inspected the edit boundary must not be reused"
+            "Weavy must not reuse a node that inspected the edit boundary"
         );
     }
-
     #[test]
-    fn runtime_parse_session_reuses_suffix_across_edited_extra() {
+    fn weavy_runtime_parse_session_reuses_suffix_across_edited_extra() {
         let (validated, parser, table) = extra_comment_reuse_fixture();
-        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
-        let mut session = RuntimeParseSession::new(runtime);
-        let first = session.parse_compact("a#old\nb").unwrap().clone();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
+        let mut session = crate::lower::weavy::WeavyParseSession::new(&plan, &parser, &table);
+        let first = session.parse("a#old\nb").unwrap().clone();
         assert_eq!(
             first.tree().to_sexp(),
             "(source_file (left) (comment) (right))"
         );
 
-        let edit = RuntimeInputEdit::new(2, 5, 5);
-        let reparsed = session.reparse_compact(edit, "a#new\nb").unwrap().clone();
-        let scratch = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_compact_with_report("a#new\nb")
-            .unwrap();
+        let edit = ParserInputEdit::new(2, 5, 5);
+        let reparsed = session.reparse(edit, "a#new\nb").unwrap().clone();
+        let scratch =
+            crate::lower::weavy::parse_prepared_weavy_tree(&plan, &parser, &table, "a#new\nb")
+                .unwrap();
 
-        rediff::assert_same!(reparsed.tree(), scratch.tree());
+        rediff::assert_same!(reparsed.tree(), &scratch);
         assert_eq!(
             reparsed.tree().to_sexp(),
             "(source_file (left) (comment) (right))"
         );
-        assert_eq!(reused_byte_ranges(&reparsed), vec![(0, 1), (6, 7)]);
+        assert_eq!(weavy_reused_byte_ranges(&reparsed), vec![(0, 1), (6, 7)]);
     }
-
     #[test]
-    fn runtime_parse_session_reuses_node_with_attached_extra() {
+    fn weavy_runtime_parse_session_reuses_node_with_attached_extra() {
         let (validated, parser, table) = wrapped_extra_reuse_fixture();
-        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
-        let mut session = RuntimeParseSession::new(runtime);
-        let first = session.parse_compact("a#old\nb1").unwrap().clone();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
+        let mut session = crate::lower::weavy::WeavyParseSession::new(&plan, &parser, &table);
+        let first = session.parse("a#old\nb1").unwrap().clone();
         assert_eq!(
             first.tree().to_sexp(),
             "(source_file (wrapper (left) (comment) (right)) (suffix))"
         );
 
-        let edit = RuntimeInputEdit::new(7, 8, 8);
-        let reparsed = session.reparse_compact(edit, "a#old\nb2").unwrap().clone();
-        let scratch = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_compact_with_report("a#old\nb2")
-            .unwrap();
+        let edit = ParserInputEdit::new(7, 8, 8);
+        let reparsed = session.reparse(edit, "a#old\nb2").unwrap().clone();
+        let scratch =
+            crate::lower::weavy::parse_prepared_weavy_tree(&plan, &parser, &table, "a#old\nb2")
+                .unwrap();
 
-        rediff::assert_same!(reparsed.tree(), scratch.tree());
+        rediff::assert_same!(reparsed.tree(), &scratch);
         assert_eq!(
             reparsed.tree().to_sexp(),
             "(source_file (wrapper (left) (comment) (right)) (suffix))"
         );
-        assert_eq!(reused_byte_ranges(&reparsed), vec![(0, 7)]);
+        assert_eq!(weavy_reused_byte_ranges(&reparsed), vec![(0, 7)]);
     }
-
     #[test]
-    fn runtime_parse_session_does_not_reuse_error_containing_node() {
+    fn weavy_runtime_parse_session_does_not_reuse_error_containing_node() {
         let (validated, parser, table) = wrapped_extra_reuse_fixture();
-        let runtime = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .with_recovery_step_limit(128);
-        let mut session = RuntimeParseSession::new(runtime);
-        let first = session.parse_recovering_compact("a@\nb1").unwrap().clone();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
+        let mut session = crate::lower::weavy::WeavyParseSession::new(&plan, &parser, &table);
+        let first = session.parse_recovering("a@\nb1").unwrap().clone();
         assert_eq!(
             first.tree().to_sexp(),
             "(source_file (wrapper (left) (ERROR) (right)) (suffix))"
         );
 
-        let edit = RuntimeInputEdit::new(4, 5, 5);
-        let reparsed = session
-            .reparse_recovering_compact(edit, "a@\nb2")
-            .unwrap()
-            .clone();
-        let scratch = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .with_recovery_step_limit(128)
-            .parse_recovering_compact_with_report("a@\nb2")
-            .unwrap();
-
-        rediff::assert_same!(reparsed.tree(), scratch.tree());
-        assert!(
-            !reused_byte_ranges(&reparsed).contains(&(0, 4)),
-            "wrapper node contains ERROR and must not be reused"
-        );
-    }
-
-    #[test]
-    fn runtime_parse_session_does_not_reuse_root_across_boundary_insertion() {
-        let (validated, parser, table) = repeated_word_fixture();
-        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
-        let mut session = RuntimeParseSession::new(runtime);
-        let first = session.parse_compact("alpha").unwrap().clone();
-        assert_eq!(first.tree().to_sexp(), "(source_file (word))");
-
-        let edit = RuntimeInputEdit::new(5, 5, 10);
-        let reparsed = session.reparse_compact(edit, "alpha beta").unwrap().clone();
-        let scratch = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_compact_with_report("alpha beta")
-            .unwrap();
-
-        rediff::assert_same!(reparsed.tree(), scratch.tree());
-        assert_eq!(reparsed.tree().to_sexp(), "(source_file (word) (word))");
-        assert!(reused_byte_ranges(&reparsed).is_empty());
-    }
-
-    #[test]
-    fn runtime_parse_session_rejects_mismatched_edit_context() {
-        let (validated, parser, table) = flagged_regex_fixture();
-        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
-        let mut session = RuntimeParseSession::new(runtime);
-        session.parse_compact("ABCXYZ").unwrap();
-
-        let error = session
-            .reparse_compact(RuntimeInputEdit::new(0, 3, 3), "abcXYZZ")
-            .unwrap_err();
-        assert!(matches!(
-            error.kind(),
-            ReducedParseErrorKind::InvalidInputEdit { .. }
-        ));
-        assert_eq!(session.last_input(), Some("ABCXYZ"));
-    }
-
-    #[cfg(feature = "weavy-lowering")]
-    #[test]
-    fn runtime_lexer_preserves_regex_flags_through_weavy_runtime() {
-        let (validated, parser, table) = flagged_regex_fixture();
-        let input = "ABCXYZ";
-        let runtime_report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_with_report(input)
-            .unwrap();
-        let plan = crate::lower::weavy::lower_reduced_parser(&parser, &table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
-            &plan, &validated, &parser, &table, input,
+        let edit = ParserInputEdit::new(4, 5, 5);
+        let reparsed = session.reparse_recovering(edit, "a@\nb2").unwrap().clone();
+        let scratch = crate::lower::weavy::parse_prepared_weavy_recovering_with_report_and_scanner(
+            &plan, &parser, &table, "a@\nb2", None,
         )
         .unwrap();
 
-        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
+        rediff::assert_same!(reparsed.tree(), scratch.tree());
+        assert!(
+            !weavy_reused_byte_ranges(&reparsed).contains(&(0, 4)),
+            "wrapper node contains ERROR and must not be reused"
+        );
+    }
+    #[test]
+    fn weavy_runtime_recovery_matches_skip_invalid_input_shape() {
+        let (validated, parser, table) = wrapped_extra_reuse_fixture();
+        let input = "a@\nb1";
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
+        let weavy_report =
+            crate::lower::weavy::parse_prepared_weavy_recovering_with_report_and_scanner(
+                &plan, &parser, &table, input, None,
+            )
+            .unwrap();
+
         assert_eq!(
             weavy_report.tree().to_sexp(),
-            "(source_file (insensitive) (wrapped))"
+            "(source_file (wrapper (left) (ERROR) (right)) (suffix))"
         );
-        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
-        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
-        assert!(weavy_report.stats().block_call_count > 0);
+        assert_eq!(weavy_report.accepted_count(), 1);
+        assert_eq!(weavy_report.failure_count(), 0);
+        assert!(
+            weavy_report
+                .accepted_tree_events()
+                .iter()
+                .any(|event| matches!(event, TreeEvent::Error { .. })),
+            "recovering Weavy parse should emit an ERROR tree event"
+        );
+    }
+    #[test]
+    fn weavy_runtime_parse_session_does_not_reuse_root_across_boundary_insertion() {
+        let (validated, parser, table) = repeated_word_fixture();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
+        let mut session = crate::lower::weavy::WeavyParseSession::new(&plan, &parser, &table);
+        let first = session.parse("alpha").unwrap().clone();
+        assert_eq!(first.tree().to_sexp(), "(source_file (word))");
+
+        let edit = ParserInputEdit::new(5, 5, 10);
+        let reparsed = session.reparse(edit, "alpha beta").unwrap().clone();
+        let scratch =
+            crate::lower::weavy::parse_prepared_weavy_tree(&plan, &parser, &table, "alpha beta")
+                .unwrap();
+
+        rediff::assert_same!(reparsed.tree(), &scratch);
+        assert_eq!(reparsed.tree().to_sexp(), "(source_file (word) (word))");
+        assert!(weavy_reused_byte_ranges(&reparsed).is_empty());
+    }
+    #[test]
+    fn weavy_runtime_parse_session_rejects_mismatched_edit_context() {
+        let (validated, parser, table) = flagged_regex_fixture();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
+        let mut session = crate::lower::weavy::WeavyParseSession::new(&plan, &parser, &table);
+        session.parse("ABCXYZ").unwrap();
+
+        let error = session
+            .reparse(ParserInputEdit::new(0, 3, 3), "abcXYZZ")
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            crate::lower::weavy::WeavyParseError::InvalidInputEdit { .. }
+        ));
+        assert_eq!(session.last_input(), Some("ABCXYZ"));
+    }
+    #[test]
+    fn weavy_runtime_preserves_regex_flags() {
+        let (validated, parser, table) = flagged_regex_fixture();
+        let input = "ABCXYZ";
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
+        let tree =
+            crate::lower::weavy::parse_prepared_weavy_tree(&plan, &parser, &table, input).unwrap();
+
+        assert_eq!(tree.to_sexp(), "(source_file (insensitive) (wrapped))");
     }
 
     fn lexical_symbol_fixture() -> (ValidatedGrammar, ParserGrammar, ParseTable) {
@@ -12358,44 +8724,19 @@ extras (
             }"##,
         )
     }
-
     #[test]
-    fn runtime_lexer_resolves_symbol_references_inside_token() {
-        let (validated, parser, table) = lexical_symbol_fixture();
-        let report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_with_report("alpha:123")
-            .unwrap();
-
-        assert_eq!(report.tree().to_sexp(), "(source_file)");
-        assert_eq!(report.accepted_count(), 1);
-        assert_eq!(report.failure_count(), 0);
-    }
-
-    #[cfg(feature = "weavy-lowering")]
-    #[test]
-    fn runtime_lexer_resolves_symbol_references_inside_token_through_weavy_runtime() {
+    fn weavy_runtime_resolves_symbol_references_inside_token() {
         let (validated, parser, table) = lexical_symbol_fixture();
         let input = "alpha:123";
-        let runtime_report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_with_report(input)
-            .unwrap();
-        let plan = crate::lower::weavy::lower_reduced_parser(&parser, &table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
-            &plan, &validated, &parser, &table, input,
-        )
-        .unwrap();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
+        let tree =
+            crate::lower::weavy::parse_prepared_weavy_tree(&plan, &parser, &table, input).unwrap();
 
-        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
-        assert_eq!(weavy_report.tree().to_sexp(), "(source_file)");
-        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
-        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
-        assert!(weavy_report.stats().block_call_count > 0);
+        assert_eq!(tree.to_sexp(), "(source_file)");
     }
 
     #[test]
-    fn compiled_lexer_carries_precedence_inside_token_wrapper() {
+    fn lex_compiler_carries_precedence_inside_token_wrapper() {
         let (validated, parser, _table) = prepared_with_validated(
             r##"{
               "name": "mini",
@@ -12426,7 +8767,7 @@ extras (
     }
 
     #[test]
-    fn compiled_lexer_carries_implicit_precedence_through_symbol_reference() {
+    fn lex_compiler_carries_implicit_precedence_through_symbol_reference() {
         let (validated, parser, _table) = prepared_with_validated(
             r##"{
               "name": "mini",
@@ -12522,151 +8863,144 @@ extras (
     }
 
     #[test]
-    fn lexical_primitives_parse_until_and_nested_tokens() {
+    fn weavy_lexical_primitives_match_until_and_nested_tokens() {
         let (validated, parser, table) = lexical_primitives_fixture();
-        let reduced = ReducedParser::new(&validated, &parser, &table).unwrap();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
         let input = "hello {# outer {# inner #} done #}";
+        let byte_positions = [0usize, 6, 15, 26];
 
-        for terminal in parser.symbols.terminals() {
-            let compiled = compile_lex_terminal(&validated, terminal);
-            for byte_position in [0usize, 6, 15, 26] {
-                let interpreted = reduced.match_terminal(terminal, input, byte_position);
-                let compiled = reduced
-                    .match_compiled_terminal(&compiled, input, byte_position)
-                    .map(|result| result.map(|match_| match_.end));
-                assert_eq!(
-                    compiled,
-                    interpreted,
-                    "terminal `{}` at byte {byte_position}",
-                    terminal.spelling()
-                );
-            }
-        }
-
-        let report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_with_report(input)
+        let observed = parser
+            .symbols
+            .terminals()
+            .iter()
+            .map(|terminal| {
+                Ok((
+                    terminal.kind(),
+                    terminal.spelling().to_owned(),
+                    weavy_terminal_ends(&plan, terminal, input, &byte_positions)?,
+                ))
+            })
+            .collect::<Result<Vec<_>, crate::lower::weavy::WeavyParseError>>()
             .unwrap();
 
-        assert_eq!(report.tree().to_sexp(), "(source_file (text) (comment))");
-        assert_eq!(report.accepted_count(), 1);
-        assert_eq!(report.failure_count(), 0);
+        assert!(
+            observed
+                .iter()
+                .any(|(kind, _, ends)| *kind == ParserTerminalKind::Token
+                    && *ends == vec![Some(6), None, None, Some(34)]),
+            "observed: {observed:#?}"
+        );
+        assert!(
+            observed
+                .iter()
+                .any(|(kind, _, ends)| *kind == ParserTerminalKind::Token
+                    && *ends == vec![None, Some(34), Some(26), None]),
+            "observed: {observed:#?}"
+        );
     }
-
     #[test]
-    fn runtime_parse_session_reuses_until_text_around_interpolation_edit() {
+    fn weavy_runtime_parse_session_reuses_until_text_around_interpolation_edit() {
         let (validated, parser, table) = until_reuse_fixture();
-        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
-        let mut session = RuntimeParseSession::new(runtime);
-        let first = session
-            .parse_compact("hello {{name}} tail")
-            .unwrap()
-            .clone();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
+        let mut session = crate::lower::weavy::WeavyParseSession::new(&plan, &parser, &table);
+        let first = session.parse("hello {{name}} tail").unwrap().clone();
         assert_eq!(
             first.tree().to_sexp(),
             "(source_file (text) (interpolation (word)) (text))"
         );
 
-        let edit = RuntimeInputEdit::new(8, 12, 13);
+        let edit = ParserInputEdit::new(8, 12, 13);
         let reparsed = session
-            .reparse_compact(edit, "hello {{title}} tail")
+            .reparse(edit, "hello {{title}} tail")
             .unwrap()
             .clone();
-        let scratch = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_compact_with_report("hello {{title}} tail")
-            .unwrap();
+        let scratch = crate::lower::weavy::parse_prepared_weavy_tree(
+            &plan,
+            &parser,
+            &table,
+            "hello {{title}} tail",
+        )
+        .unwrap();
 
-        rediff::assert_same!(reparsed.tree(), scratch.tree());
+        rediff::assert_same!(reparsed.tree(), &scratch);
         assert_eq!(
             reparsed.tree().to_sexp(),
             "(source_file (text) (interpolation (word)) (text))"
         );
-        assert_eq!(reused_byte_ranges(&reparsed), vec![(0, 6), (15, 20)]);
+        assert_eq!(weavy_reused_byte_ranges(&reparsed), vec![(0, 6), (15, 20)]);
     }
-
     #[test]
-    fn runtime_parse_session_reuse_metadata_survives_reparse_chains() {
+    fn weavy_runtime_parse_session_reuse_metadata_survives_reparse_chains() {
         let (validated, parser, table) = until_reuse_fixture();
-        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
-        let mut session = RuntimeParseSession::new(runtime);
-        session.parse_compact("hello {{name}} tail").unwrap();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
+        let mut session = crate::lower::weavy::WeavyParseSession::new(&plan, &parser, &table);
+        session.parse("hello {{name}} tail").unwrap();
 
         let first_reparse = session
-            .reparse_compact(RuntimeInputEdit::new(8, 12, 13), "hello {{title}} tail")
+            .reparse(ParserInputEdit::new(8, 12, 13), "hello {{title}} tail")
             .unwrap()
             .clone();
-        assert_eq!(reused_byte_ranges(&first_reparse), vec![(0, 6), (15, 20)]);
+        assert_eq!(
+            weavy_reused_byte_ranges(&first_reparse),
+            vec![(0, 6), (15, 20)]
+        );
 
         let second_reparse = session
-            .reparse_compact(RuntimeInputEdit::new(16, 20, 19), "hello {{title}} end")
+            .reparse(ParserInputEdit::new(16, 20, 19), "hello {{title}} end")
             .unwrap()
             .clone();
-        let scratch = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_compact_with_report("hello {{title}} end")
-            .unwrap();
+        let scratch = crate::lower::weavy::parse_prepared_weavy_tree(
+            &plan,
+            &parser,
+            &table,
+            "hello {{title}} end",
+        )
+        .unwrap();
 
-        rediff::assert_same!(second_reparse.tree(), scratch.tree());
+        rediff::assert_same!(second_reparse.tree(), &scratch);
         assert_eq!(
             second_reparse.tree().to_sexp(),
             "(source_file (text) (interpolation (word)) (text))"
         );
         assert!(
-            !reused_byte_ranges(&second_reparse).is_empty(),
+            !weavy_reused_byte_ranges(&second_reparse).is_empty(),
             "second reparse should consume reusable metadata produced by the first reparse"
         );
 
         let (validated, parser, table) = wrapped_extra_reuse_fixture();
-        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
-        let mut session = RuntimeParseSession::new(runtime);
-        session.parse_compact("a#old\nb1").unwrap();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
+        let mut session = crate::lower::weavy::WeavyParseSession::new(&plan, &parser, &table);
+        session.parse("a#old\nb1").unwrap();
 
         let first_reparse = session
-            .reparse_compact(RuntimeInputEdit::new(7, 8, 8), "a#old\nb2")
+            .reparse(ParserInputEdit::new(7, 8, 8), "a#old\nb2")
             .unwrap()
             .clone();
-        assert_eq!(reused_byte_ranges(&first_reparse), vec![(0, 7)]);
+        assert_eq!(weavy_reused_byte_ranges(&first_reparse), vec![(0, 7)]);
 
         let second_reparse = session
-            .reparse_compact(RuntimeInputEdit::new(2, 5, 5), "a#new\nb2")
+            .reparse(ParserInputEdit::new(2, 5, 5), "a#new\nb2")
             .unwrap()
             .clone();
-        let scratch = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_compact_with_report("a#new\nb2")
-            .unwrap();
+        let scratch =
+            crate::lower::weavy::parse_prepared_weavy_tree(&plan, &parser, &table, "a#new\nb2")
+                .unwrap();
 
-        rediff::assert_same!(second_reparse.tree(), scratch.tree());
+        rediff::assert_same!(second_reparse.tree(), &scratch);
         assert_eq!(
             second_reparse.tree().to_sexp(),
             "(source_file (wrapper (left) (comment) (right)) (suffix))"
         );
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn lexical_primitives_parse_through_weavy_runtime() {
         let (validated, parser, table) = lexical_primitives_fixture();
         let input = "hello {# outer {# inner #} done #}";
-        let runtime_report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_with_report(input)
-            .unwrap();
-        let plan = crate::lower::weavy::lower_reduced_parser(&parser, &table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
-            &plan, &validated, &parser, &table, input,
-        )
-        .unwrap();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
+        let tree =
+            crate::lower::weavy::parse_prepared_weavy_tree(&plan, &parser, &table, input).unwrap();
 
-        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
-        assert_eq!(
-            weavy_report.tree().to_sexp(),
-            "(source_file (text) (comment))"
-        );
-        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
-        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
-        assert!(weavy_report.stats().block_call_count > 0);
+        assert_eq!(tree.to_sexp(), "(source_file (text) (comment))");
     }
 
     #[test]
@@ -12917,154 +9251,6 @@ extras (
         resolve_static_conflicts(&mut entries, &BTreeMap::new(), &grammar);
 
         assert_eq!(entries[&lookahead], vec![reduce_action(high)]);
-    }
-
-    #[test]
-    fn reduced_lexer_prefers_higher_implicit_precedence_for_equal_length_candidates() {
-        let direct_string = ReducedTokenCandidate {
-            lookahead: LookaheadSymbol::Terminal(TerminalId::from_index(0)),
-            end: 1,
-            inspected_end: 1,
-            extra: false,
-            external: false,
-            immediate: false,
-            literal: true,
-            lexical_precedence: 0,
-            implicit_precedence: 2,
-            scanner: None,
-        };
-        let immediate_string = ReducedTokenCandidate {
-            lookahead: LookaheadSymbol::Terminal(TerminalId::from_index(1)),
-            end: 1,
-            inspected_end: 1,
-            extra: false,
-            external: false,
-            immediate: true,
-            literal: false,
-            lexical_precedence: 0,
-            implicit_precedence: 3,
-            scanner: None,
-        };
-
-        assert_eq!(
-            reduced_candidate_order(immediate_string, direct_string),
-            ReducedCandidateOrder::Greater
-        );
-        assert_eq!(
-            reduced_candidate_order(direct_string, immediate_string),
-            ReducedCandidateOrder::Less
-        );
-    }
-
-    #[test]
-    fn reduced_lexer_prefers_explicit_lexical_precedence_before_length() {
-        let structured_line = ReducedTokenCandidate {
-            lookahead: LookaheadSymbol::Terminal(TerminalId::from_index(0)),
-            end: 1,
-            inspected_end: 1,
-            extra: false,
-            external: false,
-            immediate: false,
-            literal: true,
-            lexical_precedence: 0,
-            implicit_precedence: 2,
-            scanner: None,
-        };
-        let low_precedence_context = ReducedTokenCandidate {
-            lookahead: LookaheadSymbol::Terminal(TerminalId::from_index(1)),
-            end: 32,
-            inspected_end: 32,
-            extra: false,
-            external: false,
-            immediate: false,
-            literal: false,
-            lexical_precedence: -1,
-            implicit_precedence: 0,
-            scanner: None,
-        };
-
-        assert_eq!(
-            reduced_candidate_order(structured_line, low_precedence_context),
-            ReducedCandidateOrder::Greater
-        );
-        assert_eq!(
-            reduced_candidate_order(low_precedence_context, structured_line),
-            ReducedCandidateOrder::Less
-        );
-    }
-
-    #[test]
-    fn reduced_lexer_prefers_external_candidate_before_internal_precedence() {
-        let internal_string = ReducedTokenCandidate {
-            lookahead: LookaheadSymbol::Terminal(TerminalId::from_index(0)),
-            end: 1,
-            inspected_end: 1,
-            extra: false,
-            external: false,
-            immediate: false,
-            literal: true,
-            lexical_precedence: 0,
-            implicit_precedence: 2,
-            scanner: None,
-        };
-        let external_token = ReducedTokenCandidate {
-            lookahead: LookaheadSymbol::External(ExternalId::from_index(0)),
-            end: 1,
-            inspected_end: 1,
-            extra: false,
-            external: true,
-            immediate: false,
-            literal: true,
-            lexical_precedence: 0,
-            implicit_precedence: 0,
-            scanner: None,
-        };
-
-        assert_eq!(
-            reduced_candidate_order(external_token, internal_string),
-            ReducedCandidateOrder::Greater
-        );
-        assert_eq!(
-            reduced_candidate_order(internal_string, external_token),
-            ReducedCandidateOrder::Less
-        );
-    }
-
-    #[test]
-    fn reduced_lexer_prefers_immediate_content_over_longer_extra() {
-        let immediate_content = ReducedTokenCandidate {
-            lookahead: LookaheadSymbol::Terminal(TerminalId::from_index(0)),
-            end: 2,
-            inspected_end: 2,
-            extra: false,
-            external: false,
-            immediate: true,
-            literal: false,
-            lexical_precedence: 0,
-            implicit_precedence: 3,
-            scanner: None,
-        };
-        let comment_extra = ReducedTokenCandidate {
-            lookahead: LookaheadSymbol::Terminal(TerminalId::from_index(1)),
-            end: 8,
-            inspected_end: 8,
-            extra: true,
-            external: false,
-            immediate: false,
-            literal: false,
-            lexical_precedence: 0,
-            implicit_precedence: 0,
-            scanner: None,
-        };
-
-        assert_eq!(
-            reduced_candidate_order(immediate_content, comment_extra),
-            ReducedCandidateOrder::Greater
-        );
-        assert_eq!(
-            reduced_candidate_order(comment_extra, immediate_content),
-            ReducedCandidateOrder::Less
-        );
     }
 
     #[test]

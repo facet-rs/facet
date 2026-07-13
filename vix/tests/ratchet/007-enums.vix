@@ -1,0 +1,18 @@
+// Rung 007 — enums with payloads; construction and matching.
+enum Shape {
+    Circle(Int),
+    Rect { w: Int, h: Int },
+}
+
+fn area(s: Shape) -> Int {
+    match s {
+        Shape::Circle(r) => 3 * r * r,
+        Shape::Rect { w, h } => w * h,
+    }
+}
+
+#[test]
+fn enums() -> Stream<Check> {
+    yield expect_eq(area(Shape::Circle(2)), 12);
+    yield expect_eq(area(Shape::Rect { w: 3, h: 5 }), 15);
+}

@@ -1,0 +1,8 @@
+// Rung 048 — closures capture values (by value, like everything).
+#[test]
+fn closures_capture() -> Stream<Check> {
+    let base = 100;
+    let add_base = |n| n + base;
+    yield expect_eq(add_base(1), 101);
+    yield expect_eq([1, 2, 3].map(add_base), [101, 102, 103]);
+}

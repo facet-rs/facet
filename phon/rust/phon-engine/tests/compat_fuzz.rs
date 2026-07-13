@@ -227,7 +227,7 @@ impl SchemaBuilder {
     }
 
     fn fresh(&mut self) -> SchemaId {
-        let id = SchemaId(self.next_id);
+        let id = SchemaId::from_raw(self.next_id);
         self.next_id += 1;
         id
     }

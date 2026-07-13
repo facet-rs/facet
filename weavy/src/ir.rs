@@ -504,6 +504,24 @@ where
     Ok(DenseLowered::new(program, blocks))
 }
 
+/// Resolve a canonical lowered program into dense block-ref form while keeping
+/// the symbolic program available to the caller.
+pub fn resolve_lowered_ref<Block, Intrinsic>(
+    lowered: &WeavyLowered<Block, Intrinsic>,
+) -> Result<DenseWeavyLowered<Intrinsic>, ResolveError<Block>>
+where
+    Block: Clone + Ord,
+    Intrinsic: Clone,
+{
+    let refs = lowered.block_refs();
+    let program = resolve_program_ref(&lowered.program, &refs)?;
+    let mut blocks = Vec::with_capacity(lowered.blocks.len());
+    for block in lowered.blocks.values() {
+        blocks.push(resolve_program_ref(block, &refs)?);
+    }
+    Ok(DenseLowered::new(program, blocks))
+}
+
 fn resolve_program<Block, Intrinsic>(
     program: WeavyProgram<Block, Intrinsic>,
     refs: &BTreeMap<Block, BlockRef>,
@@ -513,6 +531,27 @@ where
 {
     program
         .into_iter()
+        .map(|op| {
+            op.try_map_blocks(&mut |block| {
+                refs.get(&block)
+                    .copied()
+                    .ok_or(ResolveError::MissingBlock(block))
+            })
+        })
+        .collect()
+}
+
+fn resolve_program_ref<Block, Intrinsic>(
+    program: &[WeavyOp<Block, Intrinsic>],
+    refs: &BTreeMap<Block, BlockRef>,
+) -> Result<DenseWeavyProgram<Intrinsic>, ResolveError<Block>>
+where
+    Block: Clone + Ord,
+    Intrinsic: Clone,
+{
+    program
+        .iter()
+        .cloned()
         .map(|op| {
             op.try_map_blocks(&mut |block| {
                 refs.get(&block)
@@ -1526,7 +1565,10 @@ mod tests {
             ]),
         };
 
+        let borrowed_dense = resolve_lowered_ref(&lowered).unwrap();
         let dense = resolve_lowered(lowered).unwrap();
+
+        assert_eq!(borrowed_dense, dense);
 
         assert_eq!(
             dense.program,
@@ -1566,8 +1608,10 @@ mod tests {
             blocks: BTreeMap::new(),
         };
 
+        let borrowed_err = resolve_lowered_ref(&lowered).unwrap_err();
         let err = resolve_lowered(lowered).unwrap_err();
 
+        assert_eq!(borrowed_err, ResolveError::MissingBlock("missing"));
         assert_eq!(err, ResolveError::MissingBlock("missing"));
     }
 

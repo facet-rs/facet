@@ -1,0 +1,9 @@
+enum Artifact {
+    Object(Path),
+}
+
+fn main(a: Artifact) -> Int {
+    match a {
+        Artifact::Object(p, q) => 1,
+    }
+}

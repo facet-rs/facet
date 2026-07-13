@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "reject.duplicate-type",
+  "outcome": "reject",
+  "description": "Structs and enums share the type namespace.",
+  "sources": [
+    {
+      "path": "reject/duplicate-type.vix",
+      "module": "crate"
+    }
+  ],
+  "assertions": [
+    {
+      "query": "diagnostics",
+      "subject": "DuplicateType",
+      "expect": "name=Thing namespace=type first_span=7..12",
+      "span_start": 20,
+      "span_end": 25
+    }
+  ]
+}

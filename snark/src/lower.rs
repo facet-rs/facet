@@ -7,8 +7,6 @@
 //!    production, field, scanner, query, recovery, and incremental facts;
 //! 3. lower Snark's own facts into a Snark dialect carried by Weavy programs.
 //!
-//! Raw `grammar.json` DTOs, generated Tree-sitter implementation files, and
-//! milestone parsers are not this layer.
-
-#[cfg(feature = "weavy-lowering")]
+//! Raw `grammar.json` DTOs and generated Tree-sitter implementation files are
+//! not this layer.
 pub mod weavy;

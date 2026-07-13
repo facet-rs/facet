@@ -1,0 +1,8 @@
+// Rung 067 — exec: run a process, its output is a value. (effects)
+// There is no `status` field: a nonzero exit is a failure, so a successful
+// exec is one whose demand simply has a value.
+#[test]
+fn exec_echo(echo: Echo) -> Stream<Check> {
+    let out = exec echo`"hello ratchet"`;
+    yield expect_eq(out.stdout.collect().values(), ["hello ratchet"]);
+}

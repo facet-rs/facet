@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}{{ config.title }}{% endblock %}</title>
+    {% if config.description %}
+    <meta name="description" content="{{ config.description }}">{% endif %}
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Commissioner:wght@400..700&family=Outfit:wght@400..700&display=swap">
+    <link rel="stylesheet" href="/main.css">
+    <link rel="icon" type="image/png" href="/favicon.png">
+    {% block head %}{% endblock %}
+</head>
+
+<body>
+    {% set here = current_path %}
+    {% set site = source.name | default(value="facet") %}
+
+    <header class="site-header">
+        <div class="site-header-inner">
+            <div class="header-lead">
+                <button class="nav-burger" type="button" aria-label="Open chapter navigation" aria-controls="mobile-sidebar" aria-expanded="false">
+                    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+                </button>
+                {# Project switcher — a dropdown so it scales as the ecosystem
+                   grows (fable, weavy, …). The trigger is the current project;
+                   the menu lists them all. data-x-site keeps the links
+                   site-absolute (mount-localization leaves them alone). #}
+                <details class="eco-menu">
+                    <summary class="brand" aria-label="Switch project" title="Switch project">
+                        <span class="brand-text"><strong>{{ site }}</strong></span>
+                        <svg class="eco-caret" viewBox="0 0 10 6" width="10" height="6" aria-hidden="true"><path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+                    </summary>
+                    <div class="eco-menu-list" role="menu">
+                        <p class="eco-menu-label">facet ecosystem</p>
+                        {# Data-driven from the mounted sources (render.rs `sites`), so
+                           every subsite shows and the list grows as sources are added. #}
+                        {% for s in sites %}
+                        <a href="{{ s.mount }}" data-x-site role="menuitem" {% if s.active %}class="is-active"{% endif %}>{{ s.name }}</a>
+                        {% endfor %}
+                    </div>
+                </details>
+
+                <nav class="breadcrumbs" aria-label="Breadcrumb">
+                    {% block breadcrumb %}{% endblock %}
+                </nav>
+            </div>
+
+            <div id="search" class="search-slot" aria-label="Search"></div>
+
+            <div class="page-actions">
+                {% block actions %}{% endblock %}
+                {# Per-source repo URL (config `repo`), falling back to a guess. #}
+                {% set gh = "https://github.com/facet-rs/facet" if site == "facet" else "https://github.com/bearcove/" ~ site %}
+                {% if source is defined and source.repo %}{% set gh = source.repo %}{% endif %}
+                <a class="header-github" href="{{ gh }}" aria-label="GitHub" title="GitHub">
+                    <svg viewBox="0 0 16 16" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <input type="checkbox" id="nav-toggle" class="nav-toggle" hidden>
+    <button class="sidebar-backdrop" type="button" aria-label="Close chapter navigation" hidden></button>
+    <div class="site-shell">
+        <aside id="mobile-sidebar" class="sidebar" aria-label="{{ site }} sections">
+            <nav class="sidebar-nav">
+                {# Walk THIS source's own section tree (source.root), expanding the
+                   branch the current page lives in. #}
+                {% if source is defined and source.root %}
+                <a class="sidebar-home{% if here == source.root.path %} is-active{% endif %}" href="{{ source.mount | default(value='/') }}">{{ source.root.title or site }}</a>
+                {# Root-level pages are top-level chapters of the book: list
+                   them in reading order, before the sections. #}
+                {% for p in source.root.pages | sort(attribute="weight") %}
+                <section class="sidebar-section">
+                    <a class="sidebar-section-title{% if here == p.path %} is-active{% endif %}" href="{{ p.permalink }}">{{ p.title }}</a>
+                </section>
+                {% endfor %}
+                {% for sec in source.root.subsections | sort(attribute="weight") %}
+                <section class="sidebar-section">
+                    <a class="sidebar-section-title{% if here == sec.path %} is-active{% endif %}" href="{{ sec.permalink }}">{{ sec.title }}</a>
+                    {% if here == sec.path or (sec.path ~ "/") in here %}
+                    {% set full = get_section(path=sec.path) %}
+                    {% if full and (full.pages or full.subsections) %}
+                    <ul>
+                        {% for p in full.pages | sort(attribute="weight") %}
+                        <li><a class="{% if here == p.path %}is-active{% endif %}" href="{{ p.permalink }}">{{ p.title }}</a></li>
+                        {% endfor %}
+                        {% for sub in full.subsections | sort(attribute="weight") %}
+                        <li class="sidebar-subsection">
+                            <a class="{% if here == sub.path %}is-active{% endif %}" href="{{ sub.permalink }}">{{ sub.title }}</a>
+                            {% if (sub.path ~ "/") in here %}
+                            {% set subfull = get_section(path=sub.path) %}
+                            {% if subfull and subfull.pages %}
+                            <ul>
+                                {% for p in subfull.pages | sort(attribute="weight") %}
+                                <li><a class="{% if here == p.path %}is-active{% endif %}" href="{{ p.permalink }}">{{ p.title }}</a></li>
+                                {% endfor %}
+                            </ul>
+                            {% endif %}
+                            {% endif %}
+                        </li>
+                        {% endfor %}
+                    </ul>
+                    {% endif %}
+                    {% endif %}
+                </section>
+                {% endfor %}
+                {% endif %}
+            </nav>
+        </aside>
+
+        <div class="content-column">
+            <main class="content">
+                {% block content %}{% endblock %}
+            </main>
+        </div>
+
+        {# On this page — the right-hand TOC. Pages and sections both expose `toc`. #}
+        {# A page shows its OWN toc (never the parent section's); a section shows
+           its toc. #}
+        {% set toc = [] %}
+        {% if page is defined and page %}{% set toc = page.toc | default(value=[]) %}
+        {% elif section is defined and section %}{% set toc = section.toc | default(value=[]) %}{% endif %}
+        {% if toc | length > 0 %}
+        <aside class="page-toc" aria-label="On this page">
+            <div class="page-toc-inner">
+                <p class="page-toc-title">On this page</p>
+                <ul>
+                    {% for h1 in toc %}{% if h1 %}
+                    <li>
+                        {% if h1.permalink %}<a href="{{ h1.permalink }}">{{ h1.title }}</a>{% else %}<span>{{ h1.title }}</span>{% endif %}
+                        {% if h1.children %}
+                        <ul>
+                            {% for h2 in h1.children %}{% if h2 and h2.permalink %}
+                            <li><a href="{{ h2.permalink }}">{{ h2.title }}</a></li>
+                            {% endif %}{% endfor %}
+                        </ul>
+                        {% endif %}
+                    </li>
+                    {% endif %}{% endfor %}
+                </ul>
+            </div>
+        </aside>
+        {% endif %}
+    </div>
+
+    <button class="to-top" type="button" aria-label="Back to top" title="Back to top" hidden>↑</button>
+
+    <footer class="site-footer">
+        <div class="site-footer-inner">
+            <div class="footer-links">
+                <a href="/">facet ecosystem</a>
+                <a href="{{ gh }}">{{ site }} on GitHub</a>
+                <a href="https://github.com/bearcove/dodeca">Built with Dodeca</a>
+            </div>
+            <nav class="sitemap" aria-label="Sitemap">
+                {% for s in sites %}
+                {% set site_root = get_section(path=s.mount) %}
+                {% if site_root %}
+                <section class="sitemap-source">
+                    <a class="sitemap-title" href="{{ s.mount }}" data-x-site>{{ s.name or "facet" }}</a>
+                    <div class="sitemap-links">
+                        {% for p in site_root.pages | sort(attribute="weight") %}
+                        <a href="{{ p.permalink }}">{{ p.title }}</a>
+                        {% endfor %}
+                        {% for sec in site_root.subsections | sort(attribute="weight") %}
+                        <a href="{{ sec.permalink }}">{{ sec.title }}</a>
+                        {% endfor %}
+                    </div>
+                </section>
+                {% endif %}
+                {% endfor %}
+            </nav>
+        </div>
+    </footer>
+
+    <script>
+        (() => {
+            // Search placeholder + ⌘K / Ctrl-K focus.
+            const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+            if (!isMac) document.documentElement.style.setProperty("--kbd-hint", '"Ctrl K"');
+            const findInput = () => document.querySelector("#search .ds-input, #search input");
+            const setPlaceholder = () => { const i = findInput(); if (i) { i.placeholder = "Search"; return true; } return false; };
+            if (!setPlaceholder()) { const iv = setInterval(() => { if (setPlaceholder()) clearInterval(iv); }, 120); setTimeout(() => clearInterval(iv), 6000); }
+            document.addEventListener("keydown", (e) => {
+                const i = findInput(); if (!i) return;
+                if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) { e.preventDefault(); i.focus(); i.select(); }
+                else if (e.key === "Escape" && document.activeElement === i) { i.blur(); }
+            });
+
+            // Back-to-top: show after scrolling a screenful; close the mobile menu on nav.
+            const toTop = document.querySelector(".to-top");
+            const onScroll = () => { if (toTop) toTop.hidden = window.scrollY < window.innerHeight * 0.6; };
+            window.addEventListener("scroll", onScroll, { passive: true }); onScroll();
+            toTop?.addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
+            const navToggle = document.getElementById("nav-toggle");
+            const navButton = document.querySelector(".nav-burger");
+            const sidebar = document.querySelector(".sidebar");
+            const backdrop = document.querySelector(".sidebar-backdrop");
+            const mobileNav = window.matchMedia("(max-width: 820px)");
+            const setHeaderHeight = () => {
+                const header = document.querySelector(".site-header");
+                if (header) document.documentElement.style.setProperty("--mobile-nav-top", `${header.offsetHeight}px`);
+            };
+            const setNavOpen = (open) => {
+                document.body.classList.toggle("sidebar-open", open);
+                if (navToggle) navToggle.checked = open;
+                if (navButton) {
+                    navButton.setAttribute("aria-expanded", String(open));
+                    navButton.setAttribute("aria-label", open ? "Close chapter navigation" : "Open chapter navigation");
+                }
+                if (backdrop) backdrop.hidden = !open;
+            };
+            setHeaderHeight();
+            window.addEventListener("resize", setHeaderHeight, { passive: true });
+            mobileNav.addEventListener?.("change", () => { setHeaderHeight(); if (!mobileNav.matches) setNavOpen(false); });
+            navButton?.addEventListener("click", () => {
+                setHeaderHeight();
+                setNavOpen(!document.body.classList.contains("sidebar-open"));
+            });
+            backdrop?.addEventListener("click", () => setNavOpen(false));
+            sidebar?.addEventListener("click", (e) => {
+                if (e.target instanceof HTMLAnchorElement) setNavOpen(false);
+            });
+            document.addEventListener("keydown", (e) => {
+                if (e.key === "Escape") setNavOpen(false);
+            });
+            document.querySelectorAll("time[data-timestamp]").forEach((el) => {
+                const timestamp = Number(el.getAttribute("data-timestamp"));
+                if (!Number.isFinite(timestamp) || timestamp <= 0) return;
+                const date = new Date(timestamp * 1000);
+                el.dateTime = date.toISOString();
+                el.textContent = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric" }).format(date);
+            });
+
+            // Close the project dropdown on an outside click or Escape.
+            const ecoMenu = document.querySelector(".eco-menu");
+            document.addEventListener("click", (e) => {
+                if (ecoMenu && ecoMenu.open && !ecoMenu.contains(e.target)) ecoMenu.open = false;
+            });
+            document.addEventListener("keydown", (e) => {
+                if (e.key === "Escape" && ecoMenu && ecoMenu.open) ecoMenu.open = false;
+            });
+        })();
+    </script>
+</body>
+
+</html>

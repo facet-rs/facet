@@ -207,13 +207,13 @@ where
     assert_eq!(shape_record.method, method);
     assert_eq!(shape_record.phase, phase);
 
-    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
         assert!(shape_record.decode_native.is_some());
         assert!(shape_record.encode_native.is_some());
     }
 
-    #[cfg(not(all(feature = "jit", target_os = "macos", target_arch = "aarch64")))]
+    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
     {
         assert!(shape_record.decode_native.is_none());
         assert!(shape_record.encode_native.is_none());
@@ -228,13 +228,13 @@ where
         assert!(!record.reason.is_empty());
     }
 
-    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     assert!(
         report.is_empty(),
         "{method} {phase} has native JIT fallbacks: {report:#?}"
     );
 
-    #[cfg(not(all(feature = "jit", target_os = "macos", target_arch = "aarch64")))]
+    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
     assert!(!report.is_empty());
 
     shape
@@ -248,7 +248,7 @@ fn assert_surface_shape_summary(report: &MethodJitShapeReport) {
     assert!(summary.lowered.total.op_count > 0);
     assert!(summary.lowered.total.scalar_op_count > 0);
 
-    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
         assert_eq!(summary.decode_native_count, summary.root_count);
         assert_eq!(summary.encode_native_count, summary.root_count);
@@ -256,7 +256,7 @@ fn assert_surface_shape_summary(report: &MethodJitShapeReport) {
         assert!(summary.encode_native.stencil_count >= summary.lowered.total.op_count);
     }
 
-    #[cfg(not(all(feature = "jit", target_os = "macos", target_arch = "aarch64")))]
+    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
     {
         assert_eq!(summary.decode_native_count, 0);
         assert_eq!(summary.encode_native_count, 0);

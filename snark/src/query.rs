@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use facet::Facet;
 
-use crate::parser::{ParserGrammar, ParserSymbol, RuntimeParseReport, TreeEvent, TreeNodeId};
+use crate::parser::{ParserGrammar, ParserSymbol, TreeEvent, TreeNodeId};
 use crate::runtime_input::{ByteOffset, ByteRange, PointBytes, PointRange, Row, Utf8ColumnBytes};
 use crate::source::SourceFile;
 
@@ -37,65 +37,30 @@ impl QuerySource {
         named_node_references(&self.0)
     }
 
-    /// Execute the supported highlight-query subset against a runtime parse.
+    /// Execute the supported highlight-query subset against tree events.
     ///
-    /// This is the first oracle-driven evaluator slice: named node captures,
-    /// anonymous literal captures, direct parent/child captures, and captured-text
-    /// `#match?`/`#eq?`/`#any-of?` predicates. Unsupported query constructs are ignored
-    /// rather than approximated.
-    pub fn execute_runtime_highlights(
-        &self,
-        parser: &ParserGrammar,
-        report: &RuntimeParseReport,
-        input: &str,
-    ) -> Vec<HighlightCapture> {
-        let tree_events = report.accepted_tree_events();
-        self.execute_runtime_highlights_from_tree_events(parser, &tree_events, input)
-    }
-
-    /// Execute the supported highlight-query subset against runtime tree events.
-    ///
-    /// This is shared by the direct Snark runtime and Weavy-carried runtime
-    /// reports so query execution is checked against the same structured tree
-    /// event surface.
-    pub fn execute_runtime_highlights_from_tree_events(
+    /// Weavy reports expose the structured tree-event surface consumed here.
+    pub fn execute_highlights_from_tree_events(
         &self,
         parser: &ParserGrammar,
         tree_events: &[TreeEvent],
         input: &str,
     ) -> Vec<HighlightCapture> {
-        execute_runtime_highlights(&self.0, parser, tree_events, input)
+        execute_highlights_from_query(&self.0, parser, tree_events, input)
     }
 
-    /// Extract supported language-injection regions from accepted runtime tree events.
-    ///
-    /// This is the first layering-runtime input slice: `@injection.content`,
-    /// `@injection.language`, `#set! injection.language`, `#set! injection.combined`,
-    /// `#set! injection.include-children`, and captured-text
-    /// `#match?`/`#eq?`/`#any-of?` predicates. Unsupported predicates are ignored
-    /// rather than approximated.
-    pub fn execute_runtime_injections(
-        &self,
-        parser: &ParserGrammar,
-        report: &RuntimeParseReport,
-        input: &str,
-    ) -> Vec<InjectionRegion> {
-        let tree_events = report.accepted_tree_events();
-        self.execute_runtime_injections_from_tree_events(parser, &tree_events, input)
-    }
-
-    /// Extract supported language-injection regions from runtime tree events.
-    pub fn execute_runtime_injections_from_tree_events(
+    /// Extract supported language-injection regions from tree events.
+    pub fn execute_injections_from_tree_events(
         &self,
         parser: &ParserGrammar,
         tree_events: &[TreeEvent],
         input: &str,
     ) -> Vec<InjectionRegion> {
-        execute_runtime_injections(&self.0, parser, tree_events, input)
+        execute_injections_from_query(&self.0, parser, tree_events, input)
     }
 }
 
-/// One query capture produced by the supported runtime highlight evaluator.
+/// One query capture produced by the supported tree-event highlight evaluator.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HighlightCapture {
     capture_name: String,
@@ -228,11 +193,10 @@ pub fn anonymous_node_literals(query: &str) -> BTreeSet<String> {
                     seen_head,
                     predicate,
                 }) = contexts.last_mut()
+                    && !*seen_head
                 {
-                    if !*seen_head {
-                        *predicate = symbol.starts_with('#');
-                        *seen_head = true;
-                    }
+                    *predicate = symbol.starts_with('#');
+                    *seen_head = true;
                 }
             }
             QueryToken::String(literal) => {
@@ -280,11 +244,10 @@ pub fn capture_names(query: &str) -> BTreeSet<String> {
                     seen_head,
                     predicate,
                 }) = contexts.last_mut()
+                    && !*seen_head
                 {
-                    if !*seen_head {
-                        *predicate = symbol.starts_with('#');
-                        *seen_head = true;
-                    }
+                    *predicate = symbol.starts_with('#');
+                    *seen_head = true;
                 }
                 if !contexts.iter().any(QueryContext::is_predicate)
                     && let Some(capture) = symbol.strip_prefix('@')
@@ -331,11 +294,10 @@ pub fn named_node_references(query: &str) -> BTreeSet<String> {
                     seen_head,
                     predicate,
                 }) = contexts.last_mut()
+                    && !*seen_head
                 {
-                    if !*seen_head {
-                        *predicate = symbol.starts_with('#');
-                        *seen_head = true;
-                    }
+                    *predicate = symbol.starts_with('#');
+                    *seen_head = true;
                 }
                 if !contexts.iter().any(QueryContext::is_predicate)
                     && is_named_node_reference(&symbol)
@@ -348,16 +310,16 @@ pub fn named_node_references(query: &str) -> BTreeSet<String> {
     nodes
 }
 
-fn execute_runtime_highlights(
+fn execute_highlights_from_query(
     query: &str,
     parser: &ParserGrammar,
     tree_events: &[TreeEvent],
     input: &str,
 ) -> Vec<HighlightCapture> {
     let rules = highlight_rules(query);
-    let nodes = runtime_highlight_nodes(parser, tree_events, input);
-    let tokens = runtime_highlight_tokens(parser, tree_events, input);
-    let fields = runtime_highlight_fields(parser, tree_events);
+    let nodes = query_nodes_from_tree_events(parser, tree_events, input);
+    let tokens = query_tokens_from_tree_events(parser, tree_events, input);
+    let fields = query_fields_from_tree_events(parser, tree_events);
     let mut captures = Vec::new();
 
     for rule in &rules {
@@ -435,16 +397,16 @@ fn execute_runtime_highlights(
     captures
 }
 
-fn execute_runtime_injections(
+fn execute_injections_from_query(
     query: &str,
     parser: &ParserGrammar,
     tree_events: &[TreeEvent],
     input: &str,
 ) -> Vec<InjectionRegion> {
     let patterns = injection_patterns(query);
-    let nodes = runtime_highlight_nodes(parser, tree_events, input);
-    let tokens = runtime_highlight_tokens(parser, tree_events, input);
-    let fields = runtime_highlight_fields(parser, tree_events);
+    let nodes = query_nodes_from_tree_events(parser, tree_events, input);
+    let tokens = query_tokens_from_tree_events(parser, tree_events, input);
+    let fields = query_fields_from_tree_events(parser, tree_events);
     let mut regions = Vec::new();
 
     for pattern in &patterns {
@@ -512,7 +474,7 @@ fn execute_runtime_injections(
 fn injection_chunks(
     capture: &HighlightCapture,
     include_children: bool,
-    nodes: &[RuntimeHighlightNode],
+    nodes: &[TreeEventQueryNode],
     input: &str,
 ) -> Vec<InjectionChunk> {
     if include_children {
@@ -574,7 +536,7 @@ fn injection_chunk_from_offsets(input: &str, start: u32, end: u32) -> Option<Inj
 fn dynamic_injection_language(
     content: &HighlightCapture,
     languages: &[HighlightCapture],
-    nodes: &[RuntimeHighlightNode],
+    nodes: &[TreeEventQueryNode],
 ) -> Option<String> {
     languages
         .iter()
@@ -585,7 +547,7 @@ fn dynamic_injection_language(
 fn injection_language_score(
     content: ByteRange,
     language: ByteRange,
-    nodes: &[RuntimeHighlightNode],
+    nodes: &[TreeEventQueryNode],
 ) -> (u8, u32, u32) {
     let same_parent = direct_parent_range(content, nodes)
         .is_some_and(|parent| byte_range_contains(parent.bytes, language));
@@ -621,9 +583,9 @@ fn byte_range_gap(left: ByteRange, right: ByteRange) -> u32 {
 
 fn capture_binding_matches(
     binding: &QueryCaptureBinding,
-    nodes: &[RuntimeHighlightNode],
-    tokens: &[RuntimeHighlightToken],
-    fields: &[RuntimeHighlightField],
+    nodes: &[TreeEventQueryNode],
+    tokens: &[TreeEventQueryToken],
+    fields: &[TreeEventQueryField],
 ) -> Vec<HighlightCapture> {
     let rule = HighlightRule {
         capture_name: binding.capture_name.clone(),
@@ -752,9 +714,9 @@ impl HighlightPredicateBinding {
     fn matches_nearest_capture(
         &self,
         content: &HighlightCapture,
-        nodes: &[RuntimeHighlightNode],
-        tokens: &[RuntimeHighlightToken],
-        fields: &[RuntimeHighlightField],
+        nodes: &[TreeEventQueryNode],
+        tokens: &[TreeEventQueryToken],
+        fields: &[TreeEventQueryField],
         bindings: &[QueryCaptureBinding],
     ) -> bool {
         bindings
@@ -1380,7 +1342,7 @@ fn apply_predicates(rules: &mut [HighlightRule], predicates: &[HighlightPredicat
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct RuntimeHighlightNode {
+struct TreeEventQueryNode {
     id: TreeNodeId,
     kind: String,
     bytes: ByteRange,
@@ -1389,24 +1351,24 @@ struct RuntimeHighlightNode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct RuntimeHighlightToken {
+struct TreeEventQueryToken {
     text: String,
     bytes: ByteRange,
     points: PointRange,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct RuntimeHighlightField {
+struct TreeEventQueryField {
     parent: TreeNodeId,
     child: Option<TreeNodeId>,
     field_name: String,
 }
 
-fn runtime_highlight_nodes(
+fn query_nodes_from_tree_events(
     parser: &ParserGrammar,
     tree_events: &[TreeEvent],
     input: &str,
-) -> Vec<RuntimeHighlightNode> {
+) -> Vec<TreeEventQueryNode> {
     tree_events
         .iter()
         .filter_map(|event| match event {
@@ -1422,7 +1384,7 @@ fn runtime_highlight_nodes(
                 let kind = parser.public_node_kinds()[public_node.get() as usize]
                     .name()
                     .to_owned();
-                Some(RuntimeHighlightNode {
+                Some(TreeEventQueryNode {
                     id: *node,
                     kind,
                     bytes: *bytes,
@@ -1439,7 +1401,7 @@ fn runtime_highlight_nodes(
                 ..
             } => {
                 let kind = parser.aliases()[alias.get() as usize].value().to_owned();
-                Some(RuntimeHighlightNode {
+                Some(TreeEventQueryNode {
                     id: *node,
                     kind,
                     bytes: *bytes,
@@ -1457,7 +1419,7 @@ fn runtime_highlight_nodes(
                 let kind = parser.public_node_kinds()[public_node.get() as usize]
                     .name()
                     .to_owned();
-                Some(RuntimeHighlightNode {
+                Some(TreeEventQueryNode {
                     id: *node,
                     kind,
                     bytes: *bytes,
@@ -1470,11 +1432,11 @@ fn runtime_highlight_nodes(
         .collect()
 }
 
-fn runtime_highlight_tokens(
+fn query_tokens_from_tree_events(
     parser: &ParserGrammar,
     tree_events: &[TreeEvent],
     input: &str,
-) -> Vec<RuntimeHighlightToken> {
+) -> Vec<TreeEventQueryToken> {
     tree_events
         .iter()
         .filter_map(|event| match event {
@@ -1494,7 +1456,7 @@ fn runtime_highlight_tokens(
                     ParserSymbol::External(_) => true,
                     _ => false,
                 };
-                query_visible.then(|| RuntimeHighlightToken {
+                query_visible.then(|| TreeEventQueryToken {
                     text: text.to_owned(),
                     bytes: *bytes,
                     points: *points,
@@ -1505,16 +1467,16 @@ fn runtime_highlight_tokens(
         .collect()
 }
 
-fn runtime_highlight_fields(
+fn query_fields_from_tree_events(
     parser: &ParserGrammar,
     tree_events: &[TreeEvent],
-) -> Vec<RuntimeHighlightField> {
+) -> Vec<TreeEventQueryField> {
     tree_events
         .iter()
         .filter_map(|event| match event {
             TreeEvent::Field {
                 node, child, field, ..
-            } => Some(RuntimeHighlightField {
+            } => Some(TreeEventQueryField {
                 parent: *node,
                 child: *child,
                 field_name: parser.fields()[field.get() as usize].name().to_owned(),
@@ -1525,10 +1487,10 @@ fn runtime_highlight_fields(
 }
 
 fn node_satisfies_edge_constraints(
-    node: &RuntimeHighlightNode,
+    node: &TreeEventQueryNode,
     rule: &HighlightRule,
-    nodes: &[RuntimeHighlightNode],
-    fields: &[RuntimeHighlightField],
+    nodes: &[TreeEventQueryNode],
+    fields: &[TreeEventQueryField],
 ) -> bool {
     if let Some(field_name) = &rule.field_name {
         return fields.iter().any(|field| {
@@ -1544,8 +1506,10 @@ fn node_satisfies_edge_constraints(
         });
     }
     let parent = direct_parent_node(node, nodes);
-    if let Some(parent_kind) = &rule.parent_kind
-        && !parent.is_some_and(|parent| &parent.kind == parent_kind)
+    if rule
+        .parent_kind
+        .as_ref()
+        .is_some_and(|parent_kind| parent.is_none_or(|parent| &parent.kind != parent_kind))
     {
         return false;
     }
@@ -1553,16 +1517,16 @@ fn node_satisfies_edge_constraints(
 }
 
 fn direct_parent_node<'a>(
-    node: &RuntimeHighlightNode,
-    nodes: &'a [RuntimeHighlightNode],
-) -> Option<&'a RuntimeHighlightNode> {
+    node: &TreeEventQueryNode,
+    nodes: &'a [TreeEventQueryNode],
+) -> Option<&'a TreeEventQueryNode> {
     direct_parent_range(node.bytes, nodes).filter(|parent| parent.id != node.id)
 }
 
 fn direct_parent_range(
     bytes: ByteRange,
-    nodes: &[RuntimeHighlightNode],
-) -> Option<&RuntimeHighlightNode> {
+    nodes: &[TreeEventQueryNode],
+) -> Option<&TreeEventQueryNode> {
     nodes
         .iter()
         .filter(|candidate| byte_range_strictly_contains(candidate.bytes, bytes))
@@ -1570,9 +1534,9 @@ fn direct_parent_range(
 }
 
 fn token_has_direct_parent_kind(
-    token: &RuntimeHighlightToken,
+    token: &TreeEventQueryToken,
     parent_kind: &str,
-    nodes: &[RuntimeHighlightNode],
+    nodes: &[TreeEventQueryNode],
 ) -> bool {
     nodes
         .iter()
@@ -1853,7 +1817,8 @@ mod tests {
     use crate::{
         grammar::RawGrammarJson,
         lexical::LexicalFacts,
-        parser::{ParseTable, ParserGrammar, RuntimeParser},
+        lower::weavy::{WeavyParsePlan, parse_prepared_weavy_with_report},
+        parser::{ParseTable, ParserGrammar, TreeEvent},
         validated::ValidatedGrammar,
     };
 
@@ -1861,6 +1826,22 @@ mod tests {
         QuerySource, anonymous_node_literals, capture_names, injection_patterns,
         named_node_references,
     };
+    fn parse_injection_fixture_events(
+        raw_json: &str,
+        input: &str,
+    ) -> (ParserGrammar, Vec<TreeEvent>) {
+        let raw = RawGrammarJson::from_tree_sitter_json_str(raw_json).unwrap();
+        let validated = ValidatedGrammar::from_raw(&raw).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        let parser = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let table = ParseTable::from_grammar(&parser).unwrap();
+        let plan = WeavyParsePlan::new(&validated, &parser, &table).unwrap();
+        let report = parse_prepared_weavy_with_report(&plan, &parser, &table, input).unwrap();
+        (parser, report.accepted_tree_events())
+    }
 
     #[test]
     fn extracts_query_anonymous_node_literals() {
@@ -1985,10 +1966,9 @@ mod tests {
         assert_eq!(pattern.captures.len(), 1);
         assert_eq!(pattern.captures[0].capture_name, "injection.content");
     }
-
     #[test]
-    fn extracts_runtime_injection_regions() {
-        let raw = RawGrammarJson::from_tree_sitter_json_str(
+    fn extracts_injection_regions_from_tree_events() {
+        let (parser, tree_events) = parse_injection_fixture_events(
             r#"{
               "name": "injection_smoke",
               "rules": {
@@ -2005,19 +1985,8 @@ mod tests {
               "inline": [],
               "supertypes": []
             }"#,
-        )
-        .unwrap();
-        let validated = ValidatedGrammar::from_raw(&raw).unwrap();
-        let lexical = LexicalFacts::from_grammar(&validated);
-        let parser = ParserGrammar::normalize_from_validated(&validated, &lexical)
-            .unwrap()
-            .prepare_productions_for_items()
-            .unwrap();
-        let table = ParseTable::from_grammar(&parser).unwrap();
-        let report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_compact_with_report("print")
-            .unwrap();
+            "print",
+        );
         let query = QuerySource(
             r#"((lua_code) @injection.content
                 (#set! injection.language "lua")
@@ -2025,7 +1994,7 @@ mod tests {
                 .to_owned(),
         );
 
-        let regions = query.execute_runtime_injections(&parser, &report, "print");
+        let regions = query.execute_injections_from_tree_events(&parser, &tree_events, "print");
 
         assert_eq!(regions.len(), 1);
         assert_eq!(regions[0].language(), "lua");
@@ -2035,10 +2004,10 @@ mod tests {
         assert_eq!(regions[0].bytes().start().get(), 0);
         assert_eq!(regions[0].bytes().end().get(), 5);
     }
-
     #[test]
     fn pairs_dynamic_injection_languages_with_sibling_content() {
-        let raw = RawGrammarJson::from_tree_sitter_json_str(
+        let input = "lua:PRINT;js:RUN;";
+        let (parser, tree_events) = parse_injection_fixture_events(
             r#"{
               "name": "injection_dynamic",
               "rules": {
@@ -2071,20 +2040,8 @@ mod tests {
               "inline": [],
               "supertypes": []
             }"#,
-        )
-        .unwrap();
-        let validated = ValidatedGrammar::from_raw(&raw).unwrap();
-        let lexical = LexicalFacts::from_grammar(&validated);
-        let parser = ParserGrammar::normalize_from_validated(&validated, &lexical)
-            .unwrap()
-            .prepare_productions_for_items()
-            .unwrap();
-        let table = ParseTable::from_grammar(&parser).unwrap();
-        let input = "lua:PRINT;js:RUN;";
-        let report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_compact_with_report(input)
-            .unwrap();
+            input,
+        );
         let query = QuerySource(
             r#"((block
                   (lang) @injection.language
@@ -2092,7 +2049,7 @@ mod tests {
                 .to_owned(),
         );
 
-        let regions = query.execute_runtime_injections(&parser, &report, input);
+        let regions = query.execute_injections_from_tree_events(&parser, &tree_events, input);
 
         assert_eq!(
             regions
@@ -2102,10 +2059,10 @@ mod tests {
             vec![("lua", "PRINT"), ("js", "RUN")]
         );
     }
-
     #[test]
     fn filters_injection_patterns_with_capture_predicates() {
-        let raw = RawGrammarJson::from_tree_sitter_json_str(
+        let input = "pwsh:PRINT;hbs:RUN;";
+        let (parser, tree_events) = parse_injection_fixture_events(
             r#"{
               "name": "injection_predicate",
               "rules": {
@@ -2138,20 +2095,8 @@ mod tests {
               "inline": [],
               "supertypes": []
             }"#,
-        )
-        .unwrap();
-        let validated = ValidatedGrammar::from_raw(&raw).unwrap();
-        let lexical = LexicalFacts::from_grammar(&validated);
-        let parser = ParserGrammar::normalize_from_validated(&validated, &lexical)
-            .unwrap()
-            .prepare_productions_for_items()
-            .unwrap();
-        let table = ParseTable::from_grammar(&parser).unwrap();
-        let input = "pwsh:PRINT;hbs:RUN;";
-        let report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_compact_with_report(input)
-            .unwrap();
+            input,
+        );
         let query = QuerySource(
             r#"((block
                   (tag) @_name
@@ -2171,7 +2116,7 @@ mod tests {
                 .to_owned(),
         );
 
-        let regions = query.execute_runtime_injections(&parser, &report, input);
+        let regions = query.execute_injections_from_tree_events(&parser, &tree_events, input);
 
         assert_eq!(
             regions

@@ -37,7 +37,7 @@ impl RawGrammarFile {
                 package_path: Some(package_path),
                 document: JsonDocumentKind::Grammar,
                 phase: "decode raw grammar JSON",
-                source,
+                source: Box::new(source),
             })?;
         Ok(source_file.map(|raw| Self { raw, grammar }))
     }
@@ -207,7 +207,7 @@ impl RawGrammarJson {
             package_path: None,
             document: JsonDocumentKind::Grammar,
             phase: "decode raw grammar JSON",
-            source,
+            source: Box::new(source),
         })
     }
 
@@ -291,31 +291,31 @@ pub enum RawRuleJson {
     /// Declarative implicit close token for tag-stack grammars.
     AutoClose {
         /// Element/tag name this token implicitly closes.
-        tag: String,
+        tag: Box<String>,
         /// Literal opening marker that pushes this tag.
         #[facet(default)]
-        open: Option<String>,
+        open: Option<Box<String>>,
         /// Literal explicit closing marker that pops this tag.
         #[facet(default)]
-        close: Option<String>,
+        close: Option<Box<String>>,
         /// Literal markers that trigger this implicit close when this tag is open.
         #[facet(default)]
         closed_by: Vec<String>,
         /// Public node kind whose reduced range pushes its tag-name child.
         #[facet(default)]
-        open_node: Option<String>,
+        open_node: Option<Box<String>>,
         /// Public node kind whose reduced range pops its tag-name child.
         #[facet(default)]
-        close_node: Option<String>,
+        close_node: Option<Box<String>>,
         /// Public child node kind that carries the tag-name text.
         #[facet(default)]
-        tag_name_node: Option<String>,
+        tag_name_node: Option<Box<String>>,
         /// Prefix that begins a start tag at the current lexer position.
         #[facet(default)]
-        start_prefix: Option<String>,
+        start_prefix: Option<Box<String>>,
         /// Prefix that begins an end tag node range.
         #[facet(default)]
-        end_prefix: Option<String>,
+        end_prefix: Option<Box<String>>,
         /// Tag names that trigger this implicit close after `start_prefix`.
         #[facet(default)]
         closed_by_tags: Vec<String>,

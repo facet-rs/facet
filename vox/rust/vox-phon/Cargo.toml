@@ -14,7 +14,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 vox-rt = { workspace = true }
-phon = { workspace = true, features = ["jit"] }
+phon.workspace = true
 phon-engine = { workspace = true }
 phon-ir = { workspace = true }
 phon-jit = { workspace = true }

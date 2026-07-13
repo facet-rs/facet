@@ -154,7 +154,7 @@ fn list_begin<S: Sink>(out: &mut S, len: usize) {
 fn enc_schema<S: Sink>(out: &mut S, s: &Schema) {
     st(out, "Schema", 3);
     write_str(out, "id");
-    v_u64(out, s.id.0);
+    v_u64(out, s.id.as_u64());
     write_str(out, "type_params");
     list_begin(out, s.type_params.len());
     for p in &s.type_params {
@@ -305,7 +305,7 @@ fn enc_ref<S: Sink>(out: &mut S, r: &SchemaRef) {
             write_str(out, "Concrete");
             st(out, "Concrete", 2);
             write_str(out, "id");
-            v_u64(out, id.0);
+            v_u64(out, id.as_u64());
             write_str(out, "args");
             enc_ref_list(out, args);
         }
@@ -454,7 +454,7 @@ fn dec_schema(r: &mut Reader, depth: usize) -> Result<Schema, DecodeError> {
     check_depth(depth)?;
     st_begin(r, 3)?;
     fname(r)?;
-    let id = SchemaId(d_u64(r)?);
+    let id = SchemaId::from_raw(d_u64(r)?);
     fname(r)?;
     let n = list_len(r)?;
     let mut type_params = Vec::with_capacity(n);
@@ -623,7 +623,7 @@ fn dec_ref(r: &mut Reader, depth: usize) -> Result<SchemaRef, DecodeError> {
         "Concrete" => {
             st_begin(r, 2)?;
             fname(r)?;
-            let id = SchemaId(d_u64(r)?);
+            let id = SchemaId::from_raw(d_u64(r)?);
             fname(r)?;
             let args = dec_ref_list(r, depth + 1)?;
             Ok(SchemaRef::Concrete { id, args })
@@ -1239,7 +1239,7 @@ mod tests {
     // r[verify type-system.canonical-form]
     fn roundtrip_struct() {
         roundtrip(&Schema {
-            id: SchemaId(0xABCD),
+            id: SchemaId::from_raw(0xABCD),
             type_params: Vec::new(),
             kind: SchemaKind::Struct {
                 name: "Point".to_string(),
@@ -1264,7 +1264,7 @@ mod tests {
     // r[verify type-system.variant-payloads]
     fn roundtrip_enum_all_payload_shapes() {
         roundtrip(&Schema {
-            id: SchemaId(7),
+            id: SchemaId::from_raw(7),
             type_params: Vec::new(),
             kind: SchemaKind::Enum {
                 name: "E".to_string(),
@@ -1352,7 +1352,7 @@ mod tests {
         ];
         for (i, kind) in kinds.into_iter().enumerate() {
             roundtrip(&Schema {
-                id: SchemaId(i as u64),
+                id: SchemaId::from_raw(i as u64),
                 type_params: Vec::new(),
                 kind,
             });
@@ -1364,7 +1364,7 @@ mod tests {
     fn roundtrip_generic_with_var_and_args() {
         // A parametric schema with a Var, and a concrete ref carrying args.
         roundtrip(&Schema {
-            id: SchemaId(42),
+            id: SchemaId::from_raw(42),
             type_params: vec!["T".to_string()],
             kind: SchemaKind::Struct {
                 name: "Wrapper".to_string(),
@@ -1376,7 +1376,10 @@ mod tests {
                     },
                     Field {
                         name: "list".to_string(),
-                        schema: SchemaRef::generic(SchemaId(999), vec![SchemaRef::var("T")]),
+                        schema: SchemaRef::generic(
+                            SchemaId::from_raw(999),
+                            vec![SchemaRef::var("T")],
+                        ),
                         required: true,
                     },
                 ],
@@ -1388,7 +1391,7 @@ mod tests {
     // r[verify decode.whole-message]
     fn rejects_trailing_bytes() {
         let mut bytes = schema_to_bytes(&Schema {
-            id: SchemaId(1),
+            id: SchemaId::from_raw(1),
             type_params: Vec::new(),
             kind: SchemaKind::Dynamic,
         });
@@ -1402,7 +1405,7 @@ mod tests {
     #[test]
     fn rejects_truncated_input() {
         let bytes = schema_to_bytes(&Schema {
-            id: SchemaId(1),
+            id: SchemaId::from_raw(1),
             type_params: Vec::new(),
             kind: SchemaKind::Dynamic,
         });
@@ -1419,7 +1422,7 @@ mod tests {
     fn rejects_unknown_tag() {
         // Replace the leading struct tag with an undefined tag byte.
         let mut bytes = schema_to_bytes(&Schema {
-            id: SchemaId(1),
+            id: SchemaId::from_raw(1),
             type_params: Vec::new(),
             kind: SchemaKind::Dynamic,
         });

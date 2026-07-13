@@ -389,6 +389,7 @@ function resolveRequire(specifier: string, dirname: string, modules: Map<string,
     for (const candidate of [
       `node_modules/tree-sitter-${grammarId}/grammar.js`,
       `tree-sitter-${grammarId}/grammar.js`,
+      `${grammarId}/def/grammar/grammar.js`,
       `langs/${grammarId}/def/grammar/grammar.js`,
     ]) {
       if (modules.has(candidate)) {

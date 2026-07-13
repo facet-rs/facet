@@ -1,16 +1,49 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { join } from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 const wsServerBuildTimeoutMs = 120_000;
 const wsServerStartupTimeoutMs = 5_000;
 
-let wsServerBuildPromise: Promise<void> | null = null;
+// Default vox peer-server binary: a bare tokio-tungstenite accept loop. The
+// axum variant (`axum-peer-server`) is selected by passing `binaryName`.
+const defaultBinaryName = "ws-peer-server";
 
-export async function startWsServer(projectRoot: string, wsPort: number): Promise<ChildProcess> {
-  await buildWsServerBinary(projectRoot);
+// Build promises are cached per binary name so requesting a different peer
+// server (e.g. the axum variant) doesn't return a stale build.
+const wsServerBuildPromises = new Map<string, Promise<void>>();
+let cargoTargetDirPromise: Promise<string> | null = null;
 
-  const binaryName = process.platform === "win32" ? "ws-peer-server.exe" : "ws-peer-server";
-  const binaryPath = join(projectRoot, "target", "debug", binaryName);
+// `projectRoot` (vox/) may be a standalone Cargo workspace or a subdirectory
+// of a larger workspace (as in the facet monorepo), so the `target/` dir
+// isn't necessarily directly under it. Ask cargo where it actually is.
+function getCargoTargetDir(projectRoot: string): Promise<string> {
+  if (!cargoTargetDirPromise) {
+    cargoTargetDirPromise = execFileAsync("cargo", ["metadata", "--no-deps", "--format-version", "1"], {
+      cwd: projectRoot,
+      maxBuffer: 64 * 1024 * 1024,
+    }).then(({ stdout }) => {
+      const metadata = JSON.parse(stdout) as { target_directory: string };
+      return metadata.target_directory;
+    });
+  }
+  return cargoTargetDirPromise;
+}
+
+export async function startWsServer(
+  projectRoot: string,
+  wsPort: number,
+  binaryName: string = defaultBinaryName,
+): Promise<ChildProcess> {
+  const [, targetDir] = await Promise.all([
+    buildWsServerBinary(projectRoot, binaryName),
+    getCargoTargetDir(projectRoot),
+  ]);
+
+  const executableName = process.platform === "win32" ? `${binaryName}.exe` : binaryName;
+  const binaryPath = join(targetDir, "debug", executableName);
   const wsServer = spawn(binaryPath, [], {
     cwd: projectRoot,
     env: { ...process.env, WS_PORT: String(wsPort) },
@@ -21,13 +54,14 @@ export async function startWsServer(projectRoot: string, wsPort: number): Promis
   return wsServer;
 }
 
-function buildWsServerBinary(projectRoot: string): Promise<void> {
-  if (wsServerBuildPromise) {
-    return wsServerBuildPromise;
+function buildWsServerBinary(projectRoot: string, binaryName: string): Promise<void> {
+  const cached = wsServerBuildPromises.get(binaryName);
+  if (cached) {
+    return cached;
   }
 
-  wsServerBuildPromise = new Promise<void>((resolve, reject) => {
-    const cargoBuild = spawn("cargo", ["build", "-p", "peer-server", "--bin", "ws-peer-server"], {
+  const buildPromise = new Promise<void>((resolve, reject) => {
+    const cargoBuild = spawn("cargo", ["build", "-p", "peer-server", "--bin", binaryName], {
       cwd: projectRoot,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -60,11 +94,12 @@ function buildWsServerBinary(projectRoot: string): Promise<void> {
       reject(new Error(`WS server build failed (code=${code}, signal=${signal})`));
     });
   }).catch((err) => {
-    wsServerBuildPromise = null;
+    wsServerBuildPromises.delete(binaryName);
     throw err;
   });
 
-  return wsServerBuildPromise;
+  wsServerBuildPromises.set(binaryName, buildPromise);
+  return buildPromise;
 }
 
 function waitForWsServerReady(wsServer: ChildProcess, wsPort: number): Promise<void> {

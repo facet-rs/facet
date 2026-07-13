@@ -1,0 +1,9 @@
+// Rung 059 — different arguments are different demands (negative control).
+fn costly(n: Int) -> Int { n * 1000 }
+
+#[test]
+fn distinct_args_distinct_demands() -> Stream<Check> {
+    yield expect_eq(costly(1) + costly(2), 3000);
+    yield demanded_once(costly(1));
+    yield demanded_once(costly(2));
+}

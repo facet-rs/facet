@@ -1,13 +1,18 @@
 # Snark Weavy Parser Lowering
 
 This document fixes the target architecture for Snark's parser lowering. Snark
-does not grow from the scannerless milestone parser, does not inspect generated
-Tree-sitter implementation files, and does not treat generated parser code as an
-oracle. The final parser is Snark's own Tree-sitter-compatible LR/GLR parser
-machine, built from validated `grammar.json`, scanner, query, corpus, and
-runtime-input contracts, then carried by Weavy programs.
+does not inspect generated Tree-sitter implementation files and does not treat
+generated parser code as an oracle. The parser is Snark's own
+Tree-sitter-compatible LR/GLR machine, built from validated `grammar.json`,
+scanner, corpus, and runtime-input contracts, then carried by Weavy
+programs.
 
 Weavy is the lowering and execution carrier. Snark owns parser semantics.
+There is one parser executor: the Weavy-carried Snark machine. Retired native
+parser-interpreter spikes are not reference runtimes, production fallbacks, or
+parity targets. Native copy-and-patch, host-call chains, and JIT support are
+Weavy execution lanes for the same lowered Snark machine, not separate parser
+executors.
 
 ## Boundary
 
@@ -20,7 +25,7 @@ Snark owns:
 - Parser generation from validated grammar facts.
 - External scanner host ABI and scanner state replay.
 - Parse stack, GLR graph stack, tree construction, error recovery, incremental
-  edit handling, query execution, trace events, and oracle comparison.
+  edit handling, trace events, and oracle comparison.
 
 Weavy owns:
 
@@ -94,15 +99,14 @@ The executable intrinsic families should be:
   values, preserve scanner state at stack heads, and expose graph-stack ids.
 - Tree operations: open node, shift token, reduce node, attach field, apply
   alias, emit missing node, emit error node, finish node, and reuse old subtree.
-- Query operations: run compiled query bytecode over produced trees, emit
-  captures, evaluate predicates, and emit injection/tag/local/highlight events.
-- Oracle operations: normalize tree events to corpus S-expressions and normalize
-  query captures to highlight assertions.
+- Oracle operations: normalize tree events to corpus S-expressions. Query,
+  injection, tag, local, and highlight execution consume the Weavy-produced tree
+  through Snark's query engine, not through parser executor intrinsics.
 
 Each intrinsic has a stable `IntrinsicDescriptor` in the
 `snark.tree_sitter` dialect and a conservative `EffectContract`. Parser actions
 that advance source input, mutate scanner state, mutate parser stack state, or
-write tree/query sinks must remain ordered. External scanner calls are barriers
+write tree sinks must remain ordered. External scanner calls are barriers
 because they call language-owned scanner code.
 
 ## Blocks And Control Flow
@@ -125,6 +129,9 @@ Required block families:
 - Scanner blocks: wrappers around external scanner invocation and scanner-state
   persistence. These are Snark blocks carrying scanner ABI semantics, not Weavy
   primitives.
+- Lexer blocks: generated lex-mode programs that merge literal and pattern
+  terminals, execute composed token expressions, and emit the same candidates as
+  the lexical matcher oracle. See `weavy-lexer-lowering.md`.
 - GLR worklist blocks: split, merge, deferred reduction, branch retirement, and
   deterministic winner selection.
 - Query blocks: query-pattern entry blocks and shared predicate/capture emit
@@ -135,10 +142,10 @@ fragments. Use `Control::CallBlockThen` from the Snark stepper when the runtime
 must resume with a Snark continuation after a child block returns. Do not encode
 grammar recursion as Rust recursion or as recursive descent in a Snark stepper.
 
-## Runtime State And Sinks
+## Weavy State And Sinks
 
-The Snark stepper is the owner of runtime parser state. Its state bundle should
-be explicit and observable:
+The Snark Weavy stepper owns parser execution state. Its state bundle should be
+explicit and observable:
 
 - Source input: bytes, byte offsets, UTF-8 point tracking, included ranges, and
   incremental edit metadata from `runtime_input`.
@@ -156,11 +163,11 @@ be explicit and observable:
   outcome, and fixture category.
 - Trace sink: every parser/scanner/tree/query event in a facet-serializable
   top-level event enum.
-- Oracle sink: reduced parse S-expression output and highlight/query assertion
+- Oracle sink: corpus-normalized S-expression output and highlight/query assertion
   output derived from the structured sinks.
 
 The sinks are not strings first. Rendered S-expressions and highlight assertion
-text are views over structured events, so reduced output can be compared with
+text are views over structured events, so S-expression output can be compared with
 `corpus::SexpNode` and `corpus::HighlightAssertion`.
 
 ## Trace And Oracle Events
@@ -244,12 +251,12 @@ machine; Snark defines and executes parser meaning.
    productions, terminals, lexical modes, precedence/conflict facts, LR actions,
    GLR conflict metadata, and tree emission plans.
 4. Lower generated tables into `SnarkWeavyLowered` blocks: root, state,
-   reduction, recovery, scanner, GLR worklist, and query blocks. This is still
-   data construction; no parser semantics move into Weavy.
+   lex-mode, reduction, recovery, scanner, and GLR worklist blocks. This
+   is still data construction; no parser semantics move into Weavy.
 5. Implement the Snark `Step` runtime for the existing `SnarkIntrinsic`
    families, with explicit parser stack, GLR graph stack, scanner state, tree
-   sink, query sink, trace sink, and oracle sink.
-6. Make the reduced CSS fixture lane pass against parse corpus S-expressions
+   sink, trace sink, and oracle sink.
+6. Make the pinned CSS fixture lane pass against parse corpus S-expressions
    and highlight assertions. The first passing lane should include at least one
    external-scanner valid-symbol-mask trace even if the chosen parse case does
    not require a complex scanner branch.
@@ -259,9 +266,10 @@ machine; Snark defines and executes parser meaning.
 8. Add incremental parsing: old-tree reuse candidates, included ranges, edit
    coordinates, changed ranges, scanner-state replay, and final tree oracle
    equivalence.
-9. Only after interpreter correctness is observable, add dense block resolution
-   and optional copy-and-patch/JIT hooks for Snark intrinsics. JIT support must
-   consume the same lowered program and emit the same trace/oracle events.
+9. Only after Weavy execution correctness is observable, add dense block
+   resolution and optional copy-and-patch/JIT hooks for Snark intrinsics. JIT
+   support must consume the same lowered program and emit the same trace/oracle
+   events.
 
 Anything that skips from raw grammar DTOs to a toy parser, recursive descent, or
 generated implementation-file behavior is outside this plan.

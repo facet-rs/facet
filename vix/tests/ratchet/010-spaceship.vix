@@ -1,0 +1,7 @@
+// Rung 010 — <=> yields Ordering; ambient on scalars and strings.
+#[test]
+fn spaceship() -> Stream<Check> {
+    yield expect_eq(1 <=> 2, Ordering::Less);
+    yield expect_eq(2 <=> 2, Ordering::Equal);
+    yield expect_eq("b" <=> "a", Ordering::Greater);
+}

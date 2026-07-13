@@ -2,7 +2,7 @@
 // heavy grammar (e.g. gingembre) takes seconds and is synchronous; doing it on the main
 // thread freezes the whole UI, which is brutal on mobile. The worker holds the prepared
 // session so the main thread only ever posts a message and renders the result.
-import init, { SnarkPlaygroundSession, parseBundle } from "@bearcove/snark-wasm";
+import init, { SnarkPlaygroundSession, runVixMachine, vixBindings } from "@bearcove/snark-wasm";
 
 export type ParseWorkerRequest = {
   id: number;
@@ -13,10 +13,14 @@ export type ParseWorkerRequest = {
   runCorpus: boolean;
   edit: unknown | null;
   useReparse: boolean;
+  /** Also compute vix IDE bindings (symbols/refs/unresolved) for this input. */
+  vixIde?: boolean;
+  /** Also run the vix machine on this input and public function. */
+  vixMachineFn?: string | null;
 };
 
 export type ParseWorkerResponse =
-  | { id: number; ok: true; response: string; prepared: boolean }
+  | { id: number; ok: true; response: string; prepared: boolean; vix: string | null; vixMachine: string | null }
   | { id: number; ok: false; error: string };
 
 const ready = init();
@@ -32,27 +36,30 @@ function post(response: ParseWorkerResponse) {
 }
 
 self.onmessage = async (event: MessageEvent<ParseWorkerRequest>) => {
-  const { id, key, files, input, runCorpus, edit, useReparse } = event.data;
+  const { id, key, files, input, runCorpus, edit, useReparse, vixIde, vixMachineFn } = event.data;
   try {
+    const initStart = performance.now();
     await ready;
+    const initMs = performance.now() - initStart;
+    if (initMs > 1) console.log(`[snark load] wasm instantiate: ${initMs.toFixed(0)} ms`);
 
-    // (Re)prepare the session when the grammar bundle changed.
-    if (files) {
+    // (Re)prepare the session when the grammar bundle changed — but only if we're not
+    // already prepared for this exact key. The key is content-hashed (grammar + files),
+    // so an unchanged language yields the same key; redundant prepare requests (React
+    // StrictMode double-invoke, effect churn during the multi-second prepare window,
+    // repeated typing/sample switches) must not rebuild the tables again.
+    if (files && sessionKey !== key) {
       if (session) {
         session.free();
         session = null;
         sessionKey = null;
       }
-      try {
-        session = new SnarkPlaygroundSession(JSON.stringify({ files }));
-        sessionKey = key;
-      } catch {
-        // Prepare failed (grammar build error): fall back to a stateless parse so the UI
-        // still gets a diagnostic. Mark unprepared so the next run re-attempts prepare.
-        const response = parseBundle(JSON.stringify({ files, input, run_corpus: runCorpus }));
-        post({ id, ok: true, response, prepared: false });
-        return;
-      }
+      const prepStart = performance.now();
+      session = new SnarkPlaygroundSession(JSON.stringify({ files }));
+      console.log(
+        `[snark load] session prepare (tables + plan): ${(performance.now() - prepStart).toFixed(0)} ms`,
+      );
+      sessionKey = key;
     }
 
     if (!session || sessionKey !== key) {
@@ -66,8 +73,39 @@ self.onmessage = async (event: MessageEvent<ParseWorkerRequest>) => {
       edit: useReparse ? edit : null,
     });
     const response = useReparse ? session.reparse(request) : session.parse(request);
-    post({ id, ok: true, response, prepared: true });
+    // vix IDE bindings ride the same round trip: parse+bind with vix's own embedded
+    // grammar (lazy table build inside wasm, once per worker lifetime).
+    const vix = vixIde ? vixBindings(input) : null;
+    let vixMachine: string | null = null;
+    if (vixMachineFn) {
+      try {
+        vixMachine = runVixMachine(input, vixMachineFn);
+      } catch (error) {
+        vixMachine = JSON.stringify({
+          ok: false,
+          error: errorMessage(error),
+          source_kind: machineSourceKind(input),
+          fn_name: vixMachineFn,
+          result: null,
+          cold_trace: [],
+          warm_trace: [],
+          fn_hashes: [],
+          run_hashes: [],
+        });
+      }
+    }
+    post({ id, ok: true, response, prepared: true, vix, vixMachine });
   } catch (error) {
     post({ id, ok: false, error: errorMessage(error) });
   }
 };
+
+function machineSourceKind(input: string): string {
+  if (input.includes("left.c") && input.includes("subtree_chain")) {
+    return "merge-demand";
+  }
+  if (input.includes("pub fn demo() -> Float")) {
+    return "eval";
+  }
+  return "vix";
+}

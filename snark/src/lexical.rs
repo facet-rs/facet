@@ -54,10 +54,10 @@ impl LexicalFacts {
                     spelling: value.clone(),
                     flags: flags.clone(),
                 }),
-                GrammarExpr::AutoClose { tag, .. } => terminals.push(TerminalFact {
+                GrammarExpr::AutoClose(spec) => terminals.push(TerminalFact {
                     expr: id,
                     kind: TerminalKind::AutoClose,
-                    spelling: format!("auto_close({tag})"),
+                    spelling: format!("auto_close({})", spec.tag),
                     flags: None,
                 }),
                 _ => {}

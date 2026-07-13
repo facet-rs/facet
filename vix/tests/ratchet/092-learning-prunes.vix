@@ -1,0 +1,11 @@
+// Rung 092 — conflict learning: the same dead region is never searched twice.
+#[test]
+fn learning_prunes() -> Stream<Check> {
+    let reqs = %{"liba" => parse_req(">=1.0"), "libd" => parse_req("^3.0")};
+    let solution = mini_solve(fixture_index()) where { requirements: reqs };
+    yield match solution {
+        Some(sel) => expect(sel.has("libd")),
+        None => expect(false),
+    };
+    yield demanded_times(conflict_analysis, 1);
+}

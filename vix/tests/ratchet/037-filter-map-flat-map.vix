@@ -1,0 +1,12 @@
+// Rung 037 — filter_map and flat_map on streams.
+fn half(n: Int) -> Option<Int> {
+    if n.rem(2) == 0 { Some(n / 2) } else { None }
+}
+
+#[test]
+fn filter_map_flat_map() -> Stream<Check> {
+    let halves = [1, 2, 3, 4].stream().filter_map(half);
+    yield expect_eq(halves.collect().values().sorted(), [1, 2]);
+    let doubled = [1, 2].stream().flat_map(|n| [n, n * 10].stream());
+    yield expect_eq(doubled.collect().values().sorted(), [1, 2, 10, 20]);
+}

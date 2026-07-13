@@ -106,6 +106,7 @@ export function captureClass(captureName: string): string {
     case "string":
       return "capture-string";
     case "type":
+    case "constructor":
       return "capture-type";
     case "variable":
       return "capture-variable";

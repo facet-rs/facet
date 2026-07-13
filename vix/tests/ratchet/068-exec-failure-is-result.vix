@@ -1,0 +1,23 @@
+// Rung 068 — a failing process is a FAILURE VALUE, not an exception.
+// The demand answers `Failed(f)`; postfix `?` catches any expression edge with
+// its address intact; and the failure is memoized with its read-set like any
+// other value.
+#[test]
+fn exec_failure_is_a_value(sh: Sh) -> Stream<Check> {
+    yield match exec sh`-c "exit 1"`? {
+        Ok(_)  => expect(false),
+        Err(_) => expect(true),
+    };
+    let empty: Map<String, Int> = %{};
+    let missing = empty.get("missing");
+    yield match missing? {
+        Ok(_)  => expect(false),
+        Err(_) => expect(true),
+    };
+    let invalid_integer = "not-an-int".parse_int();
+    yield match invalid_integer? {
+        Ok(_)  => expect(false),
+        Err(_) => expect(true),
+    };
+    yield ran_processes(1);
+}

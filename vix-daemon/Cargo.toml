@@ -1,0 +1,41 @@
+# vix-daemon — the vix daemon: a vox service that OWNS evaluation.
+#
+# The IDE is just a vox client to this. Because vox generates typed clients
+# (TypeScript, Swift, …) from the #[service] trait, "browser IDE talks to a
+# local daemon" is a generated client, not bespoke plumbing. The daemon
+# streams demand events AND gates them for stepping — remote debugging is the
+# default, because the daemon already holds the RPC connection to wherever a
+# closure runs.
+
+[package]
+name = "vix-daemon"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "The vix daemon: a vox service that owns demand-driven evaluation."
+
+[dependencies]
+vix = { path = "../vix" }
+vox = { path = "../vox/rust/vox" }
+vox-schema = { path = "../vox/rust/vox-schema" }
+facet = { path = "../facet" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+# Only the gen_ts bin needs the code generator; the daemon itself doesn't.
+vox-codegen = { path = "../vox/rust/vox-codegen", optional = true }
+
+[features]
+codegen = ["dep:vox-codegen"]
+
+[[bin]]
+name = "vixd"
+path = "src/bin/vixd.rs"
+
+[[bin]]
+name = "gen_ts"
+path = "src/bin/gen_ts.rs"
+required-features = ["codegen"]
+
+[dev-dependencies]
+eyre = "0.6"

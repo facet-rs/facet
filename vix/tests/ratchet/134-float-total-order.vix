@@ -1,0 +1,10 @@
+// Rung 134 — floats have a TOTAL order (IEEE totalOrder): NaN equals
+// itself and sorts last; sorting floats is deterministic. Value
+// semantics require reflexive equality — there is no "NaN != NaN" here.
+#[test]
+fn float_total_order() -> Stream<Check> {
+    let nan = 0.0 / 0.0;
+    yield expect_eq(nan, nan);
+    yield expect_eq([nan, 1.5, -2.0].sorted(), [-2.0, 1.5, nan]);
+    yield expect(1.5 < nan);
+}

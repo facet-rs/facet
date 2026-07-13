@@ -193,7 +193,7 @@ pub enum ImportError {
         /// Import phase.
         phase: &'static str,
         /// Facet JSON error.
-        source: facet_json::DeserializeError,
+        source: Box<facet_json::DeserializeError>,
     },
 }
 
@@ -377,7 +377,7 @@ impl Error for ImportError {
             | Self::ReadFile { source, .. }
             | Self::ReadDir { source, .. } => Some(source),
             #[cfg(feature = "json-import")]
-            Self::Json { source, .. } => Some(source),
+            Self::Json { source, .. } => Some(source.as_ref()),
             Self::InvalidPackagePath { .. }
             | Self::PathOutsidePackage { .. }
             | Self::PackageRootNotDirectory { .. }

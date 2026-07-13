@@ -1,3 +1,0 @@
-self-hosted-runner:
-  labels:
-    - bearcove-ubuntu-24.04

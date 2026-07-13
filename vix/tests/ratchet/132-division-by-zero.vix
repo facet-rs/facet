@@ -1,0 +1,11 @@
+// Rung 132 — division by zero is a typed demand failure with a span,
+// never a wrong value, never a process crash. The harness observes the
+// failure; the test passes when the failure is right.
+fn risky(n: Int) -> Int { 100 / n }
+
+#[test]
+fn division_by_zero() -> Stream<Check> {
+    yield expect_eq(risky(4), 25);
+    let boom = risky(0);
+    yield failed_with(boom, "division by zero");
+}

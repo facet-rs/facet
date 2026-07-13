@@ -1,11 +1,11 @@
 //! Build-time stencil extraction for facet-json's opt-in native backend.
 
-use std::{env, fs, path::PathBuf};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
-#[cfg(feature = "jit")]
 use copypatch::extract::{Stencil, compile_object, extract_stencil};
-#[cfg(feature = "jit")]
-use std::path::Path;
 
 const EMPTY_STENCILS: &str = "\
 pub const ROOT_OBJECT_START: &[u8] = &[];\n\
@@ -13,32 +13,32 @@ pub const ROOT_OBJECT_START_CONT: &[usize] = &[];\n\
 pub const ROOT_ARRAY_START: &[u8] = &[];\n\
 pub const ROOT_ARRAY_START_CONT: &[usize] = &[];\n";
 
-#[cfg(feature = "jit")]
 const SYMBOLS: &[&str] = &[
     "facet_json_stencil_root_object_start",
     "facet_json_stencil_root_array_start",
 ];
 
 fn main() {
+    println!("cargo:rustc-check-cfg=cfg(facet_json_jit_active)");
+
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let generated = out.join("stencils.rs");
 
-    #[cfg(feature = "jit")]
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+    let weavy_jit_active = env::var("DEP_WEAVY_JIT").as_deref() == Ok("1");
+    if weavy_jit_active
+        && ((target_os == "macos" && target_arch == "aarch64")
+            || (target_os == "linux" && target_arch == "x86_64"))
     {
-        let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-        let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
-        if (target_os == "macos" && target_arch == "aarch64")
-            || (target_os == "linux" && target_arch == "x86_64")
-        {
-            emit_native_stencils(&out, &generated);
-            return;
-        }
+        println!("cargo:rustc-cfg=facet_json_jit_active");
+        emit_native_stencils(&out, &generated);
+        return;
     }
 
     fs::write(&generated, EMPTY_STENCILS).unwrap();
 }
 
-#[cfg(feature = "jit")]
 fn emit_native_stencils(out: &Path, generated: &Path) {
     println!("cargo:rerun-if-changed=stencils/stencils.rs");
     println!("cargo:rerun-if-changed=build.rs");
@@ -90,7 +90,6 @@ fn emit_native_stencils(out: &Path, generated: &Path) {
     fs::write(generated, out).unwrap();
 }
 
-#[cfg(feature = "jit")]
 fn emit(out: &mut String, name: &str, doc: &str, stencil: &Stencil) {
     out.push_str(&format!(
         "/// {doc}\npub const {name}: &[u8] = &{:?};\n",
@@ -98,7 +97,6 @@ fn emit(out: &mut String, name: &str, doc: &str, stencil: &Stencil) {
     ));
 }
 
-#[cfg(feature = "jit")]
 fn emit_cont(out: &mut String, name: &str, of: &str, stencil: &Stencil) {
     out.push_str(&format!(
         "/// Byte offsets within `{of}` of the continuation relocations to patch.\n\

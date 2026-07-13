@@ -1,0 +1,14 @@
+
+// Rung 080 — early cutoff: the input file is touched between runs but its
+// relevant content is unchanged; downstream work is reused. (three-planes)
+fn line_count(tree: Tree) -> Int {
+    (tree / "data.txt").text().lines().len()
+}
+fn render(n: Int) -> String { "lines: " + n.to_string() }
+
+#[test { rerun_with: "touched-fixture" }]
+fn early_cutoff() -> Stream<Check> {
+    let report = render(line_count(fixture_tree("touched-fixture")));
+    yield expect_eq(report, "lines: 3");
+    yield never_demanded(render(line_count(fixture_tree("touched-fixture"))));
+}

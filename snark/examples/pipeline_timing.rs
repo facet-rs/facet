@@ -1,28 +1,75 @@
 //! Phase-by-phase timing of the full grammar pipeline for one grammar, native release.
 //! Records where the time actually goes: grammar.js -> JSON (boa) -> decode -> validate
-//! -> lexical -> normalize -> prepare -> parse table -> runtime plan (compiled lexer) ->
+//! -> lexical -> normalize -> prepare -> parse table -> Weavy parse plan ->
 //! parse. Compare the table-build line against everything else.
 //!
-//! Usage: cargo run --release -p snark --features json-import --example pipeline_timing \
-//!          -- [GRAMMAR_JS] [SAMPLE]
+//! Usage: cargo run --release -p snark --features json-import \
+//!          --example pipeline_timing -- [GRAMMAR_JS] [SAMPLE]
 
 use std::{env, path::PathBuf, time::Instant};
 
 use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
-    parser::{ParseTable, ParserGrammar, RuntimeParser},
+    lower::weavy::{
+        SnarkStencilProfile, WeavyParsePlan, WeavySnarkProfileStencilReadiness,
+        parse_prepared_weavy_recovering_with_report_and_scanner,
+        parse_prepared_weavy_resolved_tree, parse_prepared_weavy_tree,
+        parse_prepared_weavy_with_report,
+    },
+    parser::{ParseTable, ParserGrammar},
     validated::ValidatedGrammar,
 };
+
+fn print_profile_stencil_readiness(label: &str, profile: &WeavySnarkProfileStencilReadiness) {
+    if profile.descriptor_summaries.is_empty() {
+        return;
+    }
+    println!("  {label} stencil families:");
+    for summary in &profile.family_summaries {
+        println!(
+            "    {:?}/{:?}: {}  state={:?}  effect={:?} fail={} alloc={} user={} opaque={}",
+            summary.family,
+            summary.execution,
+            summary.count,
+            summary.state,
+            summary.effect.ordering,
+            summary.effect.may_fail,
+            summary.effect.may_allocate,
+            summary.effect.calls_user_code,
+            summary.effect.opaque
+        );
+    }
+    println!("  {label} stencil execution lanes:");
+    for summary in &profile.execution_summaries {
+        println!(
+            "    {:?}: {}  families={:?}  state={:?}  effect={:?} fail={} alloc={} user={} opaque={}",
+            summary.execution,
+            summary.count,
+            summary.families,
+            summary.state,
+            summary.effect.ordering,
+            summary.effect.may_fail,
+            summary.effect.may_allocate,
+            summary.effect.calls_user_code,
+            summary.effect.opaque
+        );
+    }
+    println!("  {label} stencil state surfaces:");
+    for summary in &profile.state_summaries {
+        println!("    {:?}: {}", summary.state, summary.count);
+    }
+}
 
 fn main() {
     let repo = env::var_os("CARGO_MANIFEST_DIR")
         .map(PathBuf::from)
         .and_then(|p| p.parent().map(PathBuf::from))
         .unwrap_or_else(|| PathBuf::from("."));
-    let grammar_js = env::args_os().nth(1).map(PathBuf::from).unwrap_or_else(|| {
-        repo.join("playgrounds/snark/src/bundled/gingembre/grammar.js")
-    });
+    let grammar_js = env::args_os()
+        .nth(1)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| repo.join("playgrounds/snark/src/bundled/gingembre/grammar.js"));
     let sample = env::args_os().nth(2).map(PathBuf::from).unwrap_or_else(|| {
         repo.join("playgrounds/snark/src/bundled/gingembre/samples/blog-index.html")
     });
@@ -36,15 +83,19 @@ fn main() {
         }};
     }
 
-    let (t_emit, grammar_json) =
-        phase!("emit", snark_dsl::emit_with_boa(&grammar_js).expect("emit grammar.js -> json"));
+    let (t_emit, grammar_json) = phase!(
+        "emit",
+        snark_dsl::emit_with_boa(&grammar_js).expect("emit grammar.js -> json")
+    );
     let json_bytes = grammar_json.len();
     let (t_decode, raw) = phase!(
         "decode",
         RawGrammarJson::from_tree_sitter_json_str(&grammar_json).expect("decode json")
     );
-    let (t_validate, validated) =
-        phase!("validate", ValidatedGrammar::from_raw(&raw).expect("validate"));
+    let (t_validate, validated) = phase!(
+        "validate",
+        ValidatedGrammar::from_raw(&raw).expect("validate")
+    );
     let (t_lexical, lexical) = phase!("lexical", LexicalFacts::from_grammar(&validated));
     let (t_normalize, normalized) = phase!(
         "normalize",
@@ -52,32 +103,45 @@ fn main() {
     );
     let (t_prepare, parser) = phase!(
         "prepare",
-        normalized.prepare_productions_for_items().expect("prepare productions")
+        normalized
+            .prepare_productions_for_items()
+            .expect("prepare productions")
     );
-    let (t_table, table) =
-        phase!("table", ParseTable::from_grammar(&parser).expect("build parse table"));
-    let (t_plan, runtime) = phase!(
+    let (t_table, table) = phase!(
+        "table",
+        ParseTable::from_grammar(&parser).expect("build parse table")
+    );
+    let (t_plan, plan) = phase!(
         "plan",
-        RuntimeParser::new(&validated, &parser, &table).expect("runtime plan + compiled lexer")
+        WeavyParsePlan::new(&validated, &parser, &table).expect("Weavy parse plan")
     );
-    // Measure each entry point the way the playground actually calls them.
-    // Playground: parse_compact_with_report (strict) first, fall back to
-    // parse_recovering_compact_with_report only on Err.
+    let analysis = plan.analysis();
+    // Measure the lean consumer paths separately from the rich report path. The
+    // report path is still what diagnostics, recovery, and incremental reuse
+    // consumers need.
     let t0 = Instant::now();
-    let strict = runtime.parse_compact_with_report(&input);
-    let t_strict = t0.elapsed().as_secs_f64() * 1000.0;
-    let strict_ok = strict.is_ok();
+    let strict_tree = parse_prepared_weavy_tree(&plan, &parser, &table, &input);
+    let t_strict_tree = t0.elapsed().as_secs_f64() * 1000.0;
+    let strict_tree_ok = strict_tree.is_ok();
 
     let t0 = Instant::now();
-    let _ = runtime.parse_recovering_compact_with_report(&input);
-    let t_rec_compact = t0.elapsed().as_secs_f64() * 1000.0;
+    let strict_resolved_tree = parse_prepared_weavy_resolved_tree(&plan, &parser, &table, &input);
+    let t_strict_resolved_tree = t0.elapsed().as_secs_f64() * 1000.0;
+    let strict_resolved_tree_ok = strict_resolved_tree.is_ok();
 
     let t0 = Instant::now();
-    let _ = runtime.parse_recovering_with_report(&input);
-    let t_rec_full = t0.elapsed().as_secs_f64() * 1000.0;
+    let strict_report = parse_prepared_weavy_with_report(&plan, &parser, &table, &input);
+    let t_strict_report = t0.elapsed().as_secs_f64() * 1000.0;
+    let strict_report_ok = strict_report.is_ok();
 
-    let prepare_total = t_emit + t_decode + t_validate + t_lexical + t_normalize + t_prepare
-        + t_table + t_plan;
+    let t0 = Instant::now();
+    let _ = parse_prepared_weavy_recovering_with_report_and_scanner(
+        &plan, &parser, &table, &input, None,
+    );
+    let t_recovering = t0.elapsed().as_secs_f64() * 1000.0;
+
+    let prepare_total =
+        t_emit + t_decode + t_validate + t_lexical + t_normalize + t_prepare + t_table + t_plan;
 
     println!("grammar: {}", grammar_js.display());
     println!("sample:  {} ({} bytes)", sample.display(), input.len());
@@ -91,25 +155,146 @@ fn main() {
         ("normalize -> ParserGrammar", t_normalize),
         ("prepare productions", t_prepare),
         ("** ParseTable::from_grammar", t_table),
-        ("runtime plan (compiled lexer)", t_plan),
+        ("Weavy parse plan", t_plan),
     ];
     println!("---- one-time prepare ----");
     for (label, ms) in rows {
-        let pct = if prepare_total > 0.0 { ms / prepare_total * 100.0 } else { 0.0 };
+        let pct = if prepare_total > 0.0 {
+            ms / prepare_total * 100.0
+        } else {
+            0.0
+        };
         println!("  {label:<32} {ms:>9.1} ms  {pct:>5.1}%");
     }
     println!("  {:<32} {:>9.1} ms", "prepare TOTAL", prepare_total);
-    println!("\n---- steady state (parse, same input, 3 entry points) ----");
+    println!("\n---- steady state (parse, same input) ----");
     println!(
         "  {:<40} {:>11.3} ms   (strict ok? {})",
-        "parse_compact_with_report [playground 1st]", t_strict, strict_ok
+        "parse_prepared_weavy_tree", t_strict_tree, strict_tree_ok
+    );
+    println!(
+        "  {:<40} {:>11.3} ms   (strict ok? {})",
+        "parse_prepared_weavy_resolved_tree", t_strict_resolved_tree, strict_resolved_tree_ok
+    );
+    println!(
+        "  {:<40} {:>11.3} ms   (strict ok? {})",
+        "parse_prepared_weavy_with_report", t_strict_report, strict_report_ok
     );
     println!(
         "  {:<40} {:>11.3} ms",
-        "parse_recovering_compact_with_report [fb]", t_rec_compact
+        "parse_prepared_weavy_recovering", t_recovering
+    );
+
+    println!("\n---- weavy lowering readiness ----");
+    println!(
+        "  parser ops: {} neutral, {} snark intrinsics",
+        analysis.readiness.neutral_weavy_op_count, analysis.readiness.snark_intrinsic_count
     );
     println!(
-        "  {:<40} {:>11.3} ms",
-        "parse_recovering_with_report [my bench]", t_rec_full
+        "  intrinsic lanes: {} dialect, {} lexer graph, {} sink, {} host-call barrier",
+        analysis.readiness.dialect_op_intrinsic_count,
+        analysis.readiness.lexer_graph_intrinsic_count,
+        analysis.readiness.sink_op_intrinsic_count,
+        analysis.readiness.host_call_barrier_intrinsic_count
     );
+    println!(
+        "  lexer leaves: {} regex-automata, {} unsupported pattern, {} unsupported terminal, {} unsupported symbol",
+        analysis.readiness.lexer.regex_automata_count,
+        analysis.readiness.lexer.unsupported_pattern_count,
+        analysis.readiness.lexer.unsupported_terminal_count,
+        analysis.readiness.lexer.unsupported_symbol_count
+    );
+    println!(
+        "  merged lexer sets: {} literal sets ({} terminals), {} pattern sets ({} terminals)",
+        analysis.readiness.lexer.merged_literal_set_count,
+        analysis.readiness.lexer.merged_literal_terminal_count,
+        analysis.readiness.lexer.merged_pattern_set_count,
+        analysis.readiness.lexer.merged_pattern_terminal_count
+    );
+    println!(
+        "  fully visible? parser={} all={} neutral-weavy-only={} needs-snark-stencils={} needs-lexer-stencils={}",
+        analysis.readiness.is_parser_fully_visible(),
+        analysis.readiness.is_fully_visible(),
+        analysis.readiness.is_neutral_weavy_only(),
+        analysis.readiness.needs_snark_stencils(),
+        analysis.readiness.needs_lexer_stencils()
+    );
+    if analysis.readiness.barrier_summaries.is_empty() {
+        println!("  blockers: none");
+    } else {
+        println!("  blockers:");
+        for summary in &analysis.readiness.barrier_summaries {
+            println!("    {:?}: {}", summary.barrier, summary.count);
+        }
+    }
+
+    if !analysis.readiness.snark_stencil_family_summaries.is_empty() {
+        println!("  stencil families:");
+        for summary in &analysis.readiness.snark_stencil_family_summaries {
+            println!(
+                "    {:?}/{:?}: {}  state={:?}  effect={:?} fail={} alloc={} user={} opaque={}",
+                summary.family,
+                summary.execution,
+                summary.count,
+                summary.state,
+                summary.effect.ordering,
+                summary.effect.may_fail,
+                summary.effect.may_allocate,
+                summary.effect.calls_user_code,
+                summary.effect.opaque
+            );
+        }
+    }
+
+    if !analysis.readiness.lexer_stencil_summaries.is_empty() {
+        println!("  lexer graph stencils:");
+        for summary in &analysis.readiness.lexer_stencil_summaries {
+            println!(
+                "    {:?}/{:?}: {}  state={:?}",
+                summary.kind, summary.execution, summary.count, summary.state
+            );
+        }
+    }
+
+    if !analysis
+        .readiness
+        .snark_stencil_execution_summaries
+        .is_empty()
+    {
+        println!("  stencil execution lanes:");
+        for summary in &analysis.readiness.snark_stencil_execution_summaries {
+            println!(
+                "    {:?}: {}  families={:?}  state={:?}  effect={:?} fail={} alloc={} user={} opaque={}",
+                summary.execution,
+                summary.count,
+                summary.families,
+                summary.state,
+                summary.effect.ordering,
+                summary.effect.may_fail,
+                summary.effect.may_allocate,
+                summary.effect.calls_user_code,
+                summary.effect.opaque
+            );
+        }
+    }
+
+    if !analysis.readiness.snark_stencil_state_summaries.is_empty() {
+        println!("  stencil state surfaces:");
+        for summary in &analysis.readiness.snark_stencil_state_summaries {
+            println!("    {:?}: {}", summary.state, summary.count);
+        }
+    }
+    let direct_no_trace_profile = analysis
+        .readiness
+        .snark_stencil_profile(SnarkStencilProfile::DirectNoTrace);
+    if direct_no_trace_profile.state_summaries != analysis.readiness.snark_stencil_state_summaries {
+        print_profile_stencil_readiness("direct no-trace", &direct_no_trace_profile);
+    }
+    let direct_tree_only_profile = analysis
+        .readiness
+        .snark_stencil_profile(SnarkStencilProfile::DirectTreeOnly);
+    if direct_tree_only_profile.state_summaries != analysis.readiness.snark_stencil_state_summaries
+    {
+        print_profile_stencil_readiness("direct tree-only", &direct_tree_only_profile);
+    }
 }

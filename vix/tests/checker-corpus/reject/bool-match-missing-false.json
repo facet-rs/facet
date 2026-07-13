@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "reject.bool-match-missing-false",
+  "outcome": "reject",
+  "description": "Bool matches must cover true and false unless an irrefutable final arm covers the rest.",
+  "sources": [
+    {
+      "path": "reject/bool-match-missing-false.vix",
+      "module": "crate"
+    }
+  ],
+  "assertions": [
+    {
+      "query": "diagnostics",
+      "subject": "NonExhaustiveMatch",
+      "expect": "type=Bool missing=false",
+      "span_start": 39,
+      "span_end": 76
+    }
+  ]
+}

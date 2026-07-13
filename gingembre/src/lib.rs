@@ -57,7 +57,7 @@ pub use eval::{
     builtin_filter, builtin_filter_names, builtin_test, builtin_test_names,
 };
 pub use lazy::{DataPath, DataResolver, LazyValue};
-pub use render::{Engine, InMemoryLoader, TemplateLoader};
+pub use render::{Engine, InMemoryLoader, Template, TemplateLoader};
 
 // Re-export facet_value types for convenience
 pub use facet_value::{VArray, VObject, VSafeString, VString};

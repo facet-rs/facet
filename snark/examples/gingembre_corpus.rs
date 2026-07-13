@@ -2,7 +2,7 @@
 //! templates parse cleanly (no Error / Missing tree events).
 //!
 //! Usage:
-//!   cargo run -p snark --example gingembre_corpus -- [GRAMMAR_JS] [CORPUS_ROOT]
+//!   cargo run -p snark --features json-import --example gingembre_corpus -- [GRAMMAR_JS] [CORPUS_ROOT]
 //!
 //! Defaults:
 //!   GRAMMAR_JS  = playgrounds/snark/src/bundled/gingembre/grammar.js (relative to repo)
@@ -16,7 +16,8 @@ use std::{env, path::PathBuf};
 use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
-    parser::{ParseTable, ParserGrammar, RuntimeParser, TreeEvent},
+    lower::weavy::{WeavyParsePlan, parse_prepared_weavy_recovering_with_report_and_scanner},
+    parser::{ParseTable, ParserGrammar, TreeEvent},
     validated::ValidatedGrammar,
 };
 
@@ -45,16 +46,22 @@ fn main() {
     let table = ParseTable::from_grammar(&parser).expect("parse table should build");
     let table_ms = t_table.elapsed().as_secs_f64() * 1000.0;
 
-    // Time one runtime construction (compiles the lexer) and one parse in isolation.
+    // Time one Weavy plan construction and one parse in isolation.
     let probe_input = "alpha";
-    let t_rt = std::time::Instant::now();
-    let probe_rt = RuntimeParser::new(&validated, &parser, &table).expect("runtime");
-    let runtime_new_ms = t_rt.elapsed().as_secs_f64() * 1000.0;
+    let t_plan = std::time::Instant::now();
+    let plan = WeavyParsePlan::new(&validated, &parser, &table).expect("weavy parse plan");
+    let plan_ms = t_plan.elapsed().as_secs_f64() * 1000.0;
     let t_p = std::time::Instant::now();
-    let _ = probe_rt.parse_recovering_with_report(probe_input);
+    let _ = parse_prepared_weavy_recovering_with_report_and_scanner(
+        &plan,
+        &parser,
+        &table,
+        probe_input,
+        None,
+    );
     let parse_probe_ms = t_p.elapsed().as_secs_f64() * 1000.0;
     println!(
-        "[timing] table_build={table_ms:.1}ms  RuntimeParser::new={runtime_new_ms:.1}ms  parse('alpha')={parse_probe_ms:.1}ms",
+        "[timing] table_build={table_ms:.1}ms  WeavyParsePlan::new={plan_ms:.1}ms  parse('alpha')={parse_probe_ms:.1}ms",
     );
 
     println!("language: {}", raw.name);
@@ -70,9 +77,9 @@ fn main() {
 
     for path in &files {
         let input = std::fs::read_to_string(path).unwrap_or_default();
-        let runtime =
-            RuntimeParser::new(&validated, &parser, &table).expect("runtime should build");
-        let report = match runtime.parse_recovering_with_report(&input) {
+        let report = match parse_prepared_weavy_recovering_with_report_and_scanner(
+            &plan, &parser, &table, &input, None,
+        ) {
             Ok(report) => report,
             Err(error) => {
                 dirty += 1;
@@ -109,7 +116,7 @@ fn main() {
         }
     }
 
-    worst.sort_by(|a, b| b.0.cmp(&a.0));
+    worst.sort_by_key(|(total, _, _)| std::cmp::Reverse(*total));
     println!("\n==== summary ====");
     println!("templates: {}", files.len());
     println!("clean:     {clean}");
@@ -141,10 +148,10 @@ fn collect_templates(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
             if name == "arborium-header.html" {
                 continue;
             }
-            if let Ok(text) = std::fs::read_to_string(&path) {
-                if text.contains("{{") || text.contains("{%") || text.contains("{#") {
-                    out.push(path);
-                }
+            if let Ok(text) = std::fs::read_to_string(&path)
+                && (text.contains("{{") || text.contains("{%") || text.contains("{#"))
+            {
+                out.push(path);
             }
         }
     }

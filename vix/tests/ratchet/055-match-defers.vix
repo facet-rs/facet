@@ -1,0 +1,14 @@
+// Rung 055 — the untaken arm is never demanded. (demand.md)
+enum Mode { Quick, Full }
+fn cheap_summary() -> String { "ok" }
+fn full_audit() -> String { "everything" }
+
+#[test]
+fn match_defers() -> Stream<Check> {
+    let report = match Mode::Quick {
+        Mode::Quick => cheap_summary(),
+        Mode::Full => full_audit(),
+    };
+    yield expect_eq(report, "ok");
+    yield never_demanded(full_audit());
+}

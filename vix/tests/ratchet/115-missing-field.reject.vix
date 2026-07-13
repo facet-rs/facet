@@ -1,0 +1,9 @@
+//! reject: missing field y
+//! at: 5
+
+// Rung 115 — missing struct field, named.
+struct Point { x: Int, y: Int }
+#[test]
+fn t() -> Stream<Check> {
+    yield expect_eq(Point { x: 1 }.x, 1);
+}

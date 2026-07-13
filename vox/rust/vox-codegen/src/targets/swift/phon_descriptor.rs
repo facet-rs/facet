@@ -102,7 +102,7 @@ pub fn generate_phon_codec(roots: &[(String, &'static Shape)]) -> String {
 /// The phon content-derived id (`SchemaId`) of a shape's root — the canonical id
 /// peers agree on, matching the closure bytes (NOT the vox-types `SchemaHash`).
 fn phon_schema_id(shape: &'static Shape) -> u64 {
-    schema_id_for_shape(shape).expect("phon schema id").0
+    schema_id_for_shape(shape).expect("phon schema id").as_u64()
 }
 
 /// `MemoryLayout<T>` size/align expression for a shape's Swift type.
@@ -114,7 +114,7 @@ fn layout_expr(shape: &'static Shape) -> String {
 fn schema_ref_expr(schema_ref: &SchemaRef) -> String {
     match schema_ref {
         SchemaRef::Concrete { id, args } if args.is_empty() => {
-            format!(".concrete(SchemaId({}))", hex_u64(id.0))
+            format!(".concrete(SchemaId({}))", hex_u64(id.as_u64()))
         }
         SchemaRef::Concrete { id, args } => {
             let args = args
@@ -122,7 +122,10 @@ fn schema_ref_expr(schema_ref: &SchemaRef) -> String {
                 .map(schema_ref_expr)
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!(".concrete(id: SchemaId({}), args: [{args}])", hex_u64(id.0))
+            format!(
+                ".concrete(id: SchemaId({}), args: [{args}])",
+                hex_u64(id.as_u64())
+            )
         }
         SchemaRef::Var { name } => format!(".variable(name: {name:?})"),
     }
@@ -170,7 +173,7 @@ struct RecCtx {
 
 impl RecCtx {
     fn ensure_block(&mut self, shape: &'static Shape, id: SchemaId) {
-        if self.blocks.contains_key(&id.0) || self.building.contains(&id.0) {
+        if self.blocks.contains_key(&id.as_u64()) || self.building.contains(&id.as_u64()) {
             return;
         }
         let rust_body = self
@@ -178,10 +181,10 @@ impl RecCtx {
             .get(&id)
             .unwrap_or_else(|| panic!("missing Rust-derived recursion block for {id:?}"))
             .clone();
-        self.building.insert(id.0);
+        self.building.insert(id.as_u64());
         let body = descriptor_node(shape, &rust_body, self);
-        self.building.remove(&id.0);
-        self.blocks.insert(id.0, body);
+        self.building.remove(&id.as_u64());
+        self.blocks.insert(id.as_u64(), body);
     }
 }
 
@@ -737,11 +740,11 @@ mod tests {
         let closure_ids = bundle
             .schemas
             .iter()
-            .map(|schema| schema.id.0)
+            .map(|schema| schema.id.as_u64())
             .collect::<BTreeSet<_>>();
         let primitive_ids = Primitive::ALL
             .iter()
-            .map(|&primitive| primitive_id(primitive).0)
+            .map(|&primitive| primitive_id(primitive).as_u64())
             .collect::<BTreeSet<_>>();
         let missing = descriptor_ids
             .difference(&closure_ids)

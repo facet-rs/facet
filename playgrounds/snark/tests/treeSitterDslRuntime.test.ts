@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import test from "node:test";
 
 import { emitGrammarJsonFromDsl } from "../src/treeSitterDslRuntime.ts";
@@ -8,6 +8,21 @@ const officialDsl = readFileSync(
   new URL("../../../snark-dsl/vendor/tree-sitter-generate-0.26.9/dsl.js", import.meta.url),
   "utf8",
 );
+
+function arboriumGrammarFiles(root: string, prefix = ""): { path: string; text: string }[] {
+  const dir = prefix ? `${root}/${prefix}` : root;
+  const files = [];
+  for (const name of readdirSync(dir)) {
+    const path = prefix ? `${prefix}/${name}` : name;
+    const fullPath = `${root}/${path}`;
+    if (statSync(fullPath).isDirectory()) {
+      files.push(...arboriumGrammarFiles(root, path));
+    } else {
+      files.push({ path, text: readFileSync(fullPath, "utf8") });
+    }
+  }
+  return files;
+}
 
 test("emits grammar.json from an uploaded CommonJS grammar.js", () => {
   const grammarJson = emitGrammarJsonFromDsl(
@@ -958,3 +973,119 @@ module.exports = grammar(CSS, {
     value: "b",
   });
 });
+
+test("resolves normalized Arborium sibling grammar modules by tree-sitter package name", () => {
+  const grammarJson = emitGrammarJsonFromDsl(
+    officialDsl,
+    [
+      {
+        path: "css/def/grammar/grammar.js",
+        text: `
+module.exports = grammar({
+  name: "css",
+  rules: {
+    stylesheet: $ => "a",
+  },
+});
+`,
+      },
+      {
+        path: "scss/def/grammar/grammar.js",
+        text: `
+const CSS = require("tree-sitter-css/grammar");
+module.exports = grammar(CSS, {
+  name: "scss",
+  rules: {
+    stylesheet: $ => "b",
+  },
+});
+`,
+      },
+    ],
+    "scss/def/grammar/grammar.js",
+  );
+
+  const grammar = JSON.parse(grammarJson);
+  assert.equal(grammar.name, "scss");
+  assert.deepEqual(grammar.rules.stylesheet, {
+    type: "STRING",
+    value: "b",
+  });
+});
+
+test("resolves normalized Arborium cross-group grammar modules by tree-sitter package name", () => {
+  const grammarJson = emitGrammarJsonFromDsl(
+    officialDsl,
+    [
+      {
+        path: "group-birch/c/def/grammar/grammar.js",
+        text: `
+module.exports = grammar({
+  name: "c",
+  rules: {
+    translation_unit: $ => "c",
+  },
+});
+`,
+      },
+      {
+        path: "group-moss/glsl/def/grammar/grammar.js",
+        text: `
+const C = require("tree-sitter-c/grammar");
+module.exports = grammar(C, {
+  name: "glsl",
+  rules: {
+    translation_unit: $ => "glsl",
+  },
+});
+`,
+      },
+    ],
+    "group-moss/glsl/def/grammar/grammar.js",
+  );
+
+  const grammar = JSON.parse(grammarJson);
+  assert.equal(grammar.name, "glsl");
+  assert.deepEqual(grammar.rules.translation_unit, {
+    type: "STRING",
+    value: "glsl",
+  });
+});
+
+const arboriumXmlGrammarRoot = "/Users/amos/oss/arborium/langs/group-acorn/xml/def/grammar";
+const arboriumIdrisGrammarRoot = "/Users/amos/oss/arborium/langs/group-fern/idris/def/grammar";
+
+test(
+  "emits real Arborium XML ESM grammar modules",
+  { skip: existsSync(arboriumXmlGrammarRoot) ? false : `${arboriumXmlGrammarRoot} is not available` },
+  () => {
+    const grammarJson = emitGrammarJsonFromDsl(
+      officialDsl,
+      arboriumGrammarFiles(arboriumXmlGrammarRoot),
+      "grammar.js",
+    );
+
+    const grammar = JSON.parse(grammarJson);
+    assert.equal(grammar.name, "xml");
+    assert.equal(grammar.rules.document.type, "PREC");
+    assert.equal(grammar.rules.element.type, "CHOICE");
+    assert.equal(grammar.rules.XMLDecl.type, "SEQ");
+  },
+);
+
+test(
+  "emits real Arborium Idris ESM grammar modules",
+  { skip: existsSync(arboriumIdrisGrammarRoot) ? false : `${arboriumIdrisGrammarRoot} is not available` },
+  () => {
+    const grammarJson = emitGrammarJsonFromDsl(
+      officialDsl,
+      arboriumGrammarFiles(arboriumIdrisGrammarRoot),
+      "grammar.js",
+    );
+
+    const grammar = JSON.parse(grammarJson);
+    assert.equal(grammar.name, "idris");
+    assert.equal(grammar.rules.idris.type, "CHOICE");
+    assert.equal(grammar.rules._decl_import.type, "SEQ");
+  },
+);

@@ -1,0 +1,14 @@
+// Rung 053 — arguments are wires, not promises to compute. (demand.md)
+fn pick(flag: Bool) where { a: Int, b: Int } -> Int {
+    if flag { a } else { b }
+}
+fn cheap() -> Int { 1 }
+fn expensive() -> Int { 999 }
+
+#[test]
+fn args_are_wires() -> Stream<Check> {
+    let picked = pick(true) where { a: cheap(), b: expensive() };
+    yield expect_eq(picked, 1);
+    yield demanded(cheap());
+    yield never_demanded(expensive());
+}

@@ -1,0 +1,19 @@
+[package]
+name = "zzfacet-macros"
+version = "0.50.0-rc.5"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+proc-macro = true
+
+[features]
+default = ["helpful-derive"]
+function = []
+doc = []
+helpful-derive = []
+
+[lints]
+workspace = true

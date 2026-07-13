@@ -1,0 +1,11 @@
+
+// Rung 125 — the chaos guard as a rung: this test's plain and
+// kill-randomly runs must agree, including the trace-derived counts.
+// (Foundation §2 makes this global; this rung pins one concrete case.)
+fn stage(n: Int) -> Int { n + 100 }
+
+#[test { differential: "chaos" }]
+fn chaos_differential() -> Stream<Check> {
+    let out = [1, 2, 3].stream().map(stage).collect().values().sorted();
+    yield expect_eq(out, [101, 102, 103]);
+}

@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "reject.duplicate-struct-field",
+  "outcome": "reject",
+  "description": "Struct literals cannot initialize the same field twice.",
+  "sources": [
+    {
+      "path": "reject/duplicate-struct-field.vix",
+      "module": "crate"
+    }
+  ],
+  "assertions": [
+    {
+      "query": "diagnostics",
+      "subject": "DuplicateStructField",
+      "expect": "type=Config field=name",
+      "span_start": 83,
+      "span_end": 92
+    }
+  ]
+}

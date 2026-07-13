@@ -1,0 +1,17 @@
+// Rung 017 — match arm guards.
+fn classify(n: Int) -> String {
+    match n {
+        x if x < 0 => "negative",
+        0 => "zero",
+        x if x < 10 => "small",
+        _ => "large",
+    }
+}
+
+#[test]
+fn match_guards() -> Stream<Check> {
+    yield expect_eq(classify(-3), "negative");
+    yield expect_eq(classify(0), "zero");
+    yield expect_eq(classify(7), "small");
+    yield expect_eq(classify(1000), "large");
+}

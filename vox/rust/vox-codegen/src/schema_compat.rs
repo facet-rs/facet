@@ -396,7 +396,7 @@ fn snapshot_root(
             message: error.to_string(),
         })?;
     Ok(SchemaRootSnapshot {
-        root: hex_u64(bundle.root.0),
+        root: hex_u64(bundle.root.as_u64()),
         closure: hex_bytes(&closure),
     })
 }
@@ -414,12 +414,12 @@ fn registry_for_snapshots(
         if bundle.root != expected_root {
             return Err(SchemaCompatError::SchemaClosure(format!(
                 "schema closure root {} did not match snapshot root {}",
-                hex_u64(bundle.root.0),
+                hex_u64(bundle.root.as_u64()),
                 root.root
             )));
         }
         for schema in bundle.schemas {
-            schemas.entry(schema.id.0).or_insert(schema);
+            schemas.entry(schema.id.as_u64()).or_insert(schema);
         }
     }
     Ok(Registry::new(schemas.into_values()))
@@ -453,7 +453,7 @@ fn method_map(service: &ServiceSchemaSnapshot) -> BTreeMap<&str, &MethodSchemaSn
 fn parse_schema_id(hex: &str) -> Result<SchemaId, SchemaCompatError> {
     let trimmed = hex.strip_prefix("0x").unwrap_or(hex);
     u64::from_str_radix(trimmed, 16)
-        .map(SchemaId)
+        .map(SchemaId::from_raw)
         .map_err(|error| SchemaCompatError::Hex(format!("invalid schema id {hex:?}: {error}")))
 }
 

@@ -1,0 +1,11 @@
+
+// Rung 137 — a persisted entry is corrupted between runs. Reverify-on-
+// load catches it: the value recomputes and the answer is RIGHT. Trust
+// nothing on record. (persistence.value-vs-claim, reverify-on-load)
+fn costly(n: Int) -> Int { n * n }
+
+#[test { rerun_with: "corrupted-store" }]
+fn corrupted_store_caught() -> Stream<Check> {
+    yield expect_eq(costly(1111), 1234321);
+    yield demanded(costly(1111));
+}

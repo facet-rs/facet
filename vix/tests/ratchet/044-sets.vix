@@ -1,0 +1,12 @@
+// Rung 044 — Set<T>: membership without Map<T, Bool> workarounds.
+#[test]
+fn sets() -> Stream<Check> {
+    let s: Set<Int> = %[3, 1, 3];
+    let extended = s + 2;
+    let combined = extended ++ %[2, 4];
+    yield expect_eq(s.len(), 2);
+    yield expect(s.has(3));
+    yield expect(!s.has(2));
+    yield expect_eq(s.values(), [1, 3]);
+    yield expect_eq(combined.values(), [1, 2, 3, 4]);
+}

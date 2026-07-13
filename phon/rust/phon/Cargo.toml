@@ -5,24 +5,17 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "The phon front door: facet-derived schemas and descriptors, typed encode/decode, optional JIT."
+description = "The phon front door: facet-derived schemas and descriptors, typed encode/decode, Weavy-controlled JIT."
 
 [package.metadata]
 
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
-[features]
-default = []
-# Pull in the copy-and-patch JIT and route the typed API through it. Off by
-# default so the baseline interpreter pays nothing; not enabled on targets that
-# forbid allocating executable memory. (r[crates.jit-opt-in])
-jit = ["dep:phon-jit"]
-
 [dependencies]
 phon-schema.workspace = true
 phon-ir.workspace = true
 phon-engine.workspace = true
-phon-jit = { workspace = true, optional = true }
+phon-jit.workspace = true
 facet.workspace = true
 facet-value.workspace = true

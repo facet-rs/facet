@@ -65,7 +65,7 @@ mod tests {
         for s in &m.schemas {
             let bytes = schema_to_bytes(s);
             let back = schema_from_bytes(&bytes).expect("schema round-trips");
-            assert_eq!(&back, s, "schema {:#x} must round-trip", s.id.0);
+            assert_eq!(&back, s, "schema {:#x} must round-trip", s.id.as_u64());
         }
     }
 

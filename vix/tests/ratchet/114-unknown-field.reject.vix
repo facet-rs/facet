@@ -1,0 +1,9 @@
+//! reject: unknown field z
+//! at: 5
+
+// Rung 114 — unknown struct field, named in the message.
+struct Point { x: Int, y: Int }
+#[test]
+fn t() -> Stream<Check> {
+    yield expect_eq(Point { x: 1, y: 2, z: 3 }.x, 1);
+}

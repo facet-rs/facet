@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "id": "accept.merge-demand",
+  "outcome": "accept",
+  "description": "The merge-demand sample checks lazy demanded Tree projection without strict evaluation of unrelated producers.",
+  "sources": [
+    {
+      "path": "../../../playgrounds/snark/src/bundled/vix/samples/merge-demand.vix",
+      "module": "crate"
+    }
+  ],
+  "assertions": [
+    {
+      "query": "function_signature",
+      "subject": "object",
+      "expect": "fn(Cc,Path)->Tree abi=Handle<Tree>",
+      "span_start": 0,
+      "span_end": 0
+    },
+    {
+      "query": "function_signature",
+      "subject": "selected",
+      "expect": "pub fn(Target)->Tree abi=Handle<Tree>",
+      "span_start": 0,
+      "span_end": 0
+    },
+    {
+      "query": "function_signature",
+      "subject": "fallback",
+      "expect": "pub fn(Target)->Tree abi=Handle<Tree>",
+      "span_start": 0,
+      "span_end": 0
+    },
+    {
+      "query": "function_signature",
+      "subject": "subtree_chain",
+      "expect": "pub fn(Target)->Tree abi=Handle<Tree>",
+      "span_start": 0,
+      "span_end": 0
+    },
+    {
+      "query": "type_of",
+      "subject": "units.map(|u| object(cc,u)).collect()/p\"wanted.o\"",
+      "expect": "Tree projection demand preserves Pending<Tree> producer identity",
+      "span_start": 0,
+      "span_end": 0
+    }
+  ]
+}

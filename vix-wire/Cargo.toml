@@ -1,0 +1,26 @@
+# vix-wire — the executor over the REAL wire (vox), no skipping.
+#
+# Separate crate on purpose: `vix` stays wasm-clean (the playground links it);
+# tokio/vox live here. Carries the recovered intent from vixen's history:
+# observer closures (generic over return type, identity in the key) and
+# per-path PRODUCING output trees (the early-rmeta answer) — rebuilt on the
+# current seam types, not restored wholesale.
+
+[package]
+name = "vix-wire"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "vix executor service over vox: observers + producing handles"
+
+[dependencies]
+vix = { path = "../vix" }
+vox = { path = "../vox/rust/vox" }
+vox-schema = { path = "../vox/rust/vox-schema" }
+facet = { path = "../facet" }
+phon = { path = "../phon/rust/phon", default-features = false }
+blake3.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net"] }
+
+[dev-dependencies]
+eyre = "0.6"

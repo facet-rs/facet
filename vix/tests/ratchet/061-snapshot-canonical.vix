@@ -1,0 +1,6 @@
+// Rung 061 — snapshotting sorted stream values is stable forever.
+#[test]
+fn snapshot_canonical() -> Stream<Check> {
+    let ms = ["gamma", "alpha", "beta"].stream().collect().values().sorted();
+    yield expect_snapshot(ms, "greek-letters");
+}

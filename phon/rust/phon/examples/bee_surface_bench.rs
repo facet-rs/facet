@@ -115,7 +115,7 @@ fn decode_interp<T>(lowered: &Lowered, wire: &[u8]) -> T {
     unsafe { slot.assume_init() }
 }
 
-#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 fn decode_jit<T>(jit: &phon_jit::native::NativeDecode, wire: &[u8]) -> T {
     let mut slot = MaybeUninit::<T>::uninit();
     unsafe { jit.run(wire, slot.as_mut_ptr().cast::<u8>()) }.expect("native decode should succeed");
@@ -156,7 +156,7 @@ where
         black_box(decoded);
     });
 
-    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
         use phon_jit::native::{NativeDecode, NativeEncode};
 
@@ -185,7 +185,7 @@ where
         );
     }
 
-    #[cfg(not(all(feature = "jit", target_os = "macos", target_arch = "aarch64")))]
+    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
     {
         let _ = (enc_i, dec_i);
         println!("  native JIT unavailable for this build target\n");

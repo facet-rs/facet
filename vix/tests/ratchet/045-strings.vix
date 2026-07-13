@@ -1,0 +1,11 @@
+// Rung 045 — string operations: concat, contains, split, parse.
+#[test]
+fn strings() -> Stream<Check> {
+    let s = "tokio" + "-" + "1.52";
+    yield expect_eq(s, "tokio-1.52");
+    yield expect(s.contains("-"));
+    let (name, version) = s.split_once("-");
+    yield expect_eq(name, "tokio");
+    yield expect_eq(version, "1.52");
+    yield expect_eq("42".parse_int(), 42);
+}

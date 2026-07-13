@@ -1,0 +1,8 @@
+// Rung 026 — array literals, indexing, len. Arrays are structs. (collections)
+#[test]
+fn arrays() -> Stream<Check> {
+    let xs = [10, 20, 30];
+    yield expect_eq(xs[0], 10);
+    yield expect_eq(xs[2], 30);
+    yield expect_eq(xs.len(), 3);
+}

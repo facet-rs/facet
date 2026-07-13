@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+
+{% block title %}{{ section.title }}{% endblock %}
+
+{% block content %}
+<article class="doc doc-home">
+    <header class="doc-header">
+        <h1>{{ section.title }}</h1>
+        {% if config.description %}<p class="lede">{{ config.description }}</p>{% endif %}
+    </header>
+    <div class="doc-body">
+        {{ section.content | safe }}
+    </div>
+</article>
+{% endblock %}

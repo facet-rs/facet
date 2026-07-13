@@ -1,0 +1,6 @@
+// Shared module for the module-band rungs.
+pub struct Point { x: Int, y: Int }
+
+pub fn magnitude_sq(p: Point) -> Int { p.x * p.x + p.y * p.y }
+
+fn private_helper(n: Int) -> Int { n }

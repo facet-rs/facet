@@ -1,0 +1,15 @@
+// Rung 031 — split_last: by-value removal, Option on empty.
+#[test]
+fn split_last() -> Stream<Check> {
+    let xs = [1, 2, 3];
+    yield match xs.split_last() {
+        Some((last, rest)) => {
+            yield expect_eq(last, 3);
+            yield expect_eq(rest, [1, 2]);
+            yield expect_eq(xs.len(), 3);
+        },
+        None => expect(false),
+    };
+    let empty: [Int] = [];
+    yield expect_none(empty.split_last());
+}

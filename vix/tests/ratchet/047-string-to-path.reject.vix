@@ -1,0 +1,10 @@
+//! reject: no conversion from String to Path
+//! at: 6
+
+// Rung 047 — no free String→Path cast: paths trace to a grant. (paths doctrine)
+#[test]
+fn no_string_to_path() -> Stream<Check> {
+    let s = "/etc/passwd";
+    let p: Path = s;
+    yield expect(true);
+}

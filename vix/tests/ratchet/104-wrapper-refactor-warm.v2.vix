@@ -1,0 +1,8 @@
+// Second phase for rung 104: same leaf, now reached through a wrapper.
+fn leaf(n: Int) -> Int { n * 7 }
+fn pipeline(n: Int) -> Int { leaf(n) }
+
+#[test]
+fn wrapper_refactor_warm() -> Stream<Check> {
+    yield expect_eq(pipeline(6), 42);
+}

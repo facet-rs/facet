@@ -21,18 +21,21 @@ include = [
 ]
 
 [features]
-default = []
+default = ["json-import"]
 ci = ["tree-sitter-import"]
 json-import = ["dep:facet-json", "facet/indexmap"]
+glr-diagnostics = []
 tree-sitter-import = ["json-import"]
-weavy-lowering = ["dep:weavy"]
 
 [dependencies]
+aho-corasick.workspace = true
 facet = { workspace = true, features = ["indexmap"] }
 facet-json = { workspace = true, optional = true }
 indexmap.workspace = true
 regex.workspace = true
-weavy = { workspace = true, optional = true }
+regex-automata.workspace = true
+smallvec.workspace = true
+weavy.workspace = true
 
 [dev-dependencies]
 facet-styx = { workspace = true }
@@ -43,7 +46,23 @@ snark-scanner-host = { path = "../snark-scanner-host" }
 
 [[example]]
 name = "weavy_bench"
-required-features = ["weavy-lowering"]
+required-features = ["json-import"]
+
+[[example]]
+name = "gingembre_corpus"
+required-features = ["json-import"]
+
+[[example]]
+name = "arborium_check"
+required-features = ["json-import"]
+
+[[example]]
+name = "pipeline_timing"
+required-features = ["json-import"]
+
+[[example]]
+name = "nginx_arborium_probe"
+required-features = ["json-import"]
 
 [lints]
 workspace = true

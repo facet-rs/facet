@@ -1,0 +1,1024 @@
+//! Opt-in copy-and-patch JIT support shared by Weavy consumers.
+//!
+//! This module is format- and IR-agnostic. Callers own their stencil functions, state ABI,
+//! host calls, and lowering policy; Weavy only exposes the neutral mechanics that multiple
+//! backends need. The API surface here always compiles; native execution is available when
+//! Weavy's build script activates `weavy_jit_active` (`jit` feature on AND macos-aarch64 or
+//! linux-x86_64 — [`NATIVE_COPY_PATCH_AVAILABLE`]).
+//!
+//! # The layers
+//!
+//! 1. **Stencil extraction (build time).** A consumer writes each op as an `extern "C" fn`
+//!    in a standalone stencil source file, ending in a tail call to an *undefined* symbol
+//!    (conventionally `weavy_cont`) — that call's relocation is the "continuation hole".
+//!    Its build script compiles the file with `rustc --emit=obj` and pulls each function's
+//!    machine code + hole offsets via `copypatch::extract::{compile_object, extract_stencil}`
+//!    (`extract_stencil_n` for multi-successor stencils like conditional guards).
+//!    Per-op immediates ride in a side program stream, not in the code, so stencil bytes stay
+//!    position-independent. Compile with `--cfg tailcall` (works on stable via
+//!    `RUSTC_BOOTSTRAP=1` in the build script) to make continuations guaranteed tail calls
+//!    (`become`) — at `-O` the bytes are the same as the plain call (LLVM already
+//!    tail-call-optimizes), so this is a *guard*: a stencil that can't tail-call fails to
+//!    compile instead of silently regressing to a call chain.
+//!
+//! 2. **Assembly (run time).** [`StencilLayout`]: `start_chain`, then per op
+//!    `push_prog_word` (immediates) + `emit_stencil` (copy the bytes), then
+//!    [`StencilLayout::patch_continuation`] each hole to its successor's offset.
+//!    [`NativeProgram`] maps the result executable and hands out entry function pointers;
+//!    the caller owns the context ABI (`extern "C" fn(*mut C)`). The executable buffer is
+//!    not public API; consumers build through these layout/program types and probe
+//!    [`NATIVE_COPY_PATCH_AVAILABLE`] for runtime availability.
+//!
+//! 3. **Two execution lanes.**
+//!    - **Host-call lane** ([`HostCallInfo`]/[`HostCallCtx`]/[`HostCallChain`], plus the shared
+//!      `HOSTCALL`/`DONE` stencils in [`stencils`]): control flow is copied native code, but
+//!      each site makes an indirect call back into a Rust intrinsic. This is an *unrolled
+//!      threaded interpreter* — it removes dispatch, not op-body cost. Expect roughly
+//!      interpreter-class speed; it can even lose to a tight interpreter loop for heavy ops.
+//!    - **Dedicated stencils**: the op body IS compiled code (an add stencil is a native add).
+//!      This is where copy-and-patch actually pays, and only for *small* ops where dispatch
+//!      would have dominated. Measured on a 23-op integer expression: interpreter ~1.3µs/eval,
+//!      host-call chain ~60ns, dedicated stencils ~25ns.
+//!
+//! # Observability ([`debug`], [`dwarf`])
+//!
+//! JIT'd code is an anonymous executable buffer until you register it. One call makes it
+//! debuggable and profilable:
+//!
+//! ```ignore
+//! let reg = weavy::jit::debug::register_jit_source(
+//!     native.code_ptr(), code_len,
+//!     "template.jinja", Some(dir),          // a real source file
+//!     &symbols,                             // per-op: name, offset, size, line, column
+//! )?;                                        // keep `reg` alive while the code can run
+//! ```
+//!
+//! That builds an in-memory ELF (`.symtab` per op + DWARF `.debug_line` mapping each op's
+//! code range to source line:column) and registers it through the GDB JIT interface
+//! (`__jit_debug_register_code`). Verified end-to-end: lldb resolves JIT'd PCs, takes source
+//! and column breakpoints (`b file:4`, `breakpoint set -f file -l 1 -u 8`), and backtraces
+//! through JIT frames (macOS needs `settings set plugin.jit-loader.gdb.enable on`). Every
+//! line-table row carries `prologue_end`, so breakpoints stop at a region's first instruction.
+//! For profilers, [`debug::write_jitdump`] emits a perf jitdump (`/tmp/jit-<pid>.dump`) that
+//! `perf` and stax consume to symbolicate and per-instruction-annotate JIT'd code.
+
+#[cfg(feature = "jit")]
+pub use copypatch::{patch_branch26, patch_x86_rel32};
+
+#[cfg(not(feature = "jit"))]
+pub fn patch_branch26(_: &mut [u8], _: usize, _: usize) {
+    unreachable!("native copy-and-patch is unavailable without Weavy's jit feature")
+}
+
+#[cfg(not(feature = "jit"))]
+pub fn patch_x86_rel32(_: &mut [u8], _: usize, _: usize) {
+    unreachable!("native copy-and-patch is unavailable without Weavy's jit feature")
+}
+
+#[cfg(weavy_jit_active)]
+use copypatch::ExecBuf;
+
+/// Shared copy-and-patch stencil bytes extracted by Weavy's build script.
+///
+/// Consumers should prefer the typed helpers on [`StencilLayout`]; this module
+/// is public so backend-specific compilers can still compose lower-level layouts
+/// when needed.
+pub mod stencils {
+    include!(concat!(env!("OUT_DIR"), "/weavy_stencils.rs"));
+}
+
+/// Machine code + continuation relocations for the ASYNC (suspend/resume) JIT
+/// lane, generated by `build.rs` from `stencils/async_ops.rs`. Empty off the
+/// native copy-and-patch targets; the interpreter lane (always available) needs
+/// none of this.
+pub mod async_stencils {
+    include!(concat!(env!("OUT_DIR"), "/weavy_async_stencils.rs"));
+}
+
+/// Task-lane stencils (frame ops), generated by build.rs from
+/// stencils/task_ops.rs. Empty off native copy-and-patch targets.
+pub mod task_stencils {
+    include!(concat!(env!("OUT_DIR"), "/weavy_task_stencils.rs"));
+}
+
+// NB: module docs live INSIDE these files (`//!`); an outer `///` here would make rustdoc
+// resolve the merged doc's intra-doc links in THIS scope and break them.
+pub mod debug;
+pub mod dwarf;
+pub mod task_lane;
+
+/// Whether this build can allocate and run native copy-and-patch code.
+pub const NATIVE_COPY_PATCH_AVAILABLE: bool = cfg!(weavy_jit_active);
+
+/// Native copy-and-patch execution was requested in a build where it is inactive.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NativeUnavailable;
+
+impl core::fmt::Display for NativeUnavailable {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("native copy-and-patch execution is unavailable in this build")
+    }
+}
+
+impl std::error::Error for NativeUnavailable {}
+
+/// One consumer-supplied intrinsic in a shared Weavy host-call chain.
+#[repr(C)]
+pub struct HostCallInfo {
+    /// Consumer-owned immutable metadata for this intrinsic.
+    pub info: *const (),
+    /// Consumer-owned intrinsic body.
+    ///
+    /// Returning `false` stops the copied chain immediately; consumers keep their
+    /// exact error in their own state.
+    pub call: unsafe extern "C" fn(cx: *mut (), info: *const ()) -> bool,
+}
+
+/// Threaded context expected by the shared host-call stencil.
+#[repr(C)]
+pub struct HostCallCtx<C> {
+    /// Current program stream cursor.
+    pub prog: *const u64,
+    /// Consumer-owned execution state pointer.
+    pub inner: *mut C,
+}
+
+impl<C> HostCallCtx<C> {
+    /// Build a typed host-call context over a mutable consumer state.
+    #[must_use]
+    #[inline]
+    pub fn new(prog: *const u64, inner: &mut C) -> Self {
+        Self { prog, inner }
+    }
+}
+
+/// Safe typed host-call body for copy-and-patch host-call chains.
+///
+/// The raw `extern "C"` trampoline and pointer casts stay inside Weavy's JIT
+/// module. Consumers provide typed metadata and a typed mutable execution
+/// context.
+pub trait HostCall<C> {
+    /// Execute one host-call metadata item against the caller's context.
+    ///
+    /// Returning `false` stops the copied chain immediately.
+    fn call(&self, cx: &mut C) -> bool;
+}
+
+/// Static layout facts for a copied host-call chain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HostCallChainLayout {
+    /// Number of copied host-call stencils in the chain.
+    pub hostcall_sites: usize,
+    /// Number of copied stencils including the terminal done stencil.
+    pub copied_stencils: usize,
+}
+
+impl HostCallChainLayout {
+    /// Compute host-call chain layout facts from the number of call sites.
+    #[must_use]
+    pub const fn for_hostcall_sites(hostcall_sites: usize) -> Self {
+        Self {
+            hostcall_sites,
+            copied_stencils: hostcall_sites + 1,
+        }
+    }
+}
+
+/// Typed host-call chain over Weavy's shared copy-and-patch stencils.
+///
+/// The type always compiles. When native copy-and-patch is inactive, it retains
+/// caller metadata but cannot execute.
+pub struct HostCallChain<I> {
+    infos: Vec<I>,
+    #[cfg(weavy_jit_active)]
+    call_slots: Vec<ProgSlot>,
+    #[cfg(weavy_jit_active)]
+    calls: Vec<HostCallInfo>,
+    #[cfg(weavy_jit_active)]
+    native: NativeProgram,
+}
+
+// SAFETY: The copied code and side program streams are owned by the chain and
+// remain immutable except through `&mut self` in `run`, where host-call records
+// are rebuilt for the caller's current context. Moving the chain to another
+// thread is sound when the consumer metadata is `Send`; sharing still requires
+// external synchronization because `run` takes `&mut self`.
+unsafe impl<I: Send> Send for HostCallChain<I> {}
+
+impl<I> HostCallChain<I> {
+    /// Build an executable chain that calls each metadata item in order.
+    ///
+    /// Empty chains are valid and immediately return.
+    #[must_use]
+    pub fn new(infos: Vec<I>) -> Self {
+        #[cfg(not(weavy_jit_active))]
+        {
+            Self { infos }
+        }
+        #[cfg(weavy_jit_active)]
+        {
+            let mut layout = StencilLayout::new();
+            let root = layout.start_chain();
+            let mut previous = None;
+            let mut call_slots = Vec::with_capacity(infos.len());
+            for _ in &infos {
+                let slot = layout.reserve_prog_slot(root.prog_index);
+                call_slots.push(slot);
+                let current = layout.emit_stencil(stencils::HOSTCALL);
+                if let Some(previous) = previous {
+                    layout.patch_hostcall_continuation(previous, current);
+                }
+                previous = Some(current);
+            }
+            let done = layout.emit_done();
+            if let Some(previous) = previous {
+                layout.patch_hostcall_continuation(previous, done);
+            }
+
+            Self {
+                infos,
+                call_slots,
+                calls: Vec::new(),
+                native: NativeProgram::new(layout, root),
+            }
+        }
+    }
+
+    /// Run the copied host-call chain against a typed context.
+    pub fn run<C>(&mut self, cx: &mut C) -> Result<(), NativeUnavailable>
+    where
+        I: HostCall<C>,
+    {
+        #[cfg(not(weavy_jit_active))]
+        {
+            let _ = cx;
+            Err(NativeUnavailable)
+        }
+        #[cfg(weavy_jit_active)]
+        {
+            let call: unsafe extern "C" fn(*mut (), *const ()) -> bool = typed_hostcall::<C, I>;
+            let calls_bound = self.calls.len() == self.infos.len()
+                && self
+                    .calls
+                    .iter()
+                    .all(|record| core::ptr::fn_addr_eq(record.call, call));
+            if !calls_bound {
+                self.calls.clear();
+                self.calls
+                    .extend(self.infos.iter().map(|info| HostCallInfo {
+                        info: core::ptr::from_ref(info).cast(),
+                        call,
+                    }));
+                for (slot, call) in self.call_slots.iter().copied().zip(&self.calls) {
+                    self.native
+                        .fill_prog_slot(slot, core::ptr::from_ref(call) as u64);
+                }
+            }
+            let mut host_ctx = HostCallCtx::new(self.native.entry_prog(), cx);
+            let entry = unsafe { self.native.entry_fn::<HostCallCtx<C>>() };
+            unsafe {
+                entry(&mut host_ctx);
+            }
+            Ok(())
+        }
+    }
+
+    /// Metadata items in this chain.
+    #[must_use]
+    pub fn infos(&self) -> &[I] {
+        &self.infos
+    }
+
+    /// Number of host-call stencil sites emitted by this chain.
+    #[must_use]
+    pub fn hostcall_site_count(&self) -> usize {
+        HostCallChainLayout::for_hostcall_sites(self.infos.len()).hostcall_sites
+    }
+
+    /// Number of raw host-call ABI records materialized for the most recent run.
+    #[must_use]
+    pub fn hostcall_count(&self) -> usize {
+        #[cfg(not(weavy_jit_active))]
+        {
+            0
+        }
+        #[cfg(weavy_jit_active)]
+        {
+            self.calls.len()
+        }
+    }
+
+    /// Number of copied stencils emitted by this chain.
+    #[must_use]
+    pub fn stencil_count(&self) -> usize {
+        #[cfg(not(weavy_jit_active))]
+        {
+            0
+        }
+        #[cfg(weavy_jit_active)]
+        {
+            self.native.stencil_count()
+        }
+    }
+}
+
+/// Host-call chain whose raw ABI records are fixed at construction.
+///
+/// The type always compiles. When native copy-and-patch is inactive, it retains
+/// caller metadata but cannot execute.
+pub struct RawHostCallChain<I> {
+    infos: Vec<I>,
+    #[cfg(weavy_jit_active)]
+    calls: Vec<HostCallInfo>,
+    #[cfg(weavy_jit_active)]
+    native: NativeProgram,
+}
+
+// SAFETY: The copied code, metadata, and side program streams are immutable
+// after construction. Moving the chain to another thread is sound when the
+// consumer metadata is `Send`.
+unsafe impl<I: Send> Send for RawHostCallChain<I> {}
+
+// SAFETY: `run` only mutates caller-provided context; the chain itself is
+// immutable after construction. Sharing is sound when consumer metadata is
+// `Sync` and its raw callback upholds its own context-safety contract.
+unsafe impl<I: Sync> Sync for RawHostCallChain<I> {}
+
+impl<I> RawHostCallChain<I> {
+    /// Build an executable chain using one erased callback for each metadata item.
+    ///
+    /// `call` receives the caller's `HostCallCtx::inner` pointer and a pointer
+    /// to the corresponding metadata item. The caller owns the erased ABI.
+    #[must_use]
+    pub fn new(
+        infos: Vec<I>,
+        call: unsafe extern "C" fn(cx: *mut (), info: *const ()) -> bool,
+    ) -> Self {
+        #[cfg(not(weavy_jit_active))]
+        {
+            let _ = call;
+            Self { infos }
+        }
+        #[cfg(weavy_jit_active)]
+        {
+            let calls: Vec<_> = infos
+                .iter()
+                .map(|info| HostCallInfo {
+                    info: core::ptr::from_ref(info).cast(),
+                    call,
+                })
+                .collect();
+            let mut layout = StencilLayout::new();
+            let root = layout.start_chain();
+            let mut previous = None;
+            for call in &calls {
+                let current = layout.emit_hostcall(root, core::ptr::from_ref(call));
+                if let Some(previous) = previous {
+                    layout.patch_hostcall_continuation(previous, current);
+                }
+                previous = Some(current);
+            }
+            let done = layout.emit_done();
+            if let Some(previous) = previous {
+                layout.patch_hostcall_continuation(previous, done);
+            }
+
+            Self {
+                infos,
+                calls,
+                native: NativeProgram::new(layout, root),
+            }
+        }
+    }
+
+    /// Run the copied host-call chain against a caller-owned context.
+    ///
+    /// # Safety
+    ///
+    /// The erased callback supplied to [`Self::new`] must accept a pointer to
+    /// `C` as its first argument for this chain execution.
+    pub unsafe fn run<C>(&self, cx: &mut C) -> Result<(), NativeUnavailable> {
+        #[cfg(not(weavy_jit_active))]
+        {
+            let _ = cx;
+            Err(NativeUnavailable)
+        }
+        #[cfg(weavy_jit_active)]
+        {
+            let mut host_ctx = HostCallCtx::new(self.native.entry_prog(), cx);
+            let entry = unsafe { self.native.entry_fn::<HostCallCtx<C>>() };
+            unsafe {
+                entry(&mut host_ctx);
+            }
+            Ok(())
+        }
+    }
+
+    /// Metadata items in this chain.
+    #[must_use]
+    pub fn infos(&self) -> &[I] {
+        &self.infos
+    }
+
+    /// Number of host-call stencil sites emitted by this chain.
+    #[must_use]
+    pub fn hostcall_site_count(&self) -> usize {
+        HostCallChainLayout::for_hostcall_sites(self.infos.len()).hostcall_sites
+    }
+
+    /// Number of raw host-call ABI records materialized in this chain.
+    #[must_use]
+    pub fn hostcall_count(&self) -> usize {
+        #[cfg(not(weavy_jit_active))]
+        {
+            0
+        }
+        #[cfg(weavy_jit_active)]
+        {
+            self.calls.len()
+        }
+    }
+
+    /// Number of copied stencils emitted by this chain.
+    #[must_use]
+    pub fn stencil_count(&self) -> usize {
+        #[cfg(not(weavy_jit_active))]
+        {
+            0
+        }
+        #[cfg(weavy_jit_active)]
+        {
+            self.native.stencil_count()
+        }
+    }
+}
+
+#[cfg(weavy_jit_active)]
+unsafe extern "C" fn typed_hostcall<C, I>(cx: *mut (), info: *const ()) -> bool
+where
+    I: HostCall<C>,
+{
+    let cx = unsafe { &mut *cx.cast::<C>() };
+    let info = unsafe { &*info.cast::<I>() };
+    info.call(cx)
+}
+
+/// A copied stencil chain's entry point and associated program stream.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Chain {
+    /// Offset into the final code buffer where this chain starts.
+    pub entry: usize,
+    /// Index into the program-stream table for this chain.
+    pub prog_index: usize,
+}
+
+/// A reserved word in one chain's program stream.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProgSlot {
+    /// Index into the program-stream table.
+    pub prog_index: usize,
+    /// Word index inside that program stream.
+    pub slot: usize,
+}
+
+/// Code bytes plus side program streams for a copy-and-patch backend.
+#[derive(Debug, Default)]
+pub struct StencilLayout {
+    code: Vec<u8>,
+    progs: Vec<Vec<u64>>,
+    stencil_count: usize,
+}
+
+impl StencilLayout {
+    /// Create an empty stencil layout.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Start a new callable chain at the current code offset.
+    pub fn start_chain(&mut self) -> Chain {
+        let entry = self.code.len();
+        let prog_index = self.progs.len();
+        self.progs.push(Vec::new());
+        Chain { entry, prog_index }
+    }
+
+    /// Append one stencil and return its starting offset.
+    pub fn emit_stencil(&mut self, stencil: &[u8]) -> usize {
+        let start = self.code.len();
+        self.code.extend_from_slice(stencil);
+        self.stencil_count += 1;
+        start
+    }
+
+    /// Current code-buffer length.
+    #[must_use]
+    pub fn code_len(&self) -> usize {
+        self.code.len()
+    }
+
+    /// Patch an AArch64 continuation relocation to another offset in this layout.
+    pub fn patch_branch26(&mut self, site: usize, target: usize) {
+        patch_branch26(&mut self.code, site, target);
+    }
+
+    /// Patch an x86/x86-64 `rel32` continuation relocation to another offset.
+    pub fn patch_x86_rel32(&mut self, site: usize, target: usize) {
+        patch_x86_rel32(&mut self.code, site, target);
+    }
+
+    /// Patch one continuation relocation to another offset in this layout.
+    pub fn patch_continuation(&mut self, site: usize, target: usize) {
+        #[cfg(all(weavy_jit_active, target_os = "macos", target_arch = "aarch64"))]
+        {
+            return self.patch_branch26(site, target);
+        }
+        #[cfg(all(weavy_jit_active, target_os = "linux", target_arch = "x86_64"))]
+        {
+            return self.patch_x86_rel32(site, target);
+        }
+        #[allow(unreachable_code)]
+        {
+            let _ = (site, target);
+            panic!("native copy-and-patch is not available for this target");
+        }
+    }
+
+    /// Append one word to a chain's program stream.
+    pub fn push_prog_word(&mut self, prog_index: usize, value: u64) {
+        self.progs[prog_index].push(value);
+    }
+
+    /// Mutably borrow a chain's program stream.
+    pub fn prog_mut(&mut self, prog_index: usize) -> &mut Vec<u64> {
+        &mut self.progs[prog_index]
+    }
+
+    /// Reserve one word in a chain's program stream for a later stable pointer.
+    pub fn reserve_prog_slot(&mut self, prog_index: usize) -> ProgSlot {
+        let slot = self.progs[prog_index].len();
+        self.progs[prog_index].push(0);
+        ProgSlot { prog_index, slot }
+    }
+
+    /// Fill a previously reserved program-stream word.
+    pub fn fill_prog_slot(&mut self, slot: ProgSlot, value: u64) {
+        self.progs[slot.prog_index][slot.slot] = value;
+    }
+
+    /// Append a shared host-call stencil to `chain`.
+    ///
+    /// The `info` pointer must remain valid for as long as the finalized native
+    /// program can run. Callers typically point this at an element in an owned
+    /// metadata vector held beside the finalized native program.
+    pub fn emit_hostcall(&mut self, chain: Chain, info: *const HostCallInfo) -> usize {
+        self.push_prog_word(chain.prog_index, info as u64);
+        self.emit_stencil(stencils::HOSTCALL)
+    }
+
+    /// Append the shared terminal stencil.
+    pub fn emit_done(&mut self) -> usize {
+        self.emit_stencil(stencils::DONE)
+    }
+
+    /// Patch one shared host-call stencil's continuation to `target`.
+    pub fn patch_hostcall_continuation(&mut self, hostcall_start: usize, target: usize) {
+        for &rel in stencils::HOSTCALL_CONT {
+            self.patch_continuation(hostcall_start + rel, target);
+        }
+    }
+
+    /// Borrow a chain's program stream.
+    #[must_use]
+    pub fn prog(&self, prog_index: usize) -> &[u64] {
+        &self.progs[prog_index]
+    }
+
+    /// Borrow the copied code bytes.
+    #[must_use]
+    pub fn code(&self) -> &[u8] {
+        &self.code
+    }
+
+    /// Number of stencils emitted into this layout.
+    #[must_use]
+    pub fn stencil_count(&self) -> usize {
+        self.stencil_count
+    }
+
+    /// Split the layout into executable code bytes and side program streams.
+    #[must_use]
+    pub fn into_parts(self) -> (Vec<u8>, Vec<Vec<u64>>, usize) {
+        (self.code, self.progs, self.stencil_count)
+    }
+}
+
+/// Executable copied code plus stable side program streams.
+///
+/// The ABI is still owned by the caller: this only binds a finalized
+/// [`StencilLayout`] into native memory and keeps each chain's program stream in
+/// stable heap storage for stencils to read.
+pub struct NativeProgram {
+    #[cfg(weavy_jit_active)]
+    buf: ExecBuf,
+    progs: Vec<Vec<u64>>,
+    entry: Chain,
+    stencil_count: usize,
+}
+
+impl NativeProgram {
+    /// Make a finalized stencil layout executable.
+    #[must_use]
+    #[inline]
+    pub fn new(layout: StencilLayout, entry: Chain) -> Self {
+        #[cfg(weavy_jit_active)]
+        {
+            let (code, progs, stencil_count) = layout.into_parts();
+            Self {
+                buf: ExecBuf::new(&code),
+                progs,
+                entry,
+                stencil_count,
+            }
+        }
+        #[cfg(not(weavy_jit_active))]
+        {
+            let (_code, progs, stencil_count) = layout.into_parts();
+            Self {
+                progs,
+                entry,
+                stencil_count,
+            }
+        }
+    }
+
+    /// Return the executable code buffer's base pointer.
+    #[must_use]
+    #[inline]
+    pub fn code_ptr(&self) -> *const u8 {
+        #[cfg(weavy_jit_active)]
+        {
+            self.buf.as_ptr()
+        }
+        #[cfg(not(weavy_jit_active))]
+        {
+            core::ptr::null()
+        }
+    }
+
+    /// Return this program's root chain as a function pointer.
+    ///
+    /// # Safety
+    /// The copied root code must use the caller's `extern "C" fn(*mut C)` ABI.
+    #[must_use]
+    #[inline]
+    pub unsafe fn entry_fn<C>(&self) -> unsafe extern "C" fn(*mut C) {
+        unsafe { self.chain_fn(self.entry.entry) }
+    }
+
+    /// Return an arbitrary chain entry as a function pointer.
+    ///
+    /// # Safety
+    /// `entry` must be a chain offset in this program, and that chain must use
+    /// the caller's `extern "C" fn(*mut C)` ABI.
+    #[must_use]
+    #[inline]
+    pub unsafe fn chain_fn<C>(&self, entry: usize) -> unsafe extern "C" fn(*mut C) {
+        #[cfg(weavy_jit_active)]
+        {
+            unsafe {
+                core::mem::transmute::<*const u8, unsafe extern "C" fn(*mut C)>(
+                    self.code_ptr().add(entry),
+                )
+            }
+        }
+        #[cfg(not(weavy_jit_active))]
+        {
+            let _ = entry;
+            unsafe extern "C" fn unavailable<C>(_: *mut C) {
+                unreachable!("native copy-and-patch is unavailable on this target")
+            }
+            unavailable::<C>
+        }
+    }
+
+    /// Return the root chain's program-stream index.
+    #[must_use]
+    #[inline]
+    pub fn entry_prog_index(&self) -> usize {
+        self.entry.prog_index
+    }
+
+    /// Return the root chain's program stream.
+    #[must_use]
+    #[inline]
+    pub fn entry_prog(&self) -> *const u64 {
+        self.prog_ptr(self.entry_prog_index())
+    }
+
+    /// Return one chain's program stream.
+    #[must_use]
+    #[inline]
+    pub fn prog_ptr(&self, prog_index: usize) -> *const u64 {
+        self.progs[prog_index].as_ptr()
+    }
+
+    /// Fill a previously reserved word in a program stream.
+    #[inline]
+    pub fn fill_prog_word(&mut self, prog_index: usize, slot: usize, value: u64) {
+        self.progs[prog_index][slot] = value;
+    }
+
+    /// Fill a previously reserved program-stream slot.
+    #[inline]
+    pub fn fill_prog_slot(&mut self, slot: ProgSlot, value: u64) {
+        self.fill_prog_word(slot.prog_index, slot.slot, value);
+    }
+
+    /// Number of callable chains.
+    #[must_use]
+    #[inline]
+    pub fn chain_count(&self) -> usize {
+        self.progs.len()
+    }
+
+    /// Number of copied stencils.
+    #[must_use]
+    #[inline]
+    pub fn stencil_count(&self) -> usize {
+        self.stencil_count
+    }
+
+    /// Total number of program-stream words.
+    #[must_use]
+    #[inline]
+    pub fn prog_slot_count(&self) -> usize {
+        self.progs.iter().map(Vec::len).sum()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StencilLayout;
+
+    #[test]
+    fn layout_tracks_chains_stencils_and_program_slots() {
+        let mut layout = StencilLayout::new();
+        let root = layout.start_chain();
+        let first = layout.emit_stencil(&[1, 2, 3, 4]);
+        layout.push_prog_word(root.prog_index, 7);
+        let slot = layout.reserve_prog_slot(root.prog_index);
+        layout.fill_prog_slot(slot, 11);
+        let child = layout.start_chain();
+        let second = layout.emit_stencil(&[5, 6]);
+
+        assert_eq!(root.entry, 0);
+        assert_eq!(root.prog_index, 0);
+        assert_eq!(first, 0);
+        assert_eq!(child.entry, 4);
+        assert_eq!(child.prog_index, 1);
+        assert_eq!(second, 4);
+        assert_eq!(layout.code(), &[1, 2, 3, 4, 5, 6]);
+        assert_eq!(layout.prog(root.prog_index), &[7, 11]);
+        assert_eq!(layout.stencil_count(), 2);
+    }
+
+    #[cfg(weavy_jit_active)]
+    fn ret_stencil() -> &'static [u8] {
+        #[cfg(all(weavy_jit_active, target_os = "macos", target_arch = "aarch64"))]
+        {
+            &[0xc0, 0x03, 0x5f, 0xd6]
+        }
+        #[cfg(all(weavy_jit_active, target_os = "linux", target_arch = "x86_64"))]
+        {
+            &[0xc3]
+        }
+    }
+
+    #[cfg(weavy_jit_active)]
+    #[test]
+    fn native_program_owns_executable_code_and_program_slots() {
+        use super::NativeProgram;
+
+        let mut layout = StencilLayout::new();
+        let root = layout.start_chain();
+        layout.emit_stencil(ret_stencil());
+        layout.push_prog_word(root.prog_index, 7);
+        let slot = layout.reserve_prog_slot(root.prog_index);
+
+        let mut native = NativeProgram::new(layout, root);
+        native.fill_prog_slot(slot, 11);
+
+        assert_eq!(native.chain_count(), 1);
+        assert_eq!(native.stencil_count(), 1);
+        assert_eq!(native.prog_slot_count(), 2);
+        assert!(!native.entry_prog().is_null());
+
+        let entry = unsafe { native.entry_fn::<u8>() };
+        let mut ctx = 0u8;
+        unsafe { entry(&mut ctx) };
+    }
+
+    #[cfg(weavy_jit_active)]
+    #[test]
+    fn shared_hostcall_stencil_runs_consumer_intrinsic() {
+        use super::{HostCallCtx, HostCallInfo, NativeProgram};
+
+        struct State {
+            value: u64,
+        }
+
+        struct Info {
+            add: u64,
+        }
+
+        unsafe extern "C" fn add(cx: *mut (), info: *const ()) -> bool {
+            let state = unsafe { &mut *cx.cast::<State>() };
+            let info = unsafe { &*info.cast::<Info>() };
+            state.value += info.add;
+            true
+        }
+
+        let infos = [Info { add: 41 }];
+        let calls = [HostCallInfo {
+            info: core::ptr::from_ref(&infos[0]).cast(),
+            call: add,
+        }];
+        let mut layout = StencilLayout::new();
+        let root = layout.start_chain();
+        let hostcall = layout.emit_hostcall(root, core::ptr::from_ref(&calls[0]));
+        let done = layout.emit_done();
+        layout.patch_hostcall_continuation(hostcall, done);
+
+        let native = NativeProgram::new(layout, root);
+        let mut state = State { value: 1 };
+        let mut cx = HostCallCtx::new(native.entry_prog(), &mut state);
+        let entry = unsafe { native.entry_fn::<HostCallCtx<State>>() };
+        unsafe {
+            entry(&mut cx);
+        }
+
+        assert_eq!(state.value, 42);
+    }
+
+    #[cfg(weavy_jit_active)]
+    #[test]
+    fn typed_hostcall_chain_runs_consumer_intrinsics_without_raw_abi() {
+        use super::{HostCall, HostCallChain, HostCallChainLayout};
+
+        struct State {
+            value: u64,
+        }
+
+        struct Add(u64);
+
+        impl HostCall<State> for Add {
+            fn call(&self, cx: &mut State) -> bool {
+                cx.value += self.0;
+                true
+            }
+        }
+
+        let mut chain = HostCallChain::new(vec![Add(20), Add(21)]);
+        assert_eq!(
+            HostCallChainLayout::for_hostcall_sites(2).copied_stencils,
+            3
+        );
+        assert_eq!(chain.hostcall_site_count(), 2);
+        assert_eq!(chain.stencil_count(), 3);
+        assert_eq!(chain.hostcall_count(), 0);
+        let mut state = State { value: 1 };
+        chain.run(&mut state).unwrap();
+        chain.run(&mut state).unwrap();
+
+        assert_eq!(state.value, 83);
+        assert_eq!(chain.infos().len(), 2);
+        assert_eq!(chain.hostcall_count(), 2);
+        assert_eq!(chain.stencil_count(), 3);
+    }
+
+    #[cfg(weavy_jit_active)]
+    #[test]
+    fn typed_hostcall_chain_stops_when_consumer_returns_false() {
+        use super::{HostCall, HostCallChain, HostCallChainLayout};
+
+        struct State {
+            value: u64,
+        }
+
+        struct Step {
+            add: u64,
+            keep_running: bool,
+        }
+
+        impl HostCall<State> for Step {
+            fn call(&self, cx: &mut State) -> bool {
+                cx.value += self.add;
+                self.keep_running
+            }
+        }
+
+        let mut chain = HostCallChain::new(vec![
+            Step {
+                add: 1,
+                keep_running: true,
+            },
+            Step {
+                add: 10,
+                keep_running: false,
+            },
+            Step {
+                add: 100,
+                keep_running: true,
+            },
+        ]);
+        assert_eq!(
+            HostCallChainLayout::for_hostcall_sites(3).copied_stencils,
+            4
+        );
+        assert_eq!(chain.hostcall_site_count(), 3);
+        assert_eq!(chain.stencil_count(), 4);
+        assert_eq!(chain.hostcall_count(), 0);
+        let mut state = State { value: 0 };
+        chain.run(&mut state).unwrap();
+
+        assert_eq!(state.value, 11);
+        assert_eq!(chain.hostcall_count(), 3);
+        assert_eq!(chain.stencil_count(), 4);
+    }
+
+    #[cfg(weavy_jit_active)]
+    #[test]
+    fn raw_hostcall_chain_runs_without_rebuilding_call_records() {
+        use super::{HostCallChainLayout, RawHostCallChain};
+
+        struct State {
+            value: u64,
+        }
+
+        struct Add(u64);
+
+        unsafe extern "C" fn add(cx: *mut (), info: *const ()) -> bool {
+            let cx = unsafe { &mut *cx.cast::<State>() };
+            let info = unsafe { &*info.cast::<Add>() };
+            cx.value += info.0;
+            true
+        }
+
+        let chain = RawHostCallChain::new(vec![Add(20), Add(21)], add);
+        assert_eq!(
+            HostCallChainLayout::for_hostcall_sites(2).copied_stencils,
+            3
+        );
+        assert_eq!(chain.hostcall_site_count(), 2);
+        assert_eq!(chain.hostcall_count(), 2);
+        assert_eq!(chain.stencil_count(), 3);
+
+        let mut state = State { value: 1 };
+        unsafe {
+            chain.run(&mut state).unwrap();
+            chain.run(&mut state).unwrap();
+        }
+
+        assert_eq!(state.value, 83);
+        assert_eq!(chain.infos().len(), 2);
+        assert_eq!(chain.hostcall_count(), 2);
+        assert_eq!(chain.stencil_count(), 3);
+    }
+
+    #[cfg(not(weavy_jit_active))]
+    #[test]
+    fn hostcall_chain_reports_native_unavailable_when_inactive() {
+        use super::{HostCall, HostCallChain, NativeUnavailable};
+
+        struct Add(i64);
+
+        impl HostCall<i64> for Add {
+            fn call(&self, cx: &mut i64) -> bool {
+                *cx += self.0;
+                true
+            }
+        }
+
+        let mut chain = HostCallChain::new(vec![Add(1)]);
+        let mut value = 0;
+        assert_eq!(chain.run(&mut value), Err(NativeUnavailable));
+        assert_eq!(value, 0);
+    }
+
+    #[cfg(not(weavy_jit_active))]
+    #[test]
+    fn raw_hostcall_chain_reports_native_unavailable_when_inactive() {
+        use super::{NativeUnavailable, RawHostCallChain};
+
+        unsafe extern "C" fn add(_: *mut (), _: *const ()) -> bool {
+            true
+        }
+
+        let chain = RawHostCallChain::new(vec![()], add);
+        let mut value = 0;
+        assert_eq!(unsafe { chain.run(&mut value) }, Err(NativeUnavailable));
+        assert_eq!(value, 0);
+    }
+}

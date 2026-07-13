@@ -84,7 +84,7 @@ pub fn schema_bytes_for_shape_with_auxiliary_roots(
 ) -> Result<Vec<u8>, Error> {
     let primary = of_shape(shape).map_err(|e| derive_error(shape, e))?;
     let mut schemas = primary.schemas;
-    let mut seen: BTreeSet<u64> = schemas.iter().map(|s| s.id.0).collect();
+    let mut seen: BTreeSet<u64> = schemas.iter().map(|s| s.id.as_u64()).collect();
     let mut roots = Vec::with_capacity(auxiliary_roots.len());
 
     for &(role, aux_shape) in auxiliary_roots {
@@ -93,7 +93,7 @@ pub fn schema_bytes_for_shape_with_auxiliary_roots(
         }
         let derived = of_shape(aux_shape).map_err(|e| derive_error(aux_shape, e))?;
         for schema in derived.schemas {
-            if seen.insert(schema.id.0) {
+            if seen.insert(schema.id.as_u64()) {
                 schemas.push(schema);
             }
         }
@@ -133,7 +133,7 @@ pub fn recursive_schema_ids_for_shape(
     shape: &'static Shape,
 ) -> Result<std::collections::BTreeSet<u64>, Error> {
     let d = of_shape(shape).map_err(|e| derive_error(shape, e))?;
-    Ok(d.descriptor_blocks.keys().map(|id| id.0).collect())
+    Ok(d.descriptor_blocks.keys().map(|id| id.as_u64()).collect())
 }
 
 /// Encode a `(root, schemas)` closure to self-describing bytes.
@@ -147,7 +147,7 @@ fn encode_bundle_with_auxiliary_roots(
     auxiliary_roots: &[AuxiliaryRoot],
 ) -> Vec<u8> {
     let mut out = Vec::new();
-    out.extend_from_slice(&root.0.to_le_bytes());
+    out.extend_from_slice(&root.as_u64().to_le_bytes());
     out.extend_from_slice(&(schemas.len() as u32).to_le_bytes());
     for s in schemas {
         let b = schema_to_bytes(s);
@@ -160,7 +160,7 @@ fn encode_bundle_with_auxiliary_roots(
             let role = root.role.as_bytes();
             out.extend_from_slice(&(role.len() as u32).to_le_bytes());
             out.extend_from_slice(role);
-            out.extend_from_slice(&root.root.0.to_le_bytes());
+            out.extend_from_slice(&root.root.as_u64().to_le_bytes());
         }
     }
     out
@@ -172,7 +172,7 @@ fn encode_bundle_with_auxiliary_roots(
 /// [`Error`] for malformed or truncated input.
 pub fn parse_schema_bytes(bytes: &[u8]) -> Result<SchemaBundle, Error> {
     let mut r = Reader::new(bytes);
-    let root = SchemaId(
+    let root = SchemaId::from_raw(
         r.read_u64()
             .map_err(|e| Error(format!("schema bundle root: {e:?}")))?,
     );
@@ -210,7 +210,7 @@ pub fn parse_schema_bytes(bytes: &[u8]) -> Result<SchemaBundle, Error> {
             let role = std::str::from_utf8(role)
                 .map_err(|e| Error(format!("schema bundle auxiliary role utf8: {e}")))?
                 .to_string();
-            let root = SchemaId(
+            let root = SchemaId::from_raw(
                 r.read_u64()
                     .map_err(|e| Error(format!("schema bundle auxiliary root: {e:?}")))?,
             );

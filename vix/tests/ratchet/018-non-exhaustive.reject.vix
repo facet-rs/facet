@@ -1,0 +1,11 @@
+//! reject: non-exhaustive match
+//! at: 6
+
+// Rung 018 — the checker rejects a match with a missing arm.
+enum Signal { Red, Amber, Green }
+fn go(s: Signal) -> Bool {
+    match s {
+        Signal::Green => true,
+        Signal::Red => false,
+    }
+}

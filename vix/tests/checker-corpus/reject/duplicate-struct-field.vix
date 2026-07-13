@@ -1,0 +1,7 @@
+struct Config {
+    name: String,
+}
+
+fn main() -> Config {
+    Config { name: "a", name: "b" }
+}

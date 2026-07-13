@@ -1,0 +1,8 @@
+// Rung 035 — explicit sorting observes values in canonical order.
+#[test]
+fn canonical_order() -> Stream<Check> {
+    let ms = [30, 10, 20].stream();
+    yield expect_eq(ms.collect().values().sorted(), [10, 20, 30]);
+    let words = ["pear", "apple", "quince"].stream();
+    yield expect_eq(words.collect().values().sorted(), ["apple", "pear", "quince"]);
+}

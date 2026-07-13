@@ -114,19 +114,18 @@ runtime over the same LR table:
   same tree-selection rules used for final roots.
 
 Snark needs a graph stack model, not a `Vec<Frame>` pretending ambiguity does
-not exist. Recommended types:
+not exist. Recommended table and execution data:
 
 - `parser_table::ParseTable`, `ParseState`, `ParseTableEntry`, `ParseAction`,
   `GotoAction`, `ProductionInfo`, `LexModeId`.
-- `runtime::StackVersionId`, `GraphStackNodeId`, `GraphStackLinkId`,
+- `StackVersionId`, `GraphStackNodeId`, `GraphStackLinkId`,
   `StackHead`, `StackMergeKey`, `BranchScore`.
-- `runtime::ReductionCandidate`, `ReductionPath`, `ReducedNodePlan`.
-- `runtime::TreeSelection { error_cost, dynamic_precedence, structural_order }`.
+- `ReductionCandidate`, `ReductionPath`, `ReducedNodePlan`.
+- `TreeSelection { error_cost, dynamic_precedence, structural_order }`.
 
-The existing `lower::weavy::{ParseStateId, ProductionId, LexModeId,
-AliasSequenceId, ExternalScannerStateId}` ids are suitable lowering identities,
-but Snark still needs pre-Weavy table/runtime ids and typed data that can be
-interpreted and traced before lowering.
+Snark's parser IR now owns the typed table ids and grammar facts; Weavy consumes
+those facts as the execution carrier rather than mirroring a second native
+runtime.
 
 ## Conflict Handling
 
@@ -284,15 +283,14 @@ Existing modules should keep their boundaries:
 - `runtime_input`: source coordinates, included ranges, and edits.
 - `lower::weavy`: lowering carrier ids and Snark intrinsics after the parser
   machine exists as Snark data.
-- `milestone::scannerless`: quarantined smoke parser only.
 
 New modules should be named for final parser concepts:
 
 - `parser_table`: grammar-derived LR/GLR tables.
 - `parser_gen`: construction of item sets, conflict handling, lexical modes, and
   parse tables from `ValidatedGrammar` plus `LexicalFacts`.
-- `parser_runtime`: table interpreter, stack versions, lookahead loop, and
-  recovery loop.
+- `weavy_runtime`: Snark-owned Weavy execution state for stack versions,
+  lookahead, recovery, tree sinks, scanner snapshots, and reuse.
 - `tree_plan` and `tree_sink`: tree semantics and structured events.
 - `scanner_host`: executable external scanner ABI.
 - `recovery`: error scoring and strategy data.
@@ -331,7 +329,8 @@ These paths are rejected:
 - Calling generated parser code and wrapping its tree as Snark output.
 - Building a handwritten PEG, Pratt parser, recursive descent parser, or
   CSS-only recognizer.
-- Routing semantics through `milestone::scannerless`.
+- Adding side parser implementations outside the validated grammar to Weavy
+  execution path.
 - Treating grammar rule order as runtime branch order except where Tree-sitter
   lexical tie-breaking explicitly uses grammar order.
 - Lexing a whole token stream before parsing.

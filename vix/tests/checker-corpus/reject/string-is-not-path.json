@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "reject.string-is-not-path",
+  "outcome": "reject",
+  "description": "String literals do not coerce to Path.",
+  "sources": [
+    {
+      "path": "reject/string-is-not-path.vix",
+      "module": "crate"
+    }
+  ],
+  "assertions": [
+    {
+      "query": "diagnostics",
+      "subject": "StringIsNotPath",
+      "expect": "expected=Path actual=String literal_form=p\"...\"",
+      "span_start": 65,
+      "span_end": 77
+    }
+  ]
+}

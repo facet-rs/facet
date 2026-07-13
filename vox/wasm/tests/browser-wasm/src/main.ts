@@ -4,18 +4,32 @@
 // a Rust WebSocket server to verify cross-platform compatibility.
 
 // The wasm module is built by wasm-pack and placed in pkg/
-import init, { run_tests, TestResults } from '../pkg/wasm_browser_tests.js';
+import init, { run_stress, run_tests, TestResults } from '../pkg/wasm_browser_tests.js';
+
+interface StressReport {
+  connections: number;
+  connected: number;
+  totalRequests: number;
+  totalErrors: number;
+  stuck: number;
+  elapsedMs: number;
+  firstError?: string;
+  allOk: boolean;
+}
 
 // Make test results available to Playwright
 declare global {
   interface Window {
     testResults: { name: string; passed: boolean; error?: string }[];
+    stressSummary: StressReport | null;
     runTests: (wsUrl: string) => Promise<void>;
+    runStress: (wsUrl: string, connections: number, durationMs: number) => Promise<void>;
     testsComplete: boolean;
   }
 }
 
 window.testResults = [];
+window.stressSummary = null;
 window.testsComplete = false;
 
 function log(message: string) {
@@ -69,11 +83,62 @@ async function runWasmTests(wsUrl: string): Promise<void> {
   window.testsComplete = true;
 }
 
-window.runTests = runWasmTests;
+async function runWasmStress(wsUrl: string, connections: number, durationMs: number): Promise<void> {
+  log("Initializing Wasm module...");
 
-// Auto-run if ws= is in the URL params
+  try {
+    await init();
+    log(`Stress: ${connections} connections against ${wsUrl} for ${durationMs}ms...`);
+
+    const summary = await run_stress(wsUrl, connections, durationMs);
+    window.stressSummary = {
+      connections: summary.connections,
+      connected: summary.connected,
+      totalRequests: summary.total_requests,
+      totalErrors: summary.total_errors,
+      stuck: summary.stuck,
+      elapsedMs: summary.elapsed_ms,
+      firstError: summary.get_first_error() ?? undefined,
+      allOk: summary.all_ok(),
+    };
+    summary.free();
+
+    log(
+      `Stress done: connected=${window.stressSummary.connected}/${window.stressSummary.connections}, ` +
+        `requests=${window.stressSummary.totalRequests}, errors=${window.stressSummary.totalErrors}, ` +
+        `stuck=${window.stressSummary.stuck}`,
+    );
+  } catch (e) {
+    const error = e instanceof Error ? e.message : String(e);
+    log(`Error: ${error}`);
+    window.stressSummary = {
+      connections,
+      connected: 0,
+      totalRequests: 0,
+      totalErrors: 1,
+      stuck: 0,
+      elapsedMs: 0,
+      firstError: error,
+      allOk: false,
+    };
+  }
+
+  window.testsComplete = true;
+}
+
+window.runTests = runWasmTests;
+window.runStress = runWasmStress;
+
+// Auto-run based on URL params: `?stress=1` runs the soak test, otherwise the
+// one-shot conformance run.
 const urlParams = new URLSearchParams(window.location.search);
 const wsUrl = urlParams.get("ws");
 if (wsUrl) {
-  runWasmTests(wsUrl);
+  if (urlParams.get("stress")) {
+    const connections = Number(urlParams.get("connections") ?? "8");
+    const durationMs = Number(urlParams.get("durationMs") ?? "30000");
+    runWasmStress(wsUrl, connections, durationMs);
+  } else {
+    runWasmTests(wsUrl);
+  }
 }

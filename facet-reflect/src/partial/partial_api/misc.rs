@@ -2285,46 +2285,44 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 current_child,
                 rope,
                 ..
-            } if parent_frame.is_init => {
-                if current_child.is_some() {
-                    // We just popped an element frame, now add it to the list
-                    if let Def::List(list_def) = parent_shape.def {
-                        // Check which storage mode we used
-                        if matches!(popped_frame.ownership, FrameOwnership::RopeSlot) {
-                            // Rope storage: element lives in a stable chunk.
-                            // Mark it as initialized; we'll drain to Vec when the list frame pops.
-                            if let Some(rope) = rope {
-                                rope.mark_last_initialized();
-                            }
-                            // No dealloc needed - memory belongs to rope
-                        } else {
-                            // Fallback: element is in separate heap buffer, use push to copy
-                            let Some(push_fn) = list_def.push() else {
-                                return Err(self.err(ReflectErrorKind::OperationFailed {
-                                    shape: parent_shape,
-                                    operation: "List missing push function",
-                                }));
-                            };
+            } if parent_frame.is_init && current_child.is_some() => {
+                // We just popped an element frame, now add it to the list
+                if let Def::List(list_def) = parent_shape.def {
+                    // Check which storage mode we used
+                    if matches!(popped_frame.ownership, FrameOwnership::RopeSlot) {
+                        // Rope storage: element lives in a stable chunk.
+                        // Mark it as initialized; we'll drain to Vec when the list frame pops.
+                        if let Some(rope) = rope {
+                            rope.mark_last_initialized();
+                        }
+                        // No dealloc needed - memory belongs to rope
+                    } else {
+                        // Fallback: element is in separate heap buffer, use push to copy
+                        let Some(push_fn) = list_def.push() else {
+                            return Err(self.err(ReflectErrorKind::OperationFailed {
+                                shape: parent_shape,
+                                operation: "List missing push function",
+                            }));
+                        };
 
-                            // The child frame contained the element value
-                            let element_ptr = PtrMut::new(popped_frame.data.as_mut_byte_ptr());
+                        // The child frame contained the element value
+                        let element_ptr = PtrMut::new(popped_frame.data.as_mut_byte_ptr());
 
-                            // Use push to add element to the list
-                            unsafe {
-                                push_fn(
-                                    PtrMut::new(parent_frame.data.as_mut_byte_ptr()),
-                                    element_ptr,
-                                );
-                            }
-
-                            // Push moved out of popped_frame
-                            popped_frame.tracker = Tracker::Scalar;
-                            popped_frame.is_init = false;
-                            popped_frame.dealloc();
+                        // Use push to add element to the list
+                        unsafe {
+                            push_fn(
+                                PtrMut::new(parent_frame.data.as_mut_byte_ptr()),
+                                element_ptr,
+                            );
                         }
 
-                        *current_child = None;
+                        // Push moved out of popped_frame
+                        popped_frame.tracker = Tracker::Scalar;
+                        popped_frame.is_init = false;
+                        popped_frame.dealloc();
                     }
+
+                    *current_child = None;
                 }
             }
             Tracker::Map {
@@ -2380,30 +2378,28 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     }
                 }
             }
-            Tracker::Set { current_child } if parent_frame.is_init => {
-                if *current_child {
-                    // We just popped an element frame, now insert it into the set
-                    if let Def::Set(set_def) = parent_frame.allocated.shape().def {
-                        let insert = set_def.vtable.insert;
+            Tracker::Set { current_child } if parent_frame.is_init && *current_child => {
+                // We just popped an element frame, now insert it into the set
+                if let Def::Set(set_def) = parent_frame.allocated.shape().def {
+                    let insert = set_def.vtable.insert;
 
-                        // The child frame contained the element value
-                        let element_ptr = PtrMut::new(popped_frame.data.as_mut_byte_ptr());
+                    // The child frame contained the element value
+                    let element_ptr = PtrMut::new(popped_frame.data.as_mut_byte_ptr());
 
-                        // Use insert to add element to the set
-                        unsafe {
-                            insert(
-                                PtrMut::new(parent_frame.data.as_mut_byte_ptr()),
-                                element_ptr,
-                            );
-                        }
-
-                        // Insert moved out of popped_frame
-                        popped_frame.tracker = Tracker::Scalar;
-                        popped_frame.is_init = false;
-                        popped_frame.dealloc();
-
-                        *current_child = false;
+                    // Use insert to add element to the set
+                    unsafe {
+                        insert(
+                            PtrMut::new(parent_frame.data.as_mut_byte_ptr()),
+                            element_ptr,
+                        );
                     }
+
+                    // Insert moved out of popped_frame
+                    popped_frame.tracker = Tracker::Scalar;
+                    popped_frame.is_init = false;
+                    popped_frame.dealloc();
+
+                    *current_child = false;
                 }
             }
             Tracker::Option {
@@ -2627,28 +2623,26 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 vtable,
                 building_item,
                 ..
-            } => {
-                if *building_item {
-                    // We just popped an element frame, now push it to the slice builder
-                    let element_ptr = PtrMut::new(popped_frame.data.as_mut_byte_ptr());
+            } if *building_item => {
+                // We just popped an element frame, now push it to the slice builder
+                let element_ptr = PtrMut::new(popped_frame.data.as_mut_byte_ptr());
 
-                    // Use the slice builder's push_fn to add the element
-                    crate::trace!("Pushing element to slice builder");
-                    unsafe {
-                        let parent_ptr = parent_frame.data.assume_init();
-                        (vtable.push_fn)(parent_ptr, element_ptr);
-                    }
+                // Use the slice builder's push_fn to add the element
+                crate::trace!("Pushing element to slice builder");
+                unsafe {
+                    let parent_ptr = parent_frame.data.assume_init();
+                    (vtable.push_fn)(parent_ptr, element_ptr);
+                }
 
-                    popped_frame.tracker = Tracker::Scalar;
-                    popped_frame.is_init = false;
-                    popped_frame.dealloc();
+                popped_frame.tracker = Tracker::Scalar;
+                popped_frame.is_init = false;
+                popped_frame.dealloc();
 
-                    if let Tracker::SmartPointerSlice {
-                        building_item: bi, ..
-                    } = &mut parent_frame.tracker
-                    {
-                        *bi = false;
-                    }
+                if let Tracker::SmartPointerSlice {
+                    building_item: bi, ..
+                } = &mut parent_frame.tracker
+                {
+                    *bi = false;
                 }
             }
             Tracker::DynamicValue {
@@ -2656,39 +2650,37 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     DynamicValueState::Array {
                         building_element, ..
                     },
-            } => {
-                if *building_element {
-                    // Check that the element is initialized before pushing
-                    if !popped_frame.is_init {
-                        // Element was never set - clean up and return error
-                        let shape = parent_frame.allocated.shape();
-                        popped_frame.dealloc();
-                        *building_element = false;
-                        // No need to poison - returning Err consumes self, Drop will handle cleanup
-                        return Err(self.err(ReflectErrorKind::OperationFailed {
-                            shape,
-                            operation: "end() called but array element was never initialized",
-                        }));
+            } if *building_element => {
+                // Check that the element is initialized before pushing
+                if !popped_frame.is_init {
+                    // Element was never set - clean up and return error
+                    let shape = parent_frame.allocated.shape();
+                    popped_frame.dealloc();
+                    *building_element = false;
+                    // No need to poison - returning Err consumes self, Drop will handle cleanup
+                    return Err(self.err(ReflectErrorKind::OperationFailed {
+                        shape,
+                        operation: "end() called but array element was never initialized",
+                    }));
+                }
+
+                // We just popped an element frame, now push it to the dynamic array
+                if let Def::DynamicValue(dyn_def) = parent_frame.allocated.shape().def {
+                    // Get mutable pointers - both array and element need PtrMut
+                    let array_ptr = unsafe { parent_frame.data.assume_init() };
+                    let element_ptr = unsafe { popped_frame.data.assume_init() };
+
+                    // Use push_array_element to add element to the array
+                    unsafe {
+                        (dyn_def.vtable.push_array_element)(array_ptr, element_ptr);
                     }
 
-                    // We just popped an element frame, now push it to the dynamic array
-                    if let Def::DynamicValue(dyn_def) = parent_frame.allocated.shape().def {
-                        // Get mutable pointers - both array and element need PtrMut
-                        let array_ptr = unsafe { parent_frame.data.assume_init() };
-                        let element_ptr = unsafe { popped_frame.data.assume_init() };
+                    // Push moved out of popped_frame
+                    popped_frame.tracker = Tracker::Scalar;
+                    popped_frame.is_init = false;
+                    popped_frame.dealloc();
 
-                        // Use push_array_element to add element to the array
-                        unsafe {
-                            (dyn_def.vtable.push_array_element)(array_ptr, element_ptr);
-                        }
-
-                        // Push moved out of popped_frame
-                        popped_frame.tracker = Tracker::Scalar;
-                        popped_frame.is_init = false;
-                        popped_frame.dealloc();
-
-                        *building_element = false;
-                    }
+                    *building_element = false;
                 }
             }
             Tracker::DynamicValue {

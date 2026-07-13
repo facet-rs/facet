@@ -1,0 +1,11 @@
+// Rung 041 — Map<K, V>: + adds one new row; get is addressed; has is not.
+#[test]
+fn maps() -> Stream<Check> {
+    let m: Map<String, Int> = %{};
+    let m2 = m + ("a", 1) + ("b", 2);
+    yield expect_eq(m2.get("a"), 1);
+    yield expect(m2.has("a"));
+    yield expect(!m2.has("z"));
+    yield expect_eq(m.len(), 0);
+    yield expect_eq(m2.len(), 2);
+}

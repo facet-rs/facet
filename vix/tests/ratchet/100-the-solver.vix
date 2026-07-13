@@ -1,0 +1,99 @@
+
+// Rung 100 — the last rung: the miniature solver from the book's final
+// chapter, whole, on one page. Domains, propagation, selection,
+// backtracking without a trail, learning as values. When this is green,
+// the language in the book exists. (building-a-solver.md)
+//
+// The solver (`propagate`/`candidates`/`search`/`try_candidates`) is pure Vix
+// and host-free: it reads only `fixture_index()` and the requirement domains,
+// never calls cargo. `ws.cargo_selection()` below is an oracle value the test
+// *harness* supplies (the fixture runs cargo over the workspace); the
+// differential comparison is the test's, not the solver's.
+
+struct State {
+    domains: Map<String, VersionSet>,
+    selected: Map<String, Version>,
+    learned: Set<NoGood>,
+}
+struct NoGood { pkg: String, region: VersionSet }
+enum Step { Pass(State), Conflict(NoGood) }
+enum Outcome { Solved(Map<String, Version>), Exhausted(NoGood) }
+
+fn propagate(s: State) where { pkg: String, version: Version } -> Step {
+    let row = fixture_index().row(pkg) where { version };
+    row.deps.values().fold(
+        Step::Pass(State { selected: s.selected + (pkg, version), ..s }),
+        |step, dep| match step {
+            Step::Conflict(ng) => Step::Conflict(ng),
+            Step::Pass(st) => {
+                let dom = if st.domains.has(dep.name) {
+                    st.domains.get(dep.name)
+                } else {
+                    parse_req("*")
+                };
+                let narrowed = dom.intersect(parse_req(dep.req));
+                if narrowed.is_empty() {
+                    Step::Conflict(NoGood { pkg: dep.name, region: dom })
+                } else {
+                    Step::Pass(State { domains: st.domains.with (dep.name, narrowed), ..st })
+                }
+            },
+        },
+    )
+}
+
+fn candidates(s: State) where { pkg: String } -> [Version] {
+    fixture_index().versions(pkg).values().stream()
+        .filter(|v| s.domains.get(pkg).contains(v))
+        .filter(|v| !s.learned.any(|ng| ng.pkg == pkg && ng.region.contains(v)))
+        .collect().values()
+        .sorted()
+}
+
+fn pick_undecided(s: State) -> Option<String> {
+    s.domains.keys().stream()
+        .filter(|p| !s.selected.has(p))
+        .collect().values().split_last()
+        .map(|(last, _)| last)
+}
+
+fn search(s: State) -> Outcome {
+    match pick_undecided(s) {
+        None => Outcome::Solved(s.selected),
+        Some(pkg) => {
+            let cands = candidates(s) where { pkg };
+            try_candidates(s) where { pkg, cands }
+        },
+    }
+}
+
+fn try_candidates(s: State) where { pkg: String, cands: [Version] } -> Outcome {
+    match cands.split_last() {
+        None => Outcome::Exhausted(NoGood { pkg: pkg, region: s.domains.get(pkg) }),
+        Some((v, rest)) => {
+            let step = propagate(s) where { pkg, version: v };
+            match step {
+                Step::Conflict(ng) =>
+                    try_candidates(State { learned: s.learned + ng, ..s }) where { pkg, cands: rest },
+                Step::Pass(s2) => match search(s2) {
+                    Outcome::Solved(sel) => Outcome::Solved(sel),
+                    Outcome::Exhausted(ng) =>
+                        try_candidates(State { learned: s.learned + ng, ..s }) where { pkg, cands: rest },
+                },
+            }
+        },
+    }
+}
+
+#[test { budget_wall: 30s, budget_rss: 2GB }]
+fn the_solver() -> Stream<Check> {
+    let ws = fixture_workspace("kitchen-sink");
+    let init = State { domains: ws.requirements(), selected: %{}, learned: %[] };
+    yield match search(init) {
+        Outcome::Solved(sel) => {
+            let expected = ws.cargo_selection();  // harness-supplied cargo oracle value
+            yield expect(expected.keys().all(|pkg| sel.has(pkg) && sel.get(pkg) == expected.get(pkg)));
+        },
+        Outcome::Exhausted(_) => expect(false),
+    };
+}

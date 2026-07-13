@@ -1,0 +1,11 @@
+root.name = trim(root.name);
+root.max_retries = clamp(root.max_retries, 1, 10);
+
+if root.threshold > 1.0 {
+  root.threshold = 1.0;
+} else if root.threshold < 0 {
+  root.threshold = 0;
+}
+
+let label = root.name + ":" + len(root.name);
+root.label = label;

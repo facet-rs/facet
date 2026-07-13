@@ -6,11 +6,11 @@
 //! and patching the holes: no optimizer, no unwinding. The result is identical
 //! to the interpreter, only faster (`r[exec.jit-optional]`).
 //!
-//! This crate is reached only through the `jit` Cargo feature on the `phon`
-//! front door, so the baseline pays nothing for it and platforms that forbid
-//! executable memory omit it entirely (`r[crates.jit-opt-in]`). Like the engine,
-//! it is binding-free — it consumes only the IR
-//! (`r[crates.engine-is-binding-free]`).
+//! This crate compiles unconditionally; whether its native backend is active is
+//! inherited from Weavy's single `jit` feature (`links = "weavy"` +
+//! `DEP_WEAVY_JIT`) plus phon-jit's own narrower platform gate
+//! (`r[machine.execution.jit-single-feature]`). Like the engine, it is
+//! binding-free — it consumes only the IR (`r[crates.engine-is-binding-free]`).
 //!
 //! Spec: `docs/content/spec.md` — `r[ir.stencils]`, `r[ir.inlining]`,
 //! `r[ir.memory]`, and `r[crates.concern-separation]`.
@@ -35,8 +35,10 @@ pub mod lower;
 pub use lower::{CompiledDecode, CompiledEncode, compile_decode, compile_encode};
 
 /// Stencil machine code extracted from rustc's object output at build time
-/// (`build.rs`). Empty on targets without the native backend.
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+/// (`build.rs`). Only [`native`] reads these; [`native_stub`] takes over (and
+/// this module would otherwise be all dead code) when the native backend
+/// isn't active for this build.
+#[cfg(phon_jit_native)]
 mod stencils {
     include!(concat!(env!("OUT_DIR"), "/stencils.rs"));
 }
@@ -45,5 +47,14 @@ mod stencils {
 /// `MAP_JIT` memory. The foundation the copy-and-patch backend builds on.
 ///
 /// Spec: `r[ir.stencils]`.
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(phon_jit_native)]
 pub mod native;
+
+/// Inactive-backend stub: the same API surface as [`native`], unreachable —
+/// keeps callers compiling unconditionally when phon-jit's native backend
+/// isn't active for this build (`r[machine.execution.jit-single-feature]`).
+#[cfg(not(phon_jit_native))]
+pub mod native_stub;
+
+#[cfg(not(phon_jit_native))]
+pub use native_stub as native;

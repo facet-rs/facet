@@ -571,7 +571,7 @@ mod tests {
 
     fn schema(id: u64, kind: SchemaKind) -> Schema {
         Schema {
-            id: SchemaId(id),
+            id: SchemaId::from_raw(id),
             type_params: Vec::new(),
             kind,
         }
@@ -598,15 +598,15 @@ mod tests {
         let reg = Registry::new([]);
         let lowered = ValueProgram {
             program: vec![Op::CallBlock {
-                schema: SchemaId(42),
+                schema: SchemaId::from_raw(42),
             }],
-            blocks: BTreeMap::from([(SchemaId(42), vec![Op::Scalar(Primitive::U8)])]),
+            blocks: BTreeMap::from([(SchemaId::from_raw(42), vec![Op::Scalar(Primitive::U8)])]),
         };
 
         let canonical = canonical_value_program(&lowered);
         match canonical.program.as_slice() {
             [WeavyOp::Control(ControlOp::CallBlock { block, base_offset })] => {
-                assert_eq!(*block, SchemaId(42));
+                assert_eq!(*block, SchemaId::from_raw(42));
                 assert_eq!(*base_offset, 0);
             }
             other => panic!("unexpected canonical program: {other:?}"),
@@ -622,9 +622,9 @@ mod tests {
         let reg = Registry::new([]);
         let lowered = ValueProgram {
             program: vec![Op::CallBlock {
-                schema: SchemaId(42),
+                schema: SchemaId::from_raw(42),
             }],
-            blocks: BTreeMap::from([(SchemaId(42), vec![Op::Scalar(Primitive::U8)])]),
+            blocks: BTreeMap::from([(SchemaId::from_raw(42), vec![Op::Scalar(Primitive::U8)])]),
         };
 
         let report = run_lowered_with_ir_report(&lowered, &[7], &reg).unwrap();
@@ -713,7 +713,7 @@ mod tests {
                     fields: vec![
                         Field {
                             name: "items".to_string(),
-                            schema: SchemaRef::concrete(SchemaId(1)),
+                            schema: SchemaRef::concrete(SchemaId::from_raw(1)),
                             required: true,
                         },
                         Field {
@@ -731,39 +731,39 @@ mod tests {
         list.push(Value::from(1u64));
         list.push(Value::from(2u64));
         list.push(Value::from(3u64));
-        rt_ir(Value::from(list), SchemaId(1), &reg);
+        rt_ir(Value::from(list), SchemaId::from_raw(1), &reg);
 
         // set<u32> — Op::Seq { set: true }
         let mut set = VArray::new();
         set.push(Value::from(10u32));
         set.push(Value::from(20u32));
-        rt_ir(Value::from(set), SchemaId(2), &reg);
+        rt_ir(Value::from(set), SchemaId::from_raw(2), &reg);
 
         // map<string,u32> — Op::Map
         let mut map = VObject::new();
         map.insert(VString::new("a"), Value::from(1u32));
         map.insert(VString::new("b"), Value::from(2u32));
-        rt_ir(Value::from(map), SchemaId(3), &reg);
+        rt_ir(Value::from(map), SchemaId::from_raw(3), &reg);
 
         // option<u32> — Op::Option, both arms
-        rt_ir(Value::from(42u32), SchemaId(4), &reg);
-        rt_ir(Value::NULL, SchemaId(4), &reg);
+        rt_ir(Value::from(42u32), SchemaId::from_raw(4), &reg);
+        rt_ir(Value::NULL, SchemaId::from_raw(4), &reg);
 
         // array<u16, 3> — Op::FixedArray
         let mut arr = VArray::new();
         arr.push(Value::from(7u16));
         arr.push(Value::from(8u16));
         arr.push(Value::from(9u16));
-        rt_ir(Value::from(arr), SchemaId(5), &reg);
+        rt_ir(Value::from(arr), SchemaId::from_raw(5), &reg);
 
         // tuple(u8, string) — Op::Array over inline heterogeneous elements
         let mut tup = VArray::new();
         tup.push(Value::from(5u8));
         tup.push(Value::from(VString::new("hi")));
-        rt_ir(Value::from(tup), SchemaId(6), &reg);
+        rt_ir(Value::from(tup), SchemaId::from_raw(6), &reg);
 
         // dynamic — Op::Dynamic
-        rt_ir(Value::from("free-form"), SchemaId(7), &reg);
+        rt_ir(Value::from("free-form"), SchemaId::from_raw(7), &reg);
 
         // struct holding a list — Op::Object with a nested Op::Seq child
         let mut items = VArray::new();
@@ -772,6 +772,6 @@ mod tests {
         let mut holder = VObject::new();
         holder.insert(VString::new("items"), Value::from(items));
         holder.insert(VString::new("label"), Value::from(VString::new("L")));
-        rt_ir(Value::from(holder), SchemaId(8), &reg);
+        rt_ir(Value::from(holder), SchemaId::from_raw(8), &reg);
     }
 }

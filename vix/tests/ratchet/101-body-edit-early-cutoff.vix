@@ -1,0 +1,14 @@
+
+// Rung 101 — THE early-cutoff rung: between runs, helper()'s BODY changes
+// (see 101-body-edit-early-cutoff.v2.vix) but its output value doesn't.
+// helper recomputes (its recipe changed); render does not (its input's
+// VALUE identity is unchanged). One node recomputes. (three-planes.md)
+fn helper(n: Int) -> Int { n + n }
+fn render(n: Int) -> String { "value: " + n.to_string() }
+
+#[test { rerun_with: "source-v2" }]
+fn body_edit_early_cutoff() -> Stream<Check> {
+    yield expect_eq(render(helper(21)), "value: 42");
+    yield demanded(helper(21));
+    yield never_demanded(render(helper(21)));
+}

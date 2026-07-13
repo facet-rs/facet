@@ -1,0 +1,13 @@
+
+// Rung 102 — negative control for 101: the edit CHANGES the value, so
+// downstream must recompute. A system passing 101 by never recomputing
+// anything fails here.
+fn helper(n: Int) -> Int { n + n }
+fn render(n: Int) -> String { "value: " + n.to_string() }
+
+#[test { rerun_with: "source-v2" }]
+fn body_edit_negative_control() -> Stream<Check> {
+    yield expect(render(helper(21)).contains("value:"));
+    yield demanded(helper(21));
+    yield demanded(render(helper(21)));
+}

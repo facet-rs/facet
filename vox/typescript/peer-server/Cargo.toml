@@ -15,9 +15,14 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 name = "ws-peer-server"
 path = "src/main.rs"
 
+[[bin]]
+name = "axum-peer-server"
+path = "src/bin/axum-peer-server.rs"
+
 [dependencies]
 vox-core.workspace = true
-vox-websocket.workspace = true
+vox-websocket = { workspace = true, features = ["axum"] }
 spec-proto.workspace = true
 subject-rust.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "macros"] }
+axum.workspace = true

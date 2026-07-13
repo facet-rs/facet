@@ -1,0 +1,10 @@
+//! rerun
+//! expect-harness-flag: nondeterministic
+
+// Rung 082 — a nondeterministic computation is DETECTED, not folklore:
+// rerun audit diffs results and flags divergence. (observability)
+#[test]
+fn flaky_detected(sh: Sh) -> Stream<Check> {
+    let out = exec sh`-c "date +%N"`;
+    yield expect_eq(out.stdout.collect().len(), 1);
+}

@@ -152,6 +152,20 @@ impl Template {
         })
     }
 
+    /// Build a renderable template from a pre-built AST, bypassing the cstree
+    /// front end. This is the seam an alternative front end (e.g. a snark-based
+    /// parser) needs to render an AST it produced itself.
+    pub fn from_ast(
+        ast: ast::Template,
+        name: impl Into<String>,
+        source: impl Into<String>,
+    ) -> Self {
+        Self {
+            ast,
+            source: TemplateSource::new(name, source),
+        }
+    }
+
     /// Get the extends path if this template extends another
     pub fn extends_path(&self) -> Option<&str> {
         for node in &self.ast.body {

@@ -1,0 +1,10 @@
+//! uses: lib/geometry.vix
+
+// Rung 106 — modules: import a type and a function from another file.
+import geometry::{Point, magnitude_sq};
+
+#[test]
+fn imports() -> Stream<Check> {
+    let p = Point { x: 3, y: 4 };
+    yield expect_eq(magnitude_sq(p), 25);
+}

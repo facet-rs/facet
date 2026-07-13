@@ -192,16 +192,31 @@ pub fn extract_stencil_n(
         if offset < start_offset || offset >= end_offset {
             continue;
         }
-        if let RelocationTarget::Symbol(idx) = reloc.target()
-            && let Ok(sym) = file.symbol_by_index(idx)
-            && let Ok(name) = sym.name()
-        {
-            for (i, cont) in cont_symbols.iter().enumerate() {
-                if name == *cont || name == format!("_{cont}") {
-                    cont_relocs[i].push((offset - start_offset) as usize);
-                }
+        let RelocationTarget::Symbol(idx) = reloc.target() else {
+            panic!(
+                "stencil {symbol} contains unsupported non-symbol relocation at byte offset {}",
+                offset - start_offset
+            );
+        };
+        let sym = file
+            .symbol_by_index(idx)
+            .unwrap_or_else(|_| panic!("stencil {symbol} relocation has invalid symbol index"));
+        let name = sym
+            .name()
+            .unwrap_or_else(|_| panic!("stencil {symbol} relocation target has no name"));
+
+        let mut matched = false;
+        for (i, cont) in cont_symbols.iter().enumerate() {
+            if name == *cont || name == format!("_{cont}") {
+                cont_relocs[i].push((offset - start_offset) as usize);
+                matched = true;
             }
         }
+        assert!(
+            matched,
+            "stencil {symbol} contains unsupported relocation to {name} at byte offset {}",
+            offset - start_offset
+        );
     }
     for relocs in &mut cont_relocs {
         relocs.sort_unstable();

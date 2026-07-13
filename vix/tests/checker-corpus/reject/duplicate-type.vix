@@ -1,0 +1,9 @@
+struct Thing;
+
+enum Thing {
+    A,
+}
+
+fn main() -> Int {
+    1
+}

@@ -1,0 +1,16 @@
+# The differential oracle: snark's parse output must match REAL tree-sitter's,
+# over a corpus of standard tree-sitter grammars. The reference implementation
+# IS the test — no hand-built stand-in that can agree with itself and be wrong.
+# Behavioral only: it consumes tree-sitter's OUTPUT (trees), never its source or
+# generated .c, so it stays consistent with "never rely on generated files."
+[package]
+name = "snark-ts-diff"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+snark = { path = "../snark", features = ["json-import"] }
+snark-dsl = { path = "../snark-dsl", features = ["native"] }
+facet = { path = "../facet" }
+facet-json = { path = "../facet-json" }

@@ -1,0 +1,7 @@
+fn open(p: Path) -> Path {
+    p
+}
+
+fn main() -> Path {
+    open("src/main.c")
+}

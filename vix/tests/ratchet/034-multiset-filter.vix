@@ -1,0 +1,9 @@
+// Rung 034 — stream filter preserves keys instead of renumbering positions.
+#[test]
+fn multiset_filter() -> Stream<Check> {
+    let heavy = [12, 3, 40, 7].stream().filter(|n| n > 10).collect();
+    yield expect_eq(heavy.len(), 2);
+    yield expect_eq(heavy.get(0), 12);
+    yield expect_eq(heavy.get(2), 40);
+    yield expect(!heavy.has(1));
+}
