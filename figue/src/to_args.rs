@@ -221,6 +221,8 @@ fn encode_level(
     if let Some(field_name) = level.subcommand_field_name()
         && let Some(value) = values.get(field_name)
     {
+        let value = unwrap_explicit_some(value);
+
         if matches!(value, ConfigValue::Null(_)) {
             return Ok(());
         }
@@ -247,6 +249,13 @@ fn encode_level(
     Ok(())
 }
 
+fn unwrap_explicit_some(value: &ConfigValue) -> &ConfigValue {
+    match value {
+        ConfigValue::ExplicitSome(sourced) => sourced.value.as_ref(),
+        value => value,
+    }
+}
+
 fn encode_named_arg(
     name: &str,
     schema: &ArgSchema,
@@ -254,6 +263,7 @@ fn encode_named_arg(
     args: &mut Vec<OsString>,
 ) -> Result<(), ToArgsError> {
     let flag = format!("--{}", name.to_kebab_case());
+    let value = unwrap_explicit_some(value);
 
     if matches!(value, ConfigValue::Null(_)) {
         return Ok(());
@@ -304,12 +314,16 @@ fn encode_named_arg(
         };
 
         for item in &array.value {
+            let item = unwrap_explicit_some(item);
+
             if matches!(item, ConfigValue::Null(_)) {
                 continue;
             }
 
             args.push(flag.clone().into());
-            args.push(value_to_cli_token(name, item, Some(schema.value().inner_if_option()))?.into());
+            args.push(
+                value_to_cli_token(name, item, Some(schema.value().inner_if_option()))?.into(),
+            );
         }
 
         return Ok(());
@@ -327,10 +341,16 @@ fn encode_positional_arg(
     args: &mut Vec<OsString>,
     emitted_positional_separator: &mut bool,
 ) -> Result<(), ToArgsError> {
+    // `ConfigValueSerializer` wraps `Option::Some` to preserve option nesting.
+    // Positional CLI values have no such wrapper, so emit the wrapped value itself.
+    let value = unwrap_explicit_some(value);
+
     match value {
         ConfigValue::Null(_) => Ok(()),
         ConfigValue::Array(array) => {
             for item in &array.value {
+                let item = unwrap_explicit_some(item);
+
                 if matches!(item, ConfigValue::Null(_)) {
                     continue;
                 }
@@ -415,7 +435,6 @@ fn value_to_cli_token(
         }),
     }
 }
-
 
 fn integer_to_cli_token(
     name: &str,
@@ -591,9 +610,7 @@ mod tests {
 
     #[test]
     fn to_args_string_quotes_values_with_spaces_or_single_quotes() {
-        let cli = BoolVecCli {
-            verbose: vec![],
-        };
+        let cli = BoolVecCli { verbose: vec![] };
 
         let rendered = render_display_command([
             OsStr::new("plain"),
