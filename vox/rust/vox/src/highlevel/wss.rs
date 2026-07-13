@@ -69,10 +69,12 @@ fn build_tls_acceptor(
 impl VoxListener for WssListener {
     type Link = vox_websocket::WsLink<tokio_rustls::server::TlsStream<tokio::net::TcpStream>>;
 
-    async fn accept(&mut self) -> std::io::Result<Self::Link> {
+    async fn accept(&mut self) -> std::io::Result<vox_core::Attachment<Self::Link>> {
         let (stream, _addr) = self.tcp.accept().await?;
         let tls_stream = self.tls.accept(stream).await?;
-        vox_websocket::WsLink::server(tls_stream).await
+        vox_websocket::WsLink::server(tls_stream)
+            .await
+            .map(vox_core::Attachment::initiator)
     }
 }
 

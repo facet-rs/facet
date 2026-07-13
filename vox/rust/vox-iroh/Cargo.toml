@@ -1,0 +1,27 @@
+[package]
+name = "vox-iroh"
+version = "0.10.0-rc.5"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Authenticated Iroh transport for Vox"
+readme = "README.md"
+homepage.workspace = true
+documentation.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+iroh.workspace = true
+tokio = { workspace = true, features = ["io-util", "rt", "sync"] }
+tracing.workspace = true
+vox = { workspace = true, features = ["runtime"] }
+vox-core.workspace = true
+vox-stream.workspace = true
+vox-types.workspace = true
+
+[dev-dependencies]
+iroh = { workspace = true, features = ["test-utils"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+tracing-subscriber.workspace = true

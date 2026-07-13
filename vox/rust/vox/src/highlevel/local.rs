@@ -13,8 +13,10 @@ use super::{IdentityResolverRef, ServeError, VoxListener, serve_listener};
 impl VoxListener for vox_stream::LocalLinkAcceptor {
     type Link = vox_stream::LocalLink;
 
-    async fn accept(&mut self) -> std::io::Result<Self::Link> {
-        vox_stream::LocalLinkAcceptor::accept(self).await
+    async fn accept(&mut self) -> std::io::Result<vox_core::Attachment<Self::Link>> {
+        vox_stream::LocalLinkAcceptor::accept(self)
+            .await
+            .map(vox_core::Attachment::initiator)
     }
 }
 

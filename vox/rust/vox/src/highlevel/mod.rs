@@ -50,7 +50,9 @@ pub trait VoxListener: MaybeSend + 'static {
     /// Accept the next incoming connection.
     fn accept(
         &mut self,
-    ) -> impl std::future::Future<Output = std::io::Result<Self::Link>> + MaybeSend + '_;
+    ) -> impl std::future::Future<Output = std::io::Result<vox_core::Attachment<Self::Link>>>
+    + MaybeSend
+    + '_;
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -786,7 +788,7 @@ where
         let acceptor: Arc<dyn LaneAcceptor> = Arc::new(self.acceptor);
         loop {
             tracing::trace!("vox high-level listener waiting for connection");
-            let link = self.listener.accept().await.map_err(ConnectionError::Io)?;
+            let attachment = self.listener.accept().await.map_err(ConnectionError::Io)?;
             tracing::debug!("vox high-level listener accepted raw connection");
             let acceptor = acceptor.clone();
             let metadata = self.metadata.clone();
@@ -795,7 +797,7 @@ where
             let identity_resolver = self.identity_resolver.clone();
             vox_rt::spawn(async move {
                 tracing::trace!("vox high-level listener establishing connection");
-                let mut builder = vox_core::acceptor_on(link)
+                let mut builder = vox_core::acceptor_attachment(attachment)
                     .on_lane(AcceptorRef(acceptor))
                     .metadata(metadata)
                     .channel_capacity(channel_capacity);

@@ -12,13 +12,13 @@ type SendError<T> = vox_rt::sync::mpsc::SendError<T>;
 /// Use this when you control how connections arrive (e.g. from an axum
 /// WebSocket upgrade handler) and want to feed them into [`super::serve_listener()`].
 pub struct ChannelListener<L> {
-    rx: vox_rt::sync::mpsc::Receiver<L>,
+    rx: vox_rt::sync::mpsc::Receiver<vox_core::Attachment<L>>,
 }
 
 /// Sender half of a [`ChannelListener`].
 #[derive(Clone)]
 pub struct ChannelListenerSender<L> {
-    tx: vox_rt::sync::mpsc::Sender<L>,
+    tx: vox_rt::sync::mpsc::Sender<vox_core::Attachment<L>>,
 }
 
 impl<L: vox_types::Link + MaybeSend + 'static> ChannelListener<L> {
@@ -31,8 +31,17 @@ impl<L: vox_types::Link + MaybeSend + 'static> ChannelListener<L> {
 
 impl<L: vox_types::Link + MaybeSend + 'static> ChannelListenerSender<L> {
     /// Send a link to the listener.
-    pub async fn send(&self, link: L) -> Result<(), SendError<L>> {
-        self.tx.send(link).await
+    pub async fn send(&self, link: L) -> Result<(), SendError<vox_core::Attachment<L>>> {
+        self.send_attachment(vox_core::Attachment::initiator(link))
+            .await
+    }
+
+    /// Send a link together with locally asserted transport evidence.
+    pub async fn send_attachment(
+        &self,
+        attachment: vox_core::Attachment<L>,
+    ) -> Result<(), SendError<vox_core::Attachment<L>>> {
+        self.tx.send(attachment).await
     }
 }
 
@@ -42,7 +51,7 @@ where
 {
     type Link = L;
 
-    async fn accept(&mut self) -> std::io::Result<Self::Link> {
+    async fn accept(&mut self) -> std::io::Result<vox_core::Attachment<Self::Link>> {
         self.rx
             .recv()
             .await

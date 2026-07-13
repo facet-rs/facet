@@ -166,6 +166,7 @@ members = [
   "vox/rust/vox-rt-macros",
   "vox/rust/vox-schema",
   "vox/rust/vox-core",
+  "vox/rust/vox-iroh",
   "vox/rust/vox-stream",
   "vox/rust/vox-websocket",
   "vox/rust/vox-inprocess",
@@ -283,6 +284,7 @@ vox-core = { path = "vox/rust/vox-core", version = "0.10.0-rc.5" }
 vox-fdpass = { path = "vox/rust/vox-fdpass", version = "0.10.0-rc.5" }
 vox-ffi = { path = "vox/rust/vox-ffi", version = "0.10.0-rc.5" }
 vox-inprocess = { path = "vox/rust/vox-inprocess", version = "0.10.0-rc.5" }
+vox-iroh = { path = "vox/rust/vox-iroh", version = "0.10.0-rc.5" }
 vox-macros-core = { path = "vox/rust/vox-macros-core", version = "0.10.0-rc.5" }
 vox-macros-parse = { path = "vox/rust/vox-macros-parse", version = "0.10.0-rc.5" }
 vox-phon = { path = "vox/rust/vox-phon", version = "0.10.0-rc.5" }
@@ -351,6 +353,7 @@ im = "^15.1.0"
 indexmap = { version = "^2.12.1", default-features = false }
 insta = "^1.44.3"
 inventory = "^0.3"
+iroh = "1.0.2"
 jiff = "^0.2.16"
 js-sys = "0.3"
 libc = "0.2.180"

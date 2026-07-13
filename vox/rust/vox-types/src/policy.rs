@@ -84,6 +84,10 @@ pub enum PeerEvidenceItem {
         verified_subject: Option<String>,
         alpn: Option<String>,
     },
+    PublicKey {
+        algorithm: PublicKeyAlgorithm,
+        bytes: [u8; 32],
+    },
     UnixPeerCredentials {
         uid: Option<u32>,
         gid: Option<u32>,
@@ -98,6 +102,14 @@ pub enum PeerEvidenceItem {
     InProcess {
         component: String,
     },
+}
+
+/// Algorithm attached to locally verified public-key transport evidence.
+// r[impl connection.evidence]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PublicKeyAlgorithm {
+    Ed25519,
 }
 
 // r[impl connection.identity.forms]

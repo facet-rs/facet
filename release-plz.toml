@@ -477,6 +477,11 @@ version_group = "vox"
 changelog_path = "vox/CHANGELOG.md"
 
 [[package]]
+name = "vox-iroh"
+version_group = "vox"
+changelog_path = "vox/CHANGELOG.md"
+
+[[package]]
 name = "vox-phon"
 version_group = "vox"
 changelog_path = "vox/CHANGELOG.md"

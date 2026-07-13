@@ -46,7 +46,12 @@ mounts (
         local rodin/docs/content
         repo "https://github.com/facet-rs/facet/tree/main/rodin"
     }
-    { name vox,     path /vox,     local vox/docs/content,       repo "https://github.com/bearcove/vox" }
+    {
+        name vox
+        path /vox
+        local vox/docs/content
+        repo "https://github.com/facet-rs/facet/tree/main/vox"
+    }
     { name facet-axum,       path /facet-axum,       local facet-axum/docs/content,       repo "https://github.com/facet-rs/facet/tree/main/facet-axum" }
     { name facet-cargo-toml, path /facet-cargo-toml, local facet-cargo-toml/docs/content, repo "https://github.com/facet-rs/facet/tree/main/facet-cargo-toml" }
     { name rusqlite-facet,   path /rusqlite-facet,   local rusqlite-facet/docs/content,   repo "https://github.com/facet-rs/facet/tree/main/rusqlite-facet" }
