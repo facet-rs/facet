@@ -72,7 +72,7 @@ fn format_event(event: &ParseEvent) -> String {
 
 #[test]
 fn test_01_bare_at() {
-    // @ is a unit tag (no name) with implicit unit payload
+    // @ is a unit scalar. Only named tags emit VariantTag.
     insta::assert_snapshot!(collect_events("x @"));
 }
 
