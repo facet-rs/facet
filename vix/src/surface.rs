@@ -56,6 +56,17 @@ impl SurfaceParser {
     ///
     /// r[impl lang.diagnostics.typed]
     pub fn parse(&self, source: &str) -> Result<ast::SourceFile, Diagnostics> {
+        if let Some(span) = unsupported_generic_call_span(source) {
+            return Err(Diagnostics::one(Diagnostic {
+                code: DiagnosticCode::ParseRejected,
+                primary: span,
+                labels: Vec::new(),
+                payload: DiagnosticPayload::Parse {
+                    detail: "generic call type arguments are not part of the Vix surface"
+                        .to_owned(),
+                },
+            }));
+        }
         let whole_source = Span {
             start: 0,
             end: u32::try_from(source.len()).unwrap_or(u32::MAX),
@@ -92,4 +103,86 @@ impl Default for SurfaceParser {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn unsupported_generic_call_span(source: &str) -> Option<Span> {
+    let bytes = source.as_bytes();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'"' => index = skip_string(bytes, index),
+            b'/' if bytes.get(index + 1) == Some(&b'/') => {
+                index = skip_line_comment(bytes, index);
+            }
+            byte if is_identifier_start(byte) => {
+                let start = index;
+                index += 1;
+                while bytes
+                    .get(index)
+                    .is_some_and(|byte| is_identifier_continue(*byte))
+                {
+                    index += 1;
+                }
+                if bytes.get(index) == Some(&b'<') {
+                    if let Some(end) = generic_call_end(bytes, index) {
+                        return Some(Span {
+                            start: u32::try_from(start).unwrap_or(u32::MAX),
+                            end: u32::try_from(end).unwrap_or(u32::MAX),
+                        });
+                    }
+                }
+            }
+            _ => index += 1,
+        }
+    }
+    None
+}
+
+fn generic_call_end(bytes: &[u8], lt: usize) -> Option<usize> {
+    let mut depth = 1usize;
+    let mut index = lt + 1;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'<' => depth = depth.checked_add(1)?,
+            b'>' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return (bytes.get(index + 1) == Some(&b'(')).then_some(index + 2);
+                }
+            }
+            b'"' => index = skip_string(bytes, index).saturating_sub(1),
+            b'\n' | b';' | b'{' | b'}' => return None,
+            _ => {}
+        }
+        index += 1;
+    }
+    None
+}
+
+fn skip_string(bytes: &[u8], start: usize) -> usize {
+    let mut index = start + 1;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' => index = (index + 2).min(bytes.len()),
+            b'"' => return index + 1,
+            _ => index += 1,
+        }
+    }
+    bytes.len()
+}
+
+fn skip_line_comment(bytes: &[u8], start: usize) -> usize {
+    let mut index = start + 2;
+    while index < bytes.len() && bytes[index] != b'\n' {
+        index += 1;
+    }
+    index
+}
+
+fn is_identifier_start(byte: u8) -> bool {
+    byte.is_ascii_alphabetic() || byte == b'_'
+}
+
+fn is_identifier_continue(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
 }
