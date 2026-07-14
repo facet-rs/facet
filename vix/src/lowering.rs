@@ -6190,7 +6190,8 @@ fn lower_node(
                 || target_layout
                     .region(target_parameter.node, node.span)?
                     .start()
-                    != FrameSlot::for_word(0).expect("word zero is a frame slot")
+                    != FrameSlot::for_word(DOCUMENT_HOST_ABI_WORDS)
+                        .expect("document ABI header leaves a parameter slot")
             {
                 return Err(lowering_diagnostic(
                     node.span,
