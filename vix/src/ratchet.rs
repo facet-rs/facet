@@ -598,7 +598,6 @@ impl RatchetReport {
 pub struct PreparedRun {
     compilation: crate::compiler::Compilation,
     cache: LoweringCache,
-    force_authoritative_rerun: bool,
 }
 
 /// Execution lifecycle boundaries exposed to the outer budget runner. Each
@@ -830,11 +829,7 @@ fn prepare_modules_with_cache(
         }
     }
 
-    Ok(PreparedRun {
-        compilation,
-        cache,
-        force_authoritative_rerun: source.contains("//! expect-harness-flag: nondeterministic"),
-    })
+    Ok(PreparedRun { compilation, cache })
 }
 
 impl PreparedRun {
@@ -868,7 +863,6 @@ impl PreparedRun {
     }
 
     pub fn execute_rerun_audit(mut self) -> Result<RerunAuditReport, RunError> {
-        let force_authoritative_second = self.force_authoritative_rerun;
         let mut state = PersistentRuntimeState::default();
         let first = run_lane(
             &self.compilation.module,
@@ -884,7 +878,6 @@ impl PreparedRun {
             Some(&mut state),
         )?;
         let mut second_state = PersistentRuntimeState::default();
-        let second_input = (!force_authoritative_second).then_some(state);
         let second = run_lane(
             &self.compilation.module,
             &mut self.cache,
@@ -895,7 +888,7 @@ impl PreparedRun {
             &mut |_| {},
             true,
             true,
-            second_input,
+            Some(state),
             Some(&mut second_state),
         )?;
         let first_value_checks = first
@@ -1170,6 +1163,7 @@ fn run_lane(
     } else {
         Runtime::new(EventLog::default())
     };
+    runtime.set_authoritative_rerun_audit(use_rerun_overlays);
     observe(ready_phase);
     let mut checks = Vec::new();
     let mut values = Vec::new();

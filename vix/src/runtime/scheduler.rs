@@ -222,6 +222,7 @@ pub struct Runtime<S> {
     /// this scheduler-owned receipt log rather than in a [`MemoEntry`].
     generator_document_receipts: Vec<Receipt>,
     fixture_store: FixtureStore,
+    authoritative_rerun_audit: bool,
 }
 
 #[derive(Clone, Default)]
@@ -245,6 +246,7 @@ impl<S: EventSink> Runtime<S> {
             wire_demands: Vec::new(),
             generator_document_receipts: Vec::new(),
             fixture_store: FixtureStore::default(),
+            authoritative_rerun_audit: false,
         }
     }
 
@@ -262,11 +264,16 @@ impl<S: EventSink> Runtime<S> {
             wire_demands: Vec::new(),
             generator_document_receipts: Vec::new(),
             fixture_store: FixtureStore::default(),
+            authoritative_rerun_audit: false,
         }
     }
 
     pub fn set_fixture_rerun_overlay(&mut self, rerun_with: Option<String>) {
         self.fixture_store = FixtureStore::default().with_rerun_overlay(rerun_with);
+    }
+
+    pub fn set_authoritative_rerun_audit(&mut self, enabled: bool) {
+        self.authoritative_rerun_audit = enabled;
     }
 
     #[must_use]
@@ -328,6 +335,14 @@ impl<S: EventSink> Runtime<S> {
         false
     }
 
+    fn exact_memo_replayable(&self, entry: &MemoEntry) -> bool {
+        !self.authoritative_rerun_audit
+            || entry
+                .receipt
+                .as_ref()
+                .is_none_or(|receipt| self.reverify_receipt(receipt))
+    }
+
     /// The scalar result word of a resolved wire demand, read from its interned
     /// store handle. Used to supply an awaiting task's ready wire input; a
     /// wire's callee always publishes a scalar.
@@ -363,6 +378,7 @@ impl<S: EventSink> Runtime<S> {
             && entry.location == *location
             && entry.key == lowered.demand_key
             && entry.preimage == lowered.demand_preimage
+            && self.exact_memo_replayable(entry)
         {
             let handle = entry.result;
             let failure = self
@@ -1266,8 +1282,11 @@ impl<S: EventSink> Runtime<S> {
         let memo_handle = (!force_miss)
             .then(|| {
                 self.memo.get(&location.id).and_then(|entry| {
-                    (entry.location == *location && entry.key == key && entry.preimage == preimage)
-                        .then_some(entry.result)
+                    (entry.location == *location
+                        && entry.key == key
+                        && entry.preimage == preimage
+                        && self.exact_memo_replayable(entry))
+                    .then_some(entry.result)
                 })
             })
             .flatten();
@@ -3034,6 +3053,7 @@ impl<S: EventSink> Runtime<S> {
             && entry.location == *location
             && entry.key == demand_key
             && entry.preimage == demand_preimage
+            && self.exact_memo_replayable(entry)
         {
             let handle = entry.result;
             return self.effect_memo_hit(location.id, handle, &effect_context);
