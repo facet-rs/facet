@@ -14,7 +14,7 @@ use vix::machine::{Machine, MachineArg, RenderedValue};
 const SOURCE: &str =
     include_str!("../../playgrounds/snark/src/bundled/vix/samples/cargo_manifest.vix");
 const RODIN_SOURCE: &str = include_str!("../../rodin/rodin.vix");
-const TOKIO_1_52_3_SPARSE_ROW: &str = r#"{"name":"tokio","vers":"1.52.3","deps":[],"features":{"rt-multi-thread":["rt"]},"yanked":false}"#;
+const TOKIO_1_52_3_SPARSE_ROW: &str = r#"{"name":"tokio","vers":"1.52.3","deps":[],"cksum":"fixture-tokio-1.52.3","features":{"rt-multi-thread":["rt"]},"yanked":false,"pubtime":"2024-01-01T00:00:00Z"}"#;
 
 const WORKSPACE_MANIFEST: &str = include_str!(
     "../../playgrounds/snark/src/bundled/vix/samples/fixtures/cargo_manifest_real/Cargo.toml"
@@ -872,7 +872,7 @@ fn typed_sparse_row_missing_required_field_reports_offending_row() -> Result<(),
 #[test]
 fn typed_sparse_row_wrong_field_type_reports_offending_row() -> Result<(), String> {
     assert_sparse_row_schema_error(
-        r#"{"name":"blake3","vers":"0.0.0","deps":[],"features":[],"yanked":false}"#,
+        r#"{"name":"blake3","vers":"0.0.0","deps":[],"cksum":"fixture-blake3-0.0.0","features":[],"yanked":false,"pubtime":"2024-01-01T00:00:00Z"}"#,
         "expected Map<String,Array<String>>, got []",
     )
 }
@@ -1487,7 +1487,14 @@ fn manifest_machine() -> Result<Machine, String> {
 }
 
 fn manifest_machine_with_lane(lane: Lane) -> Result<Machine, String> {
-    Machine::load_with_lane(&format!("{RODIN_SOURCE}\n\n{SOURCE}"), lane)
+    Machine::load_modules_with_lane(
+        "root",
+        BTreeMap::from([
+            ("root".to_owned(), SOURCE.to_owned()),
+            ("rodin".to_owned(), RODIN_SOURCE.to_owned()),
+        ]),
+        lane,
+    )
 }
 
 fn assert_sparse_row_schema_error(row: &str, expected_fragment: &str) -> Result<(), String> {

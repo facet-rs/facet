@@ -316,10 +316,9 @@ fn inherited_package_option(field: Option<PackageScalar>, workspace_value: Optio
 }
 
 pub fn crate_name(package_name: String) -> String {
-    if package_name.contains("-") {
-        crate_name(package_name.before("-") + "_" + package_name.after("-"))
-    } else {
-        package_name
+    match package_name.contains("-") {
+        true => crate_name(package_name.before("-") + "_" + package_name.after("-")),
+        false => package_name,
     }
 }
 
@@ -355,15 +354,15 @@ fn member_from_manifest_path(path: Path) -> String {
     path.to_string().before("/Cargo.toml")
 }
 
-fn member_manifest_path(workspace_root: Path, member: String) -> String {
-    (member_path(workspace_root, member) / "Cargo.toml").to_string()
-}
-
 fn member_path(workspace_root: Path, member: String) -> Path {
     match member.contains("/") {
         true => member_path(workspace_root / member.before("/"), member.after("/")),
         false => workspace_root / member,
     }
+}
+
+fn member_manifest_path(workspace_root: Path, member: String) -> String {
+    (member_path(workspace_root, member) / "Cargo.toml").to_string()
 }
 
 fn workspace_member_glob_pattern(member: String) -> String {
@@ -1208,6 +1207,15 @@ fn workspace_member_only_index_state_limit(workspace: Tree, workspace_root: Path
     workspace_member_only_index_state_for_members(workspace, workspace_root, take_strings(workspace_members(workspace), limit))
 }
 
+pub fn workspace_index_package_names_text(state: WorkspaceIndexState) -> String {
+    state.packages.fold("", |out, pkg| {
+        match out == "" {
+            true => state.names.get(pkg),
+            false => out + "\n" + state.names.get(pkg),
+        }
+    })
+}
+
 fn workspace_index_state_for_members(workspace: Tree, workspace_root: Path, members: [String]) -> WorkspaceIndexState {
     register_workspace_direct_deps(workspace, workspace_root, members, workspace_member_only_index_state_for_members(workspace, workspace_root, members))
 }
@@ -1228,7 +1236,8 @@ fn workspace_index_state_with_sparse_rows_limit(workspace: Tree, workspace_root:
     register_workspace_direct_deps(workspace, workspace_root, members, state)
 }
 
-pub fn workspace_index_state_with_transitive_sparse_rows_for_members(workspace: Tree, workspace_root: Path, sparse_jsonl: String, members: [String]) -> WorkspaceIndexState {
+fn workspace_index_state_with_transitive_sparse_rows_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, limit: Int) -> WorkspaceIndexState {
+    let members = take_strings(workspace_members(workspace), limit);
     let rows = parse_sparse_jsonl(sparse_jsonl);
     let state = workspace_member_only_index_state_for_members(workspace, workspace_root, members);
     let state = register_sparse_rows(rows, state);
@@ -1236,8 +1245,7 @@ pub fn workspace_index_state_with_transitive_sparse_rows_for_members(workspace: 
     add_sparse_dependency_clauses(rows, state)
 }
 
-fn workspace_index_state_with_transitive_sparse_rows_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, limit: Int) -> WorkspaceIndexState {
-    let members = take_strings(workspace_members(workspace), limit);
+pub fn workspace_index_state_with_transitive_sparse_rows_for_members(workspace: Tree, workspace_root: Path, sparse_jsonl: String, members: [String]) -> WorkspaceIndexState {
     let rows = parse_sparse_jsonl(sparse_jsonl);
     let state = workspace_member_only_index_state_for_members(workspace, workspace_root, members);
     let state = register_sparse_rows(rows, state);
@@ -1505,10 +1513,6 @@ fn workspace_index_dump(state: WorkspaceIndexState) -> String {
         append_index_dump_line(out, "v\t" + state.names.get(pkg) + "\t" + state.version_values.get(version_id))
     });
     state.clause_ids.fold(out, |out, clause_id| append_index_dump_line(out, workspace_index_dump_clause(state, clause_id)))
-}
-
-pub fn workspace_index_package_names_text(state: WorkspaceIndexState) -> String {
-    state.packages.fold("", |out, pkg| append_index_dump_line(out, "p\t" + state.names.get(pkg)))
 }
 
 fn workspace_member_direct_sparse_index_dump_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, limit: Int) -> String {
@@ -2064,6 +2068,10 @@ fn workspace_selected_version_text(state: WorkspaceIndexState, pkg: Int, selecte
             found
         }
     }).unwrap()
+}
+
+pub fn selected_version_text(state: WorkspaceIndexState, result: SolveResult, package: String) -> String {
+    workspace_selected_version_text(state, state.package_ids.get(package), result.selected.get(state.package_ids.get(package)))
 }
 
 fn package_of(manifest: Tree, workspace: Tree, manifest_path: String) -> CargoPackage {

@@ -1638,11 +1638,7 @@ fn taxon_native_sparse_jsonl() -> Result<String, String> {
         selected_sparse_row(ARRAYREF_SPARSE_INDEX, "arrayref", "0.3.9")?,
         selected_sparse_row(ARRAYVEC_SPARSE_INDEX, "arrayvec", "0.7.6")?,
         selected_sparse_row(CFG_IF_SPARSE_INDEX, "cfg-if", "1.0.0")?,
-        selected_sparse_row(
-            CONSTANT_TIME_EQ_SPARSE_INDEX,
-            "constant_time_eq",
-            "0.3.1",
-        )?,
+        selected_sparse_row(CONSTANT_TIME_EQ_SPARSE_INDEX, "constant_time_eq", "0.3.1")?,
         selected_sparse_row(SHLEX_SPARSE_INDEX, "shlex", "1.3.0")?,
     ];
     Ok(rows.join("\n"))
@@ -1701,7 +1697,9 @@ fn selected_sparse_row(index: &str, name: &str, version: &str) -> Result<String,
         };
         return facet_json::to_string(&normalized).map_err(|err| err.to_string());
     }
-    Err(format!("missing sparse row {name} {version} in pinned snapshot"))
+    Err(format!(
+        "missing sparse row {name} {version} in pinned snapshot"
+    ))
 }
 
 fn taxon_native_workspace_tree() -> Result<Tree, String> {
@@ -1712,7 +1710,12 @@ fn taxon_native_workspace_tree() -> Result<Tree, String> {
         "Cargo.toml".to_owned(),
         fs::read_to_string(root.join("Cargo.toml")).map_err(|err| err.to_string())?,
     );
-    copy_tree_into_vix_tree(&root.join("phon/rust/taxon"), "phon/rust/taxon", &mut entries, &mut blobs)?;
+    copy_tree_into_vix_tree(
+        &root.join("phon/rust/taxon"),
+        "phon/rust/taxon",
+        &mut entries,
+        &mut blobs,
+    )?;
     Ok(Tree { entries, blobs })
 }
 
@@ -2308,7 +2311,10 @@ fn taxon_ladder_builds_taxon_with_real_process_and_hashes_artifacts() -> Result<
         .map_err(|err| format!("taxon_index_package_count failed: {err}"))?;
     write_tier_a_artifact(
         "taxon-index-package-count.txt",
-        &format!("{:?}", machine.render_result("taxon_index_package_count", package_count)?),
+        &format!(
+            "{:?}",
+            machine.render_result("taxon_index_package_count", package_count)?
+        ),
     )?;
     let packages = machine
         .demand_i64("taxon_index_packages_text", args.clone())
@@ -2344,11 +2350,8 @@ fn taxon_ladder_builds_taxon_with_real_process_and_hashes_artifacts() -> Result<
         "taxon-source-package-names.txt",
         &rendered_result_string(&machine, "taxon_source_package_names_text", source_names)?,
     )?;
-    let build_script_run = demand_with_rustc_trace(
-        &mut machine,
-        "taxon_blake3_build_script_run",
-        args.clone(),
-    )?;
+    let build_script_run =
+        demand_with_rustc_trace(&mut machine, "taxon_blake3_build_script_run", args.clone())?;
     let build_script_stdout = tree_file_bytes(&mut machine, build_script_run, "build.stdout")?;
     write_tier_a_artifact(
         "taxon-blake3-build-stdout-final.txt",
