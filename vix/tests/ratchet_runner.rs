@@ -5786,9 +5786,10 @@ fn rung_066_decode_failure_is_a_typed_result() {
 /// yields the same projections an authored `PkgRow` construction does; the two
 /// produce identical check identities (`ValueId`) through the production Store
 /// path. A negative control (a different authored value) must diverge, so the
-/// oracle is discriminating rather than trivially true. Two independent decodes
-/// of the same document fold to identical canonical VIR — one recipe, one demand
-/// key — proving the fold is deterministic and content-addressed.
+/// oracle is discriminating rather than trivially true. (Fold determinism —
+/// identical canonical VIR across independent compiles — is certified
+/// separately by `try_decode_fold_is_deterministic_canonical_vir`, keeping each
+/// certificate's wall time bounded on a contended machine.)
 #[test]
 fn decoded_result_ok_payload_is_identity_equivalent_to_authored_construction() {
     const AUTHORED: &str = "\
@@ -5826,19 +5827,6 @@ fn t() -> Stream<Check> {
 }
 ";
 
-    // Two independent decodes of the same document fold to identical canonical
-    // VIR, hence one recipe and one demand key.
-    let lower = |source: &str, island: usize| {
-        let module = Compiler::new().compile(source).expect("compiles");
-        let partitioned = module.partition_test(&module.tests[0]);
-        partitioned.islands[island].canonical_recipe_bytes()
-    };
-    assert_eq!(
-        lower(DECODED, 0),
-        lower(DECODED, 0),
-        "the fold is deterministic canonical VIR"
-    );
-
     // Production Store path: the decoded Ok payload yields identical check
     // identities to the authored construction; the negative control diverges.
     let authored_run = run_source(AUTHORED).expect("authored runs");
@@ -5864,6 +5852,33 @@ fn t() -> Stream<Check> {
         check_value_ids(&authored_run.plain),
         check_value_ids(&other_run.plain),
         "a different authored value produces a different checked value identity"
+    );
+}
+
+/// Two independent compiles of the same `try_json_decode<T>` program fold to
+/// byte-identical canonical VIR — one recipe, one demand key — proving the fold
+/// is deterministic and content-addressed.
+#[test]
+fn try_decode_fold_is_deterministic_canonical_vir() {
+    const DECODED: &str = "\
+struct PkgRow { name: String, vers: String }
+#[test]
+fn t() -> Stream<Check> {
+    yield match try_json_decode<PkgRow>(\"{\\\"name\\\":\\\"mio\\\",\\\"vers\\\":\\\"0.8.11\\\"}\") {
+        Ok(row) => expect_eq(row.name, \"mio\"),
+        Err(_) => expect(false),
+    };
+}
+";
+    let lower = |source: &str| {
+        let module = Compiler::new().compile(source).expect("compiles");
+        let partitioned = module.partition_test(&module.tests[0]);
+        partitioned.islands[0].canonical_recipe_bytes()
+    };
+    assert_eq!(
+        lower(DECODED),
+        lower(DECODED),
+        "the fold is deterministic canonical VIR"
     );
 }
 
