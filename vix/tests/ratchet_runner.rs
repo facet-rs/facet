@@ -5697,15 +5697,11 @@ fn t() -> Stream<Check> {
     let src = \"{\\\"name\\\":42}\";
     yield match try_json_decode<PkgRow>(src) {
         Ok(_) => expect(false),
-        Err(error) => expect_eq(error.path, \"name\"),
-    };
-    yield match try_json_decode<PkgRow>(src) {
-        Ok(_) => expect(false),
-        Err(error) => expect_eq(error.document_offset, 8),
-    };
-    yield match try_json_decode<PkgRow>(src) {
-        Ok(_) => expect(false),
-        Err(error) => expect_eq(error.document_len, 2),
+        Err(error) => expect(
+            error.path == \"name\"
+                && error.document_offset == 8
+                && error.document_len == 2,
+        ),
     };
 }
 ";
@@ -5721,7 +5717,7 @@ fn t() -> Stream<Check> {
 }
 ";
 
-    for (source, expected_documents) in [(JSON_OK, 1), (JSON_ERR, 3), (TOML_OK, 1)] {
+    for (source, expected_documents) in [(JSON_OK, 1), (JSON_ERR, 1), (TOML_OK, 1)] {
         let module = Compiler::new()
             .compile(source)
             .expect("dynamic decode compiles");

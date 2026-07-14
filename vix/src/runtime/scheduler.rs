@@ -176,6 +176,10 @@ pub struct Runtime<S> {
     /// log counts realizations. It backs the described-wire trace checks and
     /// retains only the callee/argument selectors a descriptor can name.
     wire_demands: Vec<(FunctionId, Vec<ValueId>)>,
+    /// Generator control can itself cross the typed document host boundary.
+    /// Generators do not publish a memoized value, so their source reads live in
+    /// this scheduler-owned receipt log rather than in a [`MemoEntry`].
+    generator_document_receipts: Vec<Receipt>,
 }
 
 impl<S: EventSink> Runtime<S> {
@@ -191,6 +195,7 @@ impl<S: EventSink> Runtime<S> {
             counters: Counters::default(),
             next_task: 0,
             wire_demands: Vec::new(),
+            generator_document_receipts: Vec::new(),
         }
     }
 
@@ -1297,56 +1302,113 @@ impl<S: EventSink> Runtime<S> {
                 schema_bytes.copy_from_slice(&i64::from(element_schema.0).to_le_bytes());
                 value_memory_overrides.push((argument.handle, abi_view));
             }
-            let step = match self.store.with_value_memory_overrides(
-                &value_memory_overrides,
-                |value_memories| {
-                    task.drive_hosted_with_value_memories(&mut [], &[], &mut [], value_memories)
+            let mut document_reads = Vec::new();
+            loop {
+                let mut document_host_queue = DocumentHostQueue::default();
+                let mut document_host = |frame: &mut [u8]| document_host_queue.call(frame);
+                let step = match self.store.with_value_memory_overrides(
+                    &value_memory_overrides,
+                    |value_memories| {
+                        let mut hosts: Vec<HostFn<'_>> = vec![&mut document_host];
+                        task.drive_hosted_with_value_memories(
+                            &mut [],
+                            &[],
+                            &mut hosts,
+                            value_memories,
+                        )
                         .map_err(Box::new)
-                },
-            ) {
-                Ok(step) => step,
-                Err(fault) => {
-                    let error = self.task_fault(
-                        MachineOperation::Drive,
-                        *fault,
-                        lowered,
-                        attribution,
-                        None,
-                    );
-                    return Err(Box::new(self.terminate_machine_fault(
-                        task_id,
-                        lowered.demand_key,
-                        error,
-                    )));
-                }
-            };
-            match step {
-                TaskStep::Done => {}
-                TaskStep::Yielded => {
-                    let error = MachineError::runtime(
-                        MachineOperation::Drive,
-                        RuntimeFault::PureIslandYielded,
-                        None,
-                        Some(lowered.demand_key),
-                    );
-                    return Err(Box::new(self.terminate_machine_fault(
-                        task_id,
-                        lowered.demand_key,
-                        error,
-                    )));
-                }
-                TaskStep::Parked { input } => {
-                    let error = MachineError::runtime(
-                        MachineOperation::Drive,
-                        RuntimeFault::PureIslandParked { input },
-                        None,
-                        Some(lowered.demand_key),
-                    );
-                    return Err(Box::new(self.terminate_machine_fault(
-                        task_id,
-                        lowered.demand_key,
-                        error,
-                    )));
+                    },
+                ) {
+                    Ok(step) => step,
+                    Err(fault) => {
+                        let error = self.task_fault(
+                            MachineOperation::Drive,
+                            *fault,
+                            lowered,
+                            attribution,
+                            None,
+                        );
+                        return Err(Box::new(self.terminate_machine_fault(
+                            task_id,
+                            lowered.demand_key,
+                            error,
+                        )));
+                    }
+                };
+                drop(document_host);
+                match step {
+                    TaskStep::Done => break,
+                    TaskStep::Yielded => {
+                        let request = match document_host_queue.requests.as_slice() {
+                            [request] if document_host_queue.fault.is_none() => *request,
+                            _ => {
+                                let error = MachineError::runtime(
+                                    MachineOperation::Drive,
+                                    RuntimeFault::DocumentParseHost {
+                                        detail: document_host_queue.fault.unwrap_or_else(|| {
+                                            "document host yielded without exactly one request"
+                                                .to_owned()
+                                        }),
+                                    },
+                                    None,
+                                    Some(lowered.demand_key),
+                                );
+                                return Err(Box::new(self.terminate_machine_fault(
+                                    task_id,
+                                    lowered.demand_key,
+                                    error,
+                                )));
+                            }
+                        };
+                        let Some(plan) = lowered.document_parse_calls.get(request.plan) else {
+                            let error = MachineError::runtime(
+                                MachineOperation::Drive,
+                                RuntimeFault::DocumentParseHost {
+                                    detail:
+                                        "document host plan is absent from the lowered artifact"
+                                            .to_owned(),
+                                },
+                                None,
+                                Some(lowered.demand_key),
+                            );
+                            return Err(Box::new(self.terminate_machine_fault(
+                                task_id,
+                                lowered.demand_key,
+                                error,
+                            )));
+                        };
+                        if let Err(detail) = self.complete_document_parse(
+                            &mut task,
+                            plan,
+                            request,
+                            &mut document_reads,
+                        ) {
+                            let error = MachineError::runtime(
+                                MachineOperation::Drive,
+                                RuntimeFault::DocumentParseHost { detail },
+                                None,
+                                Some(lowered.demand_key),
+                            );
+                            return Err(Box::new(self.terminate_machine_fault(
+                                task_id,
+                                lowered.demand_key,
+                                error,
+                            )));
+                        }
+                    }
+                    TaskStep::Parked { input } => {
+                        let error = MachineError::runtime(
+                            MachineOperation::Drive,
+                            RuntimeFault::PureIslandParked { input },
+                            None,
+                            Some(lowered.demand_key),
+                        );
+                        return Err(Box::new(self.terminate_machine_fault(
+                            task_id,
+                            lowered.demand_key,
+                            error,
+                        )));
+                    }
                 }
             }
             for event in task.trace() {
@@ -1404,6 +1466,9 @@ impl<S: EventSink> Runtime<S> {
                                 )));
                             }
                         }
+                    }
+                    if let Some(receipt) = document_receipt(lowered.demand_key, &document_reads) {
+                        self.generator_document_receipts.push(receipt);
                     }
                     self.transition_task(task_id, TaskState::Completed)?;
                     self.transition_demand(lowered.demand_key, DemandState::Ready)?;
@@ -1928,6 +1993,7 @@ impl<S: EventSink> Runtime<S> {
         self.memo
             .values()
             .filter_map(|entry| entry.receipt.as_ref())
+            .chain(self.generator_document_receipts.iter())
     }
 
     #[must_use]
