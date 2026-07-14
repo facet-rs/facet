@@ -10,6 +10,9 @@ const PREC = {
   mul: 5,
   unary: 6,
   postfix: 7,
+  // `exec` reduces before a postfix `?` shifts, so `exec cap`…`?` catches the
+  // exec edge — `(exec cap`…`)?` — never the command construction.
+  exec: 8,
 };
 
 function sepBy(sep, rule) {
@@ -136,6 +139,9 @@ module.exports = grammar({
         $.match_expr,
         $.binary,
         $.unary,
+        $.exec_expr,
+        $.command_expr,
+        $.try_expr,
         $.call,
         $.where_call,
         $.method_call,
@@ -197,6 +203,24 @@ module.exports = grammar({
       );
     },
     unary: ($) => prec(PREC.unary, seq(field("op", choice("-", "!")), field("value", $._expr))),
+    // A capability-tagged backtick command template: `echo`"hello ratchet"``.
+    // The tag is an ordinary identifier resolving to a capability value; the
+    // template body is raw command text the capability's command grammar
+    // parses into typed argv roles (lang.command.typed).
+    command_expr: ($) =>
+      prec(
+        PREC.postfix,
+        seq(field("tag", $.identifier), field("template", $.command_template)),
+      ),
+    command_template: () => token(seq("`", /[^`\n]*/, "`")),
+    // `exec command` demands a process run. Reduced above postfix so a
+    // trailing `?` catches the exec demand edge, not the command value.
+    exec_expr: ($) =>
+      prec(PREC.exec, seq("exec", field("command", $.command_expr))),
+    // Postfix `?` catches any expression edge: the operand's typed language
+    // failure becomes `Result::Err`, success becomes `Result::Ok`.
+    try_expr: ($) =>
+      prec(PREC.postfix, seq(field("value", $._expr), "?")),
     call: ($) =>
       prec(
         PREC.postfix,
@@ -304,6 +328,8 @@ module.exports = grammar({
       choice(
         $.some_pattern,
         $.none_pattern,
+        $.ok_pattern,
+        $.err_pattern,
         $.record_pattern,
         $.variant_pattern,
         $.binding_pattern,
@@ -314,6 +340,8 @@ module.exports = grammar({
       ),
     some_pattern: ($) => seq("Some", "(", field("payload", $._pattern), ")"),
     none_pattern: () => "None",
+    ok_pattern: ($) => seq("Ok", "(", field("payload", $._pattern), ")"),
+    err_pattern: ($) => seq("Err", "(", field("payload", $._pattern), ")"),
     binding_pattern: ($) => field("binding", $.identifier),
     string_pattern: ($) => field("value", $.string),
     number_pattern: ($) => field("value", $.number),

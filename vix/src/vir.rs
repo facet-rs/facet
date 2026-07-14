@@ -303,6 +303,12 @@ pub enum TraceCheck {
     DemandedOnce {
         wire: DescribedWire,
     },
+    /// Exactly `count` effect processes were spawned over the whole run. A
+    /// memoized re-demand of the same (plan × capability) key spawns nothing,
+    /// so this is the whole-run process-count claim the testing chapter names.
+    RanProcesses {
+        count: i64,
+    },
 }
 
 /// A held description of an unevaluated invocation: which user function is
@@ -738,6 +744,11 @@ impl Type {
 pub enum EffectKind {
     Pure,
     Codata,
+    /// A registered runtime-primitive demand (exec, fetch): the node's value is
+    /// produced by the scheduler-owned effect path, never by in-frame Weavy
+    /// code. Demanding it may spawn external work; not demanding it runs
+    /// nothing.
+    Effect,
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
@@ -757,6 +768,14 @@ impl EffectFacts {
     pub const CODATA: Self = Self {
         kind: EffectKind::Codata,
         fallible: false,
+        placed: false,
+    };
+
+    /// An effect-primitive demand: fallible (the termination grammar may map a
+    /// run to a typed failure) and never placed here.
+    pub const EFFECT: Self = Self {
+        kind: EffectKind::Effect,
+        fallible: true,
         placed: false,
     };
 }
@@ -922,6 +941,17 @@ pub enum Op {
     /// The operand is an inline scalar; the result is a fresh resident
     /// molten byte run, identical in byte semantics to a string literal.
     IntToString,
+    /// Run a command through the exec effect primitive. The single input is the
+    /// capability value (referenced by identity — its `ValueId` enters the
+    /// demand preimage); `argv` is the command grammar's parse of the template.
+    /// The node's value is the `ExecOutcome` the termination grammar produces;
+    /// a nonzero exit is a typed language failure, never a status integer.
+    ///
+    /// r[impl machine.primitive.exec-outcome]
+    /// r[impl machine.primitive.capabilities-by-identity]
+    Exec {
+        argv: Vec<String>,
+    },
 }
 
 /// One SSA-like operation. Dependencies are explicit node ids; no Rust
@@ -1186,9 +1216,26 @@ pub struct ArrayMapPartition {
     pub shape: ArrayMapExecutionShape,
 }
 
+/// One capability parameter of a test: a value the demand root (the harness)
+/// supplies by identity before any island of the test runs. It is named by the
+/// same [`ValueIslandId`] space as shared publications, so consuming islands
+/// list it in `value_inputs` and the runner resolves it from the same
+/// published-values map.
+///
+/// r[impl machine.primitive.capabilities-by-identity]
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct PartitionedCapability {
+    pub id: ValueIslandId,
+    pub parameter: ParameterId,
+    pub name: String,
+    pub ty: Type,
+}
+
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct PartitionedTest {
     pub name: String,
+    /// Harness-supplied capability inputs, published before `values`.
+    pub capabilities: Vec<PartitionedCapability>,
     pub values: Vec<PartitionedValue>,
     /// Argument islands demanded lazily through force-on-park, keyed by their
     /// [`ValueIslandId`]. A consuming island's [`Island::wire_inputs`] names one
@@ -1375,6 +1422,43 @@ impl Module {
                     .insert(PublicationConsumer::GeneratorControl);
             }
         }
+        // Capability parameters: values the demand root supplies by identity
+        // (no ambient acquire). Each becomes a pre-published input every island
+        // may name; the harness interns the capability value before any island
+        // of this test runs.
+        //
+        // r[impl machine.primitive.capabilities-by-identity]
+        let capabilities = function
+            .parameters
+            .iter()
+            .map(|parameter| PartitionedCapability {
+                id: self.value_island_id(function.id, parameter.node),
+                parameter: parameter.id,
+                name: parameter.name.clone(),
+                ty: parameter.ty.clone(),
+            })
+            .collect::<Vec<_>>();
+        let capability_ids = function
+            .parameters
+            .iter()
+            .map(|parameter| {
+                (
+                    parameter.node,
+                    self.value_island_id(function.id, parameter.node),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        // Every consumed exec node is its own effect island: an effect demand
+        // never inlines into a consumer's Weavy frame, and structurally equal
+        // exec expressions stay distinct demand sites whose second evaluation
+        // memoizes on the (plan × capability) demand key (rung 069).
+        let effect_nodes = function
+            .nodes
+            .iter()
+            .filter(|node| {
+                matches!(node.op, Op::Exec { .. }) && consumer_sets.contains_key(&node.id)
+            })
+            .collect::<Vec<_>>();
         let mut shared = function
             .nodes
             .iter()
@@ -1384,6 +1468,7 @@ impl Module {
                     .is_some_and(|sites| sites.len() >= 2)
             })
             .filter(|node| is_shared_publication_candidate(node))
+            .filter(|node| !matches!(node.op, Op::Exec { .. }))
             .collect::<Vec<_>>();
         let candidate_ids = shared.iter().map(|node| node.id).collect::<BTreeSet<_>>();
         shared.retain(|candidate| {
@@ -1421,6 +1506,19 @@ impl Module {
             .iter()
             .map(|node| (node.id, self.value_island_id(function.id, node.id)))
             .collect::<BTreeMap<_, _>>();
+        let effect_ids = effect_nodes
+            .iter()
+            .map(|node| (node.id, self.value_island_id(function.id, node.id)))
+            .collect::<BTreeMap<_, _>>();
+        // The pre-published inputs every island may name: ordinary shared
+        // publications, harness-supplied capability values, and effect
+        // publications all arrive through the same value-input seam.
+        let published_ids = {
+            let mut map = shared_ids.clone();
+            map.extend(capability_ids.iter().map(|(node, value)| (*node, *value)));
+            map.extend(effect_ids.iter().map(|(node, value)| (*node, *value)));
+            map
+        };
         // The non-strict argument nodes of every lazy call site: a call whose
         // callee has wire parameters demands each such argument inside the callee
         // through force-on-park, so the argument becomes its own wire island. Both
@@ -1473,12 +1571,15 @@ impl Module {
         };
         let values = shared
             .iter()
+            .map(|node| (node, IslandPurpose::Value))
+            .chain(effect_nodes.iter().map(|node| (node, IslandPurpose::Value)))
             .enumerate()
-            .map(|(ordinal, node)| {
-                // A value island computes itself; only OTHER shared aggregates are
-                // pre-published inputs.
+            .map(|(ordinal, (node, purpose))| {
+                // A value island computes itself; only OTHER pre-published
+                // values (shared aggregates, capabilities, effect outcomes) are
+                // inputs.
                 let representative_id = self.value_island_id(function.id, node.id);
-                let shared_here = shared_ids
+                let shared_here = published_ids
                     .iter()
                     .filter(|(candidate, _)| **candidate != node.id)
                     .map(|(candidate, value)| (*candidate, *value))
@@ -1490,7 +1591,7 @@ impl Module {
                         function,
                         node.id,
                         IslandId(u32::try_from(ordinal).expect("value island index fits u32")),
-                        IslandPurpose::Value,
+                        purpose,
                         &IslandBoundary {
                             shared: &shared_here,
                             wires: &BTreeMap::new(),
@@ -1525,7 +1626,7 @@ impl Module {
                         IslandId(u32::try_from(ordinal).expect("wire island index fits u32")),
                         IslandPurpose::Value,
                         &IslandBoundary {
-                            shared: &shared_ids,
+                            shared: &published_ids,
                             wires: &wires_here,
                             lazy_arg_reps: &lazy_here,
                         },
@@ -1537,7 +1638,7 @@ impl Module {
         let generator = test
             .generator
             .has_conditional_sites()
-            .then(|| self.generator_task_island_with_shared(test, &shared_ids))
+            .then(|| self.generator_task_island_with_shared(test, &published_ids))
             .transpose()?;
         let mut islands = Vec::new();
         let mut sites = Vec::with_capacity(ordered.len());
@@ -1551,7 +1652,7 @@ impl Module {
                         IslandId(u32::try_from(island).expect("island index fits u32")),
                         IslandPurpose::Check,
                         &IslandBoundary {
-                            shared: &shared_ids,
+                            shared: &published_ids,
                             wires: &wire_ids,
                             lazy_arg_reps: &lazy_arg_reps,
                         },
@@ -1570,7 +1671,7 @@ impl Module {
                         IslandId(u32::try_from(island).expect("island index fits u32")),
                         IslandPurpose::Snapshot,
                         &IslandBoundary {
-                            shared: &shared_ids,
+                            shared: &published_ids,
                             wires: &wire_ids,
                             lazy_arg_reps: &lazy_arg_reps,
                         },
@@ -1589,6 +1690,7 @@ impl Module {
         }
         Ok(PartitionedTest {
             name: test.name.clone(),
+            capabilities,
             values,
             wire_islands,
             generator,
@@ -2498,7 +2600,7 @@ fn is_shared_publication_candidate(node: &Node) -> bool {
         {
             matches!(
                 node.op,
-                Op::Call(_) | Op::CallValue | Op::If { .. } | Op::Match { .. }
+                Op::Call(_) | Op::CallValue | Op::If { .. } | Op::Match { .. } | Op::Exec { .. }
             )
         }
         _ => false,
@@ -2680,6 +2782,18 @@ fn collect_dependencies_stopping_at(
 }
 
 impl Island {
+    /// The effect node this island publishes, when its output is an effect
+    /// demand. An effect island is evaluated by the registered runtime
+    /// primitive, never lowered to a Weavy frame.
+    #[must_use]
+    pub fn effect_output(&self) -> Option<&Node> {
+        let output = self
+            .nodes
+            .iter()
+            .find(|node| node.id == self.output)?;
+        matches!(output.op, Op::Exec { .. }).then_some(output)
+    }
+
     pub(crate) fn local_function_ids(&self) -> BTreeMap<FunctionId, u32> {
         let mut ids = BTreeMap::from([(self.function, 0)]);
         for (index, function) in self.callees.iter().enumerate() {
@@ -2787,6 +2901,7 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
             match node.effect.kind {
                 EffectKind::Pure => 0,
                 EffectKind::Codata => 1,
+                EffectKind::Effect => 2,
             },
             u8::from(node.effect.fallible),
             u8::from(node.effect.placed),
@@ -2952,6 +3067,13 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::PathToString => op.push(82),
         Op::IntToString => op.push(84),
         Op::Range => op.push(83),
+        Op::Exec { argv } => {
+            op.push(85);
+            frame(&mut op, &(argv.len() as u64).to_le_bytes());
+            for argument in argv {
+                frame(&mut op, argument.as_bytes());
+            }
+        }
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());

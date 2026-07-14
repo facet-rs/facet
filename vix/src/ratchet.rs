@@ -316,6 +316,7 @@ struct TraceSnapshot {
     scheduler_requests: u64,
     memo_entries: u64,
     store_interns: u64,
+    effect_spawns: u64,
     value_island_spawns: u64,
     successful_aggregate_freezes: u64,
     active_molten_selections: u64,
@@ -419,6 +420,10 @@ impl TraceSnapshot {
             TraceCheck::DemandedOnce { wire } => {
                 let observed = self.wire_matches(wire);
                 (observed, observed == 1)
+            }
+            TraceCheck::RanProcesses { count } => {
+                let observed = self.effect_spawns;
+                (observed, i128::from(observed) == i128::from(*count))
             }
         };
         CheckRun {
@@ -1234,6 +1239,7 @@ fn run_lane(
         scheduler_requests: counters.scheduler_requests,
         memo_entries: runtime.memo_entries(),
         store_interns: counters.store_interns,
+        effect_spawns: counters.effect_spawns,
         value_island_spawns: counters.value_island_spawns,
         successful_aggregate_freezes: counters.successful_aggregate_freezes,
         active_molten_selections: counters.active_molten_selections,
