@@ -378,7 +378,8 @@ impl DecodeProgram {
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 fn native_decode_supported(lowered: &Lowered) -> bool {
-    decode_program_supported(&lowered.program)
+    phon_jit::native::available()
+        && decode_program_supported(&lowered.program)
         && lowered
             .blocks
             .values()
