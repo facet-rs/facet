@@ -349,11 +349,19 @@ impl<S: EventSink> Runtime<S> {
 
     #[must_use]
     pub fn with_persistent_state(sink: S, state: PersistentRuntimeState) -> Self {
+        let memo = state
+            .memo
+            .into_iter()
+            .map(|(location, mut entry)| {
+                entry.current_receipt = false;
+                (location, entry)
+            })
+            .collect();
         Self {
             sink,
             sequence: 0,
             store: state.store,
-            memo: state.memo,
+            memo,
             demands: BTreeMap::new(),
             tasks: BTreeMap::new(),
             counters: Counters::default(),
@@ -1818,8 +1826,7 @@ impl<S: EventSink> Runtime<S> {
                         demand: key,
                         reads: reads.clone(),
                     }),
-                    current_receipt: !matches!(effect_output.op, Op::MiniSolve { .. })
-                        && !reads.is_empty(),
+                    current_receipt: !matches!(effect_output.op, Op::MiniSolve { .. }),
                 },
             );
             if let Some(demand) = self.demands.get_mut(&key) {
