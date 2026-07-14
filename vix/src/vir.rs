@@ -1432,10 +1432,30 @@ impl Module {
                 true
             }
         });
-        let shared_ids = shared
-            .iter()
-            .map(|node| (node.id, self.value_island_id(function.id, node.id)))
-            .collect::<BTreeMap<_, _>>();
+        // Eager aggregate publications use the same structural representative
+        // rule as lazy wires. Every authored duplicate maps to the first
+        // representative's value island, so the Store/memo path realizes one
+        // content-keyed outcome rather than one location-keyed computation per
+        // spelling. This is the in-session reuse boundary for aggregate solver
+        // outcomes; it does not retain a fact independently across solves.
+        let (shared_ids, value_representatives) = {
+            let mut fingerprints = BTreeMap::new();
+            let mut representative_of = BTreeMap::<String, NodeId>::new();
+            let mut representatives = Vec::new();
+            let shared_ids = shared
+                .iter()
+                .map(|node| {
+                    let fingerprint = structural_fingerprint(function, node.id, &mut fingerprints);
+                    let representative =
+                        *representative_of.entry(fingerprint).or_insert_with(|| {
+                            representatives.push(node.id);
+                            node.id
+                        });
+                    (node.id, self.value_island_id(function.id, representative))
+                })
+                .collect::<BTreeMap<_, _>>();
+            (shared_ids, representatives)
+        };
         // The non-strict argument nodes of every lazy call site: a call whose
         // callee has wire parameters demands each such argument inside the callee
         // through force-on-park, so the argument becomes its own wire island. Both
@@ -1486,24 +1506,26 @@ impl Module {
                 .collect::<BTreeMap<_, _>>();
             (wire_ids, lazy_arg_reps)
         };
-        let values = shared
+        let values = value_representatives
             .iter()
             .enumerate()
-            .map(|(ordinal, node)| {
+            .map(|(ordinal, &node_id)| {
                 // A value island computes itself; only OTHER shared aggregates are
-                // pre-published inputs.
-                let representative_id = self.value_island_id(function.id, node.id);
+                // pre-published inputs. Authored duplicates of this same
+                // structural representative are also excluded.
+                let representative_id = self.value_island_id(function.id, node_id);
                 let shared_here = shared_ids
                     .iter()
-                    .filter(|(candidate, _)| **candidate != node.id)
+                    .filter(|(_, value)| **value != representative_id)
                     .map(|(candidate, value)| (*candidate, *value))
                     .collect();
                 let lazy_here = lazy_reps_excluding(&lazy_arg_reps, representative_id);
+                let node = &function.nodes[node_id.0 as usize];
                 PartitionedValue {
                     id: representative_id,
                     island: self.partition_function_output_with_shared(
                         function,
-                        node.id,
+                        node_id,
                         IslandId(u32::try_from(ordinal).expect("value island index fits u32")),
                         IslandPurpose::Value,
                         &IslandBoundary {

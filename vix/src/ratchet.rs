@@ -134,8 +134,7 @@ fn observe_bundled_invocations(
                 }
             }
         }
-        let arguments =
-            literal.then(|| literals.iter().map(wire_arg_identity).collect::<Vec<_>>());
+        let arguments = literal.then(|| literals.iter().map(wire_arg_identity).collect::<Vec<_>>());
         seen.insert(preimage.clone());
         runtime.record_wire_demand(function, arguments, preimage);
     }
@@ -412,8 +411,7 @@ impl TraceSnapshot {
             .filter(|demand| match &wire.selector {
                 WireSelector::Name => demand.function == wire.function,
                 WireSelector::CallSite(arguments) => {
-                    let described: Vec<ValueId> =
-                        arguments.iter().map(wire_arg_identity).collect();
+                    let described: Vec<ValueId> = arguments.iter().map(wire_arg_identity).collect();
                     demand.function == wire.function
                         && demand.arguments.as_deref() == Some(&described[..])
                 }
@@ -427,7 +425,12 @@ impl TraceSnapshot {
     /// Evaluate one trace check against the frozen snapshot. `binding` is the
     /// resolved canonical preimage of a binding-level described wire, absent
     /// for every other check shape.
-    fn evaluate(&self, provenance: ProvenanceKey, check: TraceCheck, binding: Option<&str>) -> CheckRun {
+    fn evaluate(
+        &self,
+        provenance: ProvenanceKey,
+        check: TraceCheck,
+        binding: Option<&str>,
+    ) -> CheckRun {
         let (observed, passed) = match &check {
             TraceCheck::SchedulerRequestsAtMost { bound } => {
                 at_most(self.scheduler_requests, *bound)
@@ -1075,9 +1078,10 @@ fn run_lane(
             if let Some(wire) = &value.wire
                 && evaluation.memo == MemoVerdict::Miss
             {
-                let arguments = wire.arguments.as_ref().map(|arguments| {
-                    arguments.iter().map(wire_arg_identity).collect::<Vec<_>>()
-                });
+                let arguments = wire
+                    .arguments
+                    .as_ref()
+                    .map(|arguments| arguments.iter().map(wire_arg_identity).collect::<Vec<_>>());
                 runtime.record_wire_demand(
                     wire.function,
                     arguments,

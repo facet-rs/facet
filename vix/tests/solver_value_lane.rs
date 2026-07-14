@@ -433,7 +433,10 @@ fn rung_093_solve_is_deterministic() {
         .expect("rung 093 compiles and executes through VerifiedProgram");
     for lane in [&report.plain, &report.chaos] {
         assert_eq!(lane.checks.len(), 2);
-        assert!(lane.checks[0].passed, "the two solve demands are one answer");
+        assert!(
+            lane.checks[0].passed,
+            "the two solve demands are one answer"
+        );
         assert!(
             lane.checks[1].trace_failure.is_none(),
             "demanded_once(solve) observes exactly one realization: {:?}",

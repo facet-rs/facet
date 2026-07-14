@@ -7532,7 +7532,8 @@ fn push_structural_equality(
             let value_array = Type::array(value.as_ref().clone());
             let keys_left = push_project(nodes, span, left, key_array.clone(), Op::MapKeys);
             let keys_right = push_project(nodes, span, right, key_array.clone(), Op::MapKeys);
-            let keys_equal = push_structural_equality(nodes, span, keys_left, keys_right, &key_array);
+            let keys_equal =
+                push_structural_equality(nodes, span, keys_left, keys_right, &key_array);
             // The value projections and their comparison form the `then` region
             // of a short-circuiting `keys_equal && values_equal`.
             let values_start = nodes.len();

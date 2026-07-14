@@ -2897,15 +2897,15 @@ fn native_rodin_kernel_backtracks_and_returns_typed_conflicts() {
 }
 
 /// In-session learned-region reuse through the substrate's memo machinery: two
-/// solves are let-bound wires, each read by its generator control and two
-/// selected checks. Equal solve preimages share one realization — the learned
-/// no-goods riding in each typed outcome are content-keyed store values reused
-/// by every consumer — while the two distinct inputs stay distinct demands.
-/// `demanded_times(point_dead_region, 2)` pins the learned-region derivation to
-/// exactly one execution per solve: reuse flows through Store/memo identity,
-/// never a recompute and never a Rodin-private warm cache. (Cross-session fact
-/// retention is out of scope until facts carry the adjudicated premise-keyed
-/// shape; this certificate is deliberately in-session.)
+/// separately authored, content-identical solves are let-bound wires, and each
+/// is read by generator control and selected checks. Their equal canonical
+/// preimages share one realization, so the learned no-goods riding in that
+/// typed outcome are reused by every consumer. A distinct failing input remains
+/// a distinct demand and derives its own region: no learned fact is transferred
+/// between solve inputs. `demanded_times(point_dead_region, 2)` therefore pins
+/// exactly one derivation for the recurring solved input and one for the
+/// distinct failing input. Reuse flows through Store/memo identity, never a
+/// recompute, Rodin-private warm cache, or cross-solve fact persistence.
 const NATIVE_KERNEL_LEARNING_REUSE_FIXTURE: &str = r#"
 fn reuse_app_package() -> PackageId {
     PackageId {
@@ -2992,13 +2992,14 @@ fn reuse_input(include_low: Bool) -> SolveInput {
 #[test]
 fn native_learning_reuse() -> Stream<Check> {
     let found = rodin_solve(reuse_input(true));
+    let found_again = rodin_solve(reuse_input(true));
     let dead = rodin_solve(reuse_input(false));
     yield match found {
         RodinOutcome::Solved(result) => expect_eq(result.selected.get(reuse_app_package()).version, parse_version("1.0.0")),
         RodinOutcome::Failed(_) => expect(false),
         RodinOutcome::Unsupported(_) => expect(false),
     };
-    yield match found {
+    yield match found_again {
         RodinOutcome::Solved(result) => expect_eq(result.selected.get(reuse_shared_package()).version, parse_version("1.0.0")),
         RodinOutcome::Failed(_) => expect(false),
         RodinOutcome::Unsupported(_) => expect(false),
@@ -3014,6 +3015,7 @@ fn native_learning_reuse() -> Stream<Check> {
         RodinOutcome::Unsupported(_) => expect(false),
     };
     yield demanded_once(found);
+    yield demanded_once(found_again);
     yield demanded_once(dead);
     yield demanded_times(point_dead_region, 2);
 }
@@ -3022,13 +3024,12 @@ fn native_learning_reuse() -> Stream<Check> {
 // r[verify solver.learning.reuse]
 #[test]
 fn native_rodin_kernel_reuses_learned_regions_in_session() {
-    let source = format!(
-        "{STD_VERSION}\n{NATIVE_RODIN_KERNEL}\n{NATIVE_KERNEL_LEARNING_REUSE_FIXTURE}"
-    );
+    let source =
+        format!("{STD_VERSION}\n{NATIVE_RODIN_KERNEL}\n{NATIVE_KERNEL_LEARNING_REUSE_FIXTURE}");
     let report = run_source(&source).expect("native Rodin learning-reuse certificate executes");
     assert!(report.passed(), "reuse certificates pass: {report:?}");
     assert!(report.agrees(), "plain and chaos agree");
-    assert_eq!(report.plain.checks.len(), 7);
+    assert_eq!(report.plain.checks.len(), 8);
     for lane in [&report.plain, &report.chaos] {
         assert_eq!(lane.counters.pure_host_calls, 0);
         assert_eq!(lane.receipt_count, 0);
