@@ -516,6 +516,11 @@ fn direct_string_call() -> Stream<Check> {
         assert_eq!(lowered.program().fns.len(), 2);
         let root = &lowered.contract().functions[0];
         let callee = &lowered.contract().functions[1];
+        let scheduler_header_bytes: u32 = callee.frame.regions[..2]
+            .iter()
+            .map(|region| u32::try_from(region_byte_len(region)).expect("header region fits u32"))
+            .sum();
+        assert_eq!(scheduler_header_bytes, 16);
         assert_eq!(lowered.constants.len(), 2, "one publication per NodeRef");
         let root_function = lowered.constants[0].root.function;
         let string_schema = lowered.constants[0].root.schema;
@@ -539,15 +544,21 @@ fn direct_string_call() -> Stream<Check> {
                 assert_eq!(constant.owner.function, constant.node.function);
                 assert_eq!(constant.root.entry, root_entry);
                 assert_eq!(constant.owner.entry, root_entry);
-                assert_eq!(constant.root.slot.byte_offset(), 0);
-                assert_eq!(constant.owner.slot.byte_offset(), 0);
+                assert_eq!(constant.root.slot.byte_offset(), scheduler_header_bytes);
+                assert_eq!(constant.owner.slot.byte_offset(), scheduler_header_bytes);
             } else {
                 assert_eq!(constant.owner.function, constant.node.function);
                 assert_ne!(constant.owner.function, root_function);
                 assert_eq!(constant.root.entry, root_entry);
                 assert_eq!(constant.owner.entry, 1);
-                assert_eq!(constant.root.slot.byte_offset(), 24);
-                assert_eq!(constant.owner.slot.byte_offset(), 8);
+                assert_eq!(
+                    constant.root.slot.byte_offset(),
+                    scheduler_header_bytes + 24
+                );
+                assert_eq!(
+                    constant.owner.slot.byte_offset(),
+                    scheduler_header_bytes + 8
+                );
             }
         }
         assert_eq!(
@@ -569,7 +580,7 @@ fn direct_string_call() -> Stream<Check> {
             })
             .expect("root calls check_string directly");
         assert_eq!(root_call.len(), callee.entries.len());
-        assert_eq!(root_call[1].dst, 8);
+        assert_eq!(root_call[1].dst, scheduler_header_bytes + 8);
         assert_eq!(root_call[1].size, 8);
         for (arg, entry) in root_call.iter().zip(&callee.entries) {
             let region = &callee.frame.regions[entry.0 as usize];
