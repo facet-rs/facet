@@ -318,6 +318,9 @@ pub enum TraceCheck {
     MemoEntriesAtMost {
         bound: i64,
     },
+    MemoHitsAtLeast {
+        bound: i64,
+    },
     /// Store interns during the test are at most `bound`.
     StoreInternsAtMost {
         bound: i64,

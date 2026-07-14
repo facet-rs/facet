@@ -8,7 +8,8 @@ use vix::lowering::{LoweringCache, attribution_for, source_map_for};
 use vix::modules::ModuleSource;
 use vix::ratchet::{
     RunError, SnapshotExpectations, run_source, run_source_innards, run_source_rerun_audit,
-    run_source_rerun_audit_with_lane, run_source_with_modules, run_source_with_snapshots,
+    run_source_rerun_audit_with_lane, run_source_revision_audit,
+    run_source_revision_audit_with_lane, run_source_with_modules, run_source_with_snapshots,
     run_source_with_snapshots_and_lane,
 };
 use vix::runtime::{
@@ -96,6 +97,15 @@ const RUNG_079: &str = include_str!("ratchet/079-cross-run-reuse.vix");
 const RUNG_080: &str = include_str!("ratchet/080-early-cutoff.vix");
 const RUNG_081: &str = include_str!("ratchet/081-projection-reuse.vix");
 const RUNG_082: &str = include_str!("ratchet/082-flaky-detected.vix");
+const RUNG_101: &str = include_str!("ratchet/101-body-edit-early-cutoff.vix");
+const RUNG_101_V2: &str = include_str!("ratchet/101-body-edit-early-cutoff.v2.vix");
+const RUNG_102: &str = include_str!("ratchet/102-body-edit-negative-control.vix");
+const RUNG_102_V2: &str = include_str!("ratchet/102-body-edit-negative-control.v2.vix");
+const RUNG_103: &str = include_str!("ratchet/103-rename-is-cold.vix");
+const RUNG_103_V2: &str = include_str!("ratchet/103-rename-is-cold.v2.vix");
+const RUNG_104: &str = include_str!("ratchet/104-wrapper-refactor-warm.vix");
+const RUNG_104_V2: &str = include_str!("ratchet/104-wrapper-refactor-warm.v2.vix");
+const RUNG_105: &str = include_str!("ratchet/105-reuse-not-recompute.vix");
 const RUNG_106: &str = include_str!("ratchet/106-imports.vix");
 const RUNG_107: &str = include_str!("ratchet/107-visibility.reject.vix");
 const RUNG_108: &str = include_str!("ratchet/108-import-std.vix");
@@ -7189,6 +7199,138 @@ fn incrementality_band_agrees_across_native_and_interpreter_lanes() {
             .unwrap_or_else(|error| panic!("rung {name} native rerun audit: {error:?}"));
         let interp = run_source_rerun_audit_with_lane(source, LaneRequest::Interpreter)
             .unwrap_or_else(|error| panic!("rung {name} interpreter rerun audit: {error:?}"));
+        assert_eq!(
+            native.second.check_family(),
+            interp.second.check_family(),
+            "rung {name} second-run check family diverges across lanes",
+        );
+        assert_eq!(
+            native.second.value_family(),
+            interp.second.value_family(),
+            "rung {name} second-run value family diverges across lanes",
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Rungs 101-105: code-edit early cutoff and lookup-not-recompute discipline.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn rung_101_body_edit_early_cutoff_reuses_downstream_value() {
+    let audit = run_source_revision_audit(RUNG_101, RUNG_101_V2)
+        .expect("rung 101 source-revision audit executes");
+    assert!(
+        audit.second.checks.iter().all(|check| check.passed),
+        "rung 101 second revision passes: {audit:#?}",
+    );
+    assert!(
+        audit.load.claims_loaded > 0,
+        "durable journal loads reusable claims: {audit:#?}",
+    );
+    assert!(
+        audit.second.counters.memo_hits_exact
+            + audit.second.counters.memo_hits_projection
+            + audit.second.counters.memo_hits_semantic
+            > 0,
+        "second revision uses memo lookup/revalidation: {:?}",
+        audit.second.counters,
+    );
+    assert!(
+        audit.second.counters.memo_hits_semantic > 0,
+        "source-revision location churn is bridged by suffix-nominated semantic hits: {:?}",
+        audit.second.counters,
+    );
+    assert!(!audit.nondeterministic, "{audit:#?}");
+}
+
+#[test]
+fn rung_102_body_edit_negative_control_recomputes_downstream_value() {
+    let positive = run_source_revision_audit(RUNG_101, RUNG_101_V2)
+        .expect("rung 101 source-revision audit executes");
+    let control = run_source_revision_audit(RUNG_102, RUNG_102_V2)
+        .expect("rung 102 source-revision audit executes");
+    assert!(
+        control.second.checks.iter().all(|check| check.passed),
+        "rung 102 second revision passes: {control:#?}",
+    );
+    assert!(
+        control.second.counters.memo_misses > positive.second.counters.memo_misses,
+        "changed helper value forces more recomputation than 101: positive={:?} control={:?}",
+        positive.second.counters,
+        control.second.counters,
+    );
+}
+
+#[test]
+fn rung_103_rename_location_churn_is_cold_but_correct() {
+    let audit = run_source_revision_audit(RUNG_103, RUNG_103_V2)
+        .expect("rung 103 source-revision audit executes");
+    assert!(
+        audit.second.checks.iter().all(|check| check.passed),
+        "rung 103 second revision passes despite cold churn: {audit:#?}",
+    );
+    assert!(
+        audit.second.counters.memo_misses > 0,
+        "rename churn is deliberately cold: {:?}",
+        audit.second.counters,
+    );
+}
+
+#[test]
+fn rung_104_wrapper_refactor_uses_suffix_nomination_without_leaf_demand() {
+    let audit = run_source_revision_audit(RUNG_104, RUNG_104_V2)
+        .expect("rung 104 source-revision audit executes");
+    assert!(
+        audit.second.checks.iter().all(|check| check.passed),
+        "rung 104 second revision passes: {audit:#?}",
+    );
+    assert!(
+        audit.second.counters.memo_hits_semantic > 0,
+        "wrapper refactor uses suffix-nominated semantic memo hits: {:?}",
+        audit.second.counters,
+    );
+}
+
+#[test]
+fn rung_105_warm_reuse_is_lookup_not_recompute_and_compare() {
+    let audit = run_source_revision_audit(RUNG_105, RUNG_105)
+        .expect("rung 105 warm source audit executes");
+    assert!(
+        audit.second.checks.iter().all(|check| check.passed),
+        "rung 105 trace checks pass on the warm run: {audit:#?}",
+    );
+    assert_eq!(
+        audit.second.counters.memo_misses, 0,
+        "warm source reuse performs no recomputation: {:?}",
+        audit.second.counters,
+    );
+    assert!(
+        audit.second.counters.memo_hits_exact
+            + audit.second.counters.memo_hits_projection
+            + audit.second.counters.memo_hits_semantic
+            >= 1,
+        "warm source reuse is proven by memo hit counters: {:?}",
+        audit.second.counters,
+    );
+}
+
+#[test]
+fn source_revision_band_agrees_across_native_and_interpreter_lanes() {
+    if !weavy::jit::task_lane::available() {
+        return;
+    }
+    for (name, first, second) in [
+        ("101", RUNG_101, RUNG_101_V2),
+        ("102", RUNG_102, RUNG_102_V2),
+        ("103", RUNG_103, RUNG_103_V2),
+        ("104", RUNG_104, RUNG_104_V2),
+        ("105", RUNG_105, RUNG_105),
+    ] {
+        let native = run_source_revision_audit_with_lane(first, second, LaneRequest::Native)
+            .unwrap_or_else(|error| panic!("rung {name} native source audit: {error:?}"));
+        let interp = run_source_revision_audit_with_lane(first, second, LaneRequest::Interpreter)
+            .unwrap_or_else(|error| panic!("rung {name} interpreter source audit: {error:?}"));
         assert_eq!(
             native.second.check_family(),
             interp.second.check_family(),

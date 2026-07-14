@@ -186,6 +186,7 @@ fn flat_wires<'a>(
     wire_lookup: &BTreeMap<ValueIslandId, &PartitionedValue>,
     wire_inputs: &[ValueIslandId],
     test_name: &str,
+    source_revision: Option<&str>,
 ) -> FlatWires<'a> {
     let mut backing = FlatWires {
         islands: Vec::with_capacity(wire_inputs.len()),
@@ -208,9 +209,9 @@ fn flat_wires<'a>(
             .lowered(&wire.island)
             .expect("argument island was lowered before execution");
         backing.islands.push(wire.island.id);
-        backing.locations.push(Location::for_test_value(
-            test_name,
-            &format!("wire-{}", value.stable_segment()),
+        backing.locations.push(scoped_location(
+            Location::for_test_value(test_name, &format!("wire-{}", value.stable_segment())),
+            source_revision,
         ));
         backing.attributions.push(attribution_for(&wire.island));
         let provenance = wire.wire.as_ref();
@@ -365,6 +366,7 @@ pub struct TraceFailure {
 struct TraceSnapshot {
     scheduler_requests: u64,
     memo_entries: u64,
+    memo_hits: u64,
     store_interns: u64,
     effect_spawns: u64,
     value_island_spawns: u64,
@@ -456,6 +458,10 @@ impl TraceSnapshot {
                 at_most(self.scheduler_requests, *bound)
             }
             TraceCheck::MemoEntriesAtMost { bound } => at_most(self.memo_entries, *bound),
+            TraceCheck::MemoHitsAtLeast { bound } => {
+                let observed = self.memo_hits;
+                (observed, i128::from(observed) >= i128::from(*bound))
+            }
             TraceCheck::StoreInternsAtMost { bound } => at_most(self.store_interns, *bound),
             TraceCheck::ValueIslandSpawnsAtMost { bound } => {
                 at_most(self.value_island_spawns, *bound)
@@ -556,6 +562,18 @@ pub struct RerunAuditReport {
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct PersistenceAuditReport {
     pub warnings: Diagnostics,
+    pub first: SuiteRun,
+    pub second: SuiteRun,
+    pub load: PersistentRuntimeJournalLoadReport,
+    pub journal_bytes: u64,
+    pub nondeterministic: bool,
+    pub lowering_cache: LoweringCacheCounters,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct SourceRevisionAuditReport {
+    pub first_warnings: Diagnostics,
+    pub second_warnings: Diagnostics,
     pub first: SuiteRun,
     pub second: SuiteRun,
     pub load: PersistentRuntimeJournalLoadReport,
@@ -769,6 +787,98 @@ pub fn run_source_rerun_audit_with_lane(
     prepare_source_with_lane(source, lane)?.execute_rerun_audit()
 }
 
+pub fn run_source_revision_audit(
+    first_source: &str,
+    second_source: &str,
+) -> Result<SourceRevisionAuditReport, RunError> {
+    run_source_revision_audit_with_lane(first_source, second_source, weavy::exec::LaneRequest::Auto)
+}
+
+pub fn run_source_revision_audit_with_lane(
+    first_source: &str,
+    second_source: &str,
+    lane: weavy::exec::LaneRequest,
+) -> Result<SourceRevisionAuditReport, RunError> {
+    let mut first_prepared = prepare_source_with_lane(first_source, lane)?;
+    let first_revision = source_revision_id(first_source);
+    let second_revision = source_revision_id(second_source);
+    let first_warnings = first_prepared.compilation.warnings.clone();
+    let mut state = PersistentRuntimeState::default();
+    let first = run_lane(
+        &first_prepared.compilation.module,
+        &mut first_prepared.cache,
+        ChaosPolicy::default(),
+        ExecutionPhase::PlainRuntimeReady,
+        ExecutionPhase::PlainCompleted,
+        &SnapshotExpectations::new(),
+        &mut |_| {},
+        false,
+        false,
+        None,
+        Some(&mut state),
+        None,
+        None,
+        Some(&first_revision),
+    )?;
+    let journal = state.to_journal();
+    let journal_json = journal.to_json()?;
+    let loaded_journal = PersistentRuntimeJournal::from_json(&journal_json)?;
+    let journal_json = loaded_journal.to_json()?;
+    let loaded_journal = PersistentRuntimeJournal::from_json(&journal_json)?;
+    let journal_bytes = journal_json.len() as u64;
+
+    let mut second_prepared = prepare_source_with_cache(
+        second_source,
+        CompilerConfig::default(),
+        first_prepared.cache,
+    )?;
+    let second_warnings = second_prepared.compilation.warnings.clone();
+    let mut second_state = PersistentRuntimeState::default();
+    let mut load = PersistentRuntimeJournalLoadReport::default();
+    let second = run_lane(
+        &second_prepared.compilation.module,
+        &mut second_prepared.cache,
+        ChaosPolicy::default(),
+        ExecutionPhase::PlainRuntimeReady,
+        ExecutionPhase::PlainCompleted,
+        &SnapshotExpectations::new(),
+        &mut |_| {},
+        true,
+        true,
+        None,
+        Some(&mut second_state),
+        Some(&loaded_journal),
+        Some(&mut load),
+        Some(&second_revision),
+    )?;
+    let first_value_checks = first
+        .checks
+        .iter()
+        .filter(|check| check.identity.is_some())
+        .collect::<Vec<_>>();
+    let second_value_checks = second
+        .checks
+        .iter()
+        .filter(|check| check.identity.is_some())
+        .collect::<Vec<_>>();
+    let nondeterministic =
+        first.value_family() != second.value_family() || first_value_checks != second_value_checks;
+    Ok(SourceRevisionAuditReport {
+        first_warnings,
+        second_warnings,
+        first,
+        second,
+        load,
+        journal_bytes,
+        nondeterministic,
+        lowering_cache: second_prepared.cache.counters(),
+    })
+}
+
+fn source_revision_id(source: &str) -> String {
+    blake3::hash(source.as_bytes()).to_hex().to_string()
+}
+
 /// The readiness-boundary form of [`run_source_with_lane`]: compile, lower, and
 /// verify every demanded island through the requested lane without running a
 /// test.
@@ -897,6 +1007,7 @@ impl PreparedRun {
             Some(&mut state),
             None,
             None,
+            None,
         )?;
         let mut second_state = PersistentRuntimeState::default();
         let second = run_lane(
@@ -911,6 +1022,7 @@ impl PreparedRun {
             true,
             Some(state),
             Some(&mut second_state),
+            None,
             None,
             None,
         )?;
@@ -958,6 +1070,7 @@ impl PreparedRun {
             Some(&mut state),
             None,
             None,
+            None,
         )?;
         let journal = state.to_journal();
         let journal_json = journal.to_json()?;
@@ -982,6 +1095,7 @@ impl PreparedRun {
             Some(&mut second_state),
             Some(&loaded_journal),
             Some(&mut load),
+            None,
         )?;
         let first_value_checks = first
             .checks
@@ -1025,6 +1139,7 @@ impl PreparedRun {
             None,
             None,
             None,
+            None,
         )?;
         let chaos = run_lane(
             &self.compilation.module,
@@ -1038,6 +1153,7 @@ impl PreparedRun {
             &mut observe,
             true,
             false,
+            None,
             None,
             None,
             None,
@@ -1057,9 +1173,16 @@ impl PreparedRun {
 /// shared publications available as value inputs.
 struct SiteContext<'a> {
     test_name: &'a str,
+    source_revision: Option<&'a str>,
     module: &'a Module,
     wire_lookup: &'a BTreeMap<ValueIslandId, &'a PartitionedValue>,
     published_values: &'a BTreeMap<ValueIslandId, Evaluation>,
+}
+
+fn scoped_location(location: Location, source_revision: Option<&str>) -> Location {
+    source_revision.map_or(location.clone(), |revision| {
+        location.with_source_revision(revision)
+    })
 }
 
 /// Evaluate one value-check island as an ordinary pure demand and record its
@@ -1082,7 +1205,10 @@ fn evaluate_value_site(
         .expect("value-check island is lowered");
     let attribution = attribution_for(island);
     let provenance = ProvenanceKey::site(site);
-    let location = Location::for_test_provenance(context.test_name, site, &provenance.dynamic_keys);
+    let location = scoped_location(
+        Location::for_test_provenance(context.test_name, site, &provenance.dynamic_keys),
+        context.source_revision,
+    );
     let arguments = island
         .value_inputs
         .iter()
@@ -1102,6 +1228,7 @@ fn evaluate_value_site(
         context.wire_lookup,
         &island.wire_inputs,
         context.test_name,
+        context.source_revision,
     );
     let wires = wires_backing.demands();
     let evaluation: Evaluation = runtime.evaluate(
@@ -1156,7 +1283,10 @@ fn evaluate_snapshot_site(
     let output_type = lowered.output_type.clone();
     let attribution = attribution_for(island);
     let provenance = ProvenanceKey::site(site);
-    let location = Location::for_test_provenance(context.test_name, site, &provenance.dynamic_keys);
+    let location = scoped_location(
+        Location::for_test_provenance(context.test_name, site, &provenance.dynamic_keys),
+        context.source_revision,
+    );
     let arguments = island
         .value_inputs
         .iter()
@@ -1174,6 +1304,7 @@ fn evaluate_snapshot_site(
         context.wire_lookup,
         &island.wire_inputs,
         context.test_name,
+        context.source_revision,
     );
     let wires = wires_backing.demands();
     let evaluation: Evaluation = runtime.evaluate(
@@ -1257,6 +1388,7 @@ fn run_lane(
     persistent_out: Option<&mut PersistentRuntimeState>,
     persistent_journal_in: Option<&PersistentRuntimeJournal>,
     persistent_journal_report: Option<&mut PersistentRuntimeJournalLoadReport>,
+    source_revision: Option<&str>,
 ) -> Result<SuiteRun, RunError> {
     let mut journal_load_report = None;
     let mut runtime = if let Some(journal) = persistent_journal_in {
@@ -1340,7 +1472,10 @@ fn run_lane(
                         .expect("exec effect island has its declared capability input");
                     runtime.evaluate_exec(
                         &value.island,
-                        &Location::for_test_value(&partitioned.name, &value.id.stable_segment()),
+                        &scoped_location(
+                            Location::for_test_value(&partitioned.name, &value.id.stable_segment()),
+                            source_revision,
+                        ),
                         &capability,
                         chaos,
                     )?
@@ -1351,7 +1486,10 @@ fn run_lane(
                         .expect("effect island carries a structural fingerprint");
                     runtime.evaluate_effect(
                         value.island.id,
-                        &Location::for_test_effect(&partitioned.name, fingerprint),
+                        &scoped_location(
+                            Location::for_test_effect(&partitioned.name, fingerprint),
+                            source_revision,
+                        ),
                         fingerprint,
                         &value.island,
                         &arguments,
@@ -1363,7 +1501,10 @@ fn run_lane(
                 let attribution = attribution_for(&value.island);
                 runtime.evaluate(
                     value.island.id,
-                    &Location::for_test_value(&partitioned.name, &value.id.stable_segment()),
+                    &scoped_location(
+                        Location::for_test_value(&partitioned.name, &value.id.stable_segment()),
+                        source_revision,
+                    ),
                     lowered,
                     &attribution,
                     IslandInputs {
@@ -1496,6 +1637,7 @@ fn run_lane(
                                 cache,
                                 &SiteContext {
                                     test_name: &partitioned.name,
+                                    source_revision,
                                     module,
                                     wire_lookup: &wire_lookup,
                                     published_values: &published_values,
@@ -1516,6 +1658,7 @@ fn run_lane(
                                 cache,
                                 &SiteContext {
                                     test_name: &partitioned.name,
+                                    source_revision,
                                     module,
                                     wire_lookup: &wire_lookup,
                                     published_values: &published_values,
@@ -1558,6 +1701,7 @@ fn run_lane(
                                 cache,
                                 &SiteContext {
                                     test_name: &partitioned.name,
+                                    source_revision,
                                     module,
                                     wire_lookup: &wire_lookup,
                                     published_values: &published_values,
@@ -1581,6 +1725,7 @@ fn run_lane(
                                 cache,
                                 &SiteContext {
                                     test_name: &partitioned.name,
+                                    source_revision,
                                     module,
                                     wire_lookup: &wire_lookup,
                                     published_values: &published_values,
@@ -1646,6 +1791,9 @@ fn run_lane(
     let snapshot = TraceSnapshot {
         scheduler_requests: counters.scheduler_requests,
         memo_entries: runtime.memo_entries(),
+        memo_hits: counters.memo_hits_exact
+            + counters.memo_hits_projection
+            + counters.memo_hits_semantic,
         store_interns: counters.store_interns,
         effect_spawns: counters.effect_spawns,
         value_island_spawns: counters.value_island_spawns,

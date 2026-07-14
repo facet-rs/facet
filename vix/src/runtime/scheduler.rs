@@ -210,6 +210,7 @@ pub struct Runtime<S> {
     sequence: u64,
     store: Store,
     memo: BTreeMap<LocationId, MemoEntry>,
+    memo_suffix_index: BTreeMap<Vec<String>, Vec<LocationId>>,
     demands: BTreeMap<DemandKey, DemandRecord>,
     tasks: BTreeMap<TaskId, TaskRecord>,
     counters: Counters,
@@ -244,12 +245,16 @@ impl PersistentRuntimeState {
                 .memo
                 .values()
                 .filter_map(|entry| {
+                    let store_entry = self.store.entry(entry.result)?;
                     Some(PersistentMemoClaim {
                         location: entry.location.clone(),
                         key: entry.key,
                         preimage: entry.preimage.clone(),
-                        result: self.store.entry(entry.result)?.identity,
-                        receipt: entry.receipt.clone(),
+                        result: store_entry.identity,
+                        receipt: Some(entry.receipt.clone().unwrap_or_else(|| Receipt {
+                            demand: entry.key,
+                            reads: Vec::new(),
+                        })),
                     })
                 })
                 .collect(),
@@ -326,6 +331,22 @@ impl From<StoreJournalError> for PersistentRuntimeJournalError {
     }
 }
 
+fn location_suffixes(location: &Location) -> impl Iterator<Item = Vec<String>> + '_ {
+    (1..location.segments.len()).map(|start| location.segments[start..].to_vec())
+}
+
+fn build_memo_suffix_index(
+    memo: &BTreeMap<LocationId, MemoEntry>,
+) -> BTreeMap<Vec<String>, Vec<LocationId>> {
+    let mut index = BTreeMap::<Vec<String>, Vec<LocationId>>::new();
+    for entry in memo.values() {
+        for suffix in location_suffixes(&entry.location) {
+            index.entry(suffix).or_default().push(entry.location.id);
+        }
+    }
+    index
+}
+
 impl<S: EventSink> Runtime<S> {
     #[must_use]
     pub fn new(sink: S) -> Self {
@@ -334,6 +355,7 @@ impl<S: EventSink> Runtime<S> {
             sequence: 0,
             store: Store::default(),
             memo: BTreeMap::new(),
+            memo_suffix_index: BTreeMap::new(),
             demands: BTreeMap::new(),
             tasks: BTreeMap::new(),
             counters: Counters::default(),
@@ -347,11 +369,13 @@ impl<S: EventSink> Runtime<S> {
 
     #[must_use]
     pub fn with_persistent_state(sink: S, state: PersistentRuntimeState) -> Self {
+        let memo_suffix_index = build_memo_suffix_index(&state.memo);
         Self {
             sink,
             sequence: 0,
             store: state.store,
             memo: state.memo,
+            memo_suffix_index,
             demands: BTreeMap::new(),
             tasks: BTreeMap::new(),
             counters: Counters::default(),
@@ -382,6 +406,7 @@ impl<S: EventSink> Runtime<S> {
                 sequence: 0,
                 store,
                 memo: BTreeMap::new(),
+                memo_suffix_index: BTreeMap::new(),
                 demands: BTreeMap::new(),
                 tasks: BTreeMap::new(),
                 counters: Counters::default(),
@@ -440,16 +465,13 @@ impl<S: EventSink> Runtime<S> {
                 .store
                 .handle_for_identity(claim.result)
                 .expect("claim result was checked above");
-            self.memo.insert(
-                claim.location.id,
-                MemoEntry {
-                    location: claim.location.clone(),
-                    key: claim.key,
-                    preimage: claim.preimage.clone(),
-                    result,
-                    receipt: claim.receipt.clone(),
-                },
-            );
+            self.insert_memo(MemoEntry {
+                location: claim.location.clone(),
+                key: claim.key,
+                preimage: claim.preimage.clone(),
+                result,
+                receipt: claim.receipt.clone(),
+            });
             report.claims_loaded += 1;
         }
     }
@@ -487,11 +509,10 @@ impl<S: EventSink> Runtime<S> {
     }
 
     fn reverify_receipt(&self, receipt: &Receipt) -> bool {
-        !receipt.reads.is_empty()
-            && receipt
-                .reads
-                .iter()
-                .all(|read| self.reverify_read_witness(read))
+        receipt
+            .reads
+            .iter()
+            .all(|read| self.reverify_read_witness(read))
     }
 
     fn reverify_read_witness(&self, read: &ReadWitness) -> bool {
@@ -538,6 +559,44 @@ impl<S: EventSink> Runtime<S> {
                 .receipt
                 .as_ref()
                 .is_none_or(|receipt| self.reverify_receipt(receipt))
+    }
+
+    fn insert_memo(&mut self, entry: MemoEntry) {
+        let id = entry.location.id;
+        if let Some(previous) = self.memo.insert(id, entry.clone()) {
+            for suffix in location_suffixes(&previous.location) {
+                let remove_suffix =
+                    if let Some(candidates) = self.memo_suffix_index.get_mut(&suffix) {
+                        candidates.retain(|candidate| *candidate != id);
+                        candidates.is_empty()
+                    } else {
+                        false
+                    };
+                if remove_suffix {
+                    self.memo_suffix_index.remove(&suffix);
+                }
+            }
+        }
+        for suffix in location_suffixes(&entry.location) {
+            self.memo_suffix_index.entry(suffix).or_default().push(id);
+        }
+    }
+
+    fn suffix_memo_candidate(
+        &self,
+        location: &Location,
+        key: DemandKey,
+        preimage: &DemandPreimage,
+    ) -> Option<&MemoEntry> {
+        location_suffixes(location)
+            .flat_map(|suffix| self.memo_suffix_index.get(&suffix).into_iter().flatten())
+            .filter_map(|id| self.memo.get(id))
+            .find(|entry| {
+                entry.location != *location
+                    && entry.key == key
+                    && entry.preimage == *preimage
+                    && self.exact_memo_replayable(entry)
+            })
     }
 
     /// The scalar result word of a resolved wire demand, read from its interned
@@ -612,6 +671,54 @@ impl<S: EventSink> Runtime<S> {
                 identity,
                 passed,
                 memo: MemoVerdict::Exact,
+                failure_context: failure
+                    .as_ref()
+                    .and_then(|failure| failure_context(failure, lowered, attribution)),
+                failure,
+            });
+        }
+        if let Some(entry) = self
+            .suffix_memo_candidate(location, lowered.demand_key, &lowered.demand_preimage)
+            .cloned()
+        {
+            let handle = entry.result;
+            let failure = self
+                .store
+                .entry(handle)
+                .and_then(StoreEntry::failure)
+                .cloned();
+            let identity = self
+                .store
+                .entry(handle)
+                .ok_or_else(|| {
+                    MachineError::runtime(
+                        MachineOperation::MemoRead,
+                        RuntimeFault::MissingMemoStoreHandle,
+                        None,
+                        None,
+                    )
+                })?
+                .identity;
+            let passed = failure.is_none()
+                && self
+                    .store
+                    .entry(handle)
+                    .and_then(StoreEntry::resident_bytes)
+                    .is_some_and(|bytes| bytes == [1]);
+            self.counters.memo_hits_semantic += 1;
+            self.emit(EventKind::Memo {
+                location: location.id,
+                verdict: MemoVerdict::Semantic,
+                verified: entry
+                    .receipt
+                    .as_ref()
+                    .map_or(0, |receipt| receipt.reads.len() as u32),
+            });
+            return Ok(Evaluation {
+                handle,
+                identity,
+                passed,
+                memo: MemoVerdict::Semantic,
                 failure_context: failure
                     .as_ref()
                     .and_then(|failure| failure_context(failure, lowered, attribution)),

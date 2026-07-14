@@ -2171,6 +2171,11 @@ fn lower_check(
                 bound: trace_bound(call)?,
             }));
         }
+        "memo_hits_at_least" => {
+            return Ok(CheckRecipe::Trace(TraceCheck::MemoHitsAtLeast {
+                bound: trace_bound(call)?,
+            }));
+        }
         "store_interns_at_most" => {
             return Ok(CheckRecipe::Trace(TraceCheck::StoreInternsAtMost {
                 bound: trace_bound(call)?,
