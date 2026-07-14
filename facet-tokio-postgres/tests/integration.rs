@@ -236,6 +236,45 @@ async fn test_bytea() {
 }
 
 #[tokio::test]
+async fn test_optional_bytea() {
+    #[derive(Debug, Facet, PartialEq)]
+    struct OptionalBinaryData {
+        id: i32,
+        data: Option<Vec<u8>>,
+    }
+
+    let handle = setup_postgres().await;
+    let client = &handle.client;
+
+    client
+        .execute(
+            "CREATE TABLE optional_binary_data (id INTEGER, data BYTEA)",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    let bytes: &[u8] = &[0xDE, 0xAD, 0xBE, 0xEF];
+    client
+        .execute(
+            "INSERT INTO optional_binary_data VALUES (1, $1), (2, NULL)",
+            &[&bytes],
+        )
+        .await
+        .unwrap();
+
+    let rows = client
+        .query("SELECT * FROM optional_binary_data ORDER BY id", &[])
+        .await
+        .unwrap();
+    let present: OptionalBinaryData = from_row(&rows[0]).unwrap();
+    let absent: OptionalBinaryData = from_row(&rows[1]).unwrap();
+
+    assert_eq!(present.data, Some(vec![0xDE, 0xAD, 0xBE, 0xEF]));
+    assert_eq!(absent.data, None);
+}
+
+#[tokio::test]
 async fn test_field_alias() {
     #[derive(Debug, Facet, PartialEq)]
     struct AliasedUser {
