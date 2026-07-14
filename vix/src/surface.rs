@@ -123,7 +123,7 @@ fn unsupported_generic_call_span(source: &str) -> Option<Span> {
                 {
                     index += 1;
                 }
-                if bytes.get(index) == Some(&b'<') {
+                if bytes.get(index) == Some(&b'<') && !is_allowed_type_application(&bytes[start..index]) {
                     if let Some(end) = generic_call_end(bytes, index) {
                         return Some(Span {
                             start: u32::try_from(start).unwrap_or(u32::MAX),
@@ -136,6 +136,10 @@ fn unsupported_generic_call_span(source: &str) -> Option<Span> {
         }
     }
     None
+}
+
+fn is_allowed_type_application(identifier: &[u8]) -> bool {
+    matches!(identifier, b"try_json_decode" | b"try_toml_decode")
 }
 
 fn generic_call_end(bytes: &[u8], lt: usize) -> Option<usize> {
