@@ -1951,28 +1951,8 @@ fn build_script_directives(run: Tree) -> BuildScriptDirectives {
     build_script_directives_from_stdout(run.text(p"build.stdout"))
 }
 
-fn rustc_cfg_directive_line(line: String, out: [String]) -> [String] {
-    let double_colon = line.strip_prefix("cargo::rustc-cfg=");
-    match double_colon == line {
-        true => match line.strip_prefix("cargo:rustc-cfg=") {
-            single_colon => match single_colon == line {
-                true => out,
-                false => out.push(single_colon),
-            },
-        },
-        false => out.push(double_colon),
-    }
-}
-
-fn rustc_cfg_directive_lines(stdout: String, out: [String]) -> [String] {
-    match stdout.contains("\n") {
-        true => rustc_cfg_directive_lines(stdout.after("\n"), rustc_cfg_directive_line(stdout.before("\n"), out)),
-        false => rustc_cfg_directive_line(stdout, out),
-    }
-}
-
 pub fn build_script_rustc_cfgs(run: Tree) -> [String] {
-    rustc_cfg_directive_lines(run.text(p"build.stdout"), [])
+    build_script_directives(run).rustc_cfg
 }
 
 fn build_script_out_dir(run: Tree) -> Tree {
