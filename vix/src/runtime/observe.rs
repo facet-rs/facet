@@ -17,6 +17,10 @@ pub struct Counters {
     pub store_dedups: u64,
     pub bytes_hashed: u64,
     pub effect_spawns: u64,
+    /// Fetch effects actually performed (a memo miss that ran). A memoized
+    /// re-demand of an identical pinned fetch adds nothing; this is what the
+    /// `fetched(n)` trace check reads.
+    pub fetches_performed: u64,
     pub scheduler_requests: u64,
     pub task_spawns: u64,
     pub task_discards: u64,

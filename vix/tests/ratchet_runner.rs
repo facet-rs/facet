@@ -85,6 +85,11 @@ const RUNG_067: &str = include_str!("ratchet/067-exec-echo.vix");
 const RUNG_068: &str = include_str!("ratchet/068-exec-failure-is-result.vix");
 const RUNG_069: &str = include_str!("ratchet/069-exec-memoized.vix");
 const RUNG_070: &str = include_str!("ratchet/070-undeclared-capability.reject.vix");
+const RUNG_071: &str = include_str!("ratchet/071-tree-projection.vix");
+const RUNG_072: &str = include_str!("ratchet/072-glob.vix");
+const RUNG_075: &str = include_str!("ratchet/075-fetch-pinned.vix");
+const RUNG_076: &str = include_str!("ratchet/076-fetch-memoized.vix");
+const RUNG_077: &str = include_str!("ratchet/077-archive-extract.vix");
 const RUNG_106: &str = include_str!("ratchet/106-imports.vix");
 const RUNG_107: &str = include_str!("ratchet/107-visibility.reject.vix");
 const RUNG_108: &str = include_str!("ratchet/108-import-std.vix");
@@ -6800,5 +6805,71 @@ fn bad() -> Stream<Check> {
     assert!(
         matches!(run_source(BAD), Err(RunError::Diagnostics(_))),
         "a non-literal snapshot name is rejected at compile time"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Rungs 071–077 (skipping the parallel exec band's 073/074): trees, glob,
+// pinned fetch, fetch memoization, archive extraction. These certificates sit
+// above the current consecutive red boundary (066/067+) — progress, not score.
+// ---------------------------------------------------------------------------
+
+/// Every rung of the tree/fetch band compiles through the production surface
+/// grammar and checker into typed VIR: the machine-plane primitives
+/// (`fixture_tree`, `/` projection, `.text()`, `.glob().collect()`,
+/// `fixture_registry().url()`, `fetch`, `untar`, `.len()`) and the
+/// `never_read` / `fetched` trace descriptors all resolve.
+#[test]
+fn tree_fetch_band_compiles_to_typed_vir() {
+    for (rung, source) in [
+        ("071", RUNG_071),
+        ("072", RUNG_072),
+        ("075", RUNG_075),
+        ("076", RUNG_076),
+        ("077", RUNG_077),
+    ] {
+        let module = Compiler::new()
+            .compile(source)
+            .unwrap_or_else(|error| panic!("rung {rung} compiles to VIR: {error:?}"));
+        assert_eq!(module.tests.len(), 1, "rung {rung} declares one test");
+    }
+}
+
+/// The rungs execute through the production runner: effect islands use the
+/// store/memo/receipt plane while their consumers remain ordinary verified
+/// Weavy islands. Each source is run in both plain and chaos lanes by
+/// `run_source`; the in-language `never_read` and `fetched` checks are the
+/// externally visible certificate.
+#[test]
+fn rung_071_runs_through_effect_plane() {
+    assert_effect_rung("071", RUNG_071);
+}
+
+#[test]
+fn rung_072_runs_through_effect_plane() {
+    assert_effect_rung("072", RUNG_072);
+}
+
+#[test]
+fn rung_075_runs_through_effect_plane() {
+    assert_effect_rung("075", RUNG_075);
+}
+
+#[test]
+fn rung_076_runs_through_effect_plane() {
+    assert_effect_rung("076", RUNG_076);
+}
+
+#[test]
+fn rung_077_runs_through_effect_plane() {
+    assert_effect_rung("077", RUNG_077);
+}
+
+fn assert_effect_rung(rung: &str, source: &str) {
+    let report = run_source(source)
+        .unwrap_or_else(|error| panic!("rung {rung} runs through the effect plane: {error:?}"));
+    assert!(
+        report.passed(),
+        "rung {rung} agrees across plain and chaos: {report:#?}"
     );
 }

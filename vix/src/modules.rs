@@ -409,6 +409,8 @@ impl Rewriter<'_> {
                 Ok(())
             }
             ast::Pattern::Some(some) => self.pattern(&mut some.payload),
+            ast::Pattern::Ok(ok) => self.pattern(&mut ok.payload),
+            ast::Pattern::Err(err) => self.pattern(&mut err.payload),
             ast::Pattern::Tuple(tuple) => {
                 for element in &mut tuple.elems {
                     self.pattern(element)?;
@@ -481,6 +483,15 @@ impl Rewriter<'_> {
             }
             ast::Expr::Unary(unary) => self.expr(&mut unary.value),
             ast::Expr::Paren(paren) => self.expr(&mut paren.inner),
+            ast::Expr::Command(command) => {
+                self.reference(&mut command.tag);
+                Ok(())
+            }
+            ast::Expr::Exec(exec) => {
+                self.reference(&mut exec.command.tag);
+                Ok(())
+            }
+            ast::Expr::Try(try_expr) => self.expr(&mut try_expr.value),
             ast::Expr::Call(call) => {
                 self.reference(&mut call.callee);
                 for argument in &mut call.args.args {

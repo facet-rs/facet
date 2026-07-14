@@ -9,8 +9,9 @@ use weavy::exec::{
 use weavy::task::{FnId, TaskEvent as WeavyTaskEvent, TaskStep};
 
 use crate::lowering::{LoweringArtifact, LoweringAttribution, ValueInputBinding};
-use crate::vir::{FunctionId, Island, IslandId, Op, Type, VariantPayload};
+use crate::vir::{FunctionId, Island, IslandId, NodeId, Op, Type, VariantPayload};
 
+use super::fixture::{FixtureStore, TarMember, parse_ustar};
 use super::identity::{
     DemandKey, DemandPreimage, Location, LocationId, RecipeId, SchemaId, ValueId,
 };
@@ -33,6 +34,19 @@ struct MemoEntry {
     preimage: DemandPreimage,
     result: Handle,
     receipt: Option<Receipt>,
+}
+
+#[derive(Clone)]
+struct EffectValue {
+    identity: ValueId,
+    resident: Vec<u8>,
+    frozen: Option<FrozenValue>,
+    node: Option<FramedNode>,
+}
+
+enum EffectTerm {
+    Value(EffectValue),
+    Glob { tree: EffectValue, pattern: String },
 }
 
 struct DemandExecution<'a> {
@@ -980,6 +994,505 @@ impl<S: EventSink> Runtime<S> {
                 failure_context: None,
             });
         }
+    }
+
+    /// Evaluate one machine-plane effect island. Effects use the same demand,
+    /// task, memo, store, and receipt authority as Weavy islands; only their
+    /// operation interpreter is different. The fixture root is reachable here
+    /// and nowhere else in the production runner.
+    pub fn evaluate_effect(
+        &mut self,
+        island: IslandId,
+        location: &Location,
+        fingerprint: &str,
+        effect: &Island,
+        arguments: &[Evaluation],
+        chaos: ChaosPolicy,
+    ) -> Result<Evaluation, Box<MachineError>> {
+        let recipe = RecipeId::from_effect_fingerprint(fingerprint);
+        let preimage = DemandPreimage {
+            closure: recipe,
+            arguments: arguments.iter().map(|argument| argument.identity).collect(),
+        };
+        let key = DemandKey::from_preimage(&preimage);
+        self.emit(EventKind::Demanded { key });
+        let memo_handle = self.memo.get(&location.id).and_then(|entry| {
+            (entry.location == *location && entry.key == key && entry.preimage == preimage)
+                .then_some(entry.result)
+        });
+        if let Some(handle) = memo_handle {
+            let (identity, failure) = match self.store.entry(handle) {
+                Some(stored) => (stored.identity, stored.failure().cloned()),
+                None => {
+                    return Err(Box::new(MachineError::runtime(
+                        MachineOperation::MemoRead,
+                        RuntimeFault::MissingMemoStoreHandle,
+                        None,
+                        Some(key),
+                    )));
+                }
+            };
+            self.counters.memo_hits_exact += 1;
+            self.emit(EventKind::Memo {
+                location: location.id,
+                verdict: MemoVerdict::Exact,
+                verified: 0,
+            });
+            return Ok(Evaluation {
+                handle,
+                identity,
+                passed: failure.is_none(),
+                memo: MemoVerdict::Exact,
+                failure,
+                failure_context: None,
+            });
+        }
+        self.counters.memo_misses += 1;
+        self.emit(EventKind::Memo {
+            location: location.id,
+            verdict: MemoVerdict::Miss,
+            verified: 0,
+        });
+        self.demands.insert(
+            key,
+            DemandRecord {
+                key,
+                state: DemandState::Queued,
+                result: None,
+            },
+        );
+        let output_ty = effect
+            .nodes
+            .iter()
+            .find(|node| node.id == effect.output)
+            .map(|node| node.ty.clone())
+            .ok_or_else(|| {
+                Box::new(MachineError::runtime(
+                    MachineOperation::Effect,
+                    RuntimeFault::EffectPlane {
+                        detail: "effect island output node was missing",
+                    },
+                    None,
+                    Some(key),
+                ))
+            })?;
+        self.emit(EventKind::DemandTransition {
+            key,
+            from: DemandState::Absent,
+            to: DemandState::Queued,
+        });
+        let mut kill_armed = chaos.kill_first_running_task;
+        loop {
+            self.counters.scheduler_requests += 1;
+            let task = self.spawn_task(key);
+            self.transition_demand(key, DemandState::Running)?;
+            self.transition_task(task, TaskState::Running)?;
+            self.emit(EventKind::IslandEntered { task, island });
+            self.emit(EventKind::SafePoint {
+                task,
+                class: SafePointClass::Edge,
+            });
+            if kill_armed {
+                kill_armed = false;
+                self.counters.task_discards += 1;
+                self.transition_task(task, TaskState::Discarded)?;
+                self.transition_demand(key, DemandState::Queued)?;
+                continue;
+            }
+            self.counters.effect_spawns += 1;
+            let mut reads = Vec::new();
+            let value = self.evaluate_effect_node(effect, effect.output, arguments, &mut reads)?;
+            let EffectTerm::Value(value) = value else {
+                return Err(Box::new(self.terminate_machine_fault(
+                    task,
+                    key,
+                    MachineError::runtime(
+                        MachineOperation::Effect,
+                        RuntimeFault::EffectPlane {
+                            detail: "effect island output was unresolved codata",
+                        },
+                        None,
+                        Some(key),
+                    ),
+                )));
+            };
+            let node = value.node.unwrap_or_else(|| {
+                FramedNode::leaf(effect_schema(&output_ty), value.resident.clone())
+            });
+            let interned = self.store.intern_tree(&node, &value.resident);
+            if let Some(frozen) = value.frozen {
+                self.store.attach_frozen(interned.handle, frozen);
+            }
+            self.observe_interned(interned);
+            self.memo.insert(
+                location.id,
+                MemoEntry {
+                    location: location.clone(),
+                    key,
+                    preimage: preimage.clone(),
+                    result: interned.handle,
+                    receipt: Some(Receipt { demand: key, reads }),
+                },
+            );
+            if let Some(demand) = self.demands.get_mut(&key) {
+                demand.result = Some(interned.handle);
+            }
+            self.transition_task(task, TaskState::Completed)?;
+            self.transition_demand(key, DemandState::Ready)?;
+            self.emit(EventKind::Completed {
+                key,
+                identity: interned.identity,
+            });
+            return Ok(Evaluation {
+                handle: interned.handle,
+                identity: interned.identity,
+                passed: true,
+                memo: MemoVerdict::Miss,
+                failure: None,
+                failure_context: None,
+            });
+        }
+    }
+
+    fn evaluate_effect_node(
+        &mut self,
+        island: &Island,
+        node: NodeId,
+        arguments: &[Evaluation],
+        reads: &mut Vec<super::model::ReadWitness>,
+    ) -> Result<EffectTerm, Box<MachineError>> {
+        let node = island
+            .nodes
+            .iter()
+            .find(|candidate| candidate.id == node)
+            .ok_or_else(|| {
+                Box::new(MachineError::runtime(
+                    MachineOperation::Effect,
+                    RuntimeFault::EffectPlane {
+                        detail: "effect island referenced a missing node",
+                    },
+                    None,
+                    None,
+                ))
+            })?;
+        let mut input = |index: usize, this: &mut Self| {
+            let id = *node.inputs.get(index).ok_or_else(|| {
+                Box::new(MachineError::runtime(
+                    MachineOperation::Effect,
+                    RuntimeFault::EffectPlane {
+                        detail: "effect primitive is missing an operand",
+                    },
+                    None,
+                    None,
+                ))
+            })?;
+            this.evaluate_effect_node(island, id, arguments, reads)
+        };
+        match &node.op {
+            Op::Parameter(id) => {
+                let argument = arguments.get(id.0 as usize).ok_or_else(|| {
+                    Box::new(MachineError::runtime(
+                        MachineOperation::Effect,
+                        RuntimeFault::EffectPlane {
+                            detail: "effect parameter has no published argument",
+                        },
+                        None,
+                        None,
+                    ))
+                })?;
+                let stored = self.store.entry(argument.handle).ok_or_else(|| {
+                    Box::new(MachineError::runtime(
+                        MachineOperation::Effect,
+                        RuntimeFault::EffectPlane {
+                            detail: "effect argument store handle vanished",
+                        },
+                        None,
+                        None,
+                    ))
+                })?;
+                Ok(EffectTerm::Value(EffectValue {
+                    identity: argument.identity,
+                    resident: stored.resident_bytes().unwrap_or_default().to_vec(),
+                    frozen: stored.frozen().cloned(),
+                    node: None,
+                }))
+            }
+            Op::String(value) | Op::Path(value) => Ok(EffectTerm::Value(effect_leaf(
+                &node.ty,
+                value.as_bytes().to_vec(),
+            ))),
+            Op::PathJoin => {
+                let EffectTerm::Value(left) = input(0, self)? else {
+                    return effect_fault("Path join left operand was codata");
+                };
+                let EffectTerm::Value(right) = input(1, self)? else {
+                    return effect_fault("Path join right operand was codata");
+                };
+                let mut path = left.resident;
+                if !path.is_empty() {
+                    path.push(b'/');
+                }
+                path.extend(right.resident);
+                Ok(EffectTerm::Value(effect_leaf(&node.ty, path)))
+            }
+            Op::FixtureTree => {
+                let EffectTerm::Value(name) = input(0, self)? else {
+                    return effect_fault("fixture_tree name was codata");
+                };
+                let mut resident = b"fixture-tree\0".to_vec();
+                resident.extend(name.resident);
+                Ok(EffectTerm::Value(effect_leaf(&node.ty, resident)))
+            }
+            Op::FixtureRegistry => Ok(EffectTerm::Value(effect_leaf(
+                &node.ty,
+                b"fixture-registry".to_vec(),
+            ))),
+            Op::TreeProject => {
+                let EffectTerm::Value(tree) = input(0, self)? else {
+                    return effect_fault("tree projection receiver was codata");
+                };
+                let EffectTerm::Value(path) = input(1, self)? else {
+                    return effect_fault("tree projection path was codata");
+                };
+                let mut resident = b"tree-entry\0".to_vec();
+                resident.extend_from_slice(&(tree.resident.len() as u64).to_le_bytes());
+                resident.extend(tree.resident);
+                resident.extend(path.resident);
+                Ok(EffectTerm::Value(effect_leaf(&node.ty, resident)))
+            }
+            Op::TreeEntryText => {
+                let EffectTerm::Value(entry) = input(0, self)? else {
+                    return effect_fault("tree text receiver was codata");
+                };
+                let (source, projection, bytes) = self.tree_entry_text(&entry)?;
+                reads.push(super::model::ReadWitness { source, projection });
+                Ok(EffectTerm::Value(effect_leaf(&node.ty, bytes)))
+            }
+            Op::TreeGlob => {
+                let EffectTerm::Value(tree) = input(0, self)? else {
+                    return effect_fault("tree glob receiver was codata");
+                };
+                let EffectTerm::Value(pattern) = input(1, self)? else {
+                    return effect_fault("tree glob pattern was codata");
+                };
+                let pattern = String::from_utf8(pattern.resident)
+                    .map_err(|_| effect_machine_error("tree glob pattern was not UTF-8"))?;
+                Ok(EffectTerm::Glob { tree, pattern })
+            }
+            Op::StreamCollect => {
+                let EffectTerm::Glob { tree, pattern } = input(0, self)? else {
+                    return effect_fault("effect Stream.collect receiver was not a tree glob");
+                };
+                let paths = self.tree_glob_paths(&tree, &pattern, reads)?;
+                let mut rows = Vec::with_capacity(paths.len());
+                let mut frozen = Vec::with_capacity(paths.len());
+                for path in paths {
+                    let path_node =
+                        FramedNode::leaf(effect_schema(&Type::Path), path.as_bytes().to_vec());
+                    let interned = self.store.intern_tree(&path_node, path.as_bytes());
+                    self.observe_interned(interned);
+                    rows.push((interned.identity, interned.identity));
+                    frozen.push((
+                        FrozenValue::Reference(interned.identity),
+                        FrozenValue::Reference(interned.identity),
+                    ));
+                }
+                rows.sort();
+                let map_node = FramedNode::OrderedMap {
+                    schema: effect_schema(&node.ty),
+                    rows,
+                };
+                Ok(EffectTerm::Value(EffectValue {
+                    identity: map_node.identity(),
+                    resident: Vec::new(),
+                    frozen: Some(FrozenValue::OrderedMap(frozen)),
+                    node: Some(map_node),
+                }))
+            }
+            Op::RegistryUrl => {
+                let EffectTerm::Value(registry) = input(0, self)? else {
+                    return effect_fault("registry URL receiver was codata");
+                };
+                let EffectTerm::Value(name) = input(1, self)? else {
+                    return effect_fault("registry URL name was codata");
+                };
+                let name = String::from_utf8(name.resident)
+                    .map_err(|_| effect_machine_error("registry artifact name was not UTF-8"))?;
+                let manifest = FixtureStore::default().registry_manifest().map_err(|_| {
+                    effect_machine_error("fixture registry manifest was unavailable")
+                })?;
+                reads.push(super::model::ReadWitness {
+                    source: registry.identity,
+                    projection: "registry/manifest".to_owned(),
+                });
+                let row = manifest.lines().find_map(|line| {
+                    let mut fields = line.split_whitespace();
+                    let artifact = fields.next()?;
+                    let url = fields.next()?;
+                    let hash = fields.next()?;
+                    (artifact == name).then(|| (url.to_owned(), hash.to_owned()))
+                });
+                let (url, hash) = row
+                    .ok_or_else(|| effect_machine_error("fixture registry artifact was absent"))?;
+                Ok(EffectTerm::Value(effect_leaf(
+                    &node.ty,
+                    format!("{url}\n{hash}").into_bytes(),
+                )))
+            }
+            Op::Fetch => {
+                let EffectTerm::Value(pinned) = input(0, self)? else {
+                    return effect_fault("fetch URL was codata");
+                };
+                let pinned_identity = pinned.identity;
+                let pinned = String::from_utf8(pinned.resident)
+                    .map_err(|_| effect_machine_error("pinned URL payload was not UTF-8"))?;
+                let (url, expected) = pinned
+                    .split_once('\n')
+                    .ok_or_else(|| effect_machine_error("pinned URL payload was malformed"))?;
+                let bytes = FixtureStore::default()
+                    .fetch_url(url)
+                    .map_err(|_| effect_machine_error("fixture fetch origin was unavailable"))?;
+                let blob = effect_leaf(&node.ty, bytes);
+                if blob.identity.content.hex() != expected {
+                    return effect_fault("fixture fetch did not match its pinned content identity");
+                }
+                let projection = FixtureStore::url_projection(url)
+                    .ok_or_else(|| effect_machine_error("fixture URL lost its projection"))?;
+                reads.push(super::model::ReadWitness {
+                    source: pinned_identity,
+                    projection: projection.to_owned(),
+                });
+                self.counters.fetches_performed += 1;
+                Ok(EffectTerm::Value(blob))
+            }
+            Op::Untar => {
+                let EffectTerm::Value(blob) = input(0, self)? else {
+                    return effect_fault("untar input was codata");
+                };
+                parse_ustar(&blob.resident)
+                    .map_err(|_| effect_machine_error("archive was not plain ustar"))?;
+                let canonical = canonical_archive_tree(&blob.resident);
+                Ok(EffectTerm::Value(EffectValue {
+                    identity: FramedNode::leaf(effect_schema(&node.ty), canonical.clone())
+                        .identity(),
+                    resident: blob.resident,
+                    frozen: None,
+                    node: Some(FramedNode::leaf(effect_schema(&node.ty), canonical)),
+                }))
+            }
+            Op::BlobLen => {
+                let EffectTerm::Value(blob) = input(0, self)? else {
+                    return effect_fault("Blob.len receiver was codata");
+                };
+                let bytes = i64::try_from(blob.resident.len())
+                    .map_err(|_| effect_machine_error("Blob length did not fit Int"))?
+                    .to_le_bytes()
+                    .to_vec();
+                Ok(EffectTerm::Value(EffectValue {
+                    identity: FramedNode::leaf(effect_schema(&node.ty), bytes.clone()).identity(),
+                    resident: bytes.clone(),
+                    frozen: Some(FrozenValue::Inline(bytes)),
+                    node: None,
+                }))
+            }
+            _ => effect_fault("effect island contained a non-effect operation"),
+        }
+    }
+
+    fn tree_entry_text(
+        &self,
+        entry: &EffectValue,
+    ) -> Result<(ValueId, String, Vec<u8>), Box<MachineError>> {
+        let (tree, path) = split_tree_entry(&entry.resident)?;
+        if let Some(name) = tree.strip_prefix(b"fixture-tree\0") {
+            let name = core::str::from_utf8(name)
+                .map_err(|_| effect_machine_error("fixture tree name was not UTF-8"))?;
+            let path = core::str::from_utf8(path)
+                .map_err(|_| effect_machine_error("tree path was not UTF-8"))?;
+            let projection = format!("{name}/{path}");
+            let bytes = FixtureStore::default()
+                .tree_file_bytes(&projection)
+                .map_err(|_| effect_machine_error("fixture tree entry was not a file"))?;
+            return Ok((entry.identity, projection, bytes));
+        }
+        let path = core::str::from_utf8(path)
+            .map_err(|_| effect_machine_error("archive tree path was not UTF-8"))?;
+        let member = parse_ustar(tree)
+            .map_err(|_| effect_machine_error("archive tree resident bytes were malformed"))?
+            .into_iter()
+            .find_map(|member| match member {
+                TarMember::File {
+                    path: candidate,
+                    bytes,
+                    ..
+                } if candidate == path => Some(bytes),
+                _ => None,
+            })
+            .ok_or_else(|| effect_machine_error("archive tree entry was not a file"))?;
+        Ok((entry.identity, path.to_owned(), member))
+    }
+
+    fn tree_glob_paths(
+        &self,
+        tree: &EffectValue,
+        pattern: &str,
+        reads: &mut Vec<super::model::ReadWitness>,
+    ) -> Result<Vec<String>, Box<MachineError>> {
+        let (directory, wildcard) = pattern
+            .rsplit_once('/')
+            .map_or(("", pattern), |(directory, wildcard)| (directory, wildcard));
+        let (prefix, suffix) = wildcard.split_once('*').unwrap_or((wildcard, ""));
+        let matches = |path: &str| {
+            let name = path.rsplit('/').next().unwrap_or(path);
+            (directory.is_empty()
+                || path
+                    .strip_prefix(directory)
+                    .is_some_and(|rest| rest.starts_with('/')))
+                && name.starts_with(prefix)
+                && name.ends_with(suffix)
+        };
+        if let Some(name) = tree.resident.strip_prefix(b"fixture-tree\0") {
+            let name = core::str::from_utf8(name)
+                .map_err(|_| effect_machine_error("fixture tree name was not UTF-8"))?;
+            let projection = if directory.is_empty() {
+                name.to_owned()
+            } else {
+                format!("{name}/{directory}")
+            };
+            let entries = FixtureStore::default()
+                .tree_dir_entries(&projection)
+                .map_err(|_| effect_machine_error("fixture glob directory was unavailable"))?;
+            reads.push(super::model::ReadWitness {
+                source: tree.identity,
+                projection,
+            });
+            let mut paths = entries
+                .into_iter()
+                .filter_map(|(entry, kind)| {
+                    (kind == super::fixture::FixtureEntryKind::File).then_some(entry)
+                })
+                .map(|entry| {
+                    if directory.is_empty() {
+                        entry
+                    } else {
+                        format!("{directory}/{entry}")
+                    }
+                })
+                .filter(|path| matches(path))
+                .collect::<Vec<_>>();
+            paths.sort();
+            return Ok(paths);
+        }
+        let mut paths = parse_ustar(&tree.resident)
+            .map_err(|_| effect_machine_error("archive tree resident bytes were malformed"))?
+            .into_iter()
+            .filter_map(|member| match member {
+                TarMember::File { path, .. } if matches(&path) => Some(path),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        paths.sort();
+        Ok(paths)
     }
 
     /// Drive one generator task to `Done` and return its outcome: either the
@@ -2391,6 +2904,19 @@ fn render_frozen(
                 .map_err(|_| "snapshot string is not utf-8".to_owned())?;
             escape_vix_string(text, out);
         }
+        Type::Extern(kind) => {
+            // Machine-plane values render as their kind plus canonical resident
+            // bytes: text when UTF-8, a hex spelling otherwise.
+            let bytes = leaf_bytes(store, frozen)?;
+            let _ = write!(out, "{}(", kind.name());
+            match core::str::from_utf8(&bytes) {
+                Ok(text) => escape_vix_string(text, out),
+                Err(_) => {
+                    let _ = write!(out, "0x{}", hex::encode(&bytes));
+                }
+            }
+            out.push(')');
+        }
         Type::Record(record) => {
             let FrozenValue::Product(fields) = frozen else {
                 return Err(render_mismatch(ty));
@@ -2772,7 +3298,7 @@ fn realize_structural_node<'task>(
                 8,
             ))
         }
-        Type::String | Type::Path => {
+        Type::String | Type::Path | Type::Extern(_) => {
             let resolved = resolver
                 .resolve(value.value_ref()?)
                 .ok_or_else(|| invalid_realized_result(lowered, 0))?;
@@ -3069,7 +3595,12 @@ fn realize_array<'task>(
 
 fn type_contains_handle(ty: &Type) -> bool {
     match ty {
-        Type::String | Type::Path | Type::Array(_) | Type::Map { .. } | Type::Set(_) => true,
+        Type::String
+        | Type::Path
+        | Type::Extern(_)
+        | Type::Array(_)
+        | Type::Map { .. }
+        | Type::Set(_) => true,
         Type::Tuple(elements) => elements.iter().any(type_contains_handle),
         Type::Record(record) => record
             .fields
@@ -3120,6 +3651,11 @@ fn frozen_to_weavy(
     store: &Store,
 ) -> Result<weavy::exec::FrozenValue, ()> {
     match (frozen, ty) {
+        (FrozenValue::Inline(_), Type::Bool | Type::Int | Type::Check) => {
+            Ok(weavy::exec::FrozenValue::Inline(
+                frozen_inline(frozen, ty, binding, store)?.into_weavy(),
+            ))
+        }
         (FrozenValue::Reference(identity), _) => {
             let schema = publication_schema(binding, ty)?;
             let handle = store
@@ -3199,12 +3735,15 @@ fn frozen_inline(
                 references: Vec::new(),
             })
         }
-        Type::String | Type::Path | Type::Array(_) | Type::Map { .. } | Type::Set(_) => {
-            Ok(FrozenInline {
-                bytes: vec![0; 8],
-                references: vec![(0, frozen_to_weavy(frozen, ty, binding, store)?)],
-            })
-        }
+        Type::String
+        | Type::Path
+        | Type::Extern(_)
+        | Type::Array(_)
+        | Type::Map { .. }
+        | Type::Set(_) => Ok(FrozenInline {
+            bytes: vec![0; 8],
+            references: vec![(0, frozen_to_weavy(frozen, ty, binding, store)?)],
+        }),
         Type::Tuple(elements) => {
             let FrozenValue::Product(fields) = frozen else {
                 return Err(());
@@ -3293,6 +3832,95 @@ fn semantic_schema_id(ty: &Type) -> SchemaId {
     SchemaId::named(&format!("vix.semantic.v1:{}", ty.name()))
 }
 
+fn effect_schema(ty: &Type) -> SchemaId {
+    semantic_schema_id(ty)
+}
+
+fn effect_leaf(ty: &Type, resident: Vec<u8>) -> EffectValue {
+    let node = FramedNode::leaf(effect_schema(ty), resident.clone());
+    let identity = node.identity();
+    EffectValue {
+        identity,
+        resident,
+        frozen: None,
+        node: Some(node),
+    }
+}
+
+fn effect_machine_error(detail: &'static str) -> Box<MachineError> {
+    Box::new(MachineError::runtime(
+        MachineOperation::Effect,
+        RuntimeFault::EffectPlane { detail },
+        None,
+        None,
+    ))
+}
+
+fn effect_fault<T>(detail: &'static str) -> Result<T, Box<MachineError>> {
+    Err(effect_machine_error(detail))
+}
+
+fn split_tree_entry(bytes: &[u8]) -> Result<(&[u8], &[u8]), Box<MachineError>> {
+    let prefix = b"tree-entry\0";
+    let header = prefix
+        .len()
+        .checked_add(8)
+        .ok_or_else(|| effect_machine_error("tree entry header overflow"))?;
+    if !bytes.starts_with(prefix) || bytes.len() < header {
+        return effect_fault("tree entry payload was malformed");
+    }
+    let length = u64::from_le_bytes(
+        bytes[prefix.len()..header]
+            .try_into()
+            .expect("eight-byte tree entry length"),
+    );
+    let length =
+        usize::try_from(length).map_err(|_| effect_machine_error("tree entry length overflow"))?;
+    let tree_end = header
+        .checked_add(length)
+        .filter(|end| *end <= bytes.len())
+        .ok_or_else(|| effect_machine_error("tree entry payload was truncated"))?;
+    Ok((&bytes[header..tree_end], &bytes[tree_end..]))
+}
+
+/// Canonical archive-tree identity material. It records entry kinds, paths,
+/// modes relevant to the Tree model, and file/symlink payloads in path order;
+/// the archive's block layout, padding, and original member order never enter.
+fn canonical_archive_tree(bytes: &[u8]) -> Vec<u8> {
+    let mut members = parse_ustar(bytes).expect("validated before canonical tree encoding");
+    members.sort_by(|left, right| left.path().as_bytes().cmp(right.path().as_bytes()));
+    let mut encoded = Vec::new();
+    for member in members {
+        match member {
+            TarMember::File {
+                path,
+                bytes,
+                executable,
+            } => {
+                encoded.push(0);
+                frame_effect_tree_field(&mut encoded, path.as_bytes());
+                encoded.push(u8::from(executable));
+                frame_effect_tree_field(&mut encoded, &bytes);
+            }
+            TarMember::Dir { path } => {
+                encoded.push(1);
+                frame_effect_tree_field(&mut encoded, path.as_bytes());
+            }
+            TarMember::Symlink { path, target } => {
+                encoded.push(2);
+                frame_effect_tree_field(&mut encoded, path.as_bytes());
+                frame_effect_tree_field(&mut encoded, target.as_bytes());
+            }
+        }
+    }
+    encoded
+}
+
+fn frame_effect_tree_field(out: &mut Vec<u8>, bytes: &[u8]) {
+    out.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
+    out.extend_from_slice(bytes);
+}
+
 fn invalid_realized_result(lowered: &LoweringArtifact, size: usize) -> TaskFault {
     TaskFault::InvalidResultShape {
         entry: FnId(0),
@@ -3325,16 +3953,9 @@ fn failure_context(
                 demand_chain: vec![lowered.demand_key],
             })
         }
-        FailureValue::IndexOutOfBounds { .. }
-        | FailureValue::MissingKey { .. }
-        | FailureValue::DuplicateKey { .. }
-        | FailureValue::MissingDelimiter { .. }
-        | FailureValue::InvalidInteger { .. }
-        | FailureValue::IntegerOverflow { .. }
-        | FailureValue::DivisionByZero { .. } => None,
-        // A process failure's recipe is the exec plan identity, never a Weavy
-        // island recipe; its context is attributed at the effect site.
-        FailureValue::ProcessFailure { .. } => None,
+        // Effect-plane failures carry an effect recipe, never a lowered
+        // island's; their context is attached where the effect evaluates.
+        _ => None,
     }
 }
 

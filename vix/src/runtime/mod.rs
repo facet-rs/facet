@@ -2,6 +2,7 @@
 
 mod abi;
 mod error;
+mod fixture;
 mod identity;
 mod model;
 mod observe;
@@ -10,6 +11,7 @@ mod store;
 
 pub use abi::*;
 pub use error::*;
+pub use fixture::*;
 pub use identity::*;
 pub use model::*;
 pub use observe::*;

@@ -324,6 +324,12 @@ struct TraceSnapshot {
     framed_bytes: u64,
     peak_molten_bytes: u64,
     peak_molten_nodes: u64,
+    /// Fetch effects actually performed during the run.
+    fetches_performed: u64,
+    /// The union of external read projections across every demand receipt.
+    /// Reads go through the recording fixture-store accessors, so this set is
+    /// complete by construction; `never_read` is absence in this set.
+    reads: BTreeSet<String>,
     function_calls: BTreeMap<FunctionId, u64>,
     /// One entry per realized wire demand (a computation the memo path actually
     /// ran). Repeated identical `recipe + argument` demands memoize to a single
@@ -424,6 +430,14 @@ impl TraceSnapshot {
             TraceCheck::RanProcesses { count } => {
                 let observed = self.effect_spawns;
                 (observed, i128::from(observed) == i128::from(*count))
+            }
+            TraceCheck::NeverRead { path } => {
+                let observed = u64::from(self.reads.contains(path));
+                (observed, observed == 0)
+            }
+            TraceCheck::Fetched { times } => {
+                let observed = self.fetches_performed;
+                (observed, i128::from(observed) == i128::from(*times))
             }
         };
         CheckRun {
@@ -715,10 +729,9 @@ fn prepare_modules_with_cache(
         // snapshot and lowers nothing, so it is skipped here.
         let partitioned = compilation.module.try_partition_test(test)?;
         for value in &partitioned.values {
-            if value.island.effect_output().is_some() {
-                continue;
+            if value.island.purpose != crate::vir::IslandPurpose::Effect {
+                cache.get_or_lower(&value.island)?;
             }
-            cache.get_or_lower(&value.island)?;
         }
         // Argument islands demanded lazily through force-on-park are compiled now
         // so a park resolves through a warm cache hit, never a compilation.
@@ -1032,49 +1045,62 @@ fn run_lane(
             published_values.insert(capability.id, evaluation);
         }
         for value in &partitioned.values {
-            let location = Location::for_test_value(&partitioned.name, &value.id.stable_segment());
-            let evaluation = if value.island.effect_output().is_some() {
-                let capability = value
-                    .island
-                    .value_inputs
-                    .first()
-                    .and_then(|input| published_values.get(input))
-                    .cloned()
-                    .expect("effect island has its declared capability input");
-                runtime.evaluate_exec(
-                    &value.island,
-                    &location,
-                    &capability,
-                    ChaosPolicy {
-                        kill_first_running_task: kill_available,
-                    },
-                )?
+            let arguments = value
+                .island
+                .value_inputs
+                .iter()
+                .map(|input| {
+                    published_values
+                        .get(input)
+                        .cloned()
+                        .expect("value islands are ordered after their dependencies")
+                })
+                .collect::<Vec<_>>();
+            let chaos = ChaosPolicy {
+                kill_first_running_task: kill_available,
+            };
+            let evaluation = if value.island.purpose == crate::vir::IslandPurpose::Effect {
+                if matches!(
+                    value.island.effect_output().map(|node| &node.op),
+                    Some(crate::vir::Op::Exec { .. })
+                ) {
+                    let capability = arguments
+                        .first()
+                        .cloned()
+                        .expect("exec effect island has its declared capability input");
+                    runtime.evaluate_exec(
+                        &value.island,
+                        &Location::for_test_value(&partitioned.name, &value.id.stable_segment()),
+                        &capability,
+                        chaos,
+                    )?
+                } else {
+                    let fingerprint = value
+                        .effect_fingerprint
+                        .as_deref()
+                        .expect("effect island carries a structural fingerprint");
+                    runtime.evaluate_effect(
+                        value.island.id,
+                        &Location::for_test_effect(&partitioned.name, fingerprint),
+                        fingerprint,
+                        &value.island,
+                        &arguments,
+                        chaos,
+                    )?
+                }
             } else {
                 let lowered = cache.get_or_lower(&value.island)?;
                 let attribution = attribution_for(&value.island);
-                let arguments = value
-                    .island
-                    .value_inputs
-                    .iter()
-                    .map(|input| {
-                        published_values
-                            .get(input)
-                            .cloned()
-                            .expect("value islands are ordered after their dependencies")
-                    })
-                    .collect::<Vec<_>>();
                 runtime.evaluate(
                     value.island.id,
-                    &location,
+                    &Location::for_test_value(&partitioned.name, &value.id.stable_segment()),
                     lowered,
                     &attribution,
                     IslandInputs {
                         arguments: &arguments,
                         wires: &[],
                     },
-                    ChaosPolicy {
-                        kill_first_running_task: kill_available,
-                    },
+                    chaos,
                 )?
             };
             kill_available = false;
@@ -1317,6 +1343,12 @@ fn run_lane(
         framed_bytes: counters.framed_bytes,
         peak_molten_bytes: counters.peak_molten_bytes,
         peak_molten_nodes: counters.peak_molten_nodes,
+        fetches_performed: counters.fetches_performed,
+        reads: runtime
+            .receipts()
+            .flat_map(|receipt| receipt.reads.iter())
+            .map(|read| read.projection.clone())
+            .collect(),
         function_calls,
         wire_demands: runtime
             .realized_wire_demands()

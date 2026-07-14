@@ -37,6 +37,9 @@ pub enum MachineOperation {
     DemandTransition,
     TaskTransition,
     TraceAttribution,
+    /// A machine-plane primitive demand (tree projection, glob, fetch,
+    /// extract) evaluated by the runtime effect plane.
+    Effect,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -92,6 +95,13 @@ pub enum RuntimeFault {
     /// An effect island was evaluated whose output is not an effect demand, or
     /// whose inputs did not carry the capability the effect requires.
     MalformedEffectIsland,
+    /// A machine invariant on the effect plane: a malformed effect island (an
+    /// op the plane does not interpret, a missing operand, a store handle that
+    /// vanished). Never a language failure — those are typed
+    /// [`super::FailureValue`]s.
+    EffectPlane {
+        detail: &'static str,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
