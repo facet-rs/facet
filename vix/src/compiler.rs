@@ -7900,12 +7900,26 @@ fn push_equality_condition(
             let right_values = push_project(nodes, span, right.node, element_array, Op::SetValues);
             push_eq(nodes, span, left_values, right_values)
         }
-        // Product equality descends through the published fields here instead
-        // of asking the Weavy leaf emitter to compare an opaque map/set handle.
-        // This makes a record whose field is an ordered collection — notably
-        // `ByteStream { $lines: Map<Int, String> }` — use the same canonical
-        // collection equality path as a top-level map.
+        // Product equality only descends through fields when a field carries an
+        // opaque collection handle. Fixed-width products keep the primitive
+        // structural equality path so existing word-level equality certificates
+        // remain stable, while `ByteStream { $lines: Map<Int, String> }` still
+        // reaches the canonical map equality path.
         Type::Record(record) => {
+            if record
+                .fields
+                .iter()
+                .all(|field| field.ty.equality_is_structural())
+            {
+                return push_node(
+                    nodes,
+                    span,
+                    Type::Bool,
+                    EffectFacts::PURE,
+                    vec![left.node, right.node],
+                    if negate { Op::Ne } else { Op::Eq },
+                );
+            }
             let mut fields = record.fields.iter().enumerate();
             let Some((first_index, first)) = fields.next() else {
                 let unit_equal = lower_bool_constant(nodes, span, true);
