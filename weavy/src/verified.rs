@@ -2207,6 +2207,7 @@ impl Verifier<'_> {
                 };
                 let call = &self.contract.calls[call_index];
                 let leading = call.entries.len();
+                let semantic_projection = contract.call_abi.is_some();
                 let projected_entries = if let Some(abi) = &contract.call_abi {
                     if abi.entries.len() != leading
                         || entries.len() != leading.saturating_add(contract.environment.len())
@@ -2263,7 +2264,11 @@ impl Verifier<'_> {
                         .zip(&call.entries)
                         .enumerate()
                         .find_map(|(index, (region, expected))| {
-                            let function = semantic_call_region(&contract.frame.regions[*region]);
+                            let function = if semantic_projection {
+                                semantic_call_region(&contract.frame.regions[*region])
+                            } else {
+                                contract.frame.regions[*region].clone()
+                            };
                             (function != *expected).then(|| FunctionCallContractMismatch::Entry {
                                 index,
                                 function,
@@ -2318,8 +2323,11 @@ impl Verifier<'_> {
                 } else {
                     result
                 };
-                let concrete_result =
-                    semantic_call_region(&contract.frame.regions[projected_result]);
+                let concrete_result = if semantic_projection {
+                    semantic_call_region(&contract.frame.regions[projected_result])
+                } else {
+                    contract.frame.regions[projected_result].clone()
+                };
                 let result_matches = concrete_result == call.result;
                 let mismatch = entry_mismatch.or_else(|| {
                     (!result_matches).then(|| FunctionCallContractMismatch::Result {
