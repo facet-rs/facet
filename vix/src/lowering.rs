@@ -2202,6 +2202,16 @@ impl<'a> ProgramContractBuilder<'a> {
         let mut regions = Vec::new();
         let mut node_region_ids = BTreeMap::new();
         let mut constant_region_ids = BTreeMap::new();
+        regions.push(WeavyFrameRegion::new(
+            document_host_plan_slot().byte_offset(),
+            WeavyRegionShape::word(WeavyWordKind::Scalar),
+        ));
+        regions.push(WeavyFrameRegion::new(
+            document_host_input_slot().byte_offset(),
+            WeavyRegionShape::word(WeavyWordKind::Handle(
+                self.schema_for_type(&Type::String, function.span)?,
+            )),
+        ));
         for node in function.nodes {
             let region = layout.region(node.id, node.span)?;
             let contract = self.frame_region(region.start(), &node.ty)?;
@@ -3004,9 +3014,12 @@ impl RegionAssignments {
             let mut assigned = BTreeMap::new();
             for (index, node) in body.iter().enumerate() {
                 layout.region(node.id, node.span)?;
-                let id = WeavyRegionId(u32::try_from(index).map_err(|_| {
-                    lowering_diagnostic(node.span, "region assignment exceeds u32")
-                })?);
+                let id = WeavyRegionId(
+                    u32::try_from(index.checked_add(DOCUMENT_HOST_ABI_WORDS).ok_or_else(|| {
+                        lowering_diagnostic(node.span, "region assignment overflow")
+                    })?)
+                    .map_err(|_| lowering_diagnostic(node.span, "region assignment exceeds u32"))?,
+                );
                 if assigned.insert(node.id, id).is_some() {
                     return Err(lowering_diagnostic(
                         node.span,
@@ -3014,7 +3027,10 @@ impl RegionAssignments {
                     ));
                 }
             }
-            let mut next = body.len();
+            let mut next = body
+                .len()
+                .checked_add(DOCUMENT_HOST_ABI_WORDS)
+                .ok_or_else(|| lowering_diagnostic(span, "region assignment overflow"))?;
             if layout.scratch.is_some() {
                 next = next.checked_add(1).ok_or_else(|| {
                     lowering_diagnostic(span, "scratch region assignment overflow")
