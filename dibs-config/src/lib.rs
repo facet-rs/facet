@@ -21,7 +21,10 @@ pub struct DbConfig {
     #[facet(rename = "crate")]
     pub crate_name: Option<String>,
 
-    /// Path to a pre-built binary (for faster iteration).
-    /// If not specified, we'll use `cargo run -p <crate_name>`.
-    pub binary: Option<String>,
+    /// Address of the application's explicitly enabled Dibs tooling endpoint.
+    ///
+    /// The Dibs CLI never discovers or launches an application binary. The
+    /// application owns the schema inventory and chooses when to expose this
+    /// endpoint, normally through a development-only process mode.
+    pub endpoint: Option<String>,
 }

@@ -76,7 +76,7 @@ struct Package {
 }
 
 /// Find the path to a crate in the workspace using cargo metadata.
-fn find_crate_path(crate_name: &str, project_root: &Path) -> Option<PathBuf> {
+fn find_crate_in_workspace(crate_name: &str, project_root: &Path) -> Option<PathBuf> {
     let output = Command::new("cargo")
         .args(["metadata", "--format-version", "1", "--no-deps"])
         .current_dir(project_root)
@@ -100,9 +100,8 @@ fn find_crate_path(crate_name: &str, project_root: &Path) -> Option<PathBuf> {
     None
 }
 
-/// Find the path to a crate for file watching.
-/// Uses the current directory as the project root.
-pub fn find_crate_path_for_watch(crate_name: &str) -> Option<PathBuf> {
+/// Find a workspace crate by package name.
+pub fn find_crate_path(crate_name: &str) -> Option<PathBuf> {
     let cwd = std::env::current_dir().ok()?;
-    find_crate_path(crate_name, &cwd)
+    find_crate_in_workspace(crate_name, &cwd)
 }

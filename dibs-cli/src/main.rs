@@ -1347,7 +1347,7 @@ fn generate_migration(db_config: &DbConfig, name: &str) {
     let migrations_dir = db_config
         .crate_name
         .as_ref()
-        .and_then(|crate_name| config::find_crate_path_for_watch(crate_name))
+        .and_then(|crate_name| config::find_crate_path(crate_name))
         .map(|p| p.join("src/migrations"))
         .unwrap_or_else(|| std::path::PathBuf::from("src/migrations"));
 
@@ -1424,8 +1424,8 @@ async fn run_generate_from_diff_via_vox(config: &Config, name: &str) {
 
     info!(
         db_crate = ?config.db.crate_name,
-        db_binary = ?config.db.binary,
-        "Connecting to db service"
+        db_endpoint = ?config.db.endpoint,
+        "Connecting to Dibs tooling endpoint"
     );
 
     // Connect to the db crate via vox
@@ -1493,7 +1493,7 @@ fn create_migration_file_from_sql(
     let migrations_dir = db_config
         .crate_name
         .as_ref()
-        .and_then(|crate_name| config::find_crate_path_for_watch(crate_name))
+        .and_then(|crate_name| config::find_crate_path(crate_name))
         .map(|p| p.join("src/migrations"))
         .unwrap_or_else(|| std::path::PathBuf::from("src/migrations"));
 

@@ -42,7 +42,7 @@
 //! Run migrations with `MigrationRunner`:
 //!
 //! ```ignore
-//! let runner = MigrationRunner::new(&client);
+//! let runner = MigrationRunner::new(&mut client);
 //! runner.migrate().await?;
 //! ```
 
@@ -73,7 +73,7 @@ pub use migrate::{
     AppliedMigration, Migration, MigrationContext, MigrationRunner, MigrationStatus, RanMigration,
 };
 pub use pool::ConnectionProvider;
-pub use service::{DibsServiceImpl, run_service};
+pub use service::{DibsServiceImpl, serve, serve_listener};
 pub use traced::{Connection, ConnectionExt, TracedConn, TracedObject, TracedPool};
 
 // Re-export schema types from dibs_db_schema

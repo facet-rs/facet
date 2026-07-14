@@ -9,10 +9,6 @@ publish = false
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
-[[bin]]
-name = "my-app-db"
-path = "src/main.rs"
-
 [lib]
 path = "src/lib.rs"
 

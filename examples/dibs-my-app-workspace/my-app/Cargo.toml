@@ -23,3 +23,5 @@ vox-websocket.workspace = true
 vox.workspace = true
 dotenvy.workspace = true
 tokio-postgres.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }

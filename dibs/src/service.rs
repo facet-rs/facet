@@ -1,22 +1,21 @@
 //! Dibs service implementation.
 //!
-//! This module provides the server-side implementation of the `DibsService` trait,
-//! which handles requests from the `dibs` CLI.
+//! This module provides the application-owned tooling endpoint used by the
+//! `dibs` CLI.
 //!
 //! # Example
 //!
-//! In your `my-app-db` crate's `main.rs`:
+//! In your application's explicit database-tooling mode:
 //!
 //! ```ignore
-//! fn main() {
-//!     dibs::run_service();
-//! }
+//! let addr = "127.0.0.1:7764".parse()?;
+//! dibs::serve(addr).await?;
 //! ```
 
 use crate::{Change, MigrationError, Schema, diff::SchemaExt, introspect::SchemaIntrospect};
 use dibs_proto::*;
-use std::net::SocketAddr;
-use tokio::net::TcpStream;
+use std::{io, net::SocketAddr};
+use tokio::net::TcpListener;
 
 /// Convert a MigrationError to a DibsError for the protocol.
 ///
@@ -74,51 +73,38 @@ fn error_to_dibs_error(err: crate::Error) -> DibsError {
     }
 }
 
-/// Run the dibs service, connecting back to the CLI.
+/// Serve Dibs tooling requests from an explicitly bound endpoint.
 ///
-/// This function reads `DIBS_CLI_ADDR` from the environment, connects to
-/// the dibs CLI, and serves requests until the connection is closed.
-///
-/// # Panics
-///
-/// Panics if `DIBS_CLI_ADDR` is not set or is invalid.
-pub fn run_service() {
-    let addr_str = std::env::var("DIBS_CLI_ADDR").unwrap_or_else(|_| {
-        eprintln!("DIBS_CLI_ADDR not set - this binary should be spawned by the dibs CLI");
-        std::process::exit(1);
-    });
-
-    let addr: SocketAddr = addr_str.parse().unwrap_or_else(|e| {
-        eprintln!("Invalid DIBS_CLI_ADDR '{}': {}", addr_str, e);
-        std::process::exit(1);
-    });
-
-    let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-    rt.block_on(run_service_async(addr));
+/// The application decides whether this endpoint exists at all. Production
+/// serve and migration modes do not need it; it is intended for local schema
+/// inspection, diffing, and migration authoring.
+pub async fn serve(addr: SocketAddr) -> io::Result<()> {
+    let listener = TcpListener::bind(addr).await?;
+    serve_listener(listener).await
 }
 
-async fn run_service_async(addr: SocketAddr) {
-    let dispatcher = DibsServiceDispatcher::new(DibsServiceImpl::new());
+/// Serve Dibs tooling requests from an already-bound listener.
+///
+/// This is useful when the application needs the operating system to choose
+/// an available port before publishing the endpoint address.
+pub async fn serve_listener(listener: TcpListener) -> io::Result<()> {
+    let addr = listener.local_addr()?;
+    tracing::info!(%addr, "Dibs tooling endpoint listening");
 
-    let result = async {
-        let stream = TcpStream::connect(addr).await?;
-        let link = vox_stream::StreamLink::tcp(stream);
-        vox::initiator_on(link)
-            .on_lane(dispatcher)
-            .establish_connection()
-            .await
-            .map_err(std::io::Error::other)
-    }
-    .await;
-
-    match result {
-        Ok(connection) => {
-            connection.closed().await;
-        }
-        Err(e) => {
-            eprintln!("Failed to connect to dibs CLI: {}", e);
-            std::process::exit(1);
-        }
+    loop {
+        let (stream, peer_addr) = listener.accept().await?;
+        tokio::spawn(async move {
+            let dispatcher = DibsServiceDispatcher::new(DibsServiceImpl::new());
+            let link = vox_stream::StreamLink::tcp(stream);
+            match vox::acceptor_on(link)
+                .on_lane(dispatcher)
+                .establish_connection()
+                .await
+            {
+                Ok(connection) => connection.closed().await,
+                Err(error) => tracing::warn!(%peer_addr, %error, "Dibs tooling session failed"),
+            }
+        });
     }
 }
 
@@ -166,7 +152,7 @@ impl DibsServiceImpl {
         // Spawn connection handler
         tokio::spawn(async move {
             if let Err(e) = connection.await {
-                eprintln!("Database connection error: {}", e);
+                tracing::warn!(error = %e, "Database connection ended");
             }
         });
 
@@ -241,7 +227,7 @@ impl DibsService for DibsServiceImpl {
         // Spawn connection handler
         tokio::spawn(async move {
             if let Err(e) = connection.await {
-                eprintln!("Database connection error: {}", e);
+                tracing::warn!(error = %e, "Database connection ended");
             }
         });
 
@@ -283,7 +269,7 @@ impl DibsService for DibsServiceImpl {
         // Spawn connection handler
         tokio::spawn(async move {
             if let Err(e) = connection.await {
-                eprintln!("Database connection error: {}", e);
+                tracing::warn!(error = %e, "Database connection ended");
             }
         });
 

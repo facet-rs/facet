@@ -6,7 +6,6 @@
 #![allow(clippy::collapsible_match)]
 
 use std::io::{self, stdout};
-use std::sync::mpsc;
 use std::time::Duration;
 
 use arborium::Highlighter;
@@ -19,7 +18,6 @@ use crossterm::{
 use dibs_proto::{
     DibsError, DiffRequest, DiffResult, MigrationInfo, MigrationStatusRequest, SchemaInfo, SqlError,
 };
-use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use ratatui::{
     prelude::*,
     widgets::{
@@ -417,11 +415,11 @@ pub struct App {
     highlighter: Highlighter,
     /// Theme for syntax highlighting
     theme: arborium_theme::Theme,
-    /// Build output lines (during build phase)
+    /// Connection diagnostics
     build_output: Vec<BuildOutput>,
-    /// Scroll position in build output
+    /// Scroll position in connection diagnostics
     build_scroll: usize,
-    /// Auto-scroll build output
+    /// Auto-scroll connection diagnostics
     build_auto_scroll: bool,
     /// Whether showing migration name input dialog
     show_migration_dialog: bool,
@@ -439,23 +437,19 @@ pub struct App {
     details_selection: usize,
     /// Scroll position in schema details pane
     details_scroll: u16,
-    /// Flag to trigger a rebuild
+    /// Flag to reconnect to the application-owned tooling endpoint
     needs_rebuild: bool,
     /// Postgres tab mode (HasPending or AllApplied)
     postgres_mode: PostgresMode,
     /// Postgres tab selection state
     postgres_selection: PostgresSelection,
-    /// Whether we're currently rebuilding (for spinner display)
-    rebuilding: bool,
-    /// File watcher for auto-rebuild on source changes
-    file_watcher_rx: Option<std::sync::mpsc::Receiver<()>>,
-    /// Pending migration to apply and commit after rebuild (path, name)
+    /// Pending migration to apply and commit after the application is restarted
     pending_migration_commit: Option<(String, String)>,
 }
 
 /// The current phase of the application.
 enum AppPhase {
-    /// Building/starting the service
+    /// Connecting to the application-owned tooling endpoint
     Building,
     /// Connected and ready
     Connected,
@@ -575,89 +569,7 @@ impl App {
             needs_rebuild: false,
             postgres_mode: PostgresMode::AllApplied,
             postgres_selection: PostgresSelection::NewChanges,
-            rebuilding: false,
-            file_watcher_rx: None,
             pending_migration_commit: None,
-        }
-    }
-
-    /// Set up file watcher for auto-rebuild on source changes.
-    /// Watches the crate's src/ directory for .rs file changes.
-    fn setup_file_watcher(&mut self, config: &DbConfig) -> Option<RecommendedWatcher> {
-        let (tx, rx) = mpsc::channel::<()>();
-        self.file_watcher_rx = Some(rx);
-
-        // Find the crate path to watch
-        let watch_path = if let Some(crate_name) = &config.crate_name {
-            // Find the crate using cargo metadata
-            if let Some(path) = crate::config::find_crate_path_for_watch(crate_name) {
-                path.join("src")
-            } else {
-                std::path::PathBuf::from("src")
-            }
-        } else {
-            std::path::PathBuf::from("src")
-        };
-
-        // Create a debounced watcher
-        let mut last_event = std::time::Instant::now();
-        let debounce_duration = Duration::from_millis(500);
-
-        let watcher =
-            notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
-                if let Ok(event) = res {
-                    // Only trigger on .rs file modifications
-                    let is_rs_change = event
-                        .paths
-                        .iter()
-                        .any(|p| p.extension().map(|e| e == "rs").unwrap_or(false));
-
-                    if is_rs_change
-                        && matches!(
-                            event.kind,
-                            notify::EventKind::Modify(_)
-                                | notify::EventKind::Create(_)
-                                | notify::EventKind::Remove(_)
-                        )
-                    {
-                        // Debounce: only send if enough time has passed
-                        let now = std::time::Instant::now();
-                        if now.duration_since(last_event) > debounce_duration {
-                            last_event = now;
-                            let _ = tx.send(());
-                        }
-                    }
-                }
-            });
-
-        match watcher {
-            Ok(mut w) => {
-                if watch_path.exists()
-                    && let Err(e) = w.watch(&watch_path, RecursiveMode::Recursive)
-                {
-                    eprintln!("Warning: Failed to watch {}: {}", watch_path.display(), e);
-                    return None;
-                }
-                Some(w)
-            }
-            Err(e) => {
-                eprintln!("Warning: Failed to create file watcher: {}", e);
-                None
-            }
-        }
-    }
-
-    /// Check for file change notifications (non-blocking).
-    fn check_file_changes(&mut self) -> bool {
-        if let Some(rx) = &self.file_watcher_rx {
-            // Drain all pending notifications and return true if any
-            let mut changed = false;
-            while rx.try_recv().is_ok() {
-                changed = true;
-            }
-            changed
-        } else {
-            false
         }
     }
 
@@ -686,29 +598,25 @@ impl App {
         result
     }
 
-    /// Run the TUI with build phase, then main loop.
-    /// Supports rebuilding via the 'R' key or automatic file watching.
+    /// Run the TUI with a connection phase, then the main loop.
+    /// Pressing `R` reconnects after the application tooling mode is restarted.
     fn run_with_build(
         &mut self,
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
         rt: &tokio::runtime::Runtime,
         config: &DbConfig,
     ) -> io::Result<()> {
-        // Set up file watcher for auto-rebuild (keep watcher alive in scope)
-        let _watcher = self.setup_file_watcher(config);
-
         loop {
-            // Reset state for fresh build
+            // Reset state for a fresh connection.
             self.phase = AppPhase::Building;
             self.conn = None;
             self.build_output.clear();
             self.build_scroll = 0;
             self.build_auto_scroll = true;
             self.needs_rebuild = false;
-            self.rebuilding = false;
             self.error = None;
 
-            // Start the build process
+            // Start connecting to the external tooling endpoint.
             let mut build_process = match rt.block_on(service::start_service(config)) {
                 Ok(bp) => bp,
                 Err(e) => {
@@ -721,15 +629,15 @@ impl App {
                 }
             };
 
-            // Build phase loop - show cargo output while waiting for connection
+            // Connection phase loop.
             let build_result = self.build_loop(terminal, rt, &mut build_process);
 
             match build_result {
                 Ok(true) => {
-                    // Connected, run main loop
+                    // Connected, run main loop.
                     let result = self.main_loop(terminal, rt);
                     if self.needs_rebuild {
-                        // User requested rebuild or file changed, loop again
+                        // User requested a reconnect after restarting the application.
                         continue;
                     }
                     return result;
@@ -754,7 +662,7 @@ impl App {
             // Draw the build UI
             terminal.draw(|frame| self.render_build_phase(frame))?;
 
-            // Poll for build output (non-blocking)
+            // Poll for connection diagnostics (non-blocking).
             while let Some(line) = build_process.try_read_line() {
                 self.build_output.push(line);
                 if self.build_auto_scroll {
@@ -995,16 +903,16 @@ impl App {
         }
     }
 
-    /// Render the build phase UI.
+    /// Render the connection phase UI.
     fn render_build_phase(&self, frame: &mut Frame) {
         let area = frame.area();
 
-        // Layout: header + build output + status bar
+        // Layout: header + connection guidance + status bar
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(3), // Header
-                Constraint::Min(0),    // Build output
+                Constraint::Min(0),    // Connection guidance
                 Constraint::Length(1), // Status bar
             ])
             .split(area);
@@ -1012,7 +920,7 @@ impl App {
         // Header
         let header = Paragraph::new(Line::from(vec![
             Span::styled(" dibs ", Style::default().fg(Color::Cyan).bold()),
-            Span::styled("Building...", Style::default().fg(Color::Yellow)),
+            Span::styled("Connecting...", Style::default().fg(Color::Yellow)),
         ]))
         .block(
             Block::default()
@@ -1021,10 +929,10 @@ impl App {
         );
         frame.render_widget(header, chunks[0]);
 
-        // Build output
+        // Connection diagnostics
         let visible_height = chunks[1].height.saturating_sub(2) as usize; // -2 for borders
         let start = self.build_scroll.saturating_sub(visible_height / 2);
-        let lines: Vec<Line> = self
+        let mut lines: Vec<Line> = self
             .build_output
             .iter()
             .skip(start)
@@ -1052,11 +960,17 @@ impl App {
             })
             .collect();
 
+        if lines.is_empty() {
+            lines.push(Line::from(
+                "Waiting for the application-owned Dibs tooling endpoint. Start the application in Dibs mode, or press q to quit.",
+            ));
+        }
+
         let output_block = Paragraph::new(lines).block(
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::DarkGray))
-                .title(" Build Output ")
+                .title(" Connection ")
                 .title_style(Style::default().fg(Color::Cyan)),
         );
         frame.render_widget(output_block, chunks[1]);
@@ -1107,15 +1021,9 @@ impl App {
         rt: &tokio::runtime::Runtime,
     ) -> io::Result<()> {
         loop {
-            // Check for file changes (triggers auto-rebuild)
-            if self.check_file_changes() {
-                self.needs_rebuild = true;
-                return Ok(());
-            }
-
             terminal.draw(|frame| self.ui(frame))?;
 
-            // Use poll to allow checking file changes periodically
+            // Poll keeps the interface responsive while RPC work runs asynchronously.
             if !event::poll(Duration::from_millis(100))? {
                 continue;
             }
@@ -1155,10 +1063,6 @@ impl App {
                             rt.block_on(self.generate_migration_with_name(&name));
                             self.migration_name_input.clear();
                             self.migration_name_cursor = 0;
-                            // If migration was created, needs_rebuild is set - exit to trigger rebuild
-                            if self.needs_rebuild {
-                                return Ok(());
-                            }
                         }
                         KeyCode::Backspace => {
                             if self.migration_name_cursor > 0 {
@@ -1347,7 +1251,7 @@ impl App {
                         rt.block_on(self.refresh());
                     }
                     KeyCode::Char('R') if !self.show_migration_source => {
-                        // Rebuild - restart the service
+                        // Reconnect after the application tooling mode is restarted.
                         self.needs_rebuild = true;
                         return Ok(());
                     }
@@ -1673,12 +1577,12 @@ impl App {
                                 }
                             }
 
-                            // Store pending commit info for after rebuild
+                            // Apply after the application restarts with the new inventory.
                             self.pending_migration_commit = Some((path.clone(), name.to_string()));
 
-                            self.error = Some(format!("Created: {} (rebuilding...)", path));
-                            // Automatically rebuild to pick up the new migration
-                            self.needs_rebuild = true;
+                            self.error = Some(format!(
+                                "Created: {path}. Restart the application Dibs mode, then press R"
+                            ));
                         }
                         Err(e) => {
                             self.show_error(format!("Failed to create migration: {}", e));
@@ -1826,9 +1730,9 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
         // Safe to delete - file is not committed
         match self.delete_migration_file(path) {
             Ok(()) => {
-                self.error = Some(format!("Deleted: {}", source_file));
-                // Trigger rebuild to pick up the change
-                self.needs_rebuild = true;
+                self.error = Some(format!(
+                    "Deleted: {source_file}. Restart the application Dibs mode, then press R"
+                ));
             }
             Err(e) => {
                 self.show_error(format!("Failed to delete migration: {}", e));
@@ -1918,17 +1822,6 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
     async fn run_migrations(&mut self) {
         if let (Some(conn), Some(url)) = (&self.conn, &self.database_url) {
             use dibs_proto::MigrateRequest;
-
-            // Safety check: refuse to run if migration files are newer than the binary
-            if let Some(stale_file) = conn.check_migrations_stale() {
-                self.show_error(format!(
-                    "Migration files changed since build!\n\n\
-                     Stale file: {}\n\n\
-                     Press R to rebuild.",
-                    stale_file.display()
-                ));
-                return;
-            }
 
             self.loading = Some("Running migrations...".to_string());
 
@@ -2493,7 +2386,7 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
         // Header
         let header = Paragraph::new(Line::from(vec![
             Span::styled(" dibs ", Style::default().fg(Color::Cyan).bold()),
-            Span::styled("Build Failed", Style::default().fg(Color::Red).bold()),
+            Span::styled("Connection Failed", Style::default().fg(Color::Red).bold()),
         ]))
         .block(
             Block::default()
@@ -2542,7 +2435,7 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::DarkGray))
-                .title(" Build Output ")
+                .title(" Connection Details ")
                 .title_style(Style::default().fg(Color::Cyan)),
         );
         frame.render_widget(output_block, chunks[2]);
@@ -3080,7 +2973,7 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
             spans.push(Span::styled("r ", Style::default().fg(Color::Yellow)));
             spans.push(Span::raw("refresh  "));
             spans.push(Span::styled("R ", Style::default().fg(Color::Yellow)));
-            spans.push(Span::raw("rebuild  "));
+            spans.push(Span::raw("reconnect  "));
 
             if self.tab == Tab::Postgres {
                 if self.postgres_mode == PostgresMode::HasPending {
