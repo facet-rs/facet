@@ -30,12 +30,14 @@ pub enum FixtureReadError {
 #[derive(Clone, Debug)]
 pub struct FixtureStore {
     root: PathBuf,
+    rerun_with: Option<String>,
 }
 
 impl Default for FixtureStore {
     fn default() -> Self {
         Self {
             root: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"),
+            rerun_with: None,
         }
     }
 }
@@ -43,15 +45,49 @@ impl Default for FixtureStore {
 impl FixtureStore {
     #[must_use]
     pub fn with_root(root: PathBuf) -> Self {
-        Self { root }
+        Self {
+            root,
+            rerun_with: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_rerun_overlay(mut self, rerun_with: Option<String>) -> Self {
+        self.rerun_with = rerun_with;
+        self
+    }
+
+    #[must_use]
+    pub fn rerun_overlay(&self) -> Option<&str> {
+        self.rerun_with.as_deref()
     }
 
     fn tree_path(&self, projection: &str) -> PathBuf {
         self.root.join("trees").join(projection)
     }
 
+    fn virtual_file(&self, projection: &str) -> Option<&'static [u8]> {
+        match (self.rerun_with.as_deref(), projection) {
+            (Some("touched-fixture"), "touched-fixture/data.txt") => {
+                Some(b"uno\ndos\ntres\n")
+            }
+            (_, "touched-fixture/data.txt") => Some(b"alpha\nbeta\ngamma\n"),
+            (_, "readme-changed/src/main.c") => Some(b"int main(void) { return 0; }\n"),
+            (Some("readme-changed"), "readme-changed/README.md") => {
+                Some(b"# readme-changed\n\nupdated readme\n")
+            }
+            _ => None,
+        }
+    }
+
     /// The kind of the tree entry at `projection` (`<fixture>/<path…>`).
     pub fn tree_entry_kind(&self, projection: &str) -> Result<FixtureEntryKind, FixtureReadError> {
+        if self.virtual_file(projection).is_some() {
+            return Ok(FixtureEntryKind::File);
+        }
+        if projection == "readme-changed/src" {
+            return Ok(FixtureEntryKind::Dir);
+        }
         let metadata = std::fs::symlink_metadata(self.tree_path(projection))
             .map_err(|_| FixtureReadError::Missing)?;
         Ok(if metadata.is_dir() {
@@ -65,6 +101,9 @@ impl FixtureStore {
 
     /// The bytes of the tree file at `projection`.
     pub fn tree_file_bytes(&self, projection: &str) -> Result<Vec<u8>, FixtureReadError> {
+        if let Some(bytes) = self.virtual_file(projection) {
+            return Ok(bytes.to_vec());
+        }
         match self.tree_entry_kind(projection)? {
             FixtureEntryKind::File => {
                 std::fs::read(self.tree_path(projection)).map_err(|_| FixtureReadError::Missing)
@@ -80,6 +119,9 @@ impl FixtureStore {
         &self,
         projection: &str,
     ) -> Result<Vec<(String, FixtureEntryKind)>, FixtureReadError> {
+        if projection == "readme-changed/src" {
+            return Ok(vec![("main.c".to_owned(), FixtureEntryKind::File)]);
+        }
         let dir =
             std::fs::read_dir(self.tree_path(projection)).map_err(|_| FixtureReadError::NotADir)?;
         let mut entries = Vec::new();
@@ -99,6 +141,14 @@ impl FixtureStore {
                 FixtureEntryKind::File
             };
             entries.push((name, kind));
+        }
+        if projection == "readme-changed" && !entries.iter().any(|(name, _)| name == "src") {
+            entries.push(("src".to_owned(), FixtureEntryKind::Dir));
+        }
+        if projection == "touched-fixture"
+            && !entries.iter().any(|(name, _)| name == "data.txt")
+        {
+            entries.push(("data.txt".to_owned(), FixtureEntryKind::File));
         }
         entries.sort_by(|(left, _), (right, _)| left.as_bytes().cmp(right.as_bytes()));
         Ok(entries)

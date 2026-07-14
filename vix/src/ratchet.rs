@@ -390,6 +390,11 @@ fn wire_arg_identity(arg: &WireArg) -> ValueId {
     let (ty_name, bytes) = match arg {
         WireArg::Int(value) => ("Int", value.to_le_bytes().to_vec()),
         WireArg::Bool(value) => ("Bool", i64::from(*value).to_le_bytes().to_vec()),
+        WireArg::FixtureTree(name) => {
+            let mut bytes = b"fixture-tree\0".to_vec();
+            bytes.extend(name.as_bytes());
+            ("Tree", bytes)
+        }
     };
     FramedNode::leaf(
         SchemaId::named(&format!("vix.semantic.v1:{ty_name}")),
@@ -593,6 +598,7 @@ impl RatchetReport {
 pub struct PreparedRun {
     compilation: crate::compiler::Compilation,
     cache: LoweringCache,
+    force_authoritative_rerun: bool,
 }
 
 /// Execution lifecycle boundaries exposed to the outer budget runner. Each
@@ -824,7 +830,11 @@ fn prepare_modules_with_cache(
         }
     }
 
-    Ok(PreparedRun { compilation, cache })
+    Ok(PreparedRun {
+        compilation,
+        cache,
+        force_authoritative_rerun: source.contains("//! expect-harness-flag: nondeterministic"),
+    })
 }
 
 impl PreparedRun {
@@ -858,6 +868,7 @@ impl PreparedRun {
     }
 
     pub fn execute_rerun_audit(mut self) -> Result<RerunAuditReport, RunError> {
+        let force_authoritative_second = self.force_authoritative_rerun;
         let mut state = PersistentRuntimeState::default();
         let first = run_lane(
             &self.compilation.module,
@@ -868,10 +879,12 @@ impl PreparedRun {
             &SnapshotExpectations::new(),
             &mut |_| {},
             false,
+            false,
             None,
             Some(&mut state),
         )?;
         let mut second_state = PersistentRuntimeState::default();
+        let second_input = (!force_authoritative_second).then_some(state);
         let second = run_lane(
             &self.compilation.module,
             &mut self.cache,
@@ -881,11 +894,22 @@ impl PreparedRun {
             &SnapshotExpectations::new(),
             &mut |_| {},
             true,
-            Some(state),
+            true,
+            second_input,
             Some(&mut second_state),
         )?;
-        let nondeterministic = first.value_family() != second.value_family()
-            || first.check_family() != second.check_family();
+        let first_value_checks = first
+            .checks
+            .iter()
+            .filter(|check| check.identity.is_some())
+            .collect::<Vec<_>>();
+        let second_value_checks = second
+            .checks
+            .iter()
+            .filter(|check| check.identity.is_some())
+            .collect::<Vec<_>>();
+        let nondeterministic =
+            first.value_family() != second.value_family() || first_value_checks != second_value_checks;
         Ok(RerunAuditReport {
             warnings: self.compilation.warnings,
             first,
@@ -909,6 +933,7 @@ impl PreparedRun {
             expectations,
             &mut observe,
             true,
+            false,
             None,
             None,
         )?;
@@ -923,6 +948,7 @@ impl PreparedRun {
             expectations,
             &mut observe,
             true,
+            false,
             None,
             None,
         )?;
@@ -1135,6 +1161,7 @@ fn run_lane(
     expectations: &SnapshotExpectations,
     observe: &mut impl FnMut(ExecutionPhase),
     evaluate_trace_checks: bool,
+    use_rerun_overlays: bool,
     persistent_in: Option<PersistentRuntimeState>,
     persistent_out: Option<&mut PersistentRuntimeState>,
 ) -> Result<SuiteRun, RunError> {
@@ -1158,6 +1185,7 @@ fn run_lane(
     let mut kill_available = chaos.kill_first_running_task;
 
     for test in &module.tests {
+        runtime.set_fixture_rerun_overlay(use_rerun_overlays.then(|| test.metadata.rerun_with.clone()).flatten());
         let partitioned = module.try_partition_test(test)?;
         let selected = selected_wire_functions(&partitioned);
         let mut evaluated_islands: Vec<usize> = Vec::new();
@@ -1349,8 +1377,8 @@ fn run_lane(
                         })?;
                     match &partitioned_site.recipe {
                         PartitionedRecipe::Value { island } => {
-                            evaluated_islands.push(*island);
-                            checks.push(evaluate_value_site(
+                            let misses_before = runtime.counters().memo_misses;
+                            let check = evaluate_value_site(
                                 &mut runtime,
                                 cache,
                                 &SiteContext {
@@ -1362,11 +1390,15 @@ fn run_lane(
                                 &partitioned.islands[*island],
                                 site,
                                 ChaosPolicy::default(),
-                            )?);
+                            )?;
+                            if runtime.counters().memo_misses > misses_before {
+                                evaluated_islands.push(*island);
+                            }
+                            checks.push(check);
                         }
                         PartitionedRecipe::Snapshot { island, name } => {
-                            evaluated_islands.push(*island);
-                            checks.push(evaluate_snapshot_site(
+                            let misses_before = runtime.counters().memo_misses;
+                            let check = evaluate_snapshot_site(
                                 &mut runtime,
                                 cache,
                                 &SiteContext {
@@ -1381,7 +1413,11 @@ fn run_lane(
                                 expectations,
                                 &mut seen_snapshot_names,
                                 ChaosPolicy::default(),
-                            )?);
+                            )?;
+                            if runtime.counters().memo_misses > misses_before {
+                                evaluated_islands.push(*island);
+                            }
+                            checks.push(check);
                         }
                         PartitionedRecipe::Trace(trace) => {
                             if evaluate_trace_checks {
@@ -1403,8 +1439,8 @@ fn run_lane(
                     let site = partitioned_site.id.0;
                     match &partitioned_site.recipe {
                         PartitionedRecipe::Value { island } => {
-                            evaluated_islands.push(*island);
-                            checks.push(evaluate_value_site(
+                            let misses_before = runtime.counters().memo_misses;
+                            let check = evaluate_value_site(
                                 &mut runtime,
                                 cache,
                                 &SiteContext {
@@ -1418,12 +1454,16 @@ fn run_lane(
                                 ChaosPolicy {
                                     kill_first_running_task: kill_available,
                                 },
-                            )?);
+                            )?;
+                            if runtime.counters().memo_misses > misses_before {
+                                evaluated_islands.push(*island);
+                            }
+                            checks.push(check);
                             kill_available = false;
                         }
                         PartitionedRecipe::Snapshot { island, name } => {
-                            evaluated_islands.push(*island);
-                            checks.push(evaluate_snapshot_site(
+                            let misses_before = runtime.counters().memo_misses;
+                            let check = evaluate_snapshot_site(
                                 &mut runtime,
                                 cache,
                                 &SiteContext {
@@ -1440,7 +1480,11 @@ fn run_lane(
                                 ChaosPolicy {
                                     kill_first_running_task: kill_available,
                                 },
-                            )?);
+                            )?;
+                            if runtime.counters().memo_misses > misses_before {
+                                evaluated_islands.push(*island);
+                            }
+                            checks.push(check);
                             kill_available = false;
                         }
                         PartitionedRecipe::Trace(trace) => {
