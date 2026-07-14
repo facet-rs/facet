@@ -12,6 +12,7 @@ ast({
   _variant_type_payload: { enum: "VariantTypePayload" },
 
   fn_item: { as: "Fn" },
+  import_item: { as: "Import" },
   struct_item: { as: "Struct" },
   enum_item: { as: "Enum" },
   let_statement: { as: "Let", struct: "LetStmt" },

@@ -244,7 +244,9 @@ impl<'a> TypeResolver<'a> {
                     enumeration.name.span,
                     TypeDeclaration::Enum(enumeration),
                 ),
-                ast::Item::Fn(_) => continue,
+                // Imports are consumed by the module front before lowering;
+                // a stray one contributes no type declaration.
+                ast::Item::Fn(_) | ast::Item::Import(_) => continue,
             };
             if name == "Ordering" {
                 return Err(Diagnostics::one(Diagnostic {
@@ -771,7 +773,7 @@ fn lower_module(source: &ast::SourceFile, config: CompilerConfig) -> Result<Modu
         .filter_map(|item| match item {
             ast::Item::Struct(record) => Some(record.name.value.as_str()),
             ast::Item::Enum(enumeration) => Some(enumeration.name.value.as_str()),
-            ast::Item::Fn(_) => None,
+            ast::Item::Fn(_) | ast::Item::Import(_) => None,
         })
         .collect::<BTreeSet<_>>();
     let mut signatures = BTreeMap::new();
@@ -822,7 +824,7 @@ fn lower_module(source: &ast::SourceFile, config: CompilerConfig) -> Result<Modu
                     Some(Type::Record(record)) => Some(record.clone()),
                     _ => None,
                 },
-                ast::Item::Enum(_) | ast::Item::Fn(_) => None,
+                ast::Item::Enum(_) | ast::Item::Fn(_) | ast::Item::Import(_) => None,
             })
             .collect(),
         enums: resolved_enum_declarations(source, &types),

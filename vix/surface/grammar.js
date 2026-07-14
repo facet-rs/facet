@@ -25,7 +25,20 @@ module.exports = grammar({
   rules: {
     source_file: ($) => repeat(field("item", $._item)),
 
-    _item: ($) => choice($.enum_item, $.struct_item, $.fn_item),
+    _item: ($) => choice($.import_item, $.enum_item, $.struct_item, $.fn_item),
+
+    // `import geometry::{Point, magnitude_sq};` / `import geometry::Point;`
+    // (ratchet rungs 106–110). One module segment, then either a single item
+    // name or a braced name list — exactly the surface the rungs spell.
+    import_item: ($) =>
+      seq(
+        "import",
+        field("module", $.identifier),
+        "::",
+        choice(field("name", $.identifier), field("names", $.import_name_list)),
+        ";",
+      ),
+    import_name_list: ($) => seq("{", sepBy(",", field("name", $.identifier)), "}"),
 
     attribute: ($) =>
       seq(
