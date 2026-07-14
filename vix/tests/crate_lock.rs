@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use vix::exec::Tree;
 use vix::machine::{DriveEvent, Machine, MachineArg, RenderedValue};
@@ -55,8 +55,7 @@ const BUILD_SCRIPT_MAIN: &str = include_str!(
 
 #[test]
 fn crate_vix_consumes_lockfile_and_builds_transitive_graph_with_fake_rustc() -> Result<(), String> {
-    let source = crate_source();
-    let mut machine = Machine::load(&source)?;
+    let mut machine = crate_machine()?;
     let target = machine.linux_target_handle();
     let graph = machine
         .intern_arg("Tree", MachineArg::Tree(lock_graph_tree()))?
@@ -105,8 +104,7 @@ fn crate_vix_consumes_lockfile_and_builds_transitive_graph_with_fake_rustc() -> 
 
 #[test]
 fn crate_vix_models_build_script_directives_and_out_dir_with_fake_runner() -> Result<(), String> {
-    let source = crate_source();
-    let mut machine = Machine::load(&source)?;
+    let mut machine = crate_machine()?;
     let target = machine.linux_target_handle();
     let graph = machine
         .intern_arg("Tree", MachineArg::Tree(build_script_tree()))?
@@ -163,8 +161,7 @@ fn crate_vix_models_build_script_directives_and_out_dir_with_fake_runner() -> Re
 
 #[test]
 fn crate_vix_parses_build_script_stdout_directives_as_pure_vix() -> Result<(), String> {
-    let source = crate_source();
-    let mut machine = Machine::load(&source)?;
+    let mut machine = crate_machine()?;
     let stdout = machine
         .intern_arg(
             "String",
@@ -232,8 +229,7 @@ fn crate_vix_parses_build_script_stdout_directives_as_pure_vix() -> Result<(), S
 
 #[test]
 fn crate_vix_propagates_build_script_metadata_to_dep_env_values() -> Result<(), String> {
-    let source = crate_source();
-    let mut machine = Machine::load(&source)?;
+    let mut machine = crate_machine()?;
     let stdout = machine
         .intern_arg(
             "String",
@@ -266,8 +262,7 @@ fn crate_vix_propagates_build_script_metadata_to_dep_env_values() -> Result<(), 
 
 #[test]
 fn crate_vix_rejects_malformed_build_script_directive_lines() -> Result<(), String> {
-    let source = crate_source();
-    let mut machine = Machine::load(&source)?;
+    let mut machine = crate_machine()?;
     let stdout = machine
         .intern_arg(
             "String",
@@ -289,8 +284,14 @@ fn crate_vix_rejects_malformed_build_script_directive_lines() -> Result<(), Stri
     }
 }
 
-fn crate_source() -> String {
-    format!("{RODIN_SOURCE}\n\n{SOURCE}")
+fn crate_machine() -> Result<Machine, String> {
+    Machine::load_modules(
+        "root",
+        BTreeMap::from([
+            ("root".to_owned(), SOURCE.to_owned()),
+            ("rodin".to_owned(), RODIN_SOURCE.to_owned()),
+        ]),
+    )
 }
 
 fn rendered_string(machine: &Machine, name: &str, word: i64) -> Result<String, String> {

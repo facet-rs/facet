@@ -8726,12 +8726,18 @@ pub fn poly(n: Int) -> Int {
         })
     }
 
-    fn crate_sample_source() -> String {
-        format!(
-            "{}\n\n{}",
-            include_str!("../../../rodin/rodin.vix"),
-            include_str!("../../../playgrounds/snark/src/bundled/vix/samples/crate.vix")
-        )
+    fn crate_sample_modules() -> BTreeMap<String, String> {
+        BTreeMap::from([
+            (
+                "root".to_owned(),
+                include_str!("../../../playgrounds/snark/src/bundled/vix/samples/crate.vix")
+                    .to_owned(),
+            ),
+            (
+                "rodin".to_owned(),
+                include_str!("../../../rodin/rodin.vix").to_owned(),
+            ),
+        ])
     }
 
     #[derive(Default)]
@@ -11351,9 +11357,9 @@ pub fn moved(n: Int) -> Map<String, Float> {
 
     #[test]
     fn crate_vix_fake_rustc_builds_lib_on_the_machine() {
-        let src = crate_sample_source();
+        let modules = crate_sample_modules();
         for lane in lanes() {
-            let mut machine = load_with_lane(&src, lane);
+            let mut machine = load_modules_with_lane("root", modules.clone(), lane);
             let target = machine.linux_target_handle();
             let crate_tree =
                 machine.intern_tree_concrete(mini_vendored_tree("not read by slice-1 rustc\n"));
@@ -11453,9 +11459,9 @@ pub fn moved(n: Int) -> Map<String, Float> {
 
     #[test]
     fn crate_vix_fake_rustc_unread_crate_file_cuts_off_at_tier2() {
-        let src = crate_sample_source();
+        let modules = crate_sample_modules();
         for lane in lanes() {
-            let mut machine = load_with_lane(&src, lane);
+            let mut machine = load_modules_with_lane("root", modules.clone(), lane);
             let target = machine.linux_target_handle();
             let crate_v1 = machine.intern_tree_concrete(mini_vendored_tree("not read by rustc\n"));
             let first = machine
@@ -11491,9 +11497,9 @@ pub fn moved(n: Int) -> Map<String, Float> {
 
     #[test]
     fn crate_vix_fake_rustc_builds_bin_with_dependency_metadata_and_rlib() {
-        let src = crate_sample_source();
+        let modules = crate_sample_modules();
         for lane in lanes() {
-            let mut machine = load_with_lane(&src, lane);
+            let mut machine = load_modules_with_lane("root", modules.clone(), lane);
             let target = machine.linux_target_handle();
             let graph = machine.intern_tree_concrete(two_crate_graph_tree());
 
@@ -11596,9 +11602,9 @@ pub fn moved(n: Int) -> Map<String, Float> {
 
     #[test]
     fn crate_vix_fake_rustc_builds_proc_macro_as_host_unit() {
-        let src = crate_sample_source();
+        let modules = crate_sample_modules();
         for lane in lanes() {
-            let mut machine = load_with_lane(&src, lane);
+            let mut machine = load_modules_with_lane("root", modules.clone(), lane);
             let target = cross_target_handle(&machine);
             let graph = machine.intern_tree_concrete(proc_macro_graph_tree());
 
