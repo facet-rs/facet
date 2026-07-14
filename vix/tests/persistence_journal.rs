@@ -129,7 +129,23 @@ fn persistent_journal_unrelated_projection_change_retains_reuse() {
         report.load.claims_loaded > 0,
         "unchanged witnessed projection loads reusable claims: {report:#?}",
     );
-    assert!(!report.load.rejected_claims.is_empty(), "{report:#?}");
+    assert_eq!(
+        report.load.claims_seen, report.load.claims_loaded,
+        "receipt-backed pure and witnessed claims all load: {report:#?}",
+    );
+    assert!(
+        report.load.rejected_claims.is_empty(),
+        "unchanged claims should not be rejected after journal revalidation: {report:#?}",
+    );
+    assert!(
+        report.second.counters.memo_hits_projection > 0,
+        "unrelated projection change keeps the projected claim warm: {report:#?}",
+    );
+    assert!(
+        report.second.counters.memo_hits_exact > 0,
+        "unchanged pure claim is reused through the durable journal: {report:#?}",
+    );
+    assert!(!report.nondeterministic, "{report:#?}");
 }
 
 #[test]

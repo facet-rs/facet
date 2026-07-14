@@ -863,8 +863,7 @@ pub fn run_source_revision_audit_with_lane(
         .iter()
         .filter(|check| check.identity.is_some())
         .collect::<Vec<_>>();
-    let nondeterministic =
-        first.value_family() != second.value_family() || first_value_checks != second_value_checks;
+    let nondeterministic = first_value_checks != second_value_checks;
     Ok(SourceRevisionAuditReport {
         first_warnings,
         second_warnings,
@@ -1109,8 +1108,7 @@ impl PreparedRun {
             .iter()
             .filter(|check| check.identity.is_some())
             .collect::<Vec<_>>();
-        let nondeterministic = first.value_family() != second.value_family()
-            || first_value_checks != second_value_checks;
+        let nondeterministic = first_value_checks != second_value_checks;
         Ok(PersistenceAuditReport {
             warnings: self.compilation.warnings,
             first,
