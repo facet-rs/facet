@@ -3250,7 +3250,7 @@ fn rung_021_closure_parameters_destructure_callable_values() {
             .iter()
             .position(|candidate| candidate.id == node)
             .expect("closure node has a canonical contract region");
-        let shape = lowered.contract().functions[0].frame.regions[region]
+        let shape = lowered.contract().functions[0].frame.regions[region + 2]
             .value_shape
             .expect("closure node has a structural value shape");
         let ValueShapeKind::Product { fields } =
@@ -3873,7 +3873,12 @@ fn rung_048_captured_closures_run_directly_and_through_array_map() {
         .call_contract
         .expect("captured closure has a verified callable ABI");
     let contract = &lowered.contract().calls[callable.0 as usize];
-    assert_eq!(contract.entries.len(), 2, "argument plus captured Int");
+    assert_eq!(contract.entries.len(), 1, "public argument only");
+    assert_eq!(
+        lowered.contract().functions[target_frame].environment.len(),
+        1,
+        "captured Int stays in the closure environment rather than the semantic ABI",
+    );
     let capture = *closure
         .inputs
         .first()
@@ -3905,8 +3910,12 @@ fn rung_048_captured_closures_run_directly_and_through_array_map() {
         })
         .next()
         .expect("direct closure call lowers to CallIndirect");
-    assert_eq!(direct_call[1].src, capture_region);
-    assert_ne!(direct_call[1].src, direct_call[0].src + 8);
+    assert_eq!(
+        direct_call.len(),
+        1,
+        "only the public argument crosses CallIndirect"
+    );
+    assert_ne!(capture_region, direct_call[0].src);
     assert!(lowered.program().fns.iter().all(|function| {
         function
             .code
@@ -6280,9 +6289,9 @@ fn tail_loop_interpreter_and_jit_agree() {
     let program = standalone_tail_loop("count_up");
 
     let mut interpreter = Task::spawn_with_mode(&program, FnId(0), TraceMode::Production);
-    interpreter.write_i64(0, 0);
-    interpreter.write_i64(8, 10_000_000);
     interpreter.write_i64(16, 0);
+    interpreter.write_i64(24, 10_000_000);
+    interpreter.write_i64(32, 0);
     interpreter.run(&program, &mut [], &[]);
     let interpreted = interpreter.result_i64();
     assert_eq!(interpreted, 49_999_995_000_000);
@@ -6299,9 +6308,9 @@ fn tail_loop_interpreter_and_jit_agree() {
     match JitProgram::compile_with_mode(&program, TraceMode::Production) {
         Some(jit) => {
             let mut native = JitTask::spawn(&jit, FnId(0));
-            native.write_i64(0, 0);
-            native.write_i64(8, 10_000_000);
             native.write_i64(16, 0);
+            native.write_i64(24, 10_000_000);
+            native.write_i64(32, 0);
             native.run(&jit, &mut [], &[]);
             assert_eq!(
                 native.result_i64(),
@@ -6335,9 +6344,9 @@ fn tail_loop_backedge_adds_no_per_iteration_machinery() {
     let program = standalone_tail_loop("count_up");
     let run = |iterations: i64| {
         let mut task = Task::spawn_with_mode(&program, FnId(0), TraceMode::Production);
-        task.write_i64(0, 0);
-        task.write_i64(8, iterations);
         task.write_i64(16, 0);
+        task.write_i64(24, iterations);
+        task.write_i64(32, 0);
         task.run(&program, &mut [], &[]);
         let marks = task
             .trace
