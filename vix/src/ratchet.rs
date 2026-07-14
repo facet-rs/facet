@@ -908,8 +908,8 @@ impl PreparedRun {
             .iter()
             .filter(|check| check.identity.is_some())
             .collect::<Vec<_>>();
-        let nondeterministic =
-            first.value_family() != second.value_family() || first_value_checks != second_value_checks;
+        let nondeterministic = first.value_family() != second.value_family()
+            || first_value_checks != second_value_checks;
         Ok(RerunAuditReport {
             warnings: self.compilation.warnings,
             first,
@@ -1185,7 +1185,11 @@ fn run_lane(
     let mut kill_available = chaos.kill_first_running_task;
 
     for test in &module.tests {
-        runtime.set_fixture_rerun_overlay(use_rerun_overlays.then(|| test.metadata.rerun_with.clone()).flatten());
+        runtime.set_fixture_rerun_overlay(
+            use_rerun_overlays
+                .then(|| test.metadata.rerun_with.clone())
+                .flatten(),
+        );
         let partitioned = module.try_partition_test(test)?;
         let selected = selected_wire_functions(&partitioned);
         let mut evaluated_islands: Vec<usize> = Vec::new();

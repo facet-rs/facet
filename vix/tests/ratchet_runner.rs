@@ -17,9 +17,9 @@ use vix::runtime::{
 };
 use vix::surface::{SurfaceParser, ast};
 use vix::vir::{
-    ArrayMapExecutionShape, ArrayMapGrainKey, DecodeFormat, EffectKind, FunctionId, GeneratorControl,
-    GeneratorStep, NodeRef, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT, Op as VirOp, Type as VirType,
-    VariantPayload, canonical_recipe,
+    ArrayMapExecutionShape, ArrayMapGrainKey, DecodeFormat, EffectKind, FunctionId,
+    GeneratorControl, GeneratorStep, NodeRef, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT,
+    Op as VirOp, Type as VirType, VariantPayload, canonical_recipe,
 };
 use weavy::task::Op as WeavyOp;
 use weavy::{LaneRequest, PayloadKind, RegionShape, ValueShapeKind, WordKind};
@@ -5970,13 +5970,16 @@ fn t() -> Stream<Check> {
         .compile(SOURCE)
         .expect("a nonliteral decode document lowers to the runtime seam");
     assert!(
-        compilation.module.functions[0].nodes.iter().any(|node| matches!(
-            &node.op,
-            VirOp::Decode {
-                format: DecodeFormat::Json,
-                target
-            } if target.name() == "PkgRow"
-        )),
+        compilation.module.functions[0]
+            .nodes
+            .iter()
+            .any(|node| matches!(
+                &node.op,
+                VirOp::Decode {
+                    format: DecodeFormat::Json,
+                    target
+                } if target.name() == "PkgRow"
+            )),
         "dynamic JSON decode is a runtime-host VIR node: {compilation:#?}"
     );
 }
@@ -7123,8 +7126,14 @@ fn rung_079_cross_run_reuses_without_recompute() {
         audit.second.checks.iter().all(|check| check.passed),
         "second run trace checks pass: {audit:#?}",
     );
-    assert_eq!(audit.second.counters.memo_misses, 0, "second run recomputes nothing");
-    assert!(audit.second.counters.memo_hits_exact > 0, "second run is served by memo hits");
+    assert_eq!(
+        audit.second.counters.memo_misses, 0,
+        "second run recomputes nothing"
+    );
+    assert!(
+        audit.second.counters.memo_hits_exact > 0,
+        "second run is served by memo hits"
+    );
     assert!(!audit.nondeterministic, "pure rerun stays deterministic");
 }
 

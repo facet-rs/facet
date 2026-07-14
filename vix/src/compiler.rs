@@ -1271,10 +1271,7 @@ fn parse_test_metadata(function: &ast::FnItem) -> Result<TestMetadata, Diagnosti
             }
         }
     }
-    Ok(TestMetadata {
-        budget,
-        rerun_with,
-    })
+    Ok(TestMetadata { budget, rerun_with })
 }
 
 /// A budget field value must be a unit-bearing literal (`5s`, `256MB`); a bare
@@ -1298,8 +1295,16 @@ fn attribute_quantity(field: &ast::NamedValue) -> Result<(&str, Span), Diagnosti
 fn attribute_string(field: &ast::NamedValue) -> Result<(&str, Span), Diagnostics> {
     match &field.value {
         Some(ast::Expr::Str(value)) => Ok((value.value.as_str(), value.span)),
-        Some(other) => Err(type_mismatch(expr_span(other), "a string literal", "expression")),
-        None => Err(type_mismatch(field.name.span, "a string literal", "bare field")),
+        Some(other) => Err(type_mismatch(
+            expr_span(other),
+            "a string literal",
+            "expression",
+        )),
+        None => Err(type_mismatch(
+            field.name.span,
+            "a string literal",
+            "bare field",
+        )),
     }
 }
 

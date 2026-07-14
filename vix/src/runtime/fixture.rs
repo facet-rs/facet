@@ -68,9 +68,7 @@ impl FixtureStore {
 
     fn virtual_file(&self, projection: &str) -> Option<&'static [u8]> {
         match (self.rerun_with.as_deref(), projection) {
-            (Some("touched-fixture"), "touched-fixture/data.txt") => {
-                Some(b"uno\ndos\ntres\n")
-            }
+            (Some("touched-fixture"), "touched-fixture/data.txt") => Some(b"uno\ndos\ntres\n"),
             (_, "touched-fixture/data.txt") => Some(b"alpha\nbeta\ngamma\n"),
             (_, "readme-changed/src/main.c") => Some(b"int main(void) { return 0; }\n"),
             (Some("readme-changed"), "readme-changed/README.md") => {
@@ -145,9 +143,7 @@ impl FixtureStore {
         if projection == "readme-changed" && !entries.iter().any(|(name, _)| name == "src") {
             entries.push(("src".to_owned(), FixtureEntryKind::Dir));
         }
-        if projection == "touched-fixture"
-            && !entries.iter().any(|(name, _)| name == "data.txt")
-        {
+        if projection == "touched-fixture" && !entries.iter().any(|(name, _)| name == "data.txt") {
             entries.push(("data.txt".to_owned(), FixtureEntryKind::File));
         }
         entries.sort_by(|(left, _), (right, _)| left.as_bytes().cmp(right.as_bytes()));

@@ -1263,12 +1263,14 @@ impl<S: EventSink> Runtime<S> {
         let key = DemandKey::from_preimage(&preimage);
         self.emit(EventKind::Demanded { key });
         let force_miss = self.effect_fixture_overlay_active(effect);
-        let memo_handle = (!force_miss).then(|| {
-            self.memo.get(&location.id).and_then(|entry| {
-                (entry.location == *location && entry.key == key && entry.preimage == preimage)
-                    .then_some(entry.result)
+        let memo_handle = (!force_miss)
+            .then(|| {
+                self.memo.get(&location.id).and_then(|entry| {
+                    (entry.location == *location && entry.key == key && entry.preimage == preimage)
+                        .then_some(entry.result)
+                })
             })
-        }).flatten();
+            .flatten();
         if let Some(handle) = memo_handle {
             let (identity, failure) = match self.store.entry(handle) {
                 Some(stored) => (stored.identity, stored.failure().cloned()),
@@ -1388,8 +1390,13 @@ impl<S: EventSink> Runtime<S> {
             self.counters.effect_spawns += 1;
             let mut reads = Vec::new();
             let arguments = self.effect_arguments(arguments)?;
-            let value =
-                self.evaluate_effect_node(effect, effect.function, effect.output, &arguments, &mut reads)?;
+            let value = self.evaluate_effect_node(
+                effect,
+                effect.function,
+                effect.output,
+                &arguments,
+                &mut reads,
+            )?;
             let EffectTerm::Value(value) = value else {
                 return Err(Box::new(self.terminate_machine_fault(
                     task,
@@ -1469,10 +1476,14 @@ impl<S: EventSink> Runtime<S> {
             .collect()
     }
 
-    fn effect_function<'a>(
-        island: &'a Island,
+    fn effect_function(
+        island: &Island,
         function: FunctionId,
-    ) -> Option<(&'a [crate::vir::Parameter], &'a [crate::vir::Node], Option<NodeId>)> {
+    ) -> Option<(
+        &[crate::vir::Parameter],
+        &[crate::vir::Node],
+        Option<NodeId>,
+    )> {
         if island.function == function {
             return Some((&island.parameters, &island.nodes, Some(island.output)));
         }
@@ -1567,7 +1578,10 @@ impl<S: EventSink> Runtime<S> {
                 })?;
                 Ok(EffectTerm::Value(argument.clone()))
             }
-            Op::Int(value) => Ok(EffectTerm::Value(effect_leaf(&node.ty, value.to_le_bytes().to_vec()))),
+            Op::Int(value) => Ok(EffectTerm::Value(effect_leaf(
+                &node.ty,
+                value.to_le_bytes().to_vec(),
+            ))),
             Op::String(value) | Op::Path(value) => Ok(EffectTerm::Value(effect_leaf(
                 &node.ty,
                 value.as_bytes().to_vec(),
@@ -1583,7 +1597,8 @@ impl<S: EventSink> Runtime<S> {
                         None,
                     ))
                 })?;
-                let output = output.ok_or_else(|| effect_machine_error("effect call target has no output"))?;
+                let output = output
+                    .ok_or_else(|| effect_machine_error("effect call target has no output"))?;
                 let mut callee_arguments = Vec::with_capacity(node.inputs.len());
                 for index in 0..node.inputs.len() {
                     let EffectTerm::Value(value) = input(index, self)? else {
@@ -4490,10 +4505,7 @@ fn effect_leaf(ty: &Type, resident: Vec<u8>) -> EffectValue {
     }
 }
 
-fn decoded_effect_value(
-    ty: &Type,
-    value: &DecodedValue,
-) -> Result<EffectValue, Box<MachineError>> {
+fn decoded_effect_value(ty: &Type, value: &DecodedValue) -> Result<EffectValue, Box<MachineError>> {
     match (ty, value) {
         (Type::Int, DecodedValue::Int(value)) => {
             let bytes = value.to_le_bytes().to_vec();
@@ -4533,7 +4545,7 @@ fn decoded_effect_value(
                 frozen.push(
                     effect
                         .frozen
-                        .unwrap_or_else(|| FrozenValue::Reference(effect.identity)),
+                        .unwrap_or(FrozenValue::Reference(effect.identity)),
                 );
             }
             let node = FramedNode::Variant {
