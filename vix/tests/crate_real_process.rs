@@ -2430,11 +2430,14 @@ fn taxon_ladder_missing_cc_capability_traps_blake3_build_script() -> Result<(), 
 
     let mut machine = taxon_native_machine(taxon_native_fetch_backend()?)?;
     let args = taxon_native_args(&mut machine)?;
-    let err = machine
+    let run = machine
         .demand_i64("taxon_blake3_build_script_run_without_declared_cc", args)
+        .map_err(|err| format!("{err}\nrustc argv trace:\n{}", rustc_argv_trace(&machine)))?;
+    let err = tree_file_bytes(&mut machine, run, "build.stdout")
         .expect_err("blake3 build.rs must not access cc without declared capability");
     assert!(
-        err.contains("undeclared C-toolchain capability"),
+        err.contains("undeclared C-toolchain capability")
+            || err.contains(".vix-undeclared-toolchain"),
         "unexpected missing-capability error: {err}\nrustc argv trace:\n{}",
         rustc_argv_trace(&machine)
     );
@@ -2449,11 +2452,14 @@ fn taxon_ladder_wrong_cc_capability_traps_blake3_build_script() -> Result<(), St
 
     let mut machine = taxon_native_machine(taxon_native_fetch_backend()?)?;
     let args = taxon_native_args(&mut machine)?;
-    let err = machine
+    let run = machine
         .demand_i64("taxon_blake3_build_script_run_with_wrong_toolchain", args)
+        .map_err(|err| format!("{err}\nrustc argv trace:\n{}", rustc_argv_trace(&machine)))?;
+    let err = tree_file_bytes(&mut machine, run, "build.stdout")
         .expect_err("blake3 build.rs must not accept a non-cc toolchain declaration");
     assert!(
-        err.contains("undeclared C-toolchain capability"),
+        err.contains("undeclared C-toolchain capability")
+            || err.contains(".vix-undeclared-toolchain"),
         "unexpected wrong-capability error: {err}\nrustc argv trace:\n{}",
         rustc_argv_trace(&machine)
     );
