@@ -384,21 +384,11 @@ impl<'de> StyxParser<'de> {
                 self.current_span = Some(span);
                 self.mark_tag_has_payload();
 
-                // Check if this Unit represents an actual @ token in the source
-                // vs an implicit unit (key with no value).
-                let is_at_token = self.span_text(span) == "@";
-
-                if is_at_token && self.tag_has_payload_stack.is_empty() {
-                    // Standalone @ is a unit tag - emit VariantTag(None) + Scalar(Unit)
-                    trace!("convert_event: Unit (@) -> VariantTag(None) + Scalar(Unit)");
-                    self.peeked_events
-                        .push(self.event(ParseEventKind::Scalar(ScalarValue::Unit)));
-                    Ok(Some(self.event(ParseEventKind::VariantTag(None))))
-                } else {
-                    // Either inside a tag payload, or an implicit unit (no value)
-                    trace!("convert_event: Unit (implicit/payload) -> Scalar(Unit)");
-                    Ok(Some(self.event(ParseEventKind::Scalar(ScalarValue::Unit))))
-                }
+                // A bare `@` is Styx's unit value. Named tags produce
+                // `VariantTag`, but the nameless form must remain a scalar so
+                // `Option<T>` can consume it as `None`.
+                trace!("convert_event: Unit -> Scalar(Unit)");
+                Ok(Some(self.event(ParseEventKind::Scalar(ScalarValue::Unit))))
             }
 
             EventKind::TagStart { name } => {

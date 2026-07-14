@@ -309,6 +309,14 @@ fn test_optional_absent() {
 }
 
 #[test]
+fn test_optional_explicit_none() {
+    let input = "required hello\noptional @";
+    let result: WithOptional = from_str(input).unwrap();
+    assert_eq!(result.required, "hello");
+    assert_eq!(result.optional, None);
+}
+
+#[test]
 fn test_bool_values() {
     #[derive(Facet, Debug, PartialEq)]
     struct Flags {
