@@ -6194,7 +6194,7 @@ fn t() -> Stream<Check> {
     let check_value_ids = |run: &vix::ratchet::SuiteRun| {
         run.checks
             .iter()
-            .map(|check| check.identity.clone())
+            .map(|check| check.identity)
             .collect::<Vec<_>>()
     };
     assert_eq!(
