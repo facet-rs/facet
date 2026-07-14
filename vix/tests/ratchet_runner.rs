@@ -6415,3 +6415,23 @@ fn tree_fetch_band_compiles_to_typed_vir() {
         assert_eq!(module.tests.len(), 1, "rung {rung} declares one test");
     }
 }
+
+/// The rungs execute through the production runner: effect islands use the
+/// store/memo/receipt plane while their consumers remain ordinary verified
+/// Weavy islands. Each source is run in both plain and chaos lanes by
+/// `run_source`; the in-language `never_read` and `fetched` checks are the
+/// externally visible certificate.
+#[test]
+fn tree_fetch_band_runs_through_effect_plane() {
+    for (rung, source) in [
+        ("071", RUNG_071),
+        ("072", RUNG_072),
+        ("075", RUNG_075),
+        ("076", RUNG_076),
+        ("077", RUNG_077),
+    ] {
+        let report = run_source(source)
+            .unwrap_or_else(|error| panic!("rung {rung} runs through the effect plane: {error:?}"));
+        assert!(report.passed(), "rung {rung} agrees across plain and chaos");
+    }
+}

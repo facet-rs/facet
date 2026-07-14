@@ -11,11 +11,10 @@ use crate::vir::DescribedWire;
 use crate::vir::{
     ArrayMapGrain, ArrayMapGrainKey, Budget, CheckRecipe, ControlRegion, EffectFacts, EffectKind,
     EnumType, EnumVariant, ExternKind, Function, FunctionId, GeneratorArm, GeneratorBody,
-    GeneratorStep,
-    MatchArm as VirMatchArm, Module, Node, NodeId, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT,
-    ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, OrderedMatchArm, Parameter, ParameterId,
-    ParameterKind, RecordField, RecordType, Test, TestMetadata, TraceCheck, Type, VariantPayload,
-    WireArg, YieldSite, YieldSiteId,
+    GeneratorStep, MatchArm as VirMatchArm, Module, Node, NodeId, OPTION_NONE_VARIANT,
+    OPTION_SOME_VARIANT, ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, OrderedMatchArm,
+    Parameter, ParameterId, ParameterKind, RecordField, RecordType, Test, TestMetadata, TraceCheck,
+    Type, VariantPayload, WireArg, YieldSite, YieldSiteId,
 };
 
 pub struct Compiler {
@@ -4244,7 +4243,14 @@ fn lower_effect_intrinsic(
         other => unreachable!("effect intrinsic dispatch matched `{other}`"),
     };
     Ok(LoweredValue {
-        node: push_node(nodes, call.span, ty.clone(), EffectFacts::EFFECT, inputs, op),
+        node: push_node(
+            nodes,
+            call.span,
+            ty.clone(),
+            EffectFacts::EFFECT,
+            inputs,
+            op,
+        ),
         ty,
     })
 }

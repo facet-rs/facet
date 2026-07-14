@@ -692,7 +692,9 @@ fn prepare_source_with_cache(
         // snapshot and lowers nothing, so it is skipped here.
         let partitioned = compilation.module.try_partition_test(test)?;
         for value in &partitioned.values {
-            cache.get_or_lower(&value.island)?;
+            if value.island.purpose != crate::vir::IslandPurpose::Effect {
+                cache.get_or_lower(&value.island)?;
+            }
         }
         // Argument islands demanded lazily through force-on-park are compiled now
         // so a park resolves through a warm cache hit, never a compilation.
@@ -1002,9 +1004,6 @@ fn run_lane(
             .collect();
         let mut published_values = BTreeMap::new();
         for value in &partitioned.values {
-            let lowered = cache.get_or_lower(&value.island)?;
-            let attribution = attribution_for(&value.island);
-            let location = Location::for_test_value(&partitioned.name, &value.id.stable_segment());
             let arguments = value
                 .island
                 .value_inputs
@@ -1016,19 +1015,36 @@ fn run_lane(
                         .expect("value islands are ordered after their dependencies")
                 })
                 .collect::<Vec<_>>();
-            let evaluation = runtime.evaluate(
-                value.island.id,
-                &location,
-                lowered,
-                &attribution,
-                IslandInputs {
-                    arguments: &arguments,
-                    wires: &[],
-                },
-                ChaosPolicy {
-                    kill_first_running_task: kill_available,
-                },
-            )?;
+            let chaos = ChaosPolicy {
+                kill_first_running_task: kill_available,
+            };
+            let evaluation = if value.island.purpose == crate::vir::IslandPurpose::Effect {
+                let fingerprint = value
+                    .effect_fingerprint
+                    .as_deref()
+                    .expect("effect island carries a structural fingerprint");
+                runtime.evaluate_effect(
+                    value.island.id,
+                    &Location::for_test_effect(&partitioned.name, fingerprint),
+                    &value.island,
+                    &arguments,
+                    chaos,
+                )?
+            } else {
+                let lowered = cache.get_or_lower(&value.island)?;
+                let attribution = attribution_for(&value.island);
+                runtime.evaluate(
+                    value.island.id,
+                    &Location::for_test_value(&partitioned.name, &value.id.stable_segment()),
+                    lowered,
+                    &attribution,
+                    IslandInputs {
+                        arguments: &arguments,
+                        wires: &[],
+                    },
+                    chaos,
+                )?
+            };
             kill_available = false;
             // A hoisted wire island that actually computed (a memo miss) records
             // one realized demand for its described invocation. A memoized

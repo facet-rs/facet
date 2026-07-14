@@ -624,9 +624,7 @@ fn lower_island(
 
 fn publication_capability_registered(ty: &Type) -> bool {
     match ty {
-        Type::Bool | Type::Int | Type::Check | Type::String | Type::Path | Type::Extern(_) => {
-            true
-        }
+        Type::Bool | Type::Int | Type::Check | Type::String | Type::Path | Type::Extern(_) => true,
         Type::Array(element) | Type::Set(element) => publication_capability_registered(element),
         Type::Map { key, value } => {
             publication_capability_registered(key) && publication_capability_registered(value)
