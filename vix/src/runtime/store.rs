@@ -80,18 +80,26 @@ pub enum StoreJournalError {
         version: u32,
     },
     AuthorityMismatch {
-        expected: StoreIdentityAuthority,
-        found: StoreIdentityAuthority,
+        error: Box<StoreJournalAuthorityMismatch>,
     },
     DuplicateValue {
         index: u64,
         identity: ValueId,
     },
-    CorruptValue {
-        index: u64,
-        claimed: ValueId,
-        observed: ValueId,
-    },
+    CorruptValue(Box<StoreJournalCorruptValue>),
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct StoreJournalAuthorityMismatch {
+    pub expected: StoreIdentityAuthority,
+    pub found: StoreIdentityAuthority,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct StoreJournalCorruptValue {
+    pub index: u64,
+    pub claimed: ValueId,
+    pub observed: ValueId,
 }
 
 /// Scheduler-owned semantic execution representation for a published value.
@@ -185,8 +193,10 @@ impl Store {
         let expected = StoreIdentityAuthority::default();
         if journal.authority != expected {
             return Err(StoreJournalError::AuthorityMismatch {
-                expected,
-                found: journal.authority,
+                error: Box::new(StoreJournalAuthorityMismatch {
+                    expected,
+                    found: journal.authority,
+                }),
             });
         }
         let mut store = Store::default();
@@ -195,11 +205,13 @@ impl Store {
             let observed =
                 FramedNode::leaf(value.identity.schema, value.resident.clone()).identity();
             if observed != value.identity {
-                return Err(StoreJournalError::CorruptValue {
-                    index: index as u64,
-                    claimed: value.identity,
-                    observed,
-                });
+                return Err(StoreJournalError::CorruptValue(Box::new(
+                    StoreJournalCorruptValue {
+                        index: index as u64,
+                        claimed: value.identity,
+                        observed,
+                    },
+                )));
             }
             if seen.insert(value.identity, index).is_some() {
                 return Err(StoreJournalError::DuplicateValue {

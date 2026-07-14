@@ -147,9 +147,13 @@ fn persistent_journal_corrupted_value_is_rejected() {
         })
         .expect_err("corrupt resident bytes are rejected before execution");
     match error {
-        RunError::PersistentRuntime(PersistentRuntimeJournalError::Store(
-            StoreJournalError::CorruptValue { .. },
-        )) => {}
+        RunError::PersistentRuntime(error) => match *error {
+            PersistentRuntimeJournalError::Store(store) => match *store {
+                StoreJournalError::CorruptValue(_) => {}
+                other => panic!("expected typed corrupt-value error, got {other:#?}"),
+            },
+            other => panic!("expected typed corrupt-value error, got {other:#?}"),
+        },
         other => panic!("expected typed corrupt-value error, got {other:#?}"),
     }
 }

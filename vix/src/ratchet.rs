@@ -266,7 +266,7 @@ pub enum RunError {
         failure: Box<FailureValue>,
         context: Option<FailureContext>,
     },
-    PersistentRuntime(PersistentRuntimeJournalError),
+    PersistentRuntime(Box<PersistentRuntimeJournalError>),
 }
 
 /// The stable provenance key of a published check: the yield site's selector
@@ -320,7 +320,7 @@ impl From<Box<MachineError>> for RunError {
 
 impl From<PersistentRuntimeJournalError> for RunError {
     fn from(error: PersistentRuntimeJournalError) -> Self {
-        Self::PersistentRuntime(error)
+        Self::PersistentRuntime(Box::new(error))
     }
 }
 
@@ -1256,7 +1256,7 @@ fn run_lane(
     persistent_in: Option<PersistentRuntimeState>,
     persistent_out: Option<&mut PersistentRuntimeState>,
     persistent_journal_in: Option<&PersistentRuntimeJournal>,
-    mut persistent_journal_report: Option<&mut PersistentRuntimeJournalLoadReport>,
+    persistent_journal_report: Option<&mut PersistentRuntimeJournalLoadReport>,
 ) -> Result<SuiteRun, RunError> {
     let mut journal_load_report = None;
     let mut runtime = if let Some(journal) = persistent_journal_in {
@@ -1680,10 +1680,7 @@ fn run_lane(
     if let Some(out) = persistent_out {
         *out = state;
     }
-    if let (Some(report_out), Some(report)) = (
-        persistent_journal_report.as_deref_mut(),
-        journal_load_report,
-    ) {
+    if let (Some(report_out), Some(report)) = (persistent_journal_report, journal_load_report) {
         *report_out = report;
     }
     let events = sink.into_events();

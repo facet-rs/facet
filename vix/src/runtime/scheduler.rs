@@ -317,12 +317,12 @@ pub enum PersistentClaimRejectionReason {
 #[repr(u8)]
 pub enum PersistentRuntimeJournalError {
     Json { detail: String },
-    Store(StoreJournalError),
+    Store(Box<StoreJournalError>),
 }
 
 impl From<StoreJournalError> for PersistentRuntimeJournalError {
     fn from(error: StoreJournalError) -> Self {
-        Self::Store(error)
+        Self::Store(Box::new(error))
     }
 }
 
