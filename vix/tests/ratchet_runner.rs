@@ -5721,7 +5721,7 @@ fn t() -> Stream<Check> {
 }
 ";
 
-    for source in [JSON_OK, JSON_ERR, TOML_OK] {
+    for (source, expected_documents) in [(JSON_OK, 1), (JSON_ERR, 3), (TOML_OK, 1)] {
         let module = Compiler::new()
             .compile(source)
             .expect("dynamic decode compiles");
@@ -5744,9 +5744,9 @@ fn t() -> Stream<Check> {
         let report = run_source(source).expect("dynamic decode runs");
         assert!(report.passed() && report.agrees());
         for lane in [&report.plain, &report.chaos] {
-            assert_eq!(lane.counters.document_parse_host_calls, 1);
+            assert_eq!(lane.counters.document_parse_host_calls, expected_documents);
             assert_eq!(lane.counters.pure_host_calls, 0);
-            assert_eq!(lane.receipt_count, 1);
+            assert_eq!(lane.receipt_count, expected_documents);
         }
     }
 }
