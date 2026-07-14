@@ -424,24 +424,30 @@ fn rung_092_shares_solution_between_generator_control_and_selected_check() {
 }
 
 #[test]
-fn rung_093_preserves_the_demanded_once_red_boundary() {
-    // `demanded_once` is now a described-wire intrinsic, but rung 093 selects a
-    // let-bound wire (`demanded_once(solve)`) rather than a direct invocation.
-    // Resolving a bound wire to its underlying demand is a separate solver-lane
-    // capability, so 093 stays red at the described-wire operand boundary.
-    let Err(RunError::Diagnostics(diagnostics)) = run_source(&solver_lane(RUNG_093)) else {
-        panic!("rung 093 remains red at the described-wire operand boundary");
-    };
-    assert_eq!(diagnostics.entries.len(), 1, "one red boundary");
-    let entry = &diagnostics.entries[0];
-    assert_eq!(entry.code, DiagnosticCode::UnsupportedExpression);
-    let DiagnosticPayload::Unsupported { construct } = &entry.payload else {
-        panic!("described-wire operand boundary carries an unsupported payload: {entry:?}");
-    };
-    assert_eq!(
-        construct,
-        "a described-wire trace check takes a direct function invocation"
-    );
+fn rung_093_solve_is_deterministic() {
+    // `demanded_once(solve)` selects the let-bound `mini_solve` invocation — a
+    // composite-argument preimage with a where-clause requirement Map — by its
+    // canonical preimage in the authored graph. Both demands of `solve` are one
+    // computation, one answer; the observer changes nothing about execution.
+    let report = run_source(&solver_lane(RUNG_093))
+        .expect("rung 093 compiles and executes through VerifiedProgram");
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.checks.len(), 2);
+        assert!(
+            lane.checks[0].passed,
+            "the two solve demands are one answer"
+        );
+        assert!(
+            lane.checks[1].trace_failure.is_none(),
+            "demanded_once(solve) observes exactly one realization: {:?}",
+            lane.checks[1].trace_failure
+        );
+        assert!(lane.checks[1].passed, "demanded_once(solve)");
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+    assert!(report.passed());
+    assert!(report.agrees());
 }
 
 #[test]

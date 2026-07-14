@@ -11,11 +11,12 @@ use crate::lowering::{
 use crate::runtime::{
     ChaosPolicy, Counters, DemandState, Evaluation, Event, EventKind, EventLog, FailureContext,
     FailureValue, FramedNode, GeneratorOutcome, IslandInputs, Location, MachineError, MemoVerdict,
-    Runtime, SchemaId, SnapshotCapture, SnapshotOutcome, TaskState, ValueId, WireDemand,
+    RealizedWireDemand, Runtime, SchemaId, SnapshotCapture, SnapshotOutcome, TaskState, ValueId,
+    WireDemand,
 };
 use crate::vir::{
-    DescribedWire, FunctionId, Island, IslandId, NodeId, Op, PartitionedRecipe, PartitionedValue,
-    TraceCheck, ValueIslandId, WireArg,
+    DescribedWire, FunctionId, Island, IslandId, Module, Op, PartitionedRecipe, PartitionedValue,
+    TraceCheck, ValueIslandId, WireArg, WireSelector,
 };
 
 /// The user functions named by a test's described-wire trace checks. A bundled
@@ -36,19 +37,46 @@ fn selected_wire_functions(partitioned: &crate::vir::PartitionedTest) -> BTreeSe
         .collect()
 }
 
+/// The resolved canonical preimage of a deferred trace check's binding-level
+/// described wire: the structural fingerprint of the let-bound invocation node
+/// in the authored test graph. `None` for every other trace shape. Resolution
+/// reads the authored graph only — nothing is demanded, lowered, or interned.
+fn binding_preimage(
+    module: &Module,
+    test_function: FunctionId,
+    trace: &TraceCheck,
+) -> Option<String> {
+    let (TraceCheck::Demanded { wire }
+    | TraceCheck::NeverDemanded { wire }
+    | TraceCheck::DemandedOnce { wire }) = trace
+    else {
+        return None;
+    };
+    let WireSelector::Binding(node) = wire.selector else {
+        return None;
+    };
+    Some(module.invocation_preimage(test_function, node))
+}
+
 /// Record one realized demand per distinct executed invocation preimage that a
 /// described-wire observer selects, without adding a scheduler edge. The cost
 /// model may fuse a mapped element or bundle a single-consumer pure call into a
 /// direct `WeavyOp::Call`; this reads the executed island's demand-independent
-/// structure and retains the exact canonical preimage (callee + framed argument
-/// identities) so `demanded_once` distinguishes `costly(1)` from `costly(2)`.
-/// Only unconditional calls (never a control-region member) are observed, so an
-/// untaken arm's invocation is never fabricated; equal preimages share one entry.
+/// structure and retains the exact canonical preimage — the invocation's
+/// structural fingerprint in the authored graph, plus framed argument
+/// identities when every argument is a closed literal — so `demanded_once`
+/// distinguishes `costly(1)` from `costly(2)` and a binding selector matches a
+/// composite-argument invocation. Only unconditional calls (never a
+/// control-region member) are observed, so an untaken arm's invocation is never
+/// fabricated; equal preimages share one entry, including with a realization
+/// the memo path already recorded.
 fn observe_bundled_invocations(
     runtime: &mut Runtime<EventLog>,
+    module: &Module,
+    test_function: FunctionId,
     island: &Island,
     selected: &BTreeSet<FunctionId>,
-    seen: &mut BTreeSet<(FunctionId, Vec<ValueId>)>,
+    seen: &mut BTreeSet<String>,
 ) {
     let mut controlled = BTreeSet::new();
     for node in &island.nodes {
@@ -75,8 +103,7 @@ fn observe_bundled_invocations(
             _ => {}
         }
     }
-    let by_id: BTreeMap<NodeId, &crate::vir::Node> =
-        island.nodes.iter().map(|node| (node.id, node)).collect();
+    let authored = &module.functions[test_function.0 as usize];
     for node in &island.nodes {
         let Op::Call(function) = node.op else {
             continue;
@@ -84,25 +111,32 @@ fn observe_bundled_invocations(
         if controlled.contains(&node.id) || !selected.contains(&function) {
             continue;
         }
-        let mut arguments = Vec::with_capacity(node.inputs.len());
+        // The preimage is read from the authored graph, never the island cut,
+        // so shared-value and wire substitutions cannot distort it.
+        let preimage = module.invocation_preimage(test_function, node.id);
+        if seen.contains(&preimage)
+            || runtime
+                .realized_wire_demands()
+                .iter()
+                .any(|demand| demand.preimage == preimage)
+        {
+            continue;
+        }
+        let mut literals = Vec::with_capacity(node.inputs.len());
         let mut literal = true;
         for input in &node.inputs {
-            match by_id.get(input).map(|node| &node.op) {
-                Some(Op::Int(value)) => arguments.push(WireArg::Int(*value)),
-                Some(Op::Bool(value)) => arguments.push(WireArg::Bool(*value)),
+            match authored.nodes[input.0 as usize].op {
+                Op::Int(value) => literals.push(WireArg::Int(value)),
+                Op::Bool(value) => literals.push(WireArg::Bool(value)),
                 _ => {
                     literal = false;
                     break;
                 }
             }
         }
-        if !literal {
-            continue;
-        }
-        let identities: Vec<ValueId> = arguments.iter().map(wire_arg_identity).collect();
-        if seen.insert((function, identities.clone())) {
-            runtime.record_wire_demand(function, identities);
-        }
+        let arguments = literal.then(|| literals.iter().map(wire_arg_identity).collect::<Vec<_>>());
+        seen.insert(preimage.clone());
+        runtime.record_wire_demand(function, arguments, preimage);
     }
 }
 
@@ -116,7 +150,8 @@ struct FlatWires<'a> {
     locations: Vec<Location>,
     attributions: Vec<LoweringAttribution>,
     functions: Vec<FunctionId>,
-    demand_args: Vec<Vec<ValueId>>,
+    demand_args: Vec<Option<Vec<ValueId>>>,
+    preimages: Vec<String>,
     artifacts: Vec<&'a LoweringArtifact>,
 }
 
@@ -133,7 +168,8 @@ impl<'a> FlatWires<'a> {
                 arguments: &[],
                 wires: &[],
                 function: self.functions[index],
-                demand_arguments: &self.demand_args[index],
+                demand_arguments: self.demand_args[index].as_deref(),
+                preimage: &self.preimages[index],
             })
             .collect()
     }
@@ -145,6 +181,7 @@ impl<'a> FlatWires<'a> {
 /// structurally equal awaits share one memo cell and realize once.
 fn flat_wires<'a>(
     cache: &'a LoweringCache,
+    module: &Module,
     wire_lookup: &BTreeMap<ValueIslandId, &PartitionedValue>,
     wire_inputs: &[ValueIslandId],
     test_name: &str,
@@ -155,6 +192,7 @@ fn flat_wires<'a>(
         attributions: Vec::with_capacity(wire_inputs.len()),
         functions: Vec::with_capacity(wire_inputs.len()),
         demand_args: Vec::with_capacity(wire_inputs.len()),
+        preimages: Vec::with_capacity(wire_inputs.len()),
         artifacts: Vec::with_capacity(wire_inputs.len()),
     };
     for value in wire_inputs {
@@ -180,11 +218,15 @@ fn flat_wires<'a>(
                 .map(|provenance| provenance.function)
                 .unwrap_or(wire.island.function),
         );
-        backing.demand_args.push(
+        backing.demand_args.push(provenance.and_then(|provenance| {
             provenance
-                .map(|provenance| provenance.arguments.iter().map(wire_arg_identity).collect())
-                .unwrap_or_default(),
-        );
+                .arguments
+                .as_ref()
+                .map(|arguments| arguments.iter().map(wire_arg_identity).collect())
+        }));
+        backing
+            .preimages
+            .push(module.invocation_preimage(wire.id.function, wire.id.node));
         backing.artifacts.push(artifact);
     }
     backing
@@ -335,19 +377,10 @@ struct TraceSnapshot {
     /// ran). Repeated identical `recipe + argument` demands memoize to a single
     /// realization, so a call-site selector observes at most one entry; distinct
     /// arguments contribute distinct entries. This is the frozen log the
-    /// described-wire trace checks read; it retains only the callee identity and
-    /// argument identities a trace descriptor can select on.
+    /// described-wire trace checks read; it retains only the callee identity,
+    /// argument identities, and canonical preimage a trace descriptor can
+    /// select on.
     wire_demands: Vec<RealizedWireDemand>,
-}
-
-/// One realized invocation recorded for described-wire observation: which user
-/// function was demanded and with which canonical argument identities. Recorded
-/// only when a wire demand actually computes (a memo miss that ran), so the log
-/// counts realizations, never re-demands of an already-memoized key.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RealizedWireDemand {
-    pub function: FunctionId,
-    pub arguments: Vec<ValueId>,
 }
 
 /// The canonical identity of one described-wire scalar argument. Computed the
@@ -375,21 +408,36 @@ fn at_most(observed: u64, bound: i64) -> (u64, bool) {
 impl TraceSnapshot {
     /// Count the realized demands that match a described wire. A name-level
     /// selector matches every realization of the callee; a call-site selector
-    /// matches only the exact described argument identities. The described
-    /// literals are resolved to identities here — never demanded or counted.
-    fn wire_matches(&self, wire: &DescribedWire) -> u64 {
-        let described: Vec<ValueId> = wire.arguments.iter().map(wire_arg_identity).collect();
+    /// matches only the exact described argument identities; a binding selector
+    /// matches the invocation's canonical preimage, resolved from the authored
+    /// graph when the check was deferred. The described literals are resolved
+    /// to identities here — never demanded or counted.
+    fn wire_matches(&self, wire: &DescribedWire, binding: Option<&str>) -> u64 {
         self.wire_demands
             .iter()
-            .filter(|demand| {
-                demand.function == wire.function
-                    && (wire.name_level || demand.arguments == described)
+            .filter(|demand| match &wire.selector {
+                WireSelector::Name => demand.function == wire.function,
+                WireSelector::CallSite(arguments) => {
+                    let described: Vec<ValueId> = arguments.iter().map(wire_arg_identity).collect();
+                    demand.function == wire.function
+                        && demand.arguments.as_deref() == Some(&described[..])
+                }
+                WireSelector::Binding(_) => {
+                    binding.is_some_and(|preimage| demand.preimage == preimage)
+                }
             })
             .count() as u64
     }
 
-    /// Evaluate one trace check against the frozen snapshot.
-    fn evaluate(&self, provenance: ProvenanceKey, check: TraceCheck) -> CheckRun {
+    /// Evaluate one trace check against the frozen snapshot. `binding` is the
+    /// resolved canonical preimage of a binding-level described wire, absent
+    /// for every other check shape.
+    fn evaluate(
+        &self,
+        provenance: ProvenanceKey,
+        check: TraceCheck,
+        binding: Option<&str>,
+    ) -> CheckRun {
         let (observed, passed) = match &check {
             TraceCheck::SchedulerRequestsAtMost { bound } => {
                 at_most(self.scheduler_requests, *bound)
@@ -416,15 +464,15 @@ impl TraceSnapshot {
                 (observed, i128::from(observed) == i128::from(*times))
             }
             TraceCheck::Demanded { wire } => {
-                let observed = self.wire_matches(wire);
+                let observed = self.wire_matches(wire, binding);
                 (observed, observed >= 1)
             }
             TraceCheck::NeverDemanded { wire } => {
-                let observed = self.wire_matches(wire);
+                let observed = self.wire_matches(wire, binding);
                 (observed, observed == 0)
             }
             TraceCheck::DemandedOnce { wire } => {
-                let observed = self.wire_matches(wire);
+                let observed = self.wire_matches(wire, binding);
                 (observed, observed == 1)
             }
             TraceCheck::RanProcesses { count } => {
@@ -824,6 +872,7 @@ impl PreparedRun {
 /// shared publications available as value inputs.
 struct SiteContext<'a> {
     test_name: &'a str,
+    module: &'a Module,
     wire_lookup: &'a BTreeMap<ValueIslandId, &'a PartitionedValue>,
     published_values: &'a BTreeMap<ValueIslandId, Evaluation>,
 }
@@ -864,6 +913,7 @@ fn evaluate_value_site(
     // the memo path; an untaken control region never parks, so it never demands.
     let wires_backing = flat_wires(
         cache,
+        context.module,
         context.wire_lookup,
         &island.wire_inputs,
         context.test_name,
@@ -935,6 +985,7 @@ fn evaluate_snapshot_site(
         .collect::<Vec<_>>();
     let wires_backing = flat_wires(
         cache,
+        context.module,
         context.wire_lookup,
         &island.wire_inputs,
         context.test_name,
@@ -1022,10 +1073,13 @@ fn run_lane(
     let mut values = Vec::new();
     // Trace checks are deferred until every selected value check completes; they
     // are evaluated once, together, against the frozen completed-run snapshot.
-    let mut deferred_traces: Vec<(ProvenanceKey, TraceCheck)> = Vec::new();
+    // Each deferred trace carries the resolved canonical preimage of its
+    // binding-level described wire (when it has one), read from the authored
+    // graph at deferral time — nothing is demanded to resolve it.
+    let mut deferred_traces: Vec<(ProvenanceKey, TraceCheck, Option<String>)> = Vec::new();
     // Distinct executed invocation preimages already observed for a described-wire
     // observer, so equal preimages share one realized-demand entry.
-    let mut observed_invocations: BTreeSet<(FunctionId, Vec<ValueId>)> = BTreeSet::new();
+    let mut observed_invocations: BTreeSet<String> = BTreeSet::new();
     let mut kill_available = chaos.kill_first_running_task;
 
     for test in &module.tests {
@@ -1104,15 +1158,23 @@ fn run_lane(
                 )?
             };
             kill_available = false;
-            // A hoisted wire island that actually computed (a memo miss) records
-            // one realized demand for its described invocation. A memoized
-            // re-demand of the same recipe+argument is a hit and adds nothing, so
-            // repeated identical wires memoize to a single realization.
+            // A hoisted invocation island that actually computed (a memo miss)
+            // records one realized demand for its described invocation. A
+            // memoized re-demand of the same recipe+argument is a hit and adds
+            // nothing, so repeated identical wires memoize to a single
+            // realization.
             if let Some(wire) = &value.wire
                 && evaluation.memo == MemoVerdict::Miss
             {
-                let arguments = wire.arguments.iter().map(wire_arg_identity).collect();
-                runtime.record_wire_demand(wire.function, arguments);
+                let arguments = wire
+                    .arguments
+                    .as_ref()
+                    .map(|arguments| arguments.iter().map(wire_arg_identity).collect::<Vec<_>>());
+                runtime.record_wire_demand(
+                    wire.function,
+                    arguments,
+                    module.invocation_preimage(value.id.function, value.id.node),
+                );
             }
             values.push(ValuePublicationRun {
                 provenance: value.id,
@@ -1218,6 +1280,7 @@ fn run_lane(
                                 cache,
                                 &SiteContext {
                                     test_name: &partitioned.name,
+                                    module,
                                     wire_lookup: &wire_lookup,
                                     published_values: &published_values,
                                 },
@@ -1233,6 +1296,7 @@ fn run_lane(
                                 cache,
                                 &SiteContext {
                                     test_name: &partitioned.name,
+                                    module,
                                     wire_lookup: &wire_lookup,
                                     published_values: &published_values,
                                 },
@@ -1245,7 +1309,11 @@ fn run_lane(
                             )?);
                         }
                         PartitionedRecipe::Trace(trace) => {
-                            deferred_traces.push((ProvenanceKey::site(site), trace.clone()));
+                            deferred_traces.push((
+                                ProvenanceKey::site(site),
+                                trace.clone(),
+                                binding_preimage(module, test.function, trace),
+                            ));
                         }
                     }
                 }
@@ -1264,6 +1332,7 @@ fn run_lane(
                                 cache,
                                 &SiteContext {
                                     test_name: &partitioned.name,
+                                    module,
                                     wire_lookup: &wire_lookup,
                                     published_values: &published_values,
                                 },
@@ -1282,6 +1351,7 @@ fn run_lane(
                                 cache,
                                 &SiteContext {
                                     test_name: &partitioned.name,
+                                    module,
                                     wire_lookup: &wire_lookup,
                                     published_values: &published_values,
                                 },
@@ -1297,7 +1367,11 @@ fn run_lane(
                             kill_available = false;
                         }
                         PartitionedRecipe::Trace(trace) => {
-                            deferred_traces.push((ProvenanceKey::site(site), trace.clone()));
+                            deferred_traces.push((
+                                ProvenanceKey::site(site),
+                                trace.clone(),
+                                binding_preimage(module, test.function, trace),
+                            ));
                         }
                     }
                 }
@@ -1312,6 +1386,8 @@ fn run_lane(
             for island in evaluated_islands {
                 observe_bundled_invocations(
                     &mut runtime,
+                    module,
+                    test.function,
                     &partitioned.islands[island],
                     &selected,
                     &mut observed_invocations,
@@ -1350,17 +1426,10 @@ fn run_lane(
             .map(|read| read.projection.clone())
             .collect(),
         function_calls,
-        wire_demands: runtime
-            .realized_wire_demands()
-            .iter()
-            .map(|(function, arguments)| RealizedWireDemand {
-                function: *function,
-                arguments: arguments.clone(),
-            })
-            .collect(),
+        wire_demands: runtime.realized_wire_demands().to_vec(),
     };
-    for (provenance, trace) in deferred_traces {
-        checks.push(snapshot.evaluate(provenance, trace));
+    for (provenance, trace, binding) in deferred_traces {
+        checks.push(snapshot.evaluate(provenance, trace, binding.as_deref()));
     }
 
     let receipt_count = runtime.receipts().count() as u64;

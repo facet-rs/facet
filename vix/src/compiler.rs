@@ -14,7 +14,7 @@ use crate::vir::{
     GeneratorStep, MatchArm as VirMatchArm, Module, Node, NodeId, OPTION_NONE_VARIANT,
     OPTION_SOME_VARIANT, ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, OrderedMatchArm,
     Parameter, ParameterId, ParameterKind, RecordField, RecordType, Test, TestMetadata, TraceCheck,
-    Type, VariantPayload, WireArg, YieldSite, YieldSiteId,
+    Type, VariantPayload, WireArg, WireSelector, YieldSite, YieldSiteId,
 };
 
 pub struct Compiler {
@@ -2160,17 +2160,17 @@ fn lower_check(
         }
         "demanded" => {
             return Ok(CheckRecipe::Trace(TraceCheck::Demanded {
-                wire: described_wire(context, call)?,
+                wire: described_wire(nodes, bindings, context, call)?,
             }));
         }
         "never_demanded" => {
             return Ok(CheckRecipe::Trace(TraceCheck::NeverDemanded {
-                wire: described_wire(context, call)?,
+                wire: described_wire(nodes, bindings, context, call)?,
             }));
         }
         "demanded_once" => {
             return Ok(CheckRecipe::Trace(TraceCheck::DemandedOnce {
-                wire: described_wire(context, call)?,
+                wire: described_wire(nodes, bindings, context, call)?,
             }));
         }
         "ran_processes" => {
@@ -2382,12 +2382,30 @@ fn trace_function_calls(
 /// literals. A zero-argument selector `f()` on a function that declares
 /// parameters is a name-level selector (every argument demand of `f`); a
 /// call-site selector carries the literal arguments so equal-recipe/different-
-/// argument demands stay distinct. No node is built and no operand is evaluated.
+/// argument demands stay distinct. An identifier operand names a let-bound
+/// invocation — including composite and where-clause arguments, which have no
+/// literal spelling — selected by its already-lowered call node's canonical
+/// preimage. No node is built and no operand is evaluated.
 fn described_wire(
+    nodes: &[Node],
+    bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
     call: &ast::Call,
 ) -> Result<DescribedWire, Diagnostics> {
     check_arity(call, 1)?;
+    if let ast::Expr::Identifier(identifier) = &call.args.args[0] {
+        let bound = lookup_binding(bindings, &identifier.value, identifier.span)?;
+        let Op::Call(function) = nodes[bound.node.0 as usize].op else {
+            return Err(Diagnostics::one(Diagnostic::unsupported(
+                identifier.span,
+                "a described-wire binding names a let-bound function invocation",
+            )));
+        };
+        return Ok(DescribedWire {
+            function,
+            selector: WireSelector::Binding(bound.node),
+        });
+    }
     let ast::Expr::Call(operand) = &call.args.args[0] else {
         return Err(Diagnostics::one(Diagnostic::unsupported(
             expr_span(&call.args.args[0]),
@@ -2419,11 +2437,14 @@ fn described_wire(
         .iter()
         .map(wire_argument_literal)
         .collect::<Result<Vec<_>, _>>()?;
-    let name_level = arguments.is_empty() && !signature.parameters.is_empty();
+    let selector = if arguments.is_empty() && !signature.parameters.is_empty() {
+        WireSelector::Name
+    } else {
+        WireSelector::CallSite(arguments)
+    };
     Ok(DescribedWire {
         function: signature.id,
-        arguments,
-        name_level,
+        selector,
     })
 }
 
@@ -8147,165 +8168,249 @@ fn push_equality_condition(
     right: &LoweredValue,
     negate: bool,
 ) -> NodeId {
-    let equal = match &left.ty {
-        Type::Map { key, value } => {
-            let key_array = Type::array(key.as_ref().clone());
-            let value_array = Type::array(value.as_ref().clone());
-            let keys_left = push_project(nodes, span, left.node, key_array.clone(), Op::MapKeys);
-            let keys_right = push_project(nodes, span, right.node, key_array, Op::MapKeys);
-            let keys_equal = push_eq(nodes, span, keys_left, keys_right);
-            // The value projections and their comparison form the `then` region
-            // of a short-circuiting `keys_equal && values_equal`.
-            let values_start = nodes.len();
-            let values_left =
-                push_project(nodes, span, left.node, value_array.clone(), Op::MapValues);
-            let values_right = push_project(nodes, span, right.node, value_array, Op::MapValues);
-            let values_equal = push_eq(nodes, span, values_left, values_right);
-            let consequent = control_region(nodes, values_start, values_equal);
-            let alternative_start = nodes.len();
-            let alternative_value = lower_bool_constant(nodes, span, false);
-            let alternative = control_region(nodes, alternative_start, alternative_value.node);
-            push_node(
-                nodes,
-                span,
-                Type::Bool,
-                EffectFacts::PURE,
-                vec![keys_equal],
-                Op::If {
-                    consequent,
-                    alternative,
-                },
-            )
-        }
-        Type::Set(element) => {
-            let element_array = Type::array(element.as_ref().clone());
-            let left_values =
-                push_project(nodes, span, left.node, element_array.clone(), Op::SetValues);
-            let right_values = push_project(nodes, span, right.node, element_array, Op::SetValues);
-            push_eq(nodes, span, left_values, right_values)
-        }
-        // Product equality only descends through fields when a field carries an
-        // opaque collection handle. Fixed-width products keep the primitive
-        // structural equality path so existing word-level equality certificates
-        // remain stable, while `ByteStream { $lines: Map<Int, String> }` still
-        // reaches the canonical map equality path.
-        Type::Record(record) => {
-            if record
-                .fields
-                .iter()
-                .all(|field| field.ty.equality_is_structural())
-            {
-                return push_node(
-                    nodes,
-                    span,
-                    Type::Bool,
-                    EffectFacts::PURE,
-                    vec![left.node, right.node],
-                    if negate { Op::Ne } else { Op::Eq },
-                );
-            }
-            let mut fields = record.fields.iter().enumerate();
-            let Some((first_index, first)) = fields.next() else {
-                let unit_equal = lower_bool_constant(nodes, span, true);
-                if negate {
-                    let false_value = lower_bool_constant(nodes, span, false);
-                    return push_eq(nodes, span, unit_equal.node, false_value.node);
-                }
-                return unit_equal.node;
-            };
-            let first_index = u32::try_from(first_index).expect("record field index fits u32");
-            let left_field = push_project(
-                nodes,
-                span,
-                left.node,
-                first.ty.clone(),
-                Op::Project { index: first_index },
-            );
-            let right_field = push_project(
-                nodes,
-                span,
-                right.node,
-                first.ty.clone(),
-                Op::Project { index: first_index },
-            );
-            let mut equal = push_equality_condition(
-                nodes,
-                span,
-                &LoweredValue {
-                    node: left_field,
-                    ty: first.ty.clone(),
-                },
-                &LoweredValue {
-                    node: right_field,
-                    ty: first.ty.clone(),
-                },
-                false,
-            );
-            for (index, field) in fields {
-                let consequent_start = nodes.len();
-                let index = u32::try_from(index).expect("record field index fits u32");
-                let left_field = push_project(
-                    nodes,
-                    span,
-                    left.node,
-                    field.ty.clone(),
-                    Op::Project { index },
-                );
-                let right_field = push_project(
-                    nodes,
-                    span,
-                    right.node,
-                    field.ty.clone(),
-                    Op::Project { index },
-                );
-                let field_equal = push_equality_condition(
-                    nodes,
-                    span,
-                    &LoweredValue {
-                        node: left_field,
-                        ty: field.ty.clone(),
-                    },
-                    &LoweredValue {
-                        node: right_field,
-                        ty: field.ty.clone(),
-                    },
-                    false,
-                );
-                let consequent = control_region(nodes, consequent_start, field_equal);
-                let alternative_start = nodes.len();
-                let alternative = lower_bool_constant(nodes, span, false);
-                let alternative = control_region(nodes, alternative_start, alternative.node);
-                equal = push_node(
-                    nodes,
-                    span,
-                    Type::Bool,
-                    EffectFacts::PURE,
-                    vec![equal],
-                    Op::If {
-                        consequent,
-                        alternative,
-                    },
-                );
-            }
-            equal
-        }
-        _ => {
-            return push_node(
-                nodes,
-                span,
-                Type::Bool,
-                EffectFacts::PURE,
-                vec![left.node, right.node],
-                if negate { Op::Ne } else { Op::Eq },
-            );
-        }
-    };
+    if left.ty.equality_is_structural() {
+        return push_node(
+            nodes,
+            span,
+            Type::Bool,
+            EffectFacts::PURE,
+            vec![left.node, right.node],
+            if negate { Op::Ne } else { Op::Eq },
+        );
+    }
+    let equal = push_structural_equality(nodes, span, left.node, right.node, &left.ty);
     if negate {
         let alternative = lower_bool_constant(nodes, span, false);
         push_eq(nodes, span, equal, alternative.node)
     } else {
         equal
     }
+}
+
+/// One Bool node deciding `left == right` for `ty`, decomposed at compile time
+/// when the type's in-frame equality is not one structural word walk. Maps and
+/// Sets compare their canonical key/value array projections; a non-structural
+/// enum compares variant tags and, only inside the both-same-variant region,
+/// each payload field recursively; non-structural tuples and records compare
+/// field by field with short-circuiting conjunction. Structural types remain a
+/// single `Op::Eq`. Every guarded projection lives inside its `If` region, so a
+/// mismatched variant never projects a payload and a failed prefix never
+/// compares a later field. This builds an ordinary pure recipe — no new
+/// execution primitive, island, or demand shape.
+fn push_structural_equality(
+    nodes: &mut Vec<Node>,
+    span: Span,
+    left: NodeId,
+    right: NodeId,
+    ty: &Type,
+) -> NodeId {
+    if ty.equality_is_structural() {
+        return push_eq(nodes, span, left, right);
+    }
+    match ty {
+        Type::Map { key, value } => {
+            let key_array = Type::array(key.as_ref().clone());
+            let value_array = Type::array(value.as_ref().clone());
+            let keys_left = push_project(nodes, span, left, key_array.clone(), Op::MapKeys);
+            let keys_right = push_project(nodes, span, right, key_array.clone(), Op::MapKeys);
+            let keys_equal =
+                push_structural_equality(nodes, span, keys_left, keys_right, &key_array);
+            // The value projections and their comparison form the `then` region
+            // of a short-circuiting `keys_equal && values_equal`.
+            let values_start = nodes.len();
+            let values_left = push_project(nodes, span, left, value_array.clone(), Op::MapValues);
+            let values_right = push_project(nodes, span, right, value_array.clone(), Op::MapValues);
+            let values_equal =
+                push_structural_equality(nodes, span, values_left, values_right, &value_array);
+            push_guarded_equality(nodes, span, keys_equal, values_start, values_equal)
+        }
+        Type::Set(element) => {
+            let element_array = Type::array(element.as_ref().clone());
+            let left_values = push_project(nodes, span, left, element_array.clone(), Op::SetValues);
+            let right_values =
+                push_project(nodes, span, right, element_array.clone(), Op::SetValues);
+            push_structural_equality(nodes, span, left_values, right_values, &element_array)
+        }
+        Type::Enum(enumeration) => {
+            let enumeration = enumeration.clone();
+            push_enum_equality(nodes, span, left, right, &enumeration, 0)
+        }
+        Type::Tuple(elements) => {
+            let elements = elements.clone();
+            push_field_conjunction(nodes, span, &elements, 0, &mut |nodes, index, ty| {
+                (
+                    push_project(nodes, span, left, ty.clone(), Op::Project { index }),
+                    push_project(nodes, span, right, ty.clone(), Op::Project { index }),
+                )
+            })
+        }
+        Type::Record(record) => {
+            let fields: Vec<Type> = record.fields.iter().map(|field| field.ty.clone()).collect();
+            push_field_conjunction(nodes, span, &fields, 0, &mut |nodes, index, ty| {
+                (
+                    push_project(nodes, span, left, ty.clone(), Op::Project { index }),
+                    push_project(nodes, span, right, ty.clone(), Op::Project { index }),
+                )
+            })
+        }
+        // Functions, streams, and other non-value shapes keep today's typed
+        // lowering boundary rather than inventing an equality for them.
+        _ => push_eq(nodes, span, left, right),
+    }
+}
+
+/// `if condition { <consequent region from `consequent_start`> } else { false }`
+/// — the short-circuit conjunction step every decomposed equality uses. The
+/// consequent region is captured before the `false` constant is pushed, so the
+/// guarded projections belong to exactly one region.
+fn push_guarded_equality(
+    nodes: &mut Vec<Node>,
+    span: Span,
+    condition: NodeId,
+    consequent_start: usize,
+    consequent_output: NodeId,
+) -> NodeId {
+    let consequent = control_region(nodes, consequent_start, consequent_output);
+    let alternative_start = nodes.len();
+    let alternative_value = lower_bool_constant(nodes, span, false);
+    let alternative = control_region(nodes, alternative_start, alternative_value.node);
+    push_node(
+        nodes,
+        span,
+        Type::Bool,
+        EffectFacts::PURE,
+        vec![condition],
+        Op::If {
+            consequent,
+            alternative,
+        },
+    )
+}
+
+/// Variant-tag chain for a non-structural enum equality: for each variant, when
+/// the left value holds it, the right value must hold it too and the payloads
+/// must compare equal inside that doubly-guarded region. The final variant needs
+/// no left-tag test — exhaustiveness makes it the only remaining case.
+fn push_enum_equality(
+    nodes: &mut Vec<Node>,
+    span: Span,
+    left: NodeId,
+    right: NodeId,
+    enumeration: &EnumType,
+    index: usize,
+) -> NodeId {
+    let variant = u32::try_from(index).expect("variant index fits u32");
+    let last = index + 1 == enumeration.variants.len();
+    let both_here = |nodes: &mut Vec<Node>| -> NodeId {
+        let right_is = push_node(
+            nodes,
+            span,
+            Type::Bool,
+            EffectFacts::PURE,
+            vec![right],
+            Op::IsVariant { variant },
+        );
+        let payload_start = nodes.len();
+        let payload_equal = push_variant_payload_equality(
+            nodes,
+            span,
+            left,
+            right,
+            variant,
+            &enumeration.variants[index].payload,
+        );
+        push_guarded_equality(nodes, span, right_is, payload_start, payload_equal)
+    };
+    if last {
+        return both_here(nodes);
+    }
+    let left_is = push_node(
+        nodes,
+        span,
+        Type::Bool,
+        EffectFacts::PURE,
+        vec![left],
+        Op::IsVariant { variant },
+    );
+    let consequent_start = nodes.len();
+    let here = both_here(nodes);
+    let consequent = control_region(nodes, consequent_start, here);
+    let alternative_start = nodes.len();
+    let rest = push_enum_equality(nodes, span, left, right, enumeration, index + 1);
+    let alternative = control_region(nodes, alternative_start, rest);
+    push_node(
+        nodes,
+        span,
+        Type::Bool,
+        EffectFacts::PURE,
+        vec![left_is],
+        Op::If {
+            consequent,
+            alternative,
+        },
+    )
+}
+
+/// Field-wise payload comparison for one shared variant. Both values are known
+/// to hold `variant` where this is emitted, so each `VariantProject` is safe. A
+/// unit payload is trivially equal.
+fn push_variant_payload_equality(
+    nodes: &mut Vec<Node>,
+    span: Span,
+    left: NodeId,
+    right: NodeId,
+    variant: u32,
+    payload: &VariantPayload,
+) -> NodeId {
+    let field_types: Vec<Type> = match payload {
+        VariantPayload::Unit => Vec::new(),
+        VariantPayload::Tuple(fields) => fields.clone(),
+        VariantPayload::Record(fields) => fields.iter().map(|field| field.ty.clone()).collect(),
+    };
+    push_field_conjunction(nodes, span, &field_types, 0, &mut |nodes, field, ty| {
+        (
+            push_project(
+                nodes,
+                span,
+                left,
+                ty.clone(),
+                Op::VariantProject { variant, field },
+            ),
+            push_project(
+                nodes,
+                span,
+                right,
+                ty.clone(),
+                Op::VariantProject { variant, field },
+            ),
+        )
+    })
+}
+
+type FieldProject<'a> = dyn FnMut(&mut Vec<Node>, u32, &Type) -> (NodeId, NodeId) + 'a;
+
+/// Short-circuit conjunction over per-field equalities: field `i + 1` is
+/// projected and compared only inside the region where field `i` already
+/// compared equal. An empty field list is `true`.
+fn push_field_conjunction(
+    nodes: &mut Vec<Node>,
+    span: Span,
+    field_types: &[Type],
+    index: usize,
+    project: &mut FieldProject<'_>,
+) -> NodeId {
+    let Some(ty) = field_types.get(index) else {
+        return lower_bool_constant(nodes, span, true).node;
+    };
+    let field = u32::try_from(index).expect("field index fits u32");
+    let (left, right) = project(nodes, field, ty);
+    let field_equal = push_structural_equality(nodes, span, left, right, ty);
+    if index + 1 == field_types.len() {
+        return field_equal;
+    }
+    let rest_start = nodes.len();
+    let rest = push_field_conjunction(nodes, span, field_types, index + 1, project);
+    push_guarded_equality(nodes, span, field_equal, rest_start, rest)
 }
 
 fn push_project(nodes: &mut Vec<Node>, span: Span, source: NodeId, ty: Type, op: Op) -> NodeId {
