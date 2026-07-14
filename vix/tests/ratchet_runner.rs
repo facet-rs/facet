@@ -6422,16 +6422,32 @@ fn tree_fetch_band_compiles_to_typed_vir() {
 /// `run_source`; the in-language `never_read` and `fetched` checks are the
 /// externally visible certificate.
 #[test]
-fn tree_fetch_band_runs_through_effect_plane() {
-    for (rung, source) in [
-        ("071", RUNG_071),
-        ("072", RUNG_072),
-        ("075", RUNG_075),
-        ("076", RUNG_076),
-        ("077", RUNG_077),
-    ] {
-        let report = run_source(source)
-            .unwrap_or_else(|error| panic!("rung {rung} runs through the effect plane: {error:?}"));
-        assert!(report.passed(), "rung {rung} agrees across plain and chaos");
-    }
+fn rung_071_runs_through_effect_plane() {
+    assert_effect_rung("071", RUNG_071);
+}
+
+#[test]
+fn rung_072_runs_through_effect_plane() {
+    assert_effect_rung("072", RUNG_072);
+}
+
+#[test]
+fn rung_075_runs_through_effect_plane() {
+    assert_effect_rung("075", RUNG_075);
+}
+
+#[test]
+fn rung_076_runs_through_effect_plane() {
+    assert_effect_rung("076", RUNG_076);
+}
+
+#[test]
+fn rung_077_runs_through_effect_plane() {
+    assert_effect_rung("077", RUNG_077);
+}
+
+fn assert_effect_rung(rung: &str, source: &str) {
+    let report = run_source(source)
+        .unwrap_or_else(|error| panic!("rung {rung} runs through the effect plane: {error:?}"));
+    assert!(report.passed(), "rung {rung} agrees across plain and chaos");
 }
