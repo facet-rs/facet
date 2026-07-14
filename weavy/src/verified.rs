@@ -2328,7 +2328,12 @@ impl Verifier<'_> {
                 } else {
                     contract.frame.regions[projected_result].clone()
                 };
-                let result_matches = concrete_result == call.result;
+                let result_matches = if semantic_projection {
+                    concrete_result == call.result
+                } else {
+                    concrete_result.shape == call.result.shape
+                        && concrete_result.value_shape == call.result.value_shape
+                };
                 let mismatch = entry_mismatch.or_else(|| {
                     (!result_matches).then(|| FunctionCallContractMismatch::Result {
                         function: concrete_result,
