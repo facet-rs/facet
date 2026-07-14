@@ -947,19 +947,6 @@ impl<S: EventSink> Runtime<S> {
                 }
             }
             for (binding, argument) in lowered.value_inputs.iter().zip(arguments) {
-                if binding.store_schema != argument.identity.schema {
-                    let error = MachineError::runtime(
-                        MachineOperation::EntryBinding,
-                        RuntimeFault::ValueInputSchemaMismatch,
-                        None,
-                        Some(lowered.demand_key),
-                    );
-                    return Err(Box::new(self.terminate_machine_fault(
-                        task_id,
-                        lowered.demand_key,
-                        error,
-                    )));
-                }
                 let frozen = self
                     .store
                     .entry(argument.handle)
@@ -977,6 +964,19 @@ impl<S: EventSink> Runtime<S> {
                 let result = if let Some(frozen) = &frozen {
                     task.write_entry_frozen(binding.entry, frozen)
                 } else {
+                    if binding.store_schema != argument.identity.schema {
+                        let error = MachineError::runtime(
+                            MachineOperation::EntryBinding,
+                            RuntimeFault::ValueInputSchemaMismatch,
+                            None,
+                            Some(lowered.demand_key),
+                        );
+                        return Err(Box::new(self.terminate_machine_fault(
+                            task_id,
+                            lowered.demand_key,
+                            error,
+                        )));
+                    }
                     let Some(handle) = self.store.weavy_handle(argument.handle) else {
                         let error = MachineError::runtime(
                             MachineOperation::EntryBinding,
@@ -1268,6 +1268,8 @@ impl<S: EventSink> Runtime<S> {
                     let interned = self
                         .store
                         .intern_realized(semantic_schema_id(&lowered.output_type), bytes);
+                    self.store
+                        .attach_frozen(interned.handle, FrozenValue::Inline(bytes.to_vec()));
                     self.observe_interned(interned);
                     self.memo.insert(
                         location.id,
@@ -2459,14 +2461,6 @@ impl<S: EventSink> Runtime<S> {
                 }
             }
             for (binding, argument) in lowered.value_inputs.iter().zip(arguments) {
-                if binding.store_schema != argument.identity.schema {
-                    return Err(Box::new(MachineError::runtime(
-                        MachineOperation::EntryBinding,
-                        RuntimeFault::ValueInputSchemaMismatch,
-                        None,
-                        Some(lowered.demand_key),
-                    )));
-                }
                 let frozen = self
                     .store
                     .entry(argument.handle)
@@ -2484,6 +2478,14 @@ impl<S: EventSink> Runtime<S> {
                 let result = if let Some(frozen) = &frozen {
                     task.write_entry_frozen(binding.entry, frozen)
                 } else {
+                    if binding.store_schema != argument.identity.schema {
+                        return Err(Box::new(MachineError::runtime(
+                            MachineOperation::EntryBinding,
+                            RuntimeFault::ValueInputSchemaMismatch,
+                            None,
+                            Some(lowered.demand_key),
+                        )));
+                    }
                     let handle = self.store.weavy_handle(argument.handle).ok_or_else(|| {
                         Box::new(MachineError::runtime(
                             MachineOperation::EntryBinding,

@@ -7241,6 +7241,16 @@ fn rung_101_body_edit_early_cutoff_reuses_downstream_value() {
         "source-revision location churn is bridged by suffix-nominated semantic hits: {:?}",
         audit.second.counters,
     );
+    assert_eq!(
+        audit.second.counters.memo_misses, 1,
+        "101 recomputes exactly one changed source-revision demand, but not downstream render: {:?}",
+        audit.second.counters,
+    );
+    assert_eq!(
+        audit.second.counters.memo_hits_semantic, 1,
+        "101 has exactly one suffix-nominated downstream hit: {:?}",
+        audit.second.counters,
+    );
     assert!(!audit.nondeterministic, "{audit:#?}");
 }
 
@@ -7258,6 +7268,16 @@ fn rung_102_body_edit_negative_control_recomputes_downstream_value() {
         control.second.counters.memo_misses > positive.second.counters.memo_misses,
         "changed helper value forces more recomputation than 101: positive={:?} control={:?}",
         positive.second.counters,
+        control.second.counters,
+    );
+    assert_eq!(
+        control.second.counters.memo_misses, 2,
+        "102 recomputes the changed source-revision demand and downstream render: {:?}",
+        control.second.counters,
+    );
+    assert_eq!(
+        control.second.counters.memo_hits_semantic, 0,
+        "102's changed value leaves no accepted downstream suffix candidate: {:?}",
         control.second.counters,
     );
 }
@@ -7294,8 +7314,8 @@ fn rung_104_wrapper_refactor_uses_suffix_nomination_without_leaf_demand() {
 
 #[test]
 fn rung_105_warm_reuse_is_lookup_not_recompute_and_compare() {
-    let audit = run_source_revision_audit(RUNG_105, RUNG_105)
-        .expect("rung 105 warm source audit executes");
+    let audit =
+        run_source_revision_audit(RUNG_105, RUNG_105).expect("rung 105 warm source audit executes");
     assert!(
         audit.second.checks.iter().all(|check| check.passed),
         "rung 105 trace checks pass on the warm run: {audit:#?}",

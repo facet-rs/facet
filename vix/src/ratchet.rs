@@ -803,7 +803,8 @@ pub fn run_source_revision_audit_with_lane(
         force_scalar_call_boundaries: true,
         ..CompilerConfig::default()
     };
-    let mut first_prepared = prepare_source_with_cache(first_source, config, LoweringCache::for_lane(lane))?;
+    let mut first_prepared =
+        prepare_source_with_cache(first_source, config, LoweringCache::for_lane(lane))?;
     let first_revision = source_revision_id(first_source);
     let second_revision = source_revision_id(second_source);
     let first_warnings = first_prepared.compilation.warnings.clone();
@@ -831,11 +832,8 @@ pub fn run_source_revision_audit_with_lane(
     let loaded_journal = PersistentRuntimeJournal::from_json(&journal_json)?;
     let journal_bytes = journal_json.len() as u64;
 
-    let mut second_prepared = prepare_source_with_cache(
-        second_source,
-        config,
-        first_prepared.cache,
-    )?;
+    let mut second_prepared =
+        prepare_source_with_cache(second_source, config, first_prepared.cache)?;
     let second_warnings = second_prepared.compilation.warnings.clone();
     let mut second_state = PersistentRuntimeState::default();
     let mut load = PersistentRuntimeJournalLoadReport::default();
