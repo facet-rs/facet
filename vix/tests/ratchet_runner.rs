@@ -17,7 +17,7 @@ use vix::runtime::{
 };
 use vix::surface::{SurfaceParser, ast};
 use vix::vir::{
-    ArrayMapExecutionShape, ArrayMapGrainKey, EffectKind, FunctionId, GeneratorControl,
+    ArrayMapExecutionShape, ArrayMapGrainKey, DecodeFormat, EffectKind, FunctionId, GeneratorControl,
     GeneratorStep, NodeRef, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT, Op as VirOp, Type as VirType,
     VariantPayload, canonical_recipe,
 };
@@ -5953,9 +5953,8 @@ fn t() -> Stream<Check> {
 }
 
 /// A decode whose document is not a compile-time-constant literal cannot be
-/// folded; rather than silently accept or host-evaluate the dynamic string, the
-/// compiler names the unavailable runtime doc-parse seam with the format and
-/// target type. (A no-target decode is the same seam with `target: None`.)
+/// folded; it lowers to the explicit scheduler-owned document host seam with
+/// the format and target type carried in VIR.
 #[test]
 fn nonliteral_decode_names_the_runtime_seam() {
     const SOURCE: &str = "\
@@ -5967,20 +5966,18 @@ fn t() -> Stream<Check> {
     yield expect_eq(row.name, \"x\");
 }
 ";
-    let diagnostics = Compiler::new()
+    let compilation = Compiler::new()
         .compile(SOURCE)
-        .expect_err("a nonliteral decode document is the runtime seam, not a fold");
-    assert_eq!(diagnostics.entries.len(), 1);
-    assert_eq!(
-        diagnostics.entries[0].code,
-        DiagnosticCode::RuntimeDecodeUnavailable
-    );
-    assert_eq!(
-        diagnostics.entries[0].payload,
-        DiagnosticPayload::RuntimeDecode {
-            format: "JSON".to_owned(),
-            target: Some("PkgRow".to_owned()),
-        }
+        .expect("a nonliteral decode document lowers to the runtime seam");
+    assert!(
+        compilation.module.functions[0].nodes.iter().any(|node| matches!(
+            &node.op,
+            VirOp::Decode {
+                format: DecodeFormat::Json,
+                target
+            } if target.name() == "PkgRow"
+        )),
+        "dynamic JSON decode is a runtime-host VIR node: {compilation:#?}"
     );
 }
 
