@@ -1822,6 +1822,113 @@ fn taxon_native_args(machine: &mut Machine) -> Result<Vec<i64>, String> {
     Ok(vec![workspace, sparse, target_name])
 }
 
+const PINNED_TAXON_ORACLE_MANIFEST: &str = r#"[package]
+name = "taxon"
+version = "0.2.0-rc.5"
+edition = "2024"
+
+[dependencies]
+blake3 = { version = "=1.6.1", default-features = false }
+"#;
+
+#[derive(Facet)]
+struct CargoMetadataSelection {
+    packages: Vec<CargoMetadataSelectionPackage>,
+}
+
+#[derive(Facet)]
+struct CargoMetadataSelectionPackage {
+    name: String,
+    version: String,
+}
+
+fn selected_versions_set(text: &str) -> Result<BTreeSet<(String, String)>, String> {
+    text.lines()
+        .map(|line| {
+            let (name, version) = line
+                .split_once(' ')
+                .ok_or_else(|| format!("invalid selected-version row `{line}`"))?;
+            Ok((name.to_owned(), version.to_owned()))
+        })
+        .collect()
+}
+
+fn cargo_pinned_taxon_oracle() -> Result<(BTreeSet<(String, String)>, CargoUnitGraph), String> {
+    let temp = tempfile::Builder::new()
+        .prefix("vix-taxon-pinned-cargo-")
+        .tempdir()
+        .map_err(|err| err.to_string())?;
+    let root = temp.path();
+    let src = root.join("src");
+    fs::create_dir_all(&src).map_err(|err| err.to_string())?;
+    fs::write(root.join("Cargo.toml"), PINNED_TAXON_ORACLE_MANIFEST)
+        .map_err(|err| err.to_string())?;
+    let taxon_src = workspace_root().join("phon/rust/taxon/src");
+    for file in ["lib.rs", "identity.rs", "sink.rs"] {
+        fs::copy(taxon_src.join(file), src.join(file)).map_err(|err| err.to_string())?;
+    }
+
+    run_cargo_oracle(root, &["generate-lockfile", "--offline"])?;
+    for (name, version) in [
+        ("arrayref", "0.3.9"),
+        ("arrayvec", "0.7.6"),
+        ("cfg-if", "1.0.0"),
+        ("constant_time_eq", "0.3.1"),
+        ("cc", "1.2.16"),
+        ("shlex", "1.3.0"),
+    ] {
+        run_cargo_oracle(
+            root,
+            &["update", "--offline", "-p", name, "--precise", version],
+        )?;
+    }
+
+    let metadata = run_cargo_oracle(
+        root,
+        &["metadata", "--format-version", "1", "--locked", "--offline"],
+    )?;
+    let metadata = String::from_utf8(metadata.stdout).map_err(|err| err.to_string())?;
+    let metadata: CargoMetadataSelection =
+        facet_json::from_str(&metadata).map_err(|err| err.to_string())?;
+    let selection = metadata
+        .packages
+        .into_iter()
+        .map(|package| (package.name, package.version))
+        .collect();
+
+    let graph = run_cargo_oracle(
+        root,
+        &[
+            "+nightly",
+            "build",
+            "-Z",
+            "unstable-options",
+            "--unit-graph",
+            "--locked",
+            "--offline",
+        ],
+    )?;
+    let graph = String::from_utf8(graph.stdout).map_err(|err| err.to_string())?;
+    let graph = facet_json::from_str(&graph).map_err(|err| err.to_string())?;
+    Ok((selection, graph))
+}
+
+fn run_cargo_oracle(root: &Path, args: &[&str]) -> Result<std::process::Output, String> {
+    let output = Command::new("cargo")
+        .args(args)
+        .current_dir(root)
+        .output()
+        .map_err(|err| format!("spawning cargo {args:?}: {err}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "cargo {args:?} exited with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(output)
+}
+
 fn cargo_real_workspace_unit_graph_oracle() -> Result<CargoUnitGraph, String> {
     let output = Command::new("cargo")
         .arg("+nightly")
@@ -2422,6 +2529,42 @@ fn taxon_ladder_builds_taxon_with_real_process_and_hashes_artifacts() -> Result<
     write_tier_a_artifact("taxon-final-artifact-receipts.tsv", &receipts)?;
     write_tier_a_artifact("taxon-final-rustc-trace.txt", &rustc_argv_trace(&machine))?;
 
+    Ok(())
+}
+
+#[test]
+fn taxon_ladder_matches_pinned_cargo_selection_and_unit_graph() -> Result<(), String> {
+    if !host_rustc_available() {
+        return Ok(());
+    }
+
+    let (cargo_selection, cargo_graph) = cargo_pinned_taxon_oracle()?;
+    let mut machine = taxon_native_machine(taxon_native_fetch_backend()?)?;
+    let args = taxon_native_args(&mut machine)?;
+    let selected = machine.demand_i64("taxon_selected_versions", args.clone())?;
+    let selected = rendered_result_string(&machine, "taxon_selected_versions", selected)?;
+    let vix_selection = selected_versions_set(&selected)?;
+    if vix_selection != cargo_selection {
+        return Err(format!(
+            "Vix selection did not match pinned Cargo lock selection\nVix: {vix_selection:#?}\nCargo: {cargo_selection:#?}"
+        ));
+    }
+
+    machine.clear_trace();
+    let _built = demand_with_rustc_trace(&mut machine, "taxon_root_link", args)?;
+    let machine_graph = machine_rustc_unit_graph(&machine)?;
+    let cargo_graph = unit_shapes_from_graph(&cargo_graph, |unit| unit.mode != "run-custom-build")?;
+    if machine_graph != cargo_graph {
+        return Err(format!(
+            "Vix-derived Taxon unit graph did not match pinned Cargo oracle\nVix: {machine_graph:#?}\nCargo: {cargo_graph:#?}"
+        ));
+    }
+
+    write_tier_a_artifact("taxon-pinned-selection.tsv", &selected.replace(' ', "\t"))?;
+    write_tier_a_artifact(
+        "taxon-pinned-unit-graph-rustc.txt",
+        &rustc_argv_trace(&machine),
+    )?;
     Ok(())
 }
 
