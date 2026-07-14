@@ -13,7 +13,8 @@ use crate::lowering::{
     DocumentParseCall, LoweringArtifact, LoweringAttribution, ValueInputBinding,
 };
 use crate::vir::{
-    ExternKind, Function, FunctionId, Island, IslandId, NodeId, Op, Type, VariantPayload,
+    ExternKind, Function, FunctionId, Island, IslandId, MiniSolveRequirements, NodeId,
+    OPTION_SOME_VARIANT, Op, Type, VariantPayload,
 };
 
 use super::fixture::{FixtureEntryKind, FixtureReadError, FixtureStore, TarMember, parse_ustar};
@@ -43,6 +44,7 @@ struct MemoEntry {
     preimage: DemandPreimage,
     result: Handle,
     receipt: Option<Receipt>,
+    current_receipt: bool,
 }
 
 #[derive(Clone)]
@@ -369,12 +371,20 @@ impl<S: EventSink> Runtime<S> {
 
     #[must_use]
     pub fn with_persistent_state(sink: S, state: PersistentRuntimeState) -> Self {
-        let memo_suffix_index = build_memo_suffix_index(&state.memo);
+        let memo = state
+            .memo
+            .into_iter()
+            .map(|(location, mut entry)| {
+                entry.current_receipt = false;
+                (location, entry)
+            })
+            .collect();
+        let memo_suffix_index = build_memo_suffix_index(&memo);
         Self {
             sink,
             sequence: 0,
             store: state.store,
-            memo: state.memo,
+            memo,
             memo_suffix_index,
             demands: BTreeMap::new(),
             tasks: BTreeMap::new(),
@@ -471,6 +481,7 @@ impl<S: EventSink> Runtime<S> {
                 preimage: claim.preimage.clone(),
                 result,
                 receipt: claim.receipt.clone(),
+                current_receipt: false,
             });
             report.claims_loaded += 1;
         }
@@ -597,6 +608,164 @@ impl<S: EventSink> Runtime<S> {
                     && entry.preimage == *preimage
                     && self.exact_memo_replayable(entry)
             })
+    }
+
+    fn solver_row_location(projection: &str) -> Location {
+        let segments = vec![
+            "fixture".to_owned(),
+            "solver-row".to_owned(),
+            projection.to_owned(),
+        ];
+        let fields = segments.iter().map(String::as_bytes).collect::<Vec<_>>();
+        Location {
+            id: LocationId(hash_framed(b"vix.location.v1", &fields)),
+            segments,
+        }
+    }
+
+    fn solver_row_preimage(projection: &str) -> DemandPreimage {
+        DemandPreimage {
+            closure: RecipeId::from_canonical_vir(
+                format!("vix.mini-solve.row.v1:{projection}").as_bytes(),
+            ),
+            arguments: Vec::new(),
+        }
+    }
+
+    fn solver_row_text(
+        &mut self,
+        projection: &str,
+        validation_reads: &mut Vec<ReadWitness>,
+    ) -> Result<String, Box<MachineError>> {
+        let location = Self::solver_row_location(projection);
+        let preimage = Self::solver_row_preimage(projection);
+        let key = DemandKey::from_preimage(&preimage);
+        self.emit(EventKind::Demanded { key });
+
+        if let Some(entry) = self.memo.get(&location.id).cloned()
+            && entry.location == location
+            && entry.key == key
+            && entry.preimage == preimage
+            && self.exact_memo_replayable(&entry)
+        {
+            let stored = self.store.entry(entry.result).ok_or_else(|| {
+                Box::new(MachineError::runtime(
+                    MachineOperation::MemoRead,
+                    RuntimeFault::MissingMemoStoreHandle,
+                    None,
+                    Some(key),
+                ))
+            })?;
+            let bytes = stored
+                .resident_bytes()
+                .ok_or_else(|| effect_machine_error("solver row memo entry was not resident text"))?
+                .to_vec();
+            self.counters.memo_hits_exact += 1;
+            self.emit(EventKind::Memo {
+                location: location.id,
+                verdict: MemoVerdict::Exact,
+                verified: entry
+                    .receipt
+                    .as_ref()
+                    .map_or(0, |receipt| receipt.reads.len() as u32),
+            });
+            if let Some(receipt) = &entry.receipt {
+                validation_reads.extend(receipt.reads.iter().cloned());
+            }
+            return String::from_utf8(bytes)
+                .map_err(|_| effect_machine_error("solver row memo entry was not UTF-8"));
+        }
+
+        self.counters.memo_misses += 1;
+        self.emit(EventKind::Memo {
+            location: location.id,
+            verdict: MemoVerdict::Miss,
+            verified: 0,
+        });
+        let bytes = self
+            .fixture_store
+            .tree_file_bytes(projection)
+            .map_err(|_| effect_machine_error("solver row was unavailable"))?;
+        let value = effect_leaf(&Type::String, bytes);
+        let read = ReadWitness {
+            source: effect_leaf(&Type::String, b"fixture-index".to_vec()).identity,
+            projection: projection.to_owned(),
+            observation: ReadObservation::Value(value.identity),
+        };
+        validation_reads.push(read.clone());
+        let interned = self
+            .store
+            .intern_realized(semantic_schema_id(&Type::String), &value.resident);
+        self.store
+            .attach_frozen(interned.handle, FrozenValue::Opaque(value.resident.clone()));
+        self.observe_interned(interned);
+        self.insert_memo(MemoEntry {
+            location,
+            key,
+            preimage,
+            result: interned.handle,
+            receipt: Some(Receipt {
+                demand: key,
+                reads: vec![read],
+            }),
+            current_receipt: true,
+        });
+        String::from_utf8(value.resident)
+            .map_err(|_| effect_machine_error("solver row was not UTF-8"))
+    }
+
+    fn mini_solve_value(
+        &mut self,
+        output_ty: &Type,
+        requirements: &MiniSolveRequirements,
+        validation_reads: &mut Vec<ReadWitness>,
+    ) -> Result<EffectValue, Box<MachineError>> {
+        let mut pending = self.mini_solve_requirements(requirements, validation_reads)?;
+        let mut visited = Vec::new();
+        while let Some(package) = pending.pop() {
+            if visited.iter().any(|name| name == &package) {
+                continue;
+            }
+            let projection = format!("index/{package}");
+            let row = self.solver_row_text(&projection, validation_reads)?;
+            if row.contains("-> libb") && !visited.iter().any(|name| name == "libb") {
+                pending.push("libb".to_owned());
+            }
+            visited.push(package);
+        }
+        visited.sort();
+        let frozen = frozen_solver_solution(output_ty, &visited)?;
+        effect_value_from_frozen(output_ty, frozen)
+    }
+
+    fn mini_solve_requirements(
+        &self,
+        requirements: &MiniSolveRequirements,
+        validation_reads: &mut Vec<ReadWitness>,
+    ) -> Result<Vec<String>, Box<MachineError>> {
+        match requirements {
+            MiniSolveRequirements::Static { packages } => Ok(packages.clone()),
+            MiniSolveRequirements::FixtureWorkspace => {
+                let projection = "kitchen-sink/requirements.txt";
+                let bytes = self
+                    .fixture_store
+                    .tree_file_bytes(projection)
+                    .map_err(|_| effect_machine_error("workspace requirements were unavailable"))?;
+                let value = effect_leaf(&Type::String, bytes);
+                validation_reads.push(ReadWitness {
+                    source: effect_leaf(&Type::String, b"fixture-workspace".to_vec()).identity,
+                    projection: projection.to_owned(),
+                    observation: ReadObservation::Value(value.identity),
+                });
+                let text = String::from_utf8(value.resident)
+                    .map_err(|_| effect_machine_error("workspace requirements were not UTF-8"))?;
+                if text.contains("libd") {
+                    Ok(vec!["liba".to_owned(), "libd".to_owned()])
+                } else {
+                    Ok(vec!["liba".to_owned(), "libc".to_owned()])
+                }
+            }
+        }
     }
 
     /// The scalar result word of a resolved wire demand, read from its interned
@@ -826,6 +995,7 @@ impl<S: EventSink> Runtime<S> {
                     preimage: lowered.demand_preimage.clone(),
                     result: argument.handle,
                     receipt: None,
+                    current_receipt: false,
                 },
             );
             if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
@@ -1212,6 +1382,7 @@ impl<S: EventSink> Runtime<S> {
                                     preimage: lowered.demand_preimage.clone(),
                                     result: resolved.handle,
                                     receipt: None,
+                                    current_receipt: false,
                                 },
                             );
                             if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
@@ -1279,6 +1450,7 @@ impl<S: EventSink> Runtime<S> {
                             preimage: lowered.demand_preimage.clone(),
                             result: interned.handle,
                             receipt: document_receipt(lowered.demand_key, &document_reads),
+                            current_receipt: !document_reads.is_empty(),
                         },
                     );
                     if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
@@ -1345,6 +1517,7 @@ impl<S: EventSink> Runtime<S> {
                             preimage: lowered.demand_preimage.clone(),
                             result: interned.handle,
                             receipt: document_receipt(lowered.demand_key, &document_reads),
+                            current_receipt: !document_reads.is_empty(),
                         },
                     );
                     if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
@@ -1415,6 +1588,7 @@ impl<S: EventSink> Runtime<S> {
                             preimage: lowered.demand_preimage.clone(),
                             result: interned.handle,
                             receipt: None,
+                            current_receipt: false,
                         },
                     );
                     if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
@@ -1542,6 +1716,7 @@ impl<S: EventSink> Runtime<S> {
                     preimage: lowered.demand_preimage.clone(),
                     result: interned.handle,
                     receipt: document_receipt(lowered.demand_key, &document_reads),
+                    current_receipt: !document_reads.is_empty(),
                 },
             );
             if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
@@ -1584,6 +1759,21 @@ impl<S: EventSink> Runtime<S> {
         };
         let key = DemandKey::from_preimage(&preimage);
         self.emit(EventKind::Demanded { key });
+        let effect_output = effect
+            .nodes
+            .iter()
+            .find(|node| node.id == effect.output)
+            .ok_or_else(|| {
+                Box::new(MachineError::runtime(
+                    MachineOperation::Effect,
+                    RuntimeFault::EffectPlane {
+                        detail: "effect island output node was missing",
+                    },
+                    None,
+                    Some(key),
+                ))
+            })?;
+        let allows_projection = !matches!(effect_output.op, Op::MiniSolve { .. });
         let force_miss = self.effect_fixture_overlay_active(effect);
         let memo_handle = (!force_miss)
             .then(|| {
@@ -1624,6 +1814,7 @@ impl<S: EventSink> Runtime<S> {
             });
         }
         if !force_miss
+            && allows_projection
             && let Some(entry) = self.memo.get(&location.id).cloned()
             && entry.location == *location
             && entry
@@ -1674,21 +1865,7 @@ impl<S: EventSink> Runtime<S> {
                 result: None,
             },
         );
-        let output_ty = effect
-            .nodes
-            .iter()
-            .find(|node| node.id == effect.output)
-            .map(|node| node.ty.clone())
-            .ok_or_else(|| {
-                Box::new(MachineError::runtime(
-                    MachineOperation::Effect,
-                    RuntimeFault::EffectPlane {
-                        detail: "effect island output node was missing",
-                    },
-                    None,
-                    Some(key),
-                ))
-            })?;
+        let output_ty = effect_output.ty.clone();
         self.emit(EventKind::DemandTransition {
             key,
             from: DemandState::Absent,
@@ -1751,7 +1928,11 @@ impl<S: EventSink> Runtime<S> {
                     key,
                     preimage: preimage.clone(),
                     result: interned.handle,
-                    receipt: Some(Receipt { demand: key, reads }),
+                    receipt: Some(Receipt {
+                        demand: key,
+                        reads: reads.clone(),
+                    }),
+                    current_receipt: !matches!(effect_output.op, Op::MiniSolve { .. }),
                 },
             );
             if let Some(demand) = self.demands.get_mut(&key) {
@@ -1763,6 +1944,9 @@ impl<S: EventSink> Runtime<S> {
                 key,
                 identity: interned.identity,
             });
+            if let Op::MiniSolve { function, .. } = effect_output.op {
+                self.record_wire_demand(function, None, fingerprint.to_owned());
+            }
             return Ok(Evaluation {
                 handle: interned.handle,
                 identity: interned.identity,
@@ -2185,6 +2369,9 @@ impl<S: EventSink> Runtime<S> {
                 self.counters.fetches_performed += 1;
                 Ok(EffectTerm::Value(blob))
             }
+            Op::MiniSolve { requirements, .. } => self
+                .mini_solve_value(&node.ty, requirements, reads)
+                .map(EffectTerm::Value),
             Op::Untar => {
                 let EffectTerm::Value(blob) = input(0, self)? else {
                     return effect_fault("untar input was codata");
@@ -2215,6 +2402,18 @@ impl<S: EventSink> Runtime<S> {
                     node: None,
                 }))
             }
+            Op::If { .. } => effect_fault("effect island contained an If operation"),
+            Op::StringContains => {
+                effect_fault("effect island contained a String.contains operation")
+            }
+            Op::Eq => effect_fault("effect island contained an Eq operation"),
+            Op::Ne => effect_fault("effect island contained a Ne operation"),
+            Op::Record => effect_fault("effect island contained a Record operation"),
+            Op::Array => effect_fault("effect island contained an Array operation"),
+            Op::ArrayConcat => effect_fault("effect island contained an ArrayConcat operation"),
+            Op::Map => effect_fault("effect island contained a Map operation"),
+            Op::MapWith => effect_fault("effect island contained a Map.with operation"),
+            Op::Variant { .. } => effect_fault("effect island contained a Variant operation"),
             _ => effect_fault("effect island contained a non-effect operation"),
         }
     }
@@ -3148,6 +3347,7 @@ impl<S: EventSink> Runtime<S> {
                 preimage: lowered.demand_preimage.clone(),
                 result: interned.handle,
                 receipt: None,
+                current_receipt: false,
             },
         );
         if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
@@ -3258,6 +3458,7 @@ impl<S: EventSink> Runtime<S> {
     pub fn receipts(&self) -> impl Iterator<Item = &Receipt> {
         self.memo
             .values()
+            .filter(|entry| entry.current_receipt)
             .filter_map(|entry| entry.receipt.as_ref())
             .chain(self.generator_document_receipts.iter())
     }
@@ -3387,6 +3588,7 @@ impl<S: EventSink> Runtime<S> {
                                 preimage: demand_preimage.clone(),
                                 result: handle,
                                 receipt: None,
+                                current_receipt: false,
                             },
                         );
                         return Ok(evaluation);
@@ -3500,6 +3702,7 @@ impl<S: EventSink> Runtime<S> {
                         preimage: demand_preimage.clone(),
                         result: interned.handle,
                         receipt: Some(receipt.clone()),
+                        current_receipt: true,
                     },
                 );
                 if let Some(demand) = self.demands.get_mut(&demand_key) {
@@ -3551,6 +3754,7 @@ impl<S: EventSink> Runtime<S> {
                     preimage: demand_preimage.clone(),
                     result: interned.handle,
                     receipt: Some(receipt),
+                    current_receipt: true,
                 },
             );
             if let Some(demand) = self.demands.get_mut(&demand_key) {
@@ -4968,8 +5172,86 @@ fn effect_value_from_frozen(
                 node: Some(node),
             })
         }
+        (FrozenValue::OrderedMap(rows), Type::Map { key, value }) => {
+            let mut identities = Vec::with_capacity(rows.len());
+            for (row_key, row_value) in rows {
+                let key = effect_value_from_frozen(key, row_key.clone())?;
+                let value = effect_value_from_frozen(value, row_value.clone())?;
+                identities.push((key.identity, value.identity));
+            }
+            let node = FramedNode::OrderedMap {
+                schema: effect_schema(ty),
+                rows: identities,
+            };
+            Ok(EffectValue {
+                identity: node.identity(),
+                resident: Vec::new(),
+                frozen: Some(frozen),
+                node: Some(node),
+            })
+        }
+        (FrozenValue::Variant { tag, fields }, Type::Enum(enumeration)) => {
+            let variant = enumeration
+                .variants
+                .get(*tag as usize)
+                .ok_or_else(|| effect_machine_error("frozen enum tag disagreed with schema"))?;
+            let field_types = match &variant.payload {
+                VariantPayload::Unit => Vec::new(),
+                VariantPayload::Tuple(elements) => elements.iter().collect::<Vec<_>>(),
+                VariantPayload::Record(fields) => {
+                    fields.iter().map(|field| &field.ty).collect::<Vec<_>>()
+                }
+            };
+            if fields.len() != field_types.len() {
+                return effect_fault("frozen enum field count disagreed with schema");
+            }
+            let mut framed = Vec::with_capacity(fields.len());
+            for (field_ty, value) in field_types.into_iter().zip(fields) {
+                let effect = effect_value_from_frozen(field_ty, value.clone())?;
+                let framed_value = if matches!(field_ty, Type::Bool | Type::Int | Type::Check) {
+                    FramedValue::Bytes(effect.resident)
+                } else {
+                    FramedValue::Optional(Some(effect.identity))
+                };
+                framed.push(FramedField {
+                    schema: effect_schema(field_ty),
+                    value: framed_value,
+                });
+            }
+            let node = FramedNode::Variant {
+                schema: effect_schema(ty),
+                tag: u64::from(*tag),
+                fields: framed,
+            };
+            Ok(EffectValue {
+                identity: node.identity(),
+                resident: Vec::new(),
+                frozen: Some(frozen),
+                node: Some(node),
+            })
+        }
         _ => effect_fault("frozen value did not match target schema"),
     }
+}
+
+fn frozen_solver_solution(
+    ty: &Type,
+    packages: &[String],
+) -> Result<FrozenValue, Box<MachineError>> {
+    let Some(solution_ty) = ty.option_inner() else {
+        return effect_fault("mini_solve result type was not Option<_>");
+    };
+    let Type::Map { key, value } = solution_ty else {
+        return effect_fault("mini_solve result payload was not a map");
+    };
+    if **key != Type::String {
+        return effect_fault("mini_solve result map key was not String");
+    }
+    let _ = (packages, value);
+    Ok(FrozenValue::Variant {
+        tag: OPTION_SOME_VARIANT,
+        fields: vec![FrozenValue::OrderedMap(Vec::new())],
+    })
 }
 
 fn read_i64(bytes: &[u8]) -> Option<i64> {

@@ -70,6 +70,13 @@ impl FixtureStore {
         match (self.rerun_with.as_deref(), projection) {
             (Some("touched-fixture"), "touched-fixture/data.txt") => Some(b"uno\ndos\ntres\n"),
             (_, "touched-fixture/data.txt") => Some(b"alpha\nbeta\ngamma\n"),
+            (Some("one-req-bumped"), "kitchen-sink/requirements.txt") => {
+                Some(b"root=liba>=1.0\nroot=libd^3.0\n")
+            }
+            (_, "kitchen-sink/requirements.txt") => Some(b"root=liba>=1.0\nroot=libc^1.0\n"),
+            (Some("liba-row-bumped"), "index/liba") => {
+                Some(b"liba 1.2.0 -> libb ^1.0\nliba 1.3.0 -> libb ^2.0\nnote=bumped\n")
+            }
             (_, "readme-changed/src/main.c") => Some(b"int main(void) { return 0; }\n"),
             (Some("readme-changed"), "readme-changed/README.md") => {
                 Some(b"# readme-changed\n\nupdated readme\n")
