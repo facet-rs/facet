@@ -5471,8 +5471,7 @@ fn modules_fixture(source: &str) -> (String, Vec<ModuleSource<'static>>) {
 #[test]
 fn rung_106_imports_run_through_production_path() {
     let (source, modules) = modules_fixture(RUNG_106);
-    let report =
-        run_source_with_modules(&source, &modules).expect("rung 106 compiles and runs");
+    let report = run_source_with_modules(&source, &modules).expect("rung 106 compiles and runs");
     assert!(report.passed(), "rung 106 checks pass: {report:?}");
     assert!(report.agrees(), "plain and chaos agree");
     assert_eq!(report.plain.checks.len(), 1);
@@ -5513,8 +5512,7 @@ fn rung_107_private_import_is_rejected() {
 #[test]
 fn rung_108_std_composes_across_module_boundaries() {
     let (source, modules) = modules_fixture(RUNG_108);
-    let report =
-        run_source_with_modules(&source, &modules).expect("rung 108 compiles and runs");
+    let report = run_source_with_modules(&source, &modules).expect("rung 108 compiles and runs");
     assert!(report.passed(), "rung 108 checks pass: {report:?}");
     assert!(report.agrees(), "plain and chaos agree");
     assert_eq!(report.plain.checks.len(), 1);

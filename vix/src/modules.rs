@@ -47,9 +47,7 @@ fn declared_items(file: &ast::SourceFile) -> BTreeMap<String, DeclaredItem> {
             ast::Item::Enum(enumeration) => (&enumeration.name.value, enumeration.vis.is_some()),
             ast::Item::Import(_) => continue,
         };
-        items
-            .entry(name.clone())
-            .or_insert(DeclaredItem { public });
+        items.entry(name.clone()).or_insert(DeclaredItem { public });
     }
     items
 }

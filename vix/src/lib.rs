@@ -30,8 +30,8 @@ pub mod fetch;
 pub mod ide;
 pub mod lowering;
 pub mod machine;
-pub mod modules;
 pub(crate) mod module;
+pub mod modules;
 pub mod ratchet;
 #[cfg(all(feature = "real-process", not(target_arch = "wasm32")))]
 pub mod real_process;
