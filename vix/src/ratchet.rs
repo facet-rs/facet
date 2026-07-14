@@ -799,7 +799,11 @@ pub fn run_source_revision_audit_with_lane(
     second_source: &str,
     lane: weavy::exec::LaneRequest,
 ) -> Result<SourceRevisionAuditReport, RunError> {
-    let mut first_prepared = prepare_source_with_lane(first_source, lane)?;
+    let config = CompilerConfig {
+        force_scalar_call_boundaries: true,
+        ..CompilerConfig::default()
+    };
+    let mut first_prepared = prepare_source_with_cache(first_source, config, LoweringCache::for_lane(lane))?;
     let first_revision = source_revision_id(first_source);
     let second_revision = source_revision_id(second_source);
     let first_warnings = first_prepared.compilation.warnings.clone();
@@ -829,7 +833,7 @@ pub fn run_source_revision_audit_with_lane(
 
     let mut second_prepared = prepare_source_with_cache(
         second_source,
-        CompilerConfig::default(),
+        config,
         first_prepared.cache,
     )?;
     let second_warnings = second_prepared.compilation.warnings.clone();

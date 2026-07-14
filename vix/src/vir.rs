@@ -1336,6 +1336,7 @@ pub struct Module {
     pub functions: Vec<Function>,
     pub tests: Vec<Test>,
     pub force_molten_copy: bool,
+    pub force_scalar_call_boundaries: bool,
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -1724,6 +1725,37 @@ impl Module {
                     && consumer_sets.get(&other) == consumer_sets.get(&candidate.id)
             })
         });
+        let forced_scalar_calls = if self.force_scalar_call_boundaries {
+            function
+                .nodes
+                .iter()
+                .filter(|node| {
+                    is_scalar_call_candidate(node)
+                        && !matches!(node.op, Op::Call(callee) if callee == function.id)
+                        && !effect_ids.contains_key(&node.id)
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        let forced_eager_scalar_ids = forced_scalar_calls
+            .iter()
+            .filter(|candidate| {
+                function.nodes.iter().any(|consumer| {
+                    matches!(consumer.op, Op::Call(_)) && consumer.inputs.contains(&candidate.id)
+                })
+            })
+            .map(|candidate| candidate.id)
+            .collect::<BTreeSet<_>>();
+        for node in forced_scalar_calls
+            .iter()
+            .copied()
+            .filter(|node| forced_eager_scalar_ids.contains(&node.id))
+        {
+            if !shared.iter().any(|candidate| candidate.id == node.id) {
+                shared.push(node);
+            }
+        }
         shared.sort_by_key(|node| ValueIslandId {
             function: function.id,
             node: node.id,
@@ -1737,13 +1769,22 @@ impl Module {
         // Aggregate publications remain eager shared value islands.
         let mut wire_nodes = Vec::new();
         shared.retain(|node| {
-            if is_scalar_call_candidate(node) {
+            if is_scalar_call_candidate(node) && !forced_eager_scalar_ids.contains(&node.id) {
                 wire_nodes.push(*node);
                 false
             } else {
                 true
             }
         });
+        for node in forced_scalar_calls
+            .iter()
+            .copied()
+            .filter(|node| !forced_eager_scalar_ids.contains(&node.id))
+        {
+            if !wire_nodes.iter().any(|candidate| candidate.id == node.id) {
+                wire_nodes.push(node);
+            }
+        }
         // Eager aggregate publications use the same structural representative
         // rule as lazy wires. Every authored duplicate maps to the first
         // representative's value island, so the Store/memo path realizes one
