@@ -1102,6 +1102,9 @@ pub enum ProgramDefect {
     AwaitInputCountOverflow {
         input: u32,
     },
+    HostCountOverflow {
+        host: u32,
+    },
     ReachableFallthrough,
 }
 
@@ -3215,8 +3218,18 @@ impl Verifier<'_> {
             Op::HostCall { .. } => {
                 return Err(self.unsupported(function_id, pc, UnsupportedOp::HostCall));
             }
-            Op::HostCallYield { .. } => {
-                return Err(self.unsupported(function_id, pc, UnsupportedOp::HostCallYield));
+            Op::HostCallYield { host } => {
+                let host_count = usize::try_from(*host)
+                    .ok()
+                    .and_then(|host| host.checked_add(1))
+                    .ok_or_else(|| {
+                        self.op(
+                            function_id,
+                            pc,
+                            ProgramDefect::HostCountOverflow { host: *host },
+                        )
+                    })?;
+                requirements.hosts = requirements.hosts.max(host_count);
             }
             Op::OrderedEmpty {
                 dst,
@@ -4931,6 +4944,7 @@ impl Verifier<'_> {
                     | Op::Call { .. }
                     | Op::CallIndirect { .. }
                     | Op::Await { .. }
+                    | Op::HostCallYield { .. }
                     | Op::CompareValueBytes { .. }
                     | Op::StringConcat { .. }
                     | Op::StringContains { .. }
@@ -4993,13 +5007,6 @@ impl Verifier<'_> {
                     }
                     Op::HostCall { .. } => {
                         return Err(self.unsupported(function_id, pc, UnsupportedOp::HostCall));
-                    }
-                    Op::HostCallYield { .. } => {
-                        return Err(self.unsupported(
-                            function_id,
-                            pc,
-                            UnsupportedOp::HostCallYield,
-                        ));
                     }
                 }
             }
@@ -6452,7 +6459,6 @@ mod tests {
                 },
             ),
             (UnsupportedOp::HostCall, Op::HostCall { host: 0 }),
-            (UnsupportedOp::HostCallYield, Op::HostCallYield { host: 0 }),
         ];
 
         for (expected, op) in unsupported {
@@ -6468,6 +6474,27 @@ mod tests {
                 op_error(1, ProgramDefect::UnsupportedOp { op: expected })
             );
         }
+    }
+
+    #[test]
+    fn host_call_yield_is_admitted_and_counts_the_host_table() {
+        let (program, contract) = single_function(
+            1,
+            vec![Op::HostCallYield { host: 3 }, Op::Ret { src: 0, size: 8 }],
+            vec![word_region(0, WordKind::Scalar)],
+            0,
+        );
+        let verified = program.verify(contract).expect("host yield is verified");
+        assert_eq!(
+            verified.drive_requirements(),
+            DriveRequirements {
+                await_inputs: 0,
+                hosts: 4,
+            }
+        );
+        let facts = verified.facts().function(FnId(0)).expect("function facts");
+        assert!(facts.pc(0).is_some_and(PcFacts::is_reachable));
+        assert!(facts.pc(1).is_some_and(PcFacts::is_reachable));
     }
 
     #[test]
