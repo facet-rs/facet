@@ -5684,7 +5684,8 @@ struct PkgRow { name: String }
 #[test]
 fn t() -> Stream<Check> {
     let src = \"{\\\"name\\\":\\\"mio\\\"}\";
-    yield match try_json_decode<PkgRow>(src) {
+    let decoded = try_json_decode<PkgRow>(src);
+    yield match decoded {
         Ok(row) => expect_eq(row.name, \"mio\"),
         Err(_) => expect(false),
     };
@@ -5695,7 +5696,8 @@ struct PkgRow { name: String }
 #[test]
 fn t() -> Stream<Check> {
     let src = \"{\\\"name\\\":42}\";
-    yield match try_json_decode<PkgRow>(src) {
+    let decoded = try_json_decode<PkgRow>(src);
+    yield match decoded {
         Ok(_) => expect(false),
         Err(error) => expect(
             error.path == \"name\"
@@ -5710,7 +5712,8 @@ struct PkgRow { name: String }
 #[test]
 fn t() -> Stream<Check> {
     let src = \"name = \\\"mio\\\"\\n\";
-    yield match try_toml_decode<PkgRow>(src) {
+    let decoded = try_toml_decode<PkgRow>(src);
+    yield match decoded {
         Ok(row) => expect_eq(row.name, \"mio\"),
         Err(_) => expect(false),
     };
