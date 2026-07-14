@@ -5519,6 +5519,164 @@ fn rung_109_import_local_collision_is_rejected() {
     );
 }
 
+/// Rung 110's foundation contract, certified the way the decode identity
+/// oracle is: memo/lowering identity is stable across module boundaries — an
+/// island's canonical recipe must not depend on which module spelled it.
+///
+/// Two compilations demand the same `geometry::magnitude_sq(geometry::Point
+/// { x: 6, y: 8 })` invocation from *differently shaped* importers (spelling
+/// B adds an unrelated imported module and an unrelated root declaration, so
+/// every `FunctionId` and item ordinal shifts). The invocation's wire island
+/// must produce byte-identical canonical VIR, one lowered recipe, one demand
+/// key — and lowering the second spelling through the first's cache must be
+/// a lookup, not a recompute. A different argument value is the
+/// discriminating negative control.
+#[test]
+fn rung_110_recipe_identity_is_importer_independent() {
+    const SPELLING_A: &str = "\
+import geometry::{Point, magnitude_sq};
+
+#[test]
+fn t() -> Stream<Check> {
+    let a = magnitude_sq(Point { x: 6, y: 8 });
+    let b = magnitude_sq(Point { x: 6, y: 8 });
+    yield expect_eq(a, b);
+    yield expect_eq(a + b, 200);
+}
+";
+    const SPELLING_B: &str = "\
+import noise::{triple, Widget};
+import geometry::{Point, magnitude_sq};
+
+fn pad(w: Widget) -> Int { triple(w.id) + 1 }
+
+#[test]
+fn t() -> Stream<Check> {
+    let a = magnitude_sq(Point { x: 6, y: 8 });
+    let b = magnitude_sq(Point { x: 6, y: 8 });
+    yield expect_eq(a, b);
+    yield expect_eq(a + b, 200);
+}
+";
+    const CONTROL: &str = "\
+import geometry::{Point, magnitude_sq};
+
+#[test]
+fn t() -> Stream<Check> {
+    let a = magnitude_sq(Point { x: 8, y: 6 });
+    let b = magnitude_sq(Point { x: 8, y: 6 });
+    yield expect_eq(a, b);
+    yield expect_eq(a + b, 200);
+}
+";
+    const NOISE: &str = "\
+pub fn triple(n: Int) -> Int { n * 3 }
+pub struct Widget { id: Int }
+";
+    let geometry = ModuleSource {
+        name: "geometry",
+        source: LIB_GEOMETRY,
+    };
+    let noise = ModuleSource {
+        name: "noise",
+        source: NOISE,
+    };
+
+    // The two structurally equal spelled invocations collapse to ONE wire
+    // island before the runtime exists: one recipe is a compile-time fact.
+    let partition = |source: &str, modules: &[ModuleSource]| {
+        let module = Compiler::new()
+            .compile_with_modules(source, modules)
+            .expect("spelling compiles");
+        let partitioned = module.partition_test(&module.tests[0]);
+        assert_eq!(
+            partitioned.wire_islands.len(),
+            1,
+            "both spelled invocations share one wire island",
+        );
+        (module, partitioned)
+    };
+    let (_module_a, partitioned_a) = partition(SPELLING_A, &[geometry]);
+    let (_module_b, partitioned_b) = partition(SPELLING_B, &[noise, geometry]);
+    let (_module_c, partitioned_c) = partition(CONTROL, &[geometry]);
+    let wire_a = &partitioned_a.wire_islands[0].island;
+    let wire_b = &partitioned_b.wire_islands[0].island;
+    let wire_c = &partitioned_c.wire_islands[0].island;
+    assert_ne!(
+        wire_a.function, wire_b.function,
+        "the reshaped importer shifts raw FunctionIds — identity must not ride on them",
+    );
+    assert_eq!(
+        wire_a.canonical_recipe_bytes(),
+        wire_b.canonical_recipe_bytes(),
+        "one canonical recipe regardless of which module set spelled the demand",
+    );
+    assert_ne!(
+        wire_a.canonical_recipe_bytes(),
+        wire_c.canonical_recipe_bytes(),
+        "a different argument is a different recipe (discriminating control)",
+    );
+
+    // One lowered recipe, one demand key; the second spelling's lowering is a
+    // cache lookup, never a recompute.
+    let mut cache = LoweringCache::default();
+    let lowered_a = cache.get_or_lower(wire_a).expect("wire island lowers");
+    let (recipe_a, key_a) = (lowered_a.recipe, lowered_a.demand_key);
+    let lowered_b = cache.get_or_lower(wire_b).expect("wire island re-lowers");
+    assert_eq!(recipe_a, lowered_b.recipe, "one lowered recipe");
+    assert_eq!(key_a, lowered_b.demand_key, "one demand key");
+    assert_eq!(cache.counters().misses, 1);
+    assert_eq!(cache.counters().hits, 1);
+    let lowered_c = cache.get_or_lower(wire_c).expect("control lowers");
+    assert_ne!(key_a, lowered_c.demand_key, "control demand key diverges");
+
+    // Production path: both spellings run green, agree across lanes, and the
+    // second await of the shared cross-module demand is a memo lookup.
+    let report_a = run_source_with_modules(SPELLING_A, &[geometry]).expect("spelling A runs");
+    let report_b =
+        run_source_with_modules(SPELLING_B, &[noise, geometry]).expect("spelling B runs");
+    for report in [&report_a, &report_b] {
+        assert!(report.passed(), "cross-module memo run passes: {report:?}");
+        assert!(report.agrees(), "plain and chaos agree");
+        assert!(
+            report.plain.counters.memo_hits_exact >= 1,
+            "the second await of the shared invocation is a lookup: {:?}",
+            report.plain.counters,
+        );
+    }
+    assert_eq!(
+        report_a.plain.checks, report_b.plain.checks,
+        "identical check identities (ValueId) regardless of importer shape",
+    );
+}
+
+/// Rung 110's fixture itself stays red at a *typed* boundary, pinned exactly:
+/// its `never_demanded(magnitude_sq(Point { x: 6, y: 8 }))` names a
+/// described-wire selector with a record-literal argument, and described
+/// selectors admit only closed scalar literals today (`WireArg::Int/Bool`).
+/// The cross-run `//! rerun` scope is the second open seam (PORT-NOTES.md:
+/// rerun-phase scoping is an explicit design PROPOSAL, not implementable
+/// surface). This pin goes green-red loudly when either seam moves.
+#[test]
+fn rung_110_stops_at_the_described_wire_record_literal_boundary() {
+    let (source, modules) = modules_fixture(RUNG_110);
+    let diagnostics = Compiler::new()
+        .compile_with_modules(&source, &modules)
+        .expect_err("a record-literal described-wire argument is a typed boundary");
+    assert_eq!(diagnostics.entries.len(), 1);
+    let diagnostic = &diagnostics.entries[0];
+    assert_eq!(diagnostic.code, DiagnosticCode::UnsupportedExpression);
+    assert_eq!(
+        diagnostic.message(),
+        "a described-wire argument must be a closed scalar literal",
+    );
+    assert_eq!(
+        &source[diagnostic.primary.start as usize..diagnostic.primary.end as usize],
+        "Point { x: 6, y: 8 }",
+        "the boundary anchors on the record literal inside never_demanded",
+    );
+}
+
 fn reject_header(source: &str) -> (&str, usize) {
     let mut message = None;
     let mut line = None;
