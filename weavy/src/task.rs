@@ -1979,6 +1979,26 @@ pub(crate) struct CallEnvironmentSite {
     pub pc: usize,
 }
 
+/// Bind one semantic indirect-call argument to the resolved callee frame.
+///
+/// A verified call contract is zero-based and excludes private frame storage.
+/// The optional projection on the resolved function supplies the physical
+/// destination without exposing that storage to callable values.
+#[must_use]
+pub(crate) fn indirect_call_destination(
+    verified: &VerifiedProgram,
+    callee: FnId,
+    argument: usize,
+    semantic_destination: u32,
+) -> u32 {
+    let function = &verified.contract().functions[callee.0 as usize];
+    let Some(abi) = &function.call_abi else {
+        return semantic_destination;
+    };
+    let region = abi.entries[argument];
+    function.frame.regions[region.0 as usize].offset
+}
+
 /// Materialize a boxed closure's trailing capture entries into a freshly
 /// allocated callee frame, shared by the interpreter and native call drivers so
 /// both lanes use one env-arena and contract semantics. The captures beyond
@@ -3530,6 +3550,12 @@ impl Task {
         self.frames.len()
     }
 
+    /// The function owning the currently suspended frame.
+    #[must_use]
+    pub fn active_function(&self) -> FnId {
+        self.frames.last().expect("live frame").fn_id
+    }
+
     #[must_use]
     pub fn frame_arena_bytes(&self) -> usize {
         self.arena.len()
@@ -3914,9 +3940,12 @@ impl Task {
                     }
                     self.frames.last_mut().expect("frame").pc += 1;
                     let callee_frame = self.alloc_frame(program.fns[callee.0 as usize].frame);
-                    for copy in &args {
+                    for (index, copy) in args.iter().enumerate() {
                         let src = base + copy.src as usize;
-                        let dst = callee_frame + copy.dst as usize;
+                        let destination = verified.map_or(copy.dst, |verified| {
+                            indirect_call_destination(verified, callee, index, copy.dst)
+                        });
+                        let dst = callee_frame + destination as usize;
                         self.arena.copy_within(src..src + copy.size as usize, dst);
                     }
                     // A closure value typed by its semantic signature carries

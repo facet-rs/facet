@@ -60,6 +60,12 @@ pub enum RuntimeFault {
     PureIslandParked {
         input: u32,
     },
+    /// The typed document host crossed its verified ABI incorrectly. Document
+    /// syntax/type errors are not machine faults: they materialize as the
+    /// `Err(DecodeError)` value instead.
+    DocumentParseHost {
+        detail: String,
+    },
     /// A wire forced a demand that is already being evaluated on the demand
     /// stack: a cyclic/re-entrant demand. The demand state machine detects it as
     /// a typed fault rather than recursing forever.

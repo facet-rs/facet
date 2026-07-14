@@ -13,6 +13,10 @@ pub struct Counters {
     pub memo_misses: u64,
     pub memo_hit_allocations: u64,
     pub pure_host_calls: u64,
+    /// Scheduler-owned typed document parses. This deliberately remains
+    /// separate from `pure_host_calls`: document parsing crosses the host
+    /// boundary once per dynamic document and is not a lowered pure op.
+    pub document_parse_host_calls: u64,
     pub store_interns: u64,
     pub store_dedups: u64,
     pub bytes_hashed: u64,

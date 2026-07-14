@@ -197,9 +197,9 @@ fn rung_001_certifies_the_new_compiler_and_runtime_spine() {
     let rendered_weavy = lowered.render();
     let recipe = lowered.recipe;
     assert!(rendered_weavy.contains("Trace { id: 0 }"));
-    assert!(rendered_weavy.contains("ConstI64 { dst: 0, value: 1 }"));
-    assert!(rendered_weavy.contains("CopyI64 { dst: 8, src: 0 }"));
-    assert!(rendered_weavy.contains("Ret { src: 8, size: 8 }"));
+    assert!(rendered_weavy.contains("ConstI64 { dst: 16, value: 1 }"));
+    assert!(rendered_weavy.contains("CopyI64 { dst: 24, src: 16 }"));
+    assert!(rendered_weavy.contains("Ret { src: 24, size: 8 }"));
 
     let shifted_source = format!("\n{RUNG_001}");
     let shifted_module = Compiler::new()
@@ -533,6 +533,11 @@ fn direct_string_call() -> Stream<Check> {
         assert_eq!(lowered.program().fns.len(), 2);
         let root = &lowered.contract().functions[0];
         let callee = &lowered.contract().functions[1];
+        let scheduler_header_bytes: u32 = callee.frame.regions[..2]
+            .iter()
+            .map(|region| u32::try_from(region_byte_len(region)).expect("header region fits u32"))
+            .sum();
+        assert_eq!(scheduler_header_bytes, 16);
         assert_eq!(lowered.constants.len(), 2, "one publication per NodeRef");
         let root_function = lowered.constants[0].root.function;
         let string_schema = lowered.constants[0].root.schema;
@@ -556,15 +561,21 @@ fn direct_string_call() -> Stream<Check> {
                 assert_eq!(constant.owner.function, constant.node.function);
                 assert_eq!(constant.root.entry, root_entry);
                 assert_eq!(constant.owner.entry, root_entry);
-                assert_eq!(constant.root.slot.byte_offset(), 0);
-                assert_eq!(constant.owner.slot.byte_offset(), 0);
+                assert_eq!(constant.root.slot.byte_offset(), scheduler_header_bytes);
+                assert_eq!(constant.owner.slot.byte_offset(), scheduler_header_bytes);
             } else {
                 assert_eq!(constant.owner.function, constant.node.function);
                 assert_ne!(constant.owner.function, root_function);
                 assert_eq!(constant.root.entry, root_entry);
                 assert_eq!(constant.owner.entry, 1);
-                assert_eq!(constant.root.slot.byte_offset(), 24);
-                assert_eq!(constant.owner.slot.byte_offset(), 8);
+                assert_eq!(
+                    constant.root.slot.byte_offset(),
+                    scheduler_header_bytes + 24
+                );
+                assert_eq!(
+                    constant.owner.slot.byte_offset(),
+                    scheduler_header_bytes + 8
+                );
             }
         }
         assert_eq!(
@@ -586,7 +597,7 @@ fn direct_string_call() -> Stream<Check> {
             })
             .expect("root calls check_string directly");
         assert_eq!(root_call.len(), callee.entries.len());
-        assert_eq!(root_call[1].dst, 8);
+        assert_eq!(root_call[1].dst, scheduler_header_bytes + 8);
         assert_eq!(root_call[1].size, 8);
         for (arg, entry) in root_call.iter().zip(&callee.entries) {
             let region = &callee.frame.regions[entry.0 as usize];
@@ -3256,7 +3267,7 @@ fn rung_021_closure_parameters_destructure_callable_values() {
             .iter()
             .position(|candidate| candidate.id == node)
             .expect("closure node has a canonical contract region");
-        let shape = lowered.contract().functions[0].frame.regions[region]
+        let shape = lowered.contract().functions[0].frame.regions[region + 2]
             .value_shape
             .expect("closure node has a structural value shape");
         let ValueShapeKind::Product { fields } =
@@ -3879,7 +3890,12 @@ fn rung_048_captured_closures_run_directly_and_through_array_map() {
         .call_contract
         .expect("captured closure has a verified callable ABI");
     let contract = &lowered.contract().calls[callable.0 as usize];
-    assert_eq!(contract.entries.len(), 2, "argument plus captured Int");
+    assert_eq!(contract.entries.len(), 1, "public argument only");
+    assert_eq!(
+        lowered.contract().functions[target_frame].environment.len(),
+        1,
+        "captured Int stays in the closure environment rather than the semantic ABI",
+    );
     let capture = *closure
         .inputs
         .first()
@@ -3911,8 +3927,12 @@ fn rung_048_captured_closures_run_directly_and_through_array_map() {
         })
         .next()
         .expect("direct closure call lowers to CallIndirect");
-    assert_eq!(direct_call[1].src, capture_region);
-    assert_ne!(direct_call[1].src, direct_call[0].src + 8);
+    assert_eq!(
+        direct_call.len(),
+        1,
+        "only the public argument crosses CallIndirect"
+    );
+    assert_ne!(capture_region, direct_call[0].src);
     assert!(lowered.program().fns.iter().all(|function| {
         function
             .code
@@ -5960,6 +5980,89 @@ fn t() -> Stream<Check> {
     );
 }
 
+/// A nonliteral fallible decode crosses the real scheduler-owned document host
+/// primitive. This is deliberately not a fold: the verified program contains a
+/// `HostCallYield`, the runtime records exactly one document host call and one
+/// source-read receipt per dynamic document, and both the success and the
+/// structured `Err(DecodeError)` branch execute through the ordinary Result
+/// match machinery.
+#[test]
+fn dynamic_json_and_toml_decode_use_the_scheduler_host_once_per_document() {
+    const JSON_OK: &str = "\
+struct PkgRow { name: String }
+fn check(src: String) -> Bool {
+    match try_json_decode<PkgRow>(src) {
+        Ok(row) => row.name == \"mio\",
+        Err(_) => false,
+    }
+}
+#[test]
+fn t() -> Stream<Check> {
+    let src = \"{\\\"name\\\":\\\"mio\\\"}\";
+    yield expect(check(src));
+}
+";
+    const JSON_ERR: &str = "\
+struct PkgRow { name: String }
+fn check(src: String) -> Bool {
+    match try_json_decode<PkgRow>(src) {
+        Ok(_) => false,
+        Err(error) => error.path == \"name\"
+            && error.document_offset == 8
+            && error.document_len == 2,
+    }
+}
+#[test]
+fn t() -> Stream<Check> {
+    let src = \"{\\\"name\\\":42}\";
+    yield expect(check(src));
+}
+";
+    const TOML_OK: &str = "\
+struct PkgRow { name: String }
+fn check(src: String) -> Bool {
+    match try_toml_decode<PkgRow>(src) {
+        Ok(row) => row.name == \"mio\",
+        Err(_) => false,
+    }
+}
+#[test]
+fn t() -> Stream<Check> {
+    let src = \"name = \\\"mio\\\"\\n\";
+    yield expect(check(src));
+}
+";
+
+    for (source, expected_documents) in [(JSON_OK, 1), (JSON_ERR, 1), (TOML_OK, 1)] {
+        let module = Compiler::new()
+            .compile(source)
+            .expect("dynamic decode compiles");
+        let partitioned = module.partition_test(&module.tests[0]);
+        let mut lowering = LoweringCache::default();
+        let lowered = lowering
+            .get_or_lower(&partitioned.islands[0])
+            .expect("dynamic decode lowers");
+        assert_eq!(
+            lowered
+                .program()
+                .fns
+                .iter()
+                .flat_map(|function| &function.code)
+                .filter(|op| matches!(op, WeavyOp::HostCallYield { .. }))
+                .count(),
+            1,
+            "one verified host edge for one dynamic document",
+        );
+        let report = run_source(source).expect("dynamic decode runs");
+        assert!(report.passed() && report.agrees());
+        for lane in [&report.plain, &report.chaos] {
+            assert_eq!(lane.counters.document_parse_host_calls, expected_documents);
+            assert_eq!(lane.counters.pure_host_calls, 0);
+            assert_eq!(lane.receipt_count, expected_documents);
+        }
+    }
+}
+
 /// A malformed constant document fails as a *structured typed* diagnostic — a
 /// stable kind label, a structured field path, and the offending document byte
 /// span — never a stringly `UnsupportedExpression`. No identity depends on the
@@ -6002,16 +6105,137 @@ fn t() -> Stream<Check> {
     assert_eq!(&document[offset..offset + len], "42");
 }
 
-/// Rung 066's exact code-grounded red boundary on the merged production tree: it
-/// stops in the surface grammar, before any decode — the `call` production does
-/// not admit the `try_json_decode<T>` turbofish that names the target type.
+/// Rung 066 — a decode that can fail returns a `Result<T, DecodeError>` value,
+/// not a crash. `try_json_decode<PkgRow>(...)` names the target schema at the
+/// call site; the failing document (an integer where `name: String` is expected)
+/// produces `Err(e)`, and `e.message` — a rendered projection over the typed
+/// error's structural fields — contains the offending field name.
+///
+/// On this compile-time-constant document the decode is the **constant fold** of
+/// the runtime doc-parse primitive: it runs once at compile time and its typed
+/// `Err` value is emitted as ordinary typed construction (`Op::Variant` +
+/// `Op::Record`), so the run performs no host call and records no receipt. The
+/// chaos lane agrees with plain, as the foundation requires from rung 001.
 #[test]
-fn typed_decode_066_red_boundary() {
-    let failure = Compiler::new()
-        .compile(RUNG_066)
-        .expect_err("the try_json_decode<T> turbofish does not parse yet");
-    assert_eq!(failure.entries.len(), 1);
-    assert_eq!(failure.entries[0].code, DiagnosticCode::ParseRejected);
+fn rung_066_decode_failure_is_a_typed_result() {
+    let report = run_source(RUNG_066).expect("rung 066 runs through Executable");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 1);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert!(lane.checks.iter().all(|check| check.passed));
+        // The literal decode is folded, so nothing reaches the machine as a host
+        // call or a recorded read: the fold is the constant-folded subset of the
+        // runtime primitive.
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+/// The fold-is-an-optimization proof for the fallible surface. A successfully
+/// decoded `Ok(row)` payload must be *the same value* as the equivalent authored
+/// typed construction — the F2 corrective seam: the literal fold is provably the
+/// constant-folded form of the same typed-construction primitive.
+///
+/// The decoded program binds the `Ok` payload through an ordinary match and
+/// yields the same projections an authored `PkgRow` construction does; the two
+/// produce identical check identities (`ValueId`) through the production Store
+/// path. A negative control (a different authored value) must diverge, so the
+/// oracle is discriminating rather than trivially true. (Fold determinism —
+/// identical canonical VIR across independent compiles — is certified
+/// separately by `try_decode_fold_is_deterministic_canonical_vir`, keeping each
+/// certificate's wall time bounded on a contended machine.)
+#[test]
+fn decoded_result_ok_payload_is_identity_equivalent_to_authored_construction() {
+    const AUTHORED: &str = "\
+struct PkgRow { name: String, vers: String }
+#[test]
+fn t() -> Stream<Check> {
+    let row = PkgRow { name: \"mio\", vers: \"0.8.11\" };
+    yield expect_eq(row.name, \"mio\");
+    yield expect_eq(row.vers, \"0.8.11\");
+}
+";
+    const DECODED: &str = "\
+struct PkgRow { name: String, vers: String }
+#[test]
+fn t() -> Stream<Check> {
+    yield match try_json_decode<PkgRow>(\"{\\\"name\\\":\\\"mio\\\",\\\"vers\\\":\\\"0.8.11\\\"}\") {
+        Ok(row) => expect_eq(row.name, \"mio\"),
+        Err(_) => expect(false),
+    };
+    yield match try_json_decode<PkgRow>(\"{\\\"name\\\":\\\"mio\\\",\\\"vers\\\":\\\"0.8.11\\\"}\") {
+        Ok(row) => expect_eq(row.vers, \"0.8.11\"),
+        Err(_) => expect(false),
+    };
+}
+";
+    // A different authored value: same shape, different `vers`. The decoded Ok
+    // payload must NOT collide with this control's identity.
+    const OTHER: &str = "\
+struct PkgRow { name: String, vers: String }
+#[test]
+fn t() -> Stream<Check> {
+    let row = PkgRow { name: \"mio\", vers: \"9.9.9\" };
+    yield expect_eq(row.name, \"mio\");
+    yield expect_eq(row.vers, \"0.8.11\");
+}
+";
+
+    // Production Store path: the decoded Ok payload yields identical check
+    // identities to the authored construction; the negative control diverges.
+    let authored_run = run_source(AUTHORED).expect("authored runs");
+    let decoded_run = run_source(DECODED).expect("decoded runs");
+    let other_run = run_source(OTHER).expect("control runs");
+    assert!(authored_run.passed() && decoded_run.passed());
+    // Compare the checked *value* identities (schema + content), independent of
+    // yield-site provenance — the decoded program binds its payload through a
+    // match, so its yield sites are numbered differently, but the value each
+    // check observes must be the same content-addressed value.
+    let check_value_ids = |run: &vix::ratchet::SuiteRun| {
+        run.checks
+            .iter()
+            .map(|check| check.identity.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        check_value_ids(&authored_run.plain),
+        check_value_ids(&decoded_run.plain),
+        "the decoded Ok payload is the same value as the authored construction"
+    );
+    assert_ne!(
+        check_value_ids(&authored_run.plain),
+        check_value_ids(&other_run.plain),
+        "a different authored value produces a different checked value identity"
+    );
+}
+
+/// Two independent compiles of the same `try_json_decode<T>` program fold to
+/// byte-identical canonical VIR — one recipe, one demand key — proving the fold
+/// is deterministic and content-addressed.
+#[test]
+fn try_decode_fold_is_deterministic_canonical_vir() {
+    const DECODED: &str = "\
+struct PkgRow { name: String, vers: String }
+#[test]
+fn t() -> Stream<Check> {
+    yield match try_json_decode<PkgRow>(\"{\\\"name\\\":\\\"mio\\\",\\\"vers\\\":\\\"0.8.11\\\"}\") {
+        Ok(row) => expect_eq(row.name, \"mio\"),
+        Err(_) => expect(false),
+    };
+}
+";
+    let lower = |source: &str| {
+        let module = Compiler::new().compile(source).expect("compiles");
+        let partitioned = module.partition_test(&module.tests[0]);
+        partitioned.islands[0].canonical_recipe_bytes()
+    };
+    assert_eq!(
+        lower(DECODED),
+        lower(DECODED),
+        "the fold is deterministic canonical VIR"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -6489,9 +6713,9 @@ fn tail_loop_interpreter_and_jit_agree() {
     let program = standalone_tail_loop("count_up");
 
     let mut interpreter = Task::spawn_with_mode(&program, FnId(0), TraceMode::Production);
-    interpreter.write_i64(0, 0);
-    interpreter.write_i64(8, 10_000_000);
     interpreter.write_i64(16, 0);
+    interpreter.write_i64(24, 10_000_000);
+    interpreter.write_i64(32, 0);
     interpreter.run(&program, &mut [], &[]);
     let interpreted = interpreter.result_i64();
     assert_eq!(interpreted, 49_999_995_000_000);
@@ -6508,9 +6732,9 @@ fn tail_loop_interpreter_and_jit_agree() {
     match JitProgram::compile_with_mode(&program, TraceMode::Production) {
         Some(jit) => {
             let mut native = JitTask::spawn(&jit, FnId(0));
-            native.write_i64(0, 0);
-            native.write_i64(8, 10_000_000);
             native.write_i64(16, 0);
+            native.write_i64(24, 10_000_000);
+            native.write_i64(32, 0);
             native.run(&jit, &mut [], &[]);
             assert_eq!(
                 native.result_i64(),
@@ -6544,9 +6768,9 @@ fn tail_loop_backedge_adds_no_per_iteration_machinery() {
     let program = standalone_tail_loop("count_up");
     let run = |iterations: i64| {
         let mut task = Task::spawn_with_mode(&program, FnId(0), TraceMode::Production);
-        task.write_i64(0, 0);
-        task.write_i64(8, iterations);
         task.write_i64(16, 0);
+        task.write_i64(24, iterations);
+        task.write_i64(32, 0);
         task.run(&program, &mut [], &[]);
         let marks = task
             .trace

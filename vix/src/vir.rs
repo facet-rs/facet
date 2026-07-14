@@ -158,42 +158,6 @@ impl EnumType {
         })
     }
 
-    /// The `Result` a postfix `?` produces: `Ok` carries the operand's value,
-    /// `Err` the caught typed failure.
-    #[must_use]
-    pub fn result(inner: Type) -> Self {
-        Self {
-            name: format!("Result<{}>", inner.name()),
-            variants: vec![
-                EnumVariant {
-                    name: "Ok".to_owned(),
-                    payload: VariantPayload::Tuple(vec![inner]),
-                },
-                EnumVariant {
-                    name: "Err".to_owned(),
-                    payload: VariantPayload::Tuple(vec![Self::failure_value()]),
-                },
-            ],
-        }
-    }
-
-    /// The `Ok` payload when this enum is the `?` Result shape, `None` otherwise.
-    #[must_use]
-    pub fn result_inner(&self) -> Option<&Type> {
-        let [ok, err] = self.variants.as_slice() else {
-            return None;
-        };
-        let (VariantPayload::Tuple(ok_payload), VariantPayload::Tuple(err_payload)) =
-            (&ok.payload, &err.payload)
-        else {
-            return None;
-        };
-        let ([inner], [failure]) = (ok_payload.as_slice(), err_payload.as_slice()) else {
-            return None;
-        };
-        (ok.name == "Ok" && err.name == "Err" && *failure == Self::failure_value()).then_some(inner)
-    }
-
     #[must_use]
     pub fn option_inner(&self) -> Option<&Type> {
         let [some, none] = self.variants.as_slice() else {
@@ -210,6 +174,50 @@ impl EnumType {
             && matches!(none.payload, VariantPayload::Unit)
             && self.name == format!("Option<{}>", inner.name()))
         .then_some(inner)
+    }
+
+    /// The built-in `Result<Ok, Err>` failure-as-value enum: `Ok(T)` and
+    /// `Err(E)` single-payload tuple variants. Failure is an ordinary domain
+    /// value, not an exception (`r[lang.failure.typed]`).
+    #[must_use]
+    pub fn result(ok: Type, err: Type) -> Self {
+        let name = format!("Result<{}, {}>", ok.name(), err.name());
+        Self {
+            name,
+            variants: vec![
+                EnumVariant {
+                    name: "Ok".to_owned(),
+                    payload: VariantPayload::Tuple(vec![ok]),
+                },
+                EnumVariant {
+                    name: "Err".to_owned(),
+                    payload: VariantPayload::Tuple(vec![err]),
+                },
+            ],
+        }
+    }
+
+    /// The `(ok, err)` payload types iff this enum is the built-in `Result`
+    /// shape (matched structurally and by canonical name, like [`option_inner`]).
+    ///
+    /// [`option_inner`]: EnumType::option_inner
+    #[must_use]
+    pub fn result_inner(&self) -> Option<(&Type, &Type)> {
+        let [ok, err] = self.variants.as_slice() else {
+            return None;
+        };
+        let (VariantPayload::Tuple(ok_payload), VariantPayload::Tuple(err_payload)) =
+            (&ok.payload, &err.payload)
+        else {
+            return None;
+        };
+        let ([ok_ty], [err_ty]) = (ok_payload.as_slice(), err_payload.as_slice()) else {
+            return None;
+        };
+        (ok.name == "Ok"
+            && err.name == "Err"
+            && self.name == format!("Result<{}, {}>", ok_ty.name(), err_ty.name()))
+        .then_some((ok_ty, err_ty))
     }
 }
 
@@ -731,6 +739,19 @@ impl Type {
     }
 
     #[must_use]
+    pub fn result(ok: Type, err: Type) -> Self {
+        Self::Enum(EnumType::result(ok, err))
+    }
+
+    #[must_use]
+    pub fn result_inner(&self) -> Option<(&Type, &Type)> {
+        let Self::Enum(enumeration) = self else {
+            return None;
+        };
+        enumeration.result_inner()
+    }
+
+    #[must_use]
     pub fn name(&self) -> String {
         match self {
             Self::Bool => "Bool".to_owned(),
@@ -867,6 +888,18 @@ pub enum EffectKind {
     Effect,
 }
 
+/// The grammar owned by the typed document-deserialization primitive.
+///
+/// This lives in VIR rather than in the parser implementation: a dynamic
+/// decode is a semantic operation whose format and target schema participate in
+/// the recipe identity and are carried across the compiler/runtime boundary.
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum DecodeFormat {
+    Json,
+    Toml,
+}
+
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EffectFacts {
     pub kind: EffectKind,
@@ -922,6 +955,14 @@ pub enum Op {
     /// where it is consumed, so an unconsumed wire issues no demand.
     AwaitWire {
         input: u32,
+    },
+    /// Parse one runtime String directly into `target` through the scheduler's
+    /// document host primitive. The node result is always
+    /// `Result<target, DecodeError>`; both success and structured parse failure
+    /// are ordinary typed frame values.
+    Decode {
+        format: DecodeFormat,
+        target: Type,
     },
     Tuple,
     Record,
@@ -3307,6 +3348,14 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::AwaitWire { input } => {
             op.push(84);
             op.extend_from_slice(&input.to_le_bytes());
+        }
+        Op::Decode { format, target } => {
+            op.push(85);
+            op.push(match format {
+                DecodeFormat::Json => 0,
+                DecodeFormat::Toml => 1,
+            });
+            frame(&mut op, &canonical_type(target));
         }
         Op::Div => op.push(23),
         Op::IsVariant { variant } => {

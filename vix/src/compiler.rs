@@ -13,8 +13,9 @@ use crate::vir::{
     EnumType, EnumVariant, ExternKind, Function, FunctionId, GeneratorArm, GeneratorBody,
     GeneratorStep, MatchArm as VirMatchArm, Module, Node, NodeId, OPTION_NONE_VARIANT,
     OPTION_SOME_VARIANT, ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, OrderedMatchArm,
-    Parameter, ParameterId, ParameterKind, RecordField, RecordType, Test, TestMetadata, TraceCheck,
-    Type, VariantPayload, WireArg, WireSelector, YieldSite, YieldSiteId,
+    Parameter, ParameterId, ParameterKind, RESULT_ERR_VARIANT, RESULT_OK_VARIANT, RecordField,
+    RecordType, Test, TestMetadata, TraceCheck, Type, VariantPayload, WireArg, WireSelector,
+    YieldSite, YieldSiteId,
 };
 
 pub struct Compiler {
@@ -760,6 +761,15 @@ impl<'a> TypeResolver<'a> {
                 }
                 Ok(Type::set(element))
             }
+            ast::Type::Generic(generic) if path_is(&generic.base, "Result") => {
+                if generic.args.len() != 2 {
+                    return Err(invalid_arity(generic.span, 2, generic.args.len()));
+                }
+                let ok = self.resolve_type_with(&generic.args[0], substitutions)?;
+                let err = self.resolve_type_with(&generic.args[1], substitutions)?;
+                Ok(Type::result(ok, err))
+            }
+            ast::Type::Path(path) if path_is(path, "DecodeError") => Ok(decode_error_type()),
             ast::Type::Path(path) => {
                 let name = path_name(path);
                 if let Some(ty) = self.resolved.get(&name) {
@@ -1450,6 +1460,15 @@ fn lower_declared_type(
             }
             Ok(Type::set(element))
         }
+        ast::Type::Generic(generic) if path_is(&generic.base, "Result") => {
+            if generic.args.len() != 2 {
+                return Err(invalid_arity(generic.span, 2, generic.args.len()));
+            }
+            let ok = lower_declared_type(&generic.args[0], types)?;
+            let err = lower_declared_type(&generic.args[1], types)?;
+            Ok(Type::result(ok, err))
+        }
+        ast::Type::Path(path) if path_is(path, "DecodeError") => Ok(decode_error_type()),
         ast::Type::Path(path) => types
             .get(&path_name(path))
             .cloned()
@@ -2900,6 +2919,9 @@ fn lower_value_expected(
         ast::Expr::Call(call) if call.callee.value == "Some" => {
             lower_some(nodes, bindings, context, call, expected)
         }
+        ast::Expr::Call(call) if try_decode_format(&call.callee.value).is_some() => {
+            lower_try_decode(nodes, bindings, context, call)
+        }
         ast::Expr::Call(call) if decode_format(&call.callee.value).is_some() => {
             lower_decode(nodes, call, expected)
         }
@@ -2961,6 +2983,13 @@ fn lower_value_expected(
         ast::Expr::Record(record) => lower_named_constructor(nodes, bindings, context, record),
         ast::Expr::Field(field) => {
             let receiver = lower_value(nodes, bindings, context, &field.receiver)?;
+            // `DecodeError.message` is a rendered projection, not a stored field.
+            if let ast::Member::Identifier(name) = &field.name
+                && name.value == "message"
+                && is_decode_error(&receiver.ty)
+            {
+                return Ok(lower_decode_error_message(nodes, &receiver, field.span));
+            }
             let (index_value, ty) = match &field.name {
                 ast::Member::Index(index) => {
                     let index_value = index.value.parse::<usize>().map_err(|_| {
@@ -4492,6 +4521,260 @@ fn runtime_decode_unavailable(
     })
 }
 
+/// The fallible decode surface: `try_json_decode<T>(doc)`. Unlike the infallible
+/// [`decode_format`] fold (062–065), this returns a first-class
+/// `Result<T, DecodeError>` — a decode that fails is a *value*, not a compile
+/// error (`r[lang.failure.typed]`). The target schema is named by the call-site
+/// turbofish, not inferred from a `let` annotation.
+fn try_decode_format(name: &str) -> Option<DecodeFormat> {
+    match name {
+        "try_json_decode" => Some(DecodeFormat::Json),
+        "try_toml_decode" => Some(DecodeFormat::Toml),
+        _ => None,
+    }
+}
+
+/// The `DecodeError` value surfaced as the `Err` payload of a decode `Result`.
+/// Its stored fields are the STRUCTURAL identity of the failure: a stable
+/// machine `kind` discriminant (never rendered prose) and the dotted field
+/// `path` that reached it. The human `message` is a projection over these
+/// fields (see [`lower_decode_error_message`]), never a stored field — a
+/// rendered message is presentation, not the error's identity
+/// (`r[lang.failure.typed]`, `errors.md`).
+const DECODE_ERROR_KIND_FIELD: u32 = 0;
+const DECODE_ERROR_PATH_FIELD: u32 = 1;
+
+fn decode_error_type() -> Type {
+    Type::Record(RecordType {
+        name: "DecodeError".to_owned(),
+        fields: vec![
+            RecordField {
+                name: "kind".to_owned(),
+                ty: Type::String,
+            },
+            RecordField {
+                name: "path".to_owned(),
+                ty: Type::String,
+            },
+            RecordField {
+                name: "document_offset".to_owned(),
+                ty: Type::Int,
+            },
+            RecordField {
+                name: "document_len".to_owned(),
+                ty: Type::Int,
+            },
+        ],
+    })
+}
+
+/// Is `ty` the built-in `DecodeError` value shape?
+fn is_decode_error(ty: &Type) -> bool {
+    matches!(ty, Type::Record(record) if record.name == "DecodeError")
+}
+
+fn push_string_literal(nodes: &mut Vec<Node>, span: Span, value: String) -> NodeId {
+    push_node(
+        nodes,
+        span,
+        Type::String,
+        EffectFacts::PURE,
+        Vec::new(),
+        Op::String(value),
+    )
+}
+
+/// Construct a `DecodeError` value from a [`decode::DecodeError`]: its stable
+/// kind label and its dotted field path, in declaration order. Building the same
+/// structured fields a runtime decode would build keeps the constant fold
+/// identity-equivalent to the runtime primitive's success/failure value.
+fn lower_decode_error_value(
+    nodes: &mut Vec<Node>,
+    error: &decode::DecodeError,
+    span: Span,
+) -> LoweredValue {
+    let kind = push_string_literal(nodes, span, error.kind.label().to_owned());
+    let path = push_string_literal(nodes, span, error.path_names().join("."));
+    let document_offset = push_node(
+        nodes,
+        span,
+        Type::Int,
+        EffectFacts::PURE,
+        Vec::new(),
+        Op::Int(error.span.map_or(-1, |span| i64::from(span.offset))),
+    );
+    let document_len = push_node(
+        nodes,
+        span,
+        Type::Int,
+        EffectFacts::PURE,
+        Vec::new(),
+        Op::Int(error.span.map_or(-1, |span| i64::from(span.len))),
+    );
+    let ty = decode_error_type();
+    LoweredValue {
+        node: push_node(
+            nodes,
+            span,
+            ty.clone(),
+            EffectFacts::PURE,
+            vec![kind, path, document_offset, document_len],
+            Op::Record,
+        ),
+        ty,
+    }
+}
+
+/// Wrap a value in a `Result<T, DecodeError>` variant (`Ok`/`Err`).
+fn lower_result_variant(
+    nodes: &mut Vec<Node>,
+    payload: LoweredValue,
+    variant: u32,
+    result_ty: &Type,
+    span: Span,
+) -> LoweredValue {
+    LoweredValue {
+        node: push_node(
+            nodes,
+            span,
+            result_ty.clone(),
+            EffectFacts::PURE,
+            vec![payload.node],
+            Op::Variant { variant },
+        ),
+        ty: result_ty.clone(),
+    }
+}
+
+/// Project the rendered `message` String of a `DecodeError` value. The message
+/// is a presentation projection over the structural fields — `"<kind> at
+/// <path>"` — computed from the stored discriminant and field path, so it
+/// carries no identity of its own.
+fn lower_decode_error_message(
+    nodes: &mut Vec<Node>,
+    receiver: &LoweredValue,
+    span: Span,
+) -> LoweredValue {
+    let kind = push_node(
+        nodes,
+        span,
+        Type::String,
+        EffectFacts::PURE,
+        vec![receiver.node],
+        Op::Project {
+            index: DECODE_ERROR_KIND_FIELD,
+        },
+    );
+    let path = push_node(
+        nodes,
+        span,
+        Type::String,
+        EffectFacts::PURE,
+        vec![receiver.node],
+        Op::Project {
+            index: DECODE_ERROR_PATH_FIELD,
+        },
+    );
+    let separator = push_string_literal(nodes, span, " at ".to_owned());
+    let prefix = push_node(
+        nodes,
+        span,
+        Type::String,
+        EffectFacts::PURE,
+        vec![kind, separator],
+        Op::StringConcat,
+    );
+    LoweredValue {
+        node: push_node(
+            nodes,
+            span,
+            Type::String,
+            EffectFacts::PURE,
+            vec![prefix, path],
+            Op::StringConcat,
+        ),
+        ty: Type::String,
+    }
+}
+
+/// Lower `try_json_decode<T>(doc)` to a `Result<T, DecodeError>`. On a
+/// compile-time-constant document this is the **constant fold** of the runtime
+/// doc-parse primitive: the decode is run once at compile time and its success
+/// or typed-failure value is emitted as ordinary typed construction, provably
+/// the same value the runtime primitive produces for that document.
+fn lower_try_decode(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    call: &ast::Call,
+) -> Result<LoweredValue, Diagnostics> {
+    let format = try_decode_format(&call.callee.value).expect("try-decode intrinsic name");
+    if call.named_args.is_some() {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            call.span,
+            "named arguments on a decode call",
+        )));
+    }
+    check_arity(call, 1)?;
+    let Some(type_args) = &call.type_args else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            call.span,
+            "try_json_decode without a target type application",
+        )));
+    };
+    if type_args.args.len() != 1 {
+        return Err(invalid_arity(type_args.span, 1, type_args.args.len()));
+    }
+    let target = lower_declared_type(&type_args.args[0], context.types)?;
+    let result_ty = Type::result(target.clone(), decode_error_type());
+
+    let ast::Expr::Str(document) = &call.args.args[0] else {
+        let document = lower_value_expected(
+            nodes,
+            bindings,
+            context,
+            &call.args.args[0],
+            Some(&Type::String),
+        )?;
+        require_type(&document, &Type::String, expr_span(&call.args.args[0]))?;
+        return Ok(LoweredValue {
+            node: push_node(
+                nodes,
+                call.span,
+                result_ty.clone(),
+                EffectFacts::PURE,
+                vec![document.node],
+                Op::Decode { format, target },
+            ),
+            ty: result_ty,
+        });
+    };
+
+    // Constant fold: decode the literal once and emit the resulting Result value.
+    match decode::decode(format, &document.value, &target) {
+        Ok(decoded) => {
+            let value = lower_decoded_value(nodes, &decoded, &target, call.span)?;
+            Ok(lower_result_variant(
+                nodes,
+                value,
+                RESULT_OK_VARIANT,
+                &result_ty,
+                call.span,
+            ))
+        }
+        Err(error) => {
+            let value = lower_decode_error_value(nodes, &error, call.span);
+            Ok(lower_result_variant(
+                nodes,
+                value,
+                RESULT_ERR_VARIANT,
+                &result_ty,
+                call.span,
+            ))
+        }
+    }
+}
+
 fn lower_decode(
     nodes: &mut Vec<Node>,
     call: &ast::Call,
@@ -4702,8 +4985,8 @@ fn collect_pattern_names(pattern: &ast::Pattern, out: &mut BTreeSet<String>) {
             }
         }
         ast::Pattern::Some(some) => collect_pattern_names(&some.payload, out),
-        ast::Pattern::Ok(pattern) => collect_pattern_names(&pattern.payload, out),
-        ast::Pattern::Err(pattern) => collect_pattern_names(&pattern.payload, out),
+        ast::Pattern::Ok(ok) => collect_pattern_names(&ok.payload, out),
+        ast::Pattern::Err(err) => collect_pattern_names(&err.payload, out),
         ast::Pattern::Variant(variant) => {
             if let Some(payload) = &variant.tuple_payload {
                 for element in &payload.elems {
@@ -7185,13 +7468,13 @@ fn find_enum_pattern_variant<'a>(
             if enumeration.result_inner().is_none() {
                 return Err(type_mismatch(
                     pattern.span,
-                    "Result<_>",
+                    "Result<_, _>",
                     enumeration.name.clone(),
                 ));
             }
             Ok((
-                crate::vir::RESULT_OK_VARIANT as usize,
-                &enumeration.variants[crate::vir::RESULT_OK_VARIANT as usize],
+                RESULT_OK_VARIANT as usize,
+                &enumeration.variants[RESULT_OK_VARIANT as usize],
                 pattern.span,
             ))
         }
@@ -7199,13 +7482,13 @@ fn find_enum_pattern_variant<'a>(
             if enumeration.result_inner().is_none() {
                 return Err(type_mismatch(
                     pattern.span,
-                    "Result<_>",
+                    "Result<_, _>",
                     enumeration.name.clone(),
                 ));
             }
             Ok((
-                crate::vir::RESULT_ERR_VARIANT as usize,
-                &enumeration.variants[crate::vir::RESULT_ERR_VARIANT as usize],
+                RESULT_ERR_VARIANT as usize,
+                &enumeration.variants[RESULT_ERR_VARIANT as usize],
                 pattern.span,
             ))
         }
@@ -7591,7 +7874,10 @@ fn lower_try(
     try_expr: &ast::TryExpr,
 ) -> Result<LoweredValue, Diagnostics> {
     let operand = lower_value(nodes, bindings, context, &try_expr.value)?;
-    let ty = Type::Enum(EnumType::result(operand.ty.clone()));
+    let ty = Type::Enum(EnumType::result(
+        operand.ty.clone(),
+        EnumType::failure_value(),
+    ));
     Ok(LoweredValue {
         node: push_node(
             nodes,
