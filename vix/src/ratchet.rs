@@ -12,8 +12,8 @@ use crate::runtime::{
     ChaosPolicy, Counters, DemandState, Evaluation, Event, EventKind, EventLog, FailureContext,
     FailureValue, FramedNode, GeneratorOutcome, IslandInputs, Location, MachineError, MemoVerdict,
     PersistentRuntimeJournal, PersistentRuntimeJournalError, PersistentRuntimeJournalLoadReport,
-    PersistentRuntimeState, RealizedWireDemand, Runtime, SchemaId, SnapshotCapture, SnapshotOutcome,
-    TaskState, ValueId, WireDemand,
+    PersistentRuntimeState, RealizedWireDemand, Runtime, SchemaId, SnapshotCapture,
+    SnapshotOutcome, TaskState, ValueId, WireDemand,
 };
 use crate::vir::{
     DescribedWire, FunctionId, Island, IslandId, Module, Op, PartitionedRecipe, PartitionedValue,
@@ -1680,9 +1680,10 @@ fn run_lane(
     if let Some(out) = persistent_out {
         *out = state;
     }
-    if let (Some(report_out), Some(report)) =
-        (persistent_journal_report.as_deref_mut(), journal_load_report)
-    {
+    if let (Some(report_out), Some(report)) = (
+        persistent_journal_report.as_deref_mut(),
+        journal_load_report,
+    ) {
         *report_out = report;
     }
     let events = sink.into_events();
