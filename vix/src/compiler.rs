@@ -7900,6 +7900,97 @@ fn push_equality_condition(
             let right_values = push_project(nodes, span, right.node, element_array, Op::SetValues);
             push_eq(nodes, span, left_values, right_values)
         }
+        // Product equality descends through the published fields here instead
+        // of asking the Weavy leaf emitter to compare an opaque map/set handle.
+        // This makes a record whose field is an ordered collection — notably
+        // `ByteStream { $lines: Map<Int, String> }` — use the same canonical
+        // collection equality path as a top-level map.
+        Type::Record(record) => {
+            let mut fields = record.fields.iter().enumerate();
+            let Some((first_index, first)) = fields.next() else {
+                let unit_equal = lower_bool_constant(nodes, span, true);
+                if negate {
+                    let false_value = lower_bool_constant(nodes, span, false);
+                    return push_eq(nodes, span, unit_equal.node, false_value.node);
+                }
+                return unit_equal.node;
+            };
+            let first_index = u32::try_from(first_index).expect("record field index fits u32");
+            let left_field = push_project(
+                nodes,
+                span,
+                left.node,
+                first.ty.clone(),
+                Op::Project { index: first_index },
+            );
+            let right_field = push_project(
+                nodes,
+                span,
+                right.node,
+                first.ty.clone(),
+                Op::Project { index: first_index },
+            );
+            let mut equal = push_equality_condition(
+                nodes,
+                span,
+                &LoweredValue {
+                    node: left_field,
+                    ty: first.ty.clone(),
+                },
+                &LoweredValue {
+                    node: right_field,
+                    ty: first.ty.clone(),
+                },
+                false,
+            );
+            for (index, field) in fields {
+                let consequent_start = nodes.len();
+                let index = u32::try_from(index).expect("record field index fits u32");
+                let left_field = push_project(
+                    nodes,
+                    span,
+                    left.node,
+                    field.ty.clone(),
+                    Op::Project { index },
+                );
+                let right_field = push_project(
+                    nodes,
+                    span,
+                    right.node,
+                    field.ty.clone(),
+                    Op::Project { index },
+                );
+                let field_equal = push_equality_condition(
+                    nodes,
+                    span,
+                    &LoweredValue {
+                        node: left_field,
+                        ty: field.ty.clone(),
+                    },
+                    &LoweredValue {
+                        node: right_field,
+                        ty: field.ty.clone(),
+                    },
+                    false,
+                );
+                let consequent = control_region(nodes, consequent_start, field_equal);
+                let alternative_start = nodes.len();
+                let alternative = lower_bool_constant(nodes, span, false);
+                let alternative = control_region(nodes, alternative_start, alternative.node);
+                equal = push_node(
+                    nodes,
+                    span,
+                    Type::Bool,
+                    EffectFacts::PURE,
+                    vec![equal],
+                    Op::If {
+                        consequent,
+                        alternative,
+                    },
+                );
+            }
+            equal
+        }
         _ => {
             return push_node(
                 nodes,
