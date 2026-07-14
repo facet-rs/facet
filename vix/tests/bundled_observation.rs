@@ -45,6 +45,91 @@ fn equal_preimages_share_one_observation() {
     assert!(report.passed() && report.agrees(), "{report:?}");
 }
 
+/// A binding selector names a let-bound invocation with composite arguments —
+/// a preimage no literal spelling can select. Two uses of the binding are one
+/// computation; `demanded_once` observes exactly one realization.
+#[test]
+fn binding_selector_matches_a_composite_preimage() {
+    let source = "\
+fn build(values: [Int]) -> Int { values.len() * 1000 }
+#[test]
+fn t() -> Stream<Check> {
+    let rows = [1, 2, 3];
+    let built = build(rows);
+    let a = built;
+    let b = built;
+    yield expect_eq(a, b);
+    yield demanded_once(built);
+}
+";
+    let report = run_source(source).expect("runs");
+    assert!(report.passed() && report.agrees(), "{report:?}");
+}
+
+/// A binding selector also matches a scalar-literal invocation hoisted as a
+/// shared wire island: the memo-path realization and the binding preimage agree
+/// on one entry, whether the invocation was bundled or hoisted.
+#[test]
+fn binding_selector_matches_a_hoisted_scalar_wire() {
+    let source = format!(
+        "{COSTLY}#[test]\nfn t() -> Stream<Check> {{\n    let a = costly(7);\n    yield expect_eq(a, 7000);\n    yield expect_eq(a + 1, 7001);\n    yield demanded_once(a);\n}}\n"
+    );
+    let report = run_source(&source).expect("runs");
+    assert!(report.passed() && report.agrees(), "{report:?}");
+}
+
+/// A held binding is a wire, not a demand: a let-bound invocation no value
+/// check ever consumes is never executed, so `never_demanded` passes on it.
+#[test]
+fn held_binding_is_never_demanded() {
+    let source = "\
+fn build(values: [Int]) -> Int { values.len() * 1000 }
+#[test]
+fn t() -> Stream<Check> {
+    let held = build([1, 2, 3]);
+    yield expect_eq(1, 1);
+    yield never_demanded(held);
+}
+";
+    let report = run_source(source).expect("runs");
+    assert!(report.passed() && report.agrees(), "{report:?}");
+}
+
+/// The composite observation is bounded exactly like the literal one: removing
+/// the binding-selector observer leaves scheduler requests and store interns
+/// identical, so observing a composite invocation never turns it into a task.
+#[test]
+fn composite_observation_adds_no_scheduler_edge() {
+    let observed = "\
+fn build(values: [Int]) -> Int { values.len() * 1000 }
+#[test]
+fn t() -> Stream<Check> {
+    let built = build([1, 2, 3]);
+    yield expect_eq(built, 3000);
+    yield demanded_once(built);
+}
+";
+    let control = "\
+fn build(values: [Int]) -> Int { values.len() * 1000 }
+#[test]
+fn t() -> Stream<Check> {
+    let built = build([1, 2, 3]);
+    yield expect_eq(built, 3000);
+}
+";
+    let observed = run_source(observed).expect("runs");
+    let control = run_source(control).expect("runs");
+    assert!(observed.passed() && observed.agrees(), "{observed:?}");
+    assert_eq!(
+        observed.plain.counters.scheduler_requests, control.plain.counters.scheduler_requests,
+        "the composite observation issues no scheduler request",
+    );
+    assert_eq!(
+        observed.plain.counters.store_interns, control.plain.counters.store_interns,
+        "the composite observation interns nothing",
+    );
+}
+
 /// The observation is bounded and adds no scheduler edge: removing the described
 /// wires leaves the scheduler-request count and the store-intern count identical,
 /// so a selected observer never turns a bundled call into a task.

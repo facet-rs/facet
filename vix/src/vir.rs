@@ -306,24 +306,36 @@ pub enum TraceCheck {
 }
 
 /// A held description of an unevaluated invocation: which user function is
-/// invoked and, for a call-site selector, the exact scalar argument identities.
-/// This is the "wire" a trace-check constructor pins — it is never demanded,
-/// counted, or lowered to an island; it only names what to look for in the
-/// frozen completed-run demand log. Arguments are carried as their surface
-/// literals and resolved to canonical value identities where the check is
-/// evaluated, so this VIR type stays free of any runtime-identity dependency.
+/// invoked and which of its realizations the check selects. This is the "wire"
+/// a trace-check constructor pins — it is never demanded, counted, or lowered
+/// to an island; it only names what to look for in the frozen completed-run
+/// demand log. Selector contents are surface literals or authored-graph
+/// provenance, resolved to canonical identities where the check is evaluated,
+/// so this VIR type stays free of any runtime-identity dependency.
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct DescribedWire {
     /// The user function whose invocation this wire describes.
     pub function: FunctionId,
-    /// Literal scalar arguments of the described invocation, in order. Empty for
-    /// a zero-argument callee or a name-level selector.
-    pub arguments: Vec<WireArg>,
-    /// A name-level selector matches every argument demand of `function`
-    /// (`demanded_once(costly())` — one distinct realization total); a call-site
-    /// selector matches only the exact described argument identities
-    /// (`demanded_once(costly(1))`).
-    pub name_level: bool,
+    /// Which realizations of `function` the check selects.
+    pub selector: WireSelector,
+}
+
+/// How a described wire selects realized demands of its function.
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum WireSelector {
+    /// A name-level selector matches every argument demand of the function
+    /// (`demanded_once(costly())` — one distinct realization total).
+    Name,
+    /// A call-site selector matches only the exact described scalar argument
+    /// identities (`demanded_once(costly(1))`).
+    CallSite(Vec<WireArg>),
+    /// A binding selector names a let-bound invocation node in the authored
+    /// test graph (`let solve = mini_solve(...); ... demanded_once(solve)`).
+    /// It matches by the invocation's canonical structural preimage, so
+    /// composite and where-clause arguments — which have no literal spelling —
+    /// are selectable without demanding anything.
+    Binding(NodeId),
 }
 
 /// One scalar argument literal of a [`DescribedWire`]. Only closed scalar
@@ -1163,14 +1175,17 @@ pub struct PartitionedValue {
     pub wire: Option<WireProvenance>,
 }
 
-/// The described invocation a hoisted wire value island realizes: the callee
-/// user function and its exact scalar argument literals. Recorded so a
-/// described-wire trace check can select this realization by callee identity and
-/// argument identities.
+/// The described invocation a hoisted value or wire island realizes: the callee
+/// user function and, when every argument is a closed scalar literal, the exact
+/// argument literals. Recorded so a described-wire trace check can select this
+/// realization by callee identity, argument identities, or canonical preimage.
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct WireProvenance {
     pub function: FunctionId,
-    pub arguments: Vec<WireArg>,
+    /// `Some` when the invocation is call-site selectable (every argument is a
+    /// closed scalar literal); `None` for a composite or computed-argument
+    /// invocation, which remains selectable through its binding preimage.
+    pub arguments: Option<Vec<WireArg>>,
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
@@ -1497,7 +1512,10 @@ impl Module {
                             lazy_arg_reps: &lazy_here,
                         },
                     ),
-                    wire: None,
+                    // A shared publication rooted at a user invocation is a
+                    // realized demand a described wire can select; its memo-miss
+                    // realization is recorded exactly like a hoisted wire's.
+                    wire: invocation_provenance(function, node),
                 }
             })
             .collect::<Vec<_>>();
@@ -1530,7 +1548,7 @@ impl Module {
                             lazy_arg_reps: &lazy_here,
                         },
                     ),
-                    wire: scalar_call_provenance(function, node),
+                    wire: invocation_provenance(function, node),
                 }
             })
             .collect::<Vec<_>>();
@@ -1599,6 +1617,20 @@ impl Module {
 
     fn value_island_id(&self, function: FunctionId, node: NodeId) -> ValueIslandId {
         ValueIslandId { function, node }
+    }
+
+    /// The canonical structural preimage of the subtree rooted at `node` in
+    /// `function`'s authored graph — the content key a binding-level described
+    /// wire selects on. Computed over the authored graph, never over an island
+    /// cut, so shared-value and wire substitutions cannot distort the preimage;
+    /// nothing is demanded, interned, or executed to produce it.
+    #[must_use]
+    pub fn invocation_preimage(&self, function: FunctionId, node: NodeId) -> String {
+        structural_fingerprint(
+            &self.functions[function.0 as usize],
+            node,
+            &mut BTreeMap::new(),
+        )
     }
 
     fn partition_function_output_with_shared(
@@ -2434,24 +2466,30 @@ fn is_scalar_call_candidate(node: &Node) -> bool {
     matches!(node.op, Op::Call(_)) && matches!(node.ty, Type::Int | Type::Bool)
 }
 
-/// The described invocation a shared scalar call realizes, when every argument is
-/// a closed scalar literal. A call with a non-literal argument shares its
-/// computation but carries no described-wire provenance (nothing selects it).
-fn scalar_call_provenance(function: &Function, node: &Node) -> Option<WireProvenance> {
+/// The described invocation a hoisted island realizes, when its root is a user
+/// call. Literal scalar arguments make the invocation call-site selectable;
+/// composite or computed arguments leave `arguments` as `None`, so the
+/// realization is selectable only through its binding preimage. A non-call root
+/// (a lazy argument expression) carries no invocation provenance.
+fn invocation_provenance(function: &Function, node: &Node) -> Option<WireProvenance> {
     let Op::Call(callee) = node.op else {
         return None;
     };
-    let mut arguments = Vec::with_capacity(node.inputs.len());
+    let mut literals = Vec::with_capacity(node.inputs.len());
+    let mut literal = true;
     for &input in &node.inputs {
         match function.nodes[input.0 as usize].op {
-            Op::Int(value) => arguments.push(WireArg::Int(value)),
-            Op::Bool(value) => arguments.push(WireArg::Bool(value)),
-            _ => return None,
+            Op::Int(value) => literals.push(WireArg::Int(value)),
+            Op::Bool(value) => literals.push(WireArg::Bool(value)),
+            _ => {
+                literal = false;
+                break;
+            }
         }
     }
     Some(WireProvenance {
         function: callee,
-        arguments,
+        arguments: literal.then_some(literals),
     })
 }
 

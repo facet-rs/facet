@@ -14,7 +14,7 @@ use crate::vir::{
     MatchArm as VirMatchArm, Module, Node, NodeId, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT,
     ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, OrderedMatchArm, Parameter, ParameterId,
     ParameterKind, RecordField, RecordType, Test, TestMetadata, TraceCheck, Type, VariantPayload,
-    WireArg, YieldSite, YieldSiteId,
+    WireArg, WireSelector, YieldSite, YieldSiteId,
 };
 
 pub struct Compiler {
@@ -2004,17 +2004,17 @@ fn lower_check(
         }
         "demanded" => {
             return Ok(CheckRecipe::Trace(TraceCheck::Demanded {
-                wire: described_wire(context, call)?,
+                wire: described_wire(nodes, bindings, context, call)?,
             }));
         }
         "never_demanded" => {
             return Ok(CheckRecipe::Trace(TraceCheck::NeverDemanded {
-                wire: described_wire(context, call)?,
+                wire: described_wire(nodes, bindings, context, call)?,
             }));
         }
         "demanded_once" => {
             return Ok(CheckRecipe::Trace(TraceCheck::DemandedOnce {
-                wire: described_wire(context, call)?,
+                wire: described_wire(nodes, bindings, context, call)?,
             }));
         }
         _ => {}
@@ -2194,12 +2194,30 @@ fn trace_function_calls(
 /// literals. A zero-argument selector `f()` on a function that declares
 /// parameters is a name-level selector (every argument demand of `f`); a
 /// call-site selector carries the literal arguments so equal-recipe/different-
-/// argument demands stay distinct. No node is built and no operand is evaluated.
+/// argument demands stay distinct. An identifier operand names a let-bound
+/// invocation — including composite and where-clause arguments, which have no
+/// literal spelling — selected by its already-lowered call node's canonical
+/// preimage. No node is built and no operand is evaluated.
 fn described_wire(
+    nodes: &[Node],
+    bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
     call: &ast::Call,
 ) -> Result<DescribedWire, Diagnostics> {
     check_arity(call, 1)?;
+    if let ast::Expr::Identifier(identifier) = &call.args.args[0] {
+        let bound = lookup_binding(bindings, &identifier.value, identifier.span)?;
+        let Op::Call(function) = nodes[bound.node.0 as usize].op else {
+            return Err(Diagnostics::one(Diagnostic::unsupported(
+                identifier.span,
+                "a described-wire binding names a let-bound function invocation",
+            )));
+        };
+        return Ok(DescribedWire {
+            function,
+            selector: WireSelector::Binding(bound.node),
+        });
+    }
     let ast::Expr::Call(operand) = &call.args.args[0] else {
         return Err(Diagnostics::one(Diagnostic::unsupported(
             expr_span(&call.args.args[0]),
@@ -2231,11 +2249,14 @@ fn described_wire(
         .iter()
         .map(wire_argument_literal)
         .collect::<Result<Vec<_>, _>>()?;
-    let name_level = arguments.is_empty() && !signature.parameters.is_empty();
+    let selector = if arguments.is_empty() && !signature.parameters.is_empty() {
+        WireSelector::Name
+    } else {
+        WireSelector::CallSite(arguments)
+    };
     Ok(DescribedWire {
         function: signature.id,
-        arguments,
-        name_level,
+        selector,
     })
 }
 

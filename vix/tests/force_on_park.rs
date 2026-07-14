@@ -93,7 +93,10 @@ fn wire<'a>(
         arguments: &[],
         wires: &[],
         function: arg.function,
-        demand_arguments: &[],
+        // Synthetic argument islands carry no invocation provenance: nothing
+        // literal-selectable and no authored preimage to select on.
+        demand_arguments: None,
+        preimage: "",
     }
 }
 
@@ -299,7 +302,8 @@ fn reentrant_wire_demand_is_a_typed_fault() {
         arguments: &[],
         wires: &[],
         function: consumer.function,
-        demand_arguments: &[],
+        demand_arguments: None,
+        preimage: "",
     }];
     let error = runtime
         .evaluate(

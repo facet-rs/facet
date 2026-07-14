@@ -95,9 +95,31 @@ pub struct WireDemand<'a> {
     pub function: FunctionId,
     /// The canonical scalar argument identities of this invocation, recorded in
     /// the realized-demand log when the wire actually computes (a memo miss).
-    /// Empty for a zero-argument callee. A memoized re-force adds no entry, so
-    /// the log counts one realization per distinct demand identity.
-    pub demand_arguments: &'a [ValueId],
+    /// `Some(&[])` for a zero-argument callee; `None` when the invocation has a
+    /// composite or computed argument, which no call-site literal can select. A
+    /// memoized re-force adds no entry, so the log counts one realization per
+    /// distinct demand identity.
+    pub demand_arguments: Option<&'a [ValueId]>,
+    /// The canonical structural preimage of this invocation in the authored
+    /// graph — the content key a binding-level described wire selects on.
+    pub preimage: &'a str,
+}
+
+/// One realized invocation recorded for described-wire observation: which user
+/// function was demanded, with which canonical argument identities (when the
+/// invocation is literal-selectable), and under which canonical structural
+/// preimage. Recorded only when a demand actually computes (a memo miss that
+/// ran), so the log counts realizations, never re-demands of an
+/// already-memoized key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RealizedWireDemand {
+    pub function: FunctionId,
+    /// Canonical scalar argument identities for a literal-selectable
+    /// invocation; `None` when an argument is composite or computed.
+    pub arguments: Option<Vec<ValueId>>,
+    /// Canonical structural preimage of the invocation subtree in the authored
+    /// graph. Equal preimages denote one semantic demand.
+    pub preimage: String,
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -140,11 +162,12 @@ pub struct Runtime<S> {
     counters: Counters,
     next_task: u64,
     /// One entry per realized wire demand — a callee invocation the memo path
-    /// actually computed (a miss that ran), recorded as its callee function and
-    /// canonical argument identities. Memoized re-demands add no entry, so this
-    /// log counts realizations. It backs the described-wire trace checks and
-    /// retains only the callee/argument selectors a descriptor can name.
-    wire_demands: Vec<(FunctionId, Vec<ValueId>)>,
+    /// actually computed (a miss that ran), recorded as its callee function,
+    /// canonical argument identities, and canonical structural preimage.
+    /// Memoized re-demands add no entry, so this log counts realizations. It
+    /// backs the described-wire trace checks and retains only the
+    /// callee/argument/preimage selectors a descriptor can name.
+    wire_demands: Vec<RealizedWireDemand>,
 }
 
 impl<S: EventSink> Runtime<S> {
@@ -164,17 +187,27 @@ impl<S: EventSink> Runtime<S> {
     }
 
     /// The frozen log of realized wire demands: each callee invocation the memo
-    /// path computed, by callee function and canonical argument identities.
+    /// path computed, by callee function, canonical argument identities, and
+    /// canonical structural preimage.
     #[must_use]
-    pub fn realized_wire_demands(&self) -> &[(FunctionId, Vec<ValueId>)] {
+    pub fn realized_wire_demands(&self) -> &[RealizedWireDemand] {
         &self.wire_demands
     }
 
     /// Record one realized wire demand — a callee invocation the memo path
     /// actually computed. The runner calls this only on a memo miss, so a
     /// memoized re-demand of the same recipe+argument adds no entry.
-    pub fn record_wire_demand(&mut self, function: FunctionId, arguments: Vec<ValueId>) {
-        self.wire_demands.push((function, arguments));
+    pub fn record_wire_demand(
+        &mut self,
+        function: FunctionId,
+        arguments: Option<Vec<ValueId>>,
+        preimage: String,
+    ) {
+        self.wire_demands.push(RealizedWireDemand {
+            function,
+            arguments,
+            preimage,
+        });
     }
 
     /// The scalar result word of a resolved wire demand, read from its interned
@@ -616,7 +649,11 @@ impl<S: EventSink> Runtime<S> {
                         // a memoized re-force is a hit and records nothing, so
                         // structurally equal forces observe a single realization.
                         if resolved.memo == MemoVerdict::Miss {
-                            self.record_wire_demand(wire.function, wire.demand_arguments.to_vec());
+                            self.record_wire_demand(
+                                wire.function,
+                                wire.demand_arguments.map(<[ValueId]>::to_vec),
+                                wire.preimage.to_owned(),
+                            );
                         }
                         if let Some(failure) = resolved.failure {
                             // A demanded argument failed on the language plane;

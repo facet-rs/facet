@@ -2896,6 +2896,145 @@ fn native_rodin_kernel_backtracks_and_returns_typed_conflicts() {
     }
 }
 
+/// In-session learned-region reuse through the substrate's memo machinery: two
+/// solves are let-bound wires, each read by its generator control and two
+/// selected checks. Equal solve preimages share one realization — the learned
+/// no-goods riding in each typed outcome are content-keyed store values reused
+/// by every consumer — while the two distinct inputs stay distinct demands.
+/// `demanded_times(point_dead_region, 2)` pins the learned-region derivation to
+/// exactly one execution per solve: reuse flows through Store/memo identity,
+/// never a recompute and never a Rodin-private warm cache. (Cross-session fact
+/// retention is out of scope until facts carry the adjudicated premise-keyed
+/// shape; this certificate is deliberately in-session.)
+const NATIVE_KERNEL_LEARNING_REUSE_FIXTURE: &str = r#"
+fn reuse_app_package() -> PackageId {
+    PackageId {
+        source: PackageSource::Path("fixture/app"),
+        name: "app",
+        compat: CompatClass::Major(1),
+    }
+}
+
+fn reuse_shared_package() -> PackageId {
+    PackageId {
+        source: PackageSource::Path("fixture/shared"),
+        name: "shared",
+        compat: CompatClass::Major(1),
+    }
+}
+
+fn reuse_app_row(version: String) where { requirement: String } -> PackageRow {
+    PackageRow {
+        package: reuse_app_package(),
+        version: parse_version(version),
+        dependencies: [Dependency {
+            package: reuse_shared_package(),
+            requirement: parse_req(requirement),
+            kind: DependencyKind::Normal,
+            target: None,
+            optional: false,
+            default_features: true,
+            features: %[],
+        }],
+        features: [],
+        yanked: false,
+        links: None,
+        provenance: "fixture/app/Cargo.toml",
+    }
+}
+
+fn reuse_shared_row() -> PackageRow {
+    PackageRow {
+        package: reuse_shared_package(),
+        version: parse_version("1.0.0"),
+        dependencies: [],
+        features: [],
+        yanked: false,
+        links: None,
+        provenance: "fixture/shared/Cargo.toml",
+    }
+}
+
+fn reuse_input(include_low: Bool) -> SolveInput {
+    let app_rows = if include_low {
+        [
+            reuse_app_row("1.0.0") where { requirement: "=1.0.0" },
+            reuse_app_row("1.1.0") where { requirement: "=2.0.0" },
+        ]
+    } else {
+        [reuse_app_row("1.1.0") where { requirement: "=2.0.0" }]
+    };
+    SolveInput {
+        unsupported: None,
+        universe: PackageUniverse {
+            rows: %{reuse_app_package() => app_rows, reuse_shared_package() => [reuse_shared_row()]},
+        },
+        roots: [RootRequest {
+            package: reuse_app_package(),
+            requirement: universe(),
+            features: %[],
+            default_features: true,
+            graph: true,
+        }],
+        target: TargetFacts {
+            triple: "x86_64-unknown-linux-gnu",
+            atoms: %["unix"],
+            values: %{"target_arch" => "x86_64", "target_os" => "linux"},
+        },
+        policy: SolvePolicy {
+            consume_build: true,
+            consume_dev: false,
+            mutually_exclusive_features: %{},
+        },
+    }
+}
+
+#[test]
+fn native_learning_reuse() -> Stream<Check> {
+    let found = rodin_solve(reuse_input(true));
+    let dead = rodin_solve(reuse_input(false));
+    yield match found {
+        RodinOutcome::Solved(result) => expect_eq(result.selected.get(reuse_app_package()).version, parse_version("1.0.0")),
+        RodinOutcome::Failed(_) => expect(false),
+        RodinOutcome::Unsupported(_) => expect(false),
+    };
+    yield match found {
+        RodinOutcome::Solved(result) => expect_eq(result.selected.get(reuse_shared_package()).version, parse_version("1.0.0")),
+        RodinOutcome::Failed(_) => expect(false),
+        RodinOutcome::Unsupported(_) => expect(false),
+    };
+    yield match dead {
+        RodinOutcome::Solved(_) => expect(false),
+        RodinOutcome::Failed(conflict) => expect(conflict.region.versions.has(reuse_app_package())),
+        RodinOutcome::Unsupported(_) => expect(false),
+    };
+    yield match dead {
+        RodinOutcome::Solved(_) => expect(false),
+        RodinOutcome::Failed(conflict) => expect(conflict.decisions.has(reuse_app_package())),
+        RodinOutcome::Unsupported(_) => expect(false),
+    };
+    yield demanded_once(found);
+    yield demanded_once(dead);
+    yield demanded_times(point_dead_region, 2);
+}
+"#;
+
+// r[verify solver.learning.reuse]
+#[test]
+fn native_rodin_kernel_reuses_learned_regions_in_session() {
+    let source = format!(
+        "{STD_VERSION}\n{NATIVE_RODIN_KERNEL}\n{NATIVE_KERNEL_LEARNING_REUSE_FIXTURE}"
+    );
+    let report = run_source(&source).expect("native Rodin learning-reuse certificate executes");
+    assert!(report.passed(), "reuse certificates pass: {report:?}");
+    assert!(report.agrees(), "plain and chaos agree");
+    assert_eq!(report.plain.checks.len(), 7);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
 #[derive(Facet, Clone, Debug)]
 struct FunctionFrameCount {
     function: String,
