@@ -431,6 +431,8 @@ fn deserialize_option_column(
         try_option!(bool);
     } else if inner_shape == String::SHAPE {
         try_option!(String);
+    } else if inner_shape == <Vec<u8>>::SHAPE {
+        try_option!(Vec<u8>);
     }
 
     #[cfg(feature = "rust_decimal")]
