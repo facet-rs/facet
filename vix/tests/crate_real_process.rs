@@ -105,7 +105,7 @@ fn real_process_rustc_builds_two_crate_fixture_and_matches_cargo_unit_graph_orac
 
     let source = crate_source();
     let backend = Arc::new(RealProcessBackend::new());
-    let mut machine = Machine::load(&source)?.with_exec_backend(backend);
+    let mut machine = crate_machine(&source)?.with_exec_backend(backend);
     let target = machine.linux_target_handle();
     let graph = machine
         .intern_arg("Tree", MachineArg::Tree(two_crate_graph_tree()))?
@@ -144,7 +144,7 @@ fn real_process_rustc_builds_lockfile_graph_and_matches_cargo_unit_graph_oracle(
 
     let source = crate_source();
     let backend = Arc::new(RealProcessBackend::new());
-    let mut machine = Machine::load(&source)?.with_exec_backend(backend);
+    let mut machine = crate_machine(&source)?.with_exec_backend(backend);
     let target = machine.linux_target_handle();
     let graph = machine
         .intern_arg("Tree", MachineArg::Tree(lock_graph_tree()))?
@@ -208,7 +208,7 @@ fn generic_walk_builds_resolved_graph_and_matches_cargo_oracle() -> Result<(), S
 
     let source = generic_lock_graph_source();
     let backend = Arc::new(RealProcessBackend::new());
-    let mut machine = Machine::load(&source)?.with_exec_backend(backend);
+    let mut machine = crate_machine(&source)?.with_exec_backend(backend);
     let target = machine.linux_target_handle();
     let graph = machine
         .intern_arg("Tree", MachineArg::Tree(lock_graph_tree()))?
@@ -247,7 +247,7 @@ fn solution_walk_derives_units_from_rodin_and_matches_cargo_oracle() -> Result<(
 
     let source = generic_lock_graph_source();
     let backend = Arc::new(RealProcessBackend::new());
-    let mut machine = Machine::load(&source)?.with_exec_backend(backend);
+    let mut machine = crate_machine(&source)?.with_exec_backend(backend);
     let target = machine.linux_target_handle();
     let graph = machine
         .intern_arg("Tree", MachineArg::Tree(lock_graph_tree()))?
@@ -296,7 +296,7 @@ fn real_process_runs_build_script_threads_directives_and_out_dir_into_parent_rus
 
     let source = crate_source();
     let backend = Arc::new(RealProcessBackend::new());
-    let mut machine = Machine::load(&source)?.with_exec_backend(backend);
+    let mut machine = crate_machine(&source)?.with_exec_backend(backend);
     let target = machine.linux_target_handle();
     let graph = machine
         .intern_arg("Tree", MachineArg::Tree(build_script_tree()))?
@@ -393,15 +393,25 @@ fn build_script_tree() -> Tree {
 }
 
 fn generic_lock_graph_source() -> String {
-    format!("{RODIN_SOURCE}\n\n{SOURCE}\n\n{GENERIC_LOCK_GRAPH_BRIDGE}")
+    format!("{SOURCE}\n\n{GENERIC_LOCK_GRAPH_BRIDGE}")
 }
 
 fn proc_macro_solution_source() -> String {
-    format!("{RODIN_SOURCE}\n\n{SOURCE}\n\n{PROC_MACRO_SOLUTION_BRIDGE}")
+    format!("{SOURCE}\n\n{PROC_MACRO_SOLUTION_BRIDGE}")
 }
 
 fn crate_source() -> String {
-    format!("{RODIN_SOURCE}\n\n{SOURCE}")
+    SOURCE.to_owned()
+}
+
+fn crate_machine(root_source: &str) -> Result<Machine, String> {
+    Machine::load_modules(
+        "root",
+        BTreeMap::from([
+            ("root".to_owned(), root_source.to_owned()),
+            ("rodin".to_owned(), RODIN_SOURCE.to_owned()),
+        ]),
+    )
 }
 
 const GENERIC_LOCK_GRAPH_BRIDGE: &str = r#"
@@ -2104,7 +2114,7 @@ fn real_process_rustc_builds_proc_macro_fixture_and_matches_cargo_unit_graph_ora
 
     let source = crate_source();
     let backend = Arc::new(RealProcessBackend::new());
-    let mut machine = Machine::load(&source)?.with_exec_backend(backend);
+    let mut machine = crate_machine(&source)?.with_exec_backend(backend);
     let graph = machine
         .intern_arg("Tree", MachineArg::Tree(proc_macro_graph_tree()))?
         .0;
@@ -2147,7 +2157,7 @@ fn real_process_rustc_builds_derived_proc_macro_fixture_and_matches_cargo_unit_g
 
     let source = proc_macro_solution_source();
     let backend = Arc::new(RealProcessBackend::new());
-    let mut machine = Machine::load(&source)?.with_exec_backend(backend);
+    let mut machine = crate_machine(&source)?.with_exec_backend(backend);
     let graph = machine
         .intern_arg("Tree", MachineArg::Tree(proc_macro_graph_tree()))?
         .0;
@@ -2195,7 +2205,7 @@ fn real_workspace_resolved_profiles_match_cargo_unit_graph_oracle() -> Result<()
     let graph = cargo_real_workspace_unit_graph_oracle()?;
     let workspace_manifest =
         fs::read_to_string(workspace_root().join("Cargo.toml")).map_err(|err| err.to_string())?;
-    let mut machine = Machine::load(&crate_source())?;
+    let mut machine = crate_machine(&crate_source())?;
     let workspace = machine
         .intern_arg(
             "Tree",

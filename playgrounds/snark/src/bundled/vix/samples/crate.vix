@@ -1,4 +1,4 @@
-use vix::{Tree, Target, Path, Os, Map, Version, Arg};
+use vix::{Tree, Target, Path, Os, Map, Version, VersionSet, Arg};
 use caps::Rustc;
 use rodin::{Index, Problem, SolveResult, gate_active_id, solve};
 
