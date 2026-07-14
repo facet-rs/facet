@@ -693,6 +693,11 @@ impl<'a> TypeResolver<'a> {
             ast::Type::Path(path) if path_is(path, "String") => Ok(Type::String),
             ast::Type::Path(path) if path_is(path, "Path") => Ok(Type::Path),
             ast::Type::Path(path) if path_is(path, "Check") => Ok(Type::Check),
+            ast::Type::Path(path)
+                if CAPABILITY_TYPE_NAMES.iter().any(|name| path_is(path, name)) =>
+            {
+                Ok(capability_type(&path_name(path)))
+            }
             ast::Type::Generic(_) if is_stream_check_type(ty) => Ok(Type::StreamCheck),
             ast::Type::Generic(generic) if path_is(&generic.base, "Option") => {
                 if generic.args.len() != 1 {
