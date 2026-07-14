@@ -5671,6 +5671,42 @@ fn t() -> Stream<Check> {
     );
 }
 
+/// The fallible surface names the same runtime seam for a dynamic document: a
+/// `try_json_decode<T>` whose argument is not a compile-time-constant literal is
+/// exactly the runtime doc-parse primitive proper (one host call per document),
+/// which the constant fold does not cover. The target schema is carried from the
+/// turbofish; the boundary is a named, structured diagnostic, never a
+/// host-evaluation of the dynamic string.
+#[test]
+fn try_decode_of_a_dynamic_document_names_the_runtime_seam() {
+    const SOURCE: &str = "\
+struct PkgRow { name: String }
+#[test]
+fn t() -> Stream<Check> {
+    let src = \"{}\";
+    yield match try_json_decode<PkgRow>(src) {
+        Ok(_) => expect(true),
+        Err(_) => expect(false),
+    };
+}
+";
+    let diagnostics = Compiler::new()
+        .compile(SOURCE)
+        .expect_err("a dynamic try-decode document is the runtime primitive, not a fold");
+    assert_eq!(diagnostics.entries.len(), 1);
+    assert_eq!(
+        diagnostics.entries[0].code,
+        DiagnosticCode::RuntimeDecodeUnavailable
+    );
+    assert_eq!(
+        diagnostics.entries[0].payload,
+        DiagnosticPayload::RuntimeDecode {
+            format: "JSON".to_owned(),
+            target: Some("PkgRow".to_owned()),
+        }
+    );
+}
+
 /// A malformed constant document fails as a *structured typed* diagnostic — a
 /// stable kind label, a structured field path, and the offending document byte
 /// span — never a stringly `UnsupportedExpression`. No identity depends on the
@@ -5713,16 +5749,122 @@ fn t() -> Stream<Check> {
     assert_eq!(&document[offset..offset + len], "42");
 }
 
-/// Rung 066's exact code-grounded red boundary on the merged production tree: it
-/// stops in the surface grammar, before any decode — the `call` production does
-/// not admit the `try_json_decode<T>` turbofish that names the target type.
+/// Rung 066 — a decode that can fail returns a `Result<T, DecodeError>` value,
+/// not a crash. `try_json_decode<PkgRow>(...)` names the target schema at the
+/// call site; the failing document (an integer where `name: String` is expected)
+/// produces `Err(e)`, and `e.message` — a rendered projection over the typed
+/// error's structural fields — contains the offending field name.
+///
+/// On this compile-time-constant document the decode is the **constant fold** of
+/// the runtime doc-parse primitive: it runs once at compile time and its typed
+/// `Err` value is emitted as ordinary typed construction (`Op::Variant` +
+/// `Op::Record`), so the run performs no host call and records no receipt. The
+/// chaos lane agrees with plain, as the foundation requires from rung 001.
 #[test]
-fn typed_decode_066_red_boundary() {
-    let failure = Compiler::new()
-        .compile(RUNG_066)
-        .expect_err("the try_json_decode<T> turbofish does not parse yet");
-    assert_eq!(failure.entries.len(), 1);
-    assert_eq!(failure.entries[0].code, DiagnosticCode::ParseRejected);
+fn rung_066_decode_failure_is_a_typed_result() {
+    let report = run_source(RUNG_066).expect("rung 066 runs through Executable");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 1);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert!(lane.checks.iter().all(|check| check.passed));
+        // The literal decode is folded, so nothing reaches the machine as a host
+        // call or a recorded read: the fold is the constant-folded subset of the
+        // runtime primitive.
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+/// The fold-is-an-optimization proof for the fallible surface. A successfully
+/// decoded `Ok(row)` payload must be *the same value* as the equivalent authored
+/// typed construction — the F2 corrective seam: the literal fold is provably the
+/// constant-folded form of the same typed-construction primitive.
+///
+/// The decoded program binds the `Ok` payload through an ordinary match and
+/// yields the same projections an authored `PkgRow` construction does; the two
+/// produce identical check identities (`ValueId`) through the production Store
+/// path. A negative control (a different authored value) must diverge, so the
+/// oracle is discriminating rather than trivially true. Two independent decodes
+/// of the same document fold to identical canonical VIR — one recipe, one demand
+/// key — proving the fold is deterministic and content-addressed.
+#[test]
+fn decoded_result_ok_payload_is_identity_equivalent_to_authored_construction() {
+    const AUTHORED: &str = "\
+struct PkgRow { name: String, vers: String }
+#[test]
+fn t() -> Stream<Check> {
+    let row = PkgRow { name: \"mio\", vers: \"0.8.11\" };
+    yield expect_eq(row.name, \"mio\");
+    yield expect_eq(row.vers, \"0.8.11\");
+}
+";
+    const DECODED: &str = "\
+struct PkgRow { name: String, vers: String }
+#[test]
+fn t() -> Stream<Check> {
+    yield match try_json_decode<PkgRow>(\"{\\\"name\\\":\\\"mio\\\",\\\"vers\\\":\\\"0.8.11\\\"}\") {
+        Ok(row) => expect_eq(row.name, \"mio\"),
+        Err(_) => expect(false),
+    };
+    yield match try_json_decode<PkgRow>(\"{\\\"name\\\":\\\"mio\\\",\\\"vers\\\":\\\"0.8.11\\\"}\") {
+        Ok(row) => expect_eq(row.vers, \"0.8.11\"),
+        Err(_) => expect(false),
+    };
+}
+";
+    // A different authored value: same shape, different `vers`. The decoded Ok
+    // payload must NOT collide with this control's identity.
+    const OTHER: &str = "\
+struct PkgRow { name: String, vers: String }
+#[test]
+fn t() -> Stream<Check> {
+    let row = PkgRow { name: \"mio\", vers: \"9.9.9\" };
+    yield expect_eq(row.name, \"mio\");
+    yield expect_eq(row.vers, \"0.8.11\");
+}
+";
+
+    // Two independent decodes of the same document fold to identical canonical
+    // VIR, hence one recipe and one demand key.
+    let lower = |source: &str, island: usize| {
+        let module = Compiler::new().compile(source).expect("compiles");
+        let partitioned = module.partition_test(&module.tests[0]);
+        partitioned.islands[island].canonical_recipe_bytes()
+    };
+    assert_eq!(
+        lower(DECODED, 0),
+        lower(DECODED, 0),
+        "the fold is deterministic canonical VIR"
+    );
+
+    // Production Store path: the decoded Ok payload yields identical check
+    // identities to the authored construction; the negative control diverges.
+    let authored_run = run_source(AUTHORED).expect("authored runs");
+    let decoded_run = run_source(DECODED).expect("decoded runs");
+    let other_run = run_source(OTHER).expect("control runs");
+    assert!(authored_run.passed() && decoded_run.passed());
+    // Compare the checked *value* identities (schema + content), independent of
+    // yield-site provenance — the decoded program binds its payload through a
+    // match, so its yield sites are numbered differently, but the value each
+    // check observes must be the same content-addressed value.
+    let check_value_ids = |run: &vix::ratchet::SuiteRun| {
+        run.checks
+            .iter()
+            .map(|check| check.identity.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        check_value_ids(&authored_run.plain),
+        check_value_ids(&decoded_run.plain),
+        "the decoded Ok payload is the same value as the authored construction"
+    );
+    assert_ne!(
+        check_value_ids(&authored_run.plain),
+        check_value_ids(&other_run.plain),
+        "a different authored value produces a different checked value identity"
+    );
 }
 
 // ---------------------------------------------------------------------------

@@ -4284,8 +4284,15 @@ fn lower_try_decode(
     let result_ty = Type::result(target.clone(), decode_error_type());
 
     let ast::Expr::Str(document) = &call.args.args[0] else {
-        // A dynamic document is the runtime doc-parse primitive proper; the
-        // constant fold does not apply. (Wired to the runtime decode op.)
+        // A dynamic document is the runtime doc-parse primitive proper — one host
+        // call per document, typed store values out
+        // (`r[machine.primitive.typed-deserialization]`). The constant fold below
+        // is the constant-input case of that primitive; the dynamic case needs a
+        // runtime decode op whose scheduler-edge evaluation reads the document
+        // String, calls `decode::decode` once, and materializes the resulting
+        // `Result<T, DecodeError>` into the Store. Until that executor lands the
+        // boundary is a named, structured diagnostic — never a host-evaluation of
+        // the dynamic string here in `Compiler::compile`.
         return Err(runtime_decode_unavailable(
             expr_span(&call.args.args[0]),
             format,
