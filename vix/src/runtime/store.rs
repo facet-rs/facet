@@ -4,7 +4,7 @@ use weavy::exec::StoreHandle;
 use weavy::task::{ValueMemories, ValueMemory};
 
 use super::identity::{Digest, FramedField, FramedNode, FramedValue, SchemaId, ValueId};
-use super::model::FailureValue;
+use super::model::{FailureValue, ProcessTermination};
 
 /// Store-owned handle. It is valid for one runtime snapshot and is never
 /// reused for a different entry during that lifetime. Resident bytes may be
@@ -305,7 +305,9 @@ fn failure_node(failure: &FailureValue) -> FramedNode {
                 FailureValue::InvalidInteger { .. } => 5,
                 FailureValue::IntegerOverflow { .. } => 6,
                 FailureValue::DivisionByZero { .. } => 7,
-                FailureValue::IndexOutOfBounds { .. } => unreachable!("matched above"),
+                FailureValue::IndexOutOfBounds { .. } | FailureValue::ProcessFailure { .. } => {
+                    unreachable!("matched above")
+                }
             };
             FramedNode::Variant {
                 schema,
@@ -318,6 +320,38 @@ fn failure_node(failure: &FailureValue) -> FramedNode {
                     FramedField {
                         schema: site_schema,
                         value: FramedValue::Bytes(site.to_le_bytes().to_vec()),
+                    },
+                ],
+            }
+        }
+        FailureValue::ProcessFailure {
+            recipe,
+            site,
+            termination,
+        } => {
+            // The raw termination information is semantic failure content: an
+            // exit-code failure and a signal failure are different values.
+            let (kind, value) = match termination {
+                ProcessTermination::Exited { code } => (0u8, *code),
+                ProcessTermination::Signaled { signal } => (1u8, *signal),
+            };
+            let mut termination_bytes = vec![kind];
+            termination_bytes.extend_from_slice(&value.to_le_bytes());
+            FramedNode::Variant {
+                schema,
+                tag: 8,
+                fields: vec![
+                    FramedField {
+                        schema: recipe_schema,
+                        value: FramedValue::Bytes(recipe.0.0.to_vec()),
+                    },
+                    FramedField {
+                        schema: site_schema,
+                        value: FramedValue::Bytes(site.to_le_bytes().to_vec()),
+                    },
+                    FramedField {
+                        schema: SchemaId::named("vix.ProcessTermination"),
+                        value: FramedValue::Bytes(termination_bytes),
                     },
                 ],
             }
