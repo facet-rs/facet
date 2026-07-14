@@ -11,7 +11,8 @@ use vix::ratchet::{
     run_source_with_snapshots, run_source_with_snapshots_and_lane,
 };
 use vix::runtime::{
-    DemandState, EventKind, FailureValue, MemoVerdict, SchemaId, SnapshotOutcome, TaskState,
+    DemandState, EventKind, FailureValue, MemoVerdict, ProcessTermination, SchemaId,
+    SnapshotOutcome, TaskState,
 };
 use vix::surface::{SurfaceParser, ast};
 use vix::vir::{
@@ -80,6 +81,10 @@ const RUNG_063: &str = include_str!("ratchet/063-toml-decode.vix");
 const RUNG_064: &str = include_str!("ratchet/064-decode-optional.vix");
 const RUNG_065: &str = include_str!("ratchet/065-decode-enum-forms.vix");
 const RUNG_066: &str = include_str!("ratchet/066-decode-failure.vix");
+const RUNG_067: &str = include_str!("ratchet/067-exec-echo.vix");
+const RUNG_068: &str = include_str!("ratchet/068-exec-failure-is-result.vix");
+const RUNG_069: &str = include_str!("ratchet/069-exec-memoized.vix");
+const RUNG_070: &str = include_str!("ratchet/070-undeclared-capability.reject.vix");
 const RUNG_106: &str = include_str!("ratchet/106-imports.vix");
 const RUNG_107: &str = include_str!("ratchet/107-visibility.reject.vix");
 const RUNG_108: &str = include_str!("ratchet/108-import-std.vix");
@@ -6002,6 +6007,141 @@ fn typed_decode_066_red_boundary() {
         .expect_err("the try_json_decode<T> turbofish does not parse yet");
     assert_eq!(failure.entries.len(), 1);
     assert_eq!(failure.entries[0].code, DiagnosticCode::ParseRejected);
+}
+
+// ---------------------------------------------------------------------------
+// Rungs 067–070 — the exec band: run+capture, failure-as-value, memoized exec,
+// undeclared capability (reject).
+// ---------------------------------------------------------------------------
+
+/// The exec band's surface parses through the canonical grammar: capability-
+/// tagged backtick command templates, `exec`, postfix `?`, and Ok/Err patterns
+/// all land in the generated typed AST.
+#[test]
+fn exec_band_surface_parses() {
+    let parser = SurfaceParser::new();
+    for (rung, source) in [
+        (67, RUNG_067),
+        (68, RUNG_068),
+        (69, RUNG_069),
+        (70, RUNG_070),
+    ] {
+        parser
+            .parse(source)
+            .unwrap_or_else(|error| panic!("rung {rung:03} parses: {error:?}"));
+    }
+}
+
+/// Rung 070 — using a tool the test did not declare is not a special error: a
+/// command's tag is a capability VALUE and a test's capabilities are parameters
+/// the harness supplies, so `cc` is an ordinary unbound identifier. The primary
+/// span names the declaration that cannot name it (attributes included); the
+/// use site is a label.
+///
+/// r[verify lang.diagnostics.typed]
+/// r[verify machine.primitive.capabilities-by-identity]
+#[test]
+fn rung_070_undeclared_capability_is_an_unbound_identifier() {
+    let (expected_message, expected_line) = reject_header(RUNG_070);
+    let diagnostics = Compiler::new()
+        .compile(RUNG_070)
+        .expect_err("rung 070 must be rejected");
+    assert_eq!(diagnostics.entries.len(), 1);
+    let diagnostic = &diagnostics.entries[0];
+    assert_eq!(diagnostic.code, DiagnosticCode::UnboundIdentifier);
+    assert_eq!(diagnostic.message(), expected_message);
+    assert_eq!(
+        source_line(RUNG_070, diagnostic.primary.start),
+        expected_line
+    );
+    // The use site stays visible as a related label on the `cc` tag.
+    assert_eq!(diagnostic.labels.len(), 1);
+    assert_eq!(
+        &RUNG_070[diagnostic.labels[0].span.start as usize..diagnostic.labels[0].span.end as usize],
+        "cc"
+    );
+}
+
+/// Rungs 067–069 execute through the scheduler-owned effect primitive. The
+/// successful echo result crosses the ordinary frozen value-input boundary into
+/// its verified check island; the effect task itself records a real
+/// spawn/park/resume lifecycle and a capability read receipt.
+///
+/// r[verify machine.primitive.exec-outcome]
+/// r[verify machine.primitive.capabilities-by-identity]
+#[test]
+fn rung_067_exec_echo_runs_through_the_capability_effect_demand() {
+    let report = run_source(RUNG_067).expect("rung 067 runs");
+    assert!(report.passed(), "rung 067 passes: {report:?}");
+    assert!(report.agrees());
+
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.effect_spawns, 1);
+        assert_eq!(lane.receipt_count, 1);
+        assert!(lane.events.iter().any(|event| matches!(
+            event.kind,
+            EventKind::TaskTransition {
+                to: TaskState::Parked,
+                ..
+            }
+        )));
+        assert!(lane.events.iter().any(|event| matches!(
+            event.kind,
+            EventKind::TaskTransition {
+                from: TaskState::Parked,
+                to: TaskState::Running,
+                ..
+            }
+        )));
+    }
+}
+
+/// A nonzero exit is retained as `ProcessFailure` in the effect demand and
+/// becomes `Result::Err` only at the scheduler-owned postfix-catch boundary.
+///
+/// r[verify machine.primitive.exit-status-is-not-a-value]
+#[test]
+fn rung_068_process_failure_is_caught_as_a_typed_result() {
+    let report = run_source(RUNG_068).expect("rung 068 runs");
+    assert!(report.passed(), "rung 068 passes: {report:?}");
+    assert!(report.agrees());
+
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.effect_spawns, 1);
+        assert_eq!(lane.receipt_count, 1);
+        assert!(lane.values.iter().any(|value| matches!(
+            value.failure,
+            Some(FailureValue::ProcessFailure {
+                termination: ProcessTermination::Exited { code: 1 },
+                ..
+            })
+        )));
+    }
+}
+
+/// The plan × capability demand preimage is shared across source sites: the
+/// second syntactically separate `exec echo` observes the same completed demand
+/// and cannot spawn another process.
+///
+/// r[verify machine.primitive.exec-identity]
+/// r[verify machine.memo.no-recompute-at-lookup]
+#[test]
+fn rung_069_exec_memoizes_by_plan_and_capability_identity() {
+    let report = run_source(RUNG_069).expect("rung 069 runs");
+    assert!(report.passed(), "rung 069 passes: {report:?}");
+    assert!(report.agrees());
+
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.effect_spawns, 1);
+        assert!(lane.counters.memo_hits_exact >= 1);
+        assert_eq!(
+            lane.events
+                .iter()
+                .filter(|event| matches!(event.kind, EventKind::EffectSpawned { .. }))
+                .count(),
+            1
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------

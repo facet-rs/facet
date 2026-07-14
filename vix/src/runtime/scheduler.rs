@@ -9,13 +9,15 @@ use weavy::exec::{
 use weavy::task::{FnId, TaskEvent as WeavyTaskEvent, TaskStep};
 
 use crate::lowering::{LoweringArtifact, LoweringAttribution, ValueInputBinding};
-use crate::vir::{FunctionId, IslandId, Type, VariantPayload};
+use crate::vir::{FunctionId, Island, IslandId, Op, Type, VariantPayload};
 
-use super::identity::{DemandKey, DemandPreimage, Location, LocationId, SchemaId, ValueId};
+use super::identity::{
+    DemandKey, DemandPreimage, Location, LocationId, RecipeId, SchemaId, ValueId,
+};
 use super::identity::{FramedField, FramedNode, FramedValue};
 use super::model::{
-    DemandRecord, DemandState, FailureContext, FailureValue, MemoVerdict, Receipt, TaskId,
-    TaskRecord, TaskState,
+    DemandRecord, DemandState, FailureContext, FailureValue, MemoVerdict, ProcessTermination,
+    ReadWitness, Receipt, TaskId, TaskRecord, TaskState,
 };
 use super::observe::{
     Counters, Event, EventKind, EventSink, ExecutionFacts, ExecutionFallbackFact,
@@ -1777,6 +1779,535 @@ impl<S: EventSink> Runtime<S> {
         &self.store
     }
 
+    /// Intern one harness-supplied capability value: an opaque record whose
+    /// single field is the executable identity. The demand root calls this
+    /// before any island of the test runs; every consuming island receives the
+    /// capability as an ordinary pre-published value input, so its `ValueId`
+    /// enters each effect demand's preimage. The resident bytes carry the
+    /// program name — a non-identity storage concern the exec primitive reads
+    /// back at spawn time.
+    ///
+    /// r[impl machine.primitive.capabilities-by-identity]
+    pub fn publish_capability(&mut self, ty: &Type, program: &str) -> Evaluation {
+        let string_schema = semantic_schema_id(&Type::String);
+        let program_leaf = FramedNode::leaf(string_schema, program.as_bytes().to_vec());
+        let node = FramedNode::Variant {
+            schema: semantic_schema_id(ty),
+            tag: 0,
+            fields: vec![FramedField {
+                schema: string_schema,
+                value: FramedValue::Optional(Some(program_leaf.identity())),
+            }],
+        };
+        let interned = self.store.intern_tree(&node, program.as_bytes());
+        self.store.attach_frozen(
+            interned.handle,
+            FrozenValue::Product(vec![FrozenValue::Opaque(program.as_bytes().to_vec())]),
+        );
+        self.observe_interned(interned);
+        Evaluation {
+            handle: interned.handle,
+            identity: interned.identity,
+            passed: true,
+            memo: MemoVerdict::Miss,
+            failure: None,
+            failure_context: None,
+        }
+    }
+
+    /// Evaluate one exec effect island: a scheduler-owned effect demand. The
+    /// demand key is the tier-1 exec identity — normalized plan × capability
+    /// identity — so the same command under the same capability is ONE demand
+    /// no matter how many source sites spell it; a second demand is a memo hit
+    /// and spawns nothing. A miss spawns the process, parks the demand, and is
+    /// resumed by process completion; the termination grammar then maps the
+    /// exit to the typed outcome or a typed `ProcessFailure`.
+    ///
+    /// r[impl machine.primitive.exec-identity]
+    /// r[impl machine.primitive.exec-outcome]
+    /// r[impl machine.primitive.exit-status-is-not-a-value]
+    pub fn evaluate_exec(
+        &mut self,
+        island: &Island,
+        location: &Location,
+        capability: &Evaluation,
+        chaos: ChaosPolicy,
+    ) -> Result<Evaluation, Box<MachineError>> {
+        let malformed = || {
+            Box::new(MachineError::runtime(
+                MachineOperation::Drive,
+                RuntimeFault::MalformedEffectIsland,
+                None,
+                None,
+            ))
+        };
+        let node = island.effect_output().ok_or_else(malformed)?.clone();
+        let Op::Exec { argv } = &node.op else {
+            return Err(malformed());
+        };
+        let plan_recipe = exec_plan_recipe(argv);
+        let demand_preimage = DemandPreimage {
+            closure: plan_recipe,
+            arguments: vec![capability.identity],
+        };
+        let demand_key = DemandKey::from_preimage(&demand_preimage);
+        let receipt = Receipt {
+            demand: demand_key,
+            reads: vec![ReadWitness {
+                source: capability.identity,
+                projection: "capability.program".to_owned(),
+            }],
+        };
+        self.emit(EventKind::Demanded { key: demand_key });
+        let effect_context = |failure: &FailureValue| -> Option<FailureContext> {
+            matches!(failure, FailureValue::ProcessFailure { recipe, .. } if *recipe == plan_recipe)
+                .then(|| FailureContext {
+                    function: island.function,
+                    node: node.id,
+                    span: node.span,
+                    demand_chain: vec![demand_key],
+                })
+        };
+
+        // Location memo, exactly as a pure demand consults it.
+        if let Some(entry) = self.memo.get(&location.id)
+            && entry.location == *location
+            && entry.key == demand_key
+            && entry.preimage == demand_preimage
+        {
+            let handle = entry.result;
+            return self.effect_memo_hit(location.id, handle, &effect_context);
+        }
+        // Same-run demand-key reuse: the same plan under the same capability at
+        // a DIFFERENT source location is the same demand. The memo path serves
+        // it without a second spawn (rung 069's whole content).
+        //
+        // r[impl machine.memo.no-recompute-at-lookup]
+        if let Some(record) = self.demands.get(&demand_key) {
+            match record.state {
+                DemandState::Ready | DemandState::Failed => {
+                    if let Some(handle) = record.result {
+                        let evaluation =
+                            self.effect_memo_hit(location.id, handle, &effect_context)?;
+                        self.memo.insert(
+                            location.id,
+                            MemoEntry {
+                                location: location.clone(),
+                                key: demand_key,
+                                preimage: demand_preimage.clone(),
+                                result: handle,
+                                receipt: None,
+                            },
+                        );
+                        return Ok(evaluation);
+                    }
+                }
+                DemandState::Running => {
+                    return Err(Box::new(MachineError::runtime(
+                        MachineOperation::Drive,
+                        RuntimeFault::ReentrantDemand { key: demand_key },
+                        None,
+                        Some(demand_key),
+                    )));
+                }
+                _ => {}
+            }
+        }
+
+        self.counters.memo_misses += 1;
+        self.emit(EventKind::Memo {
+            location: location.id,
+            verdict: MemoVerdict::Miss,
+            verified: 0,
+        });
+        self.demands.insert(
+            demand_key,
+            DemandRecord {
+                key: demand_key,
+                state: DemandState::Queued,
+                result: None,
+            },
+        );
+        self.emit(EventKind::DemandTransition {
+            key: demand_key,
+            from: DemandState::Absent,
+            to: DemandState::Queued,
+        });
+
+        // The capability's executable identity travels as the value's resident
+        // bytes; the value identity already entered the demand key above.
+        let program = self
+            .store
+            .entry(capability.handle)
+            .and_then(StoreEntry::resident_bytes)
+            .and_then(|bytes| String::from_utf8(bytes.to_vec()).ok())
+            .ok_or_else(malformed)?;
+
+        let mut kill_armed = chaos.kill_first_running_task;
+        loop {
+            self.counters.scheduler_requests += 1;
+            let task_id = self.spawn_task(demand_key);
+            self.transition_demand(demand_key, DemandState::Running)?;
+            self.transition_task(task_id, TaskState::Running)?;
+            self.emit(EventKind::IslandEntered {
+                task: task_id,
+                island: island.id,
+            });
+            self.emit(EventKind::SafePoint {
+                task: task_id,
+                class: SafePointClass::Edge,
+            });
+            if kill_armed {
+                // The chaos kill lands at the edge safepoint: the task is
+                // discarded, the demand requeued, and the replay — which is the
+                // semantics — performs the effect exactly once.
+                kill_armed = false;
+                self.counters.task_discards += 1;
+                self.transition_task(task_id, TaskState::Discarded)?;
+                self.transition_demand(demand_key, DemandState::Queued)?;
+                continue;
+            }
+
+            // Spawn, then PARK: the scheduler holds no busy loop while the
+            // process runs — the wait below is a block-on-event completion that
+            // resumes the parked task.
+            self.counters.effect_spawns += 1;
+            self.emit(EventKind::EffectSpawned {
+                task: task_id,
+                key: demand_key,
+            });
+            let host_fault = |detail: String| {
+                Box::new(MachineError::runtime(
+                    MachineOperation::Drive,
+                    RuntimeFault::EffectHostFailure { detail },
+                    None,
+                    Some(demand_key),
+                ))
+            };
+            let child = std::process::Command::new(&program)
+                .args(argv)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .map_err(|error| host_fault(format!("spawn `{program}`: {error}")))?;
+            self.transition_task(task_id, TaskState::Parked)?;
+            let output = child
+                .wait_with_output()
+                .map_err(|error| host_fault(format!("wait `{program}`: {error}")))?;
+            self.transition_task(task_id, TaskState::Running)?;
+
+            // The v1 ratchet capability packages' termination grammar: exit
+            // zero maps to the (unit) answer, anything else — nonzero exit or
+            // signal — is a typed failure carrying the raw termination.
+            if output.status.success() {
+                let interned = self.intern_exec_outcome(&node.ty, &output.stdout, &output.stderr);
+                self.memo.insert(
+                    location.id,
+                    MemoEntry {
+                        location: location.clone(),
+                        key: demand_key,
+                        preimage: demand_preimage.clone(),
+                        result: interned.handle,
+                        receipt: Some(receipt.clone()),
+                    },
+                );
+                if let Some(demand) = self.demands.get_mut(&demand_key) {
+                    demand.result = Some(interned.handle);
+                }
+                self.transition_task(task_id, TaskState::Completed)?;
+                self.transition_demand(demand_key, DemandState::Ready)?;
+                self.emit(EventKind::Completed {
+                    key: demand_key,
+                    identity: interned.identity,
+                });
+                return Ok(Evaluation {
+                    handle: interned.handle,
+                    identity: interned.identity,
+                    passed: true,
+                    memo: MemoVerdict::Miss,
+                    failure: None,
+                    failure_context: None,
+                });
+            }
+            let termination = match output.status.code() {
+                Some(code) => ProcessTermination::Exited {
+                    code: i64::from(code),
+                },
+                None => {
+                    #[cfg(unix)]
+                    let signal = {
+                        use std::os::unix::process::ExitStatusExt as _;
+                        i64::from(output.status.signal().unwrap_or_default())
+                    };
+                    #[cfg(not(unix))]
+                    let signal = 0;
+                    ProcessTermination::Signaled { signal }
+                }
+            };
+            let failure = FailureValue::ProcessFailure {
+                recipe: plan_recipe,
+                site: node.id.0,
+                termination,
+            };
+            let report_context = effect_context(&failure);
+            let interned = self.store.intern_failure(failure.clone(), &output.stderr);
+            self.observe_interned(interned);
+            self.memo.insert(
+                location.id,
+                MemoEntry {
+                    location: location.clone(),
+                    key: demand_key,
+                    preimage: demand_preimage.clone(),
+                    result: interned.handle,
+                    receipt: Some(receipt),
+                },
+            );
+            if let Some(demand) = self.demands.get_mut(&demand_key) {
+                demand.result = Some(interned.handle);
+            }
+            self.transition_task(task_id, TaskState::Completed)?;
+            self.transition_demand(demand_key, DemandState::Failed)?;
+            self.emit(EventKind::LanguageFailed {
+                task: task_id,
+                key: demand_key,
+                failure: failure.clone(),
+            });
+            return Ok(Evaluation {
+                handle: interned.handle,
+                identity: interned.identity,
+                passed: false,
+                memo: MemoVerdict::Miss,
+                failure: Some(failure),
+                failure_context: report_context,
+            });
+        }
+    }
+
+    /// Serve one effect demand from an existing store result: the shared exact-
+    /// hit path of the location memo and the same-run demand-key reuse.
+    fn effect_memo_hit(
+        &mut self,
+        location: LocationId,
+        handle: Handle,
+        effect_context: &dyn Fn(&FailureValue) -> Option<FailureContext>,
+    ) -> Result<Evaluation, Box<MachineError>> {
+        let entry = self.store.entry(handle).ok_or_else(|| {
+            MachineError::runtime(
+                MachineOperation::MemoRead,
+                RuntimeFault::MissingMemoStoreHandle,
+                None,
+                None,
+            )
+        })?;
+        let identity = entry.identity;
+        let failure = entry.failure().cloned();
+        self.counters.memo_hits_exact += 1;
+        self.emit(EventKind::Memo {
+            location,
+            verdict: MemoVerdict::Exact,
+            verified: 0,
+        });
+        Ok(Evaluation {
+            handle,
+            identity,
+            passed: failure.is_none(),
+            memo: MemoVerdict::Exact,
+            failure_context: failure.as_ref().and_then(effect_context),
+            failure,
+        })
+    }
+
+    /// Intern one completed `ExecOutcome` under the v1 output protocol: stdout
+    /// and stderr are UTF-8 line-framed, each stream's completed content the
+    /// line-number-keyed map, framed and frozen exactly as the production
+    /// realize path frames a record of records of maps.
+    fn intern_exec_outcome(&mut self, outcome_ty: &Type, stdout: &[u8], stderr: &[u8]) -> Interned {
+        let (stream_ty, lines_ty) = match outcome_ty {
+            Type::Record(record) => {
+                let stream_ty = record.fields[0].ty.clone();
+                let lines_ty = match &stream_ty {
+                    Type::Record(stream) => stream.fields[0].ty.clone(),
+                    _ => Type::map(Type::Int, Type::String),
+                };
+                (stream_ty, lines_ty)
+            }
+            _ => {
+                let lines_ty = Type::map(Type::Int, Type::String);
+                (outcome_ty.clone(), lines_ty)
+            }
+        };
+        let int_schema = semantic_schema_id(&Type::Int);
+        let string_schema = semantic_schema_id(&Type::String);
+        let stream_value = |bytes: &[u8]| -> (FramedNode, FrozenValue) {
+            let text = String::from_utf8_lossy(bytes);
+            let mut rows = Vec::new();
+            let mut frozen_rows = Vec::new();
+            for (index, line) in text.lines().enumerate() {
+                let key = FramedNode::leaf(int_schema, (index as i64).to_le_bytes().to_vec());
+                let value = FramedNode::leaf(string_schema, line.as_bytes().to_vec());
+                rows.push((key.identity(), value.identity()));
+                frozen_rows.push((
+                    FrozenValue::Inline((index as i64).to_le_bytes().to_vec()),
+                    FrozenValue::Opaque(line.as_bytes().to_vec()),
+                ));
+            }
+            let map = FramedNode::OrderedMap {
+                schema: semantic_schema_id(&lines_ty),
+                rows,
+            };
+            let record = FramedNode::Variant {
+                schema: semantic_schema_id(&stream_ty),
+                tag: 0,
+                fields: vec![FramedField {
+                    schema: semantic_schema_id(&lines_ty),
+                    value: FramedValue::Optional(Some(map.identity())),
+                }],
+            };
+            (
+                record,
+                FrozenValue::Product(vec![FrozenValue::OrderedMap(frozen_rows)]),
+            )
+        };
+        let (stdout_node, stdout_frozen) = stream_value(stdout);
+        let (stderr_node, stderr_frozen) = stream_value(stderr);
+        let outcome = FramedNode::Variant {
+            schema: semantic_schema_id(outcome_ty),
+            tag: 0,
+            fields: vec![
+                FramedField {
+                    schema: semantic_schema_id(&stream_ty),
+                    value: FramedValue::Optional(Some(stdout_node.identity())),
+                },
+                FramedField {
+                    schema: semantic_schema_id(&stream_ty),
+                    value: FramedValue::Optional(Some(stderr_node.identity())),
+                },
+            ],
+        };
+        let interned = self.store.intern_tree(&outcome, &[]);
+        self.store.attach_frozen(
+            interned.handle,
+            FrozenValue::Product(vec![stdout_frozen, stderr_frozen]),
+        );
+        self.observe_interned(interned);
+        interned
+    }
+
+    /// Construct the `Result` value a postfix `?` catches an operand edge
+    /// into: `Ok(value)` for a successful publication, `Err(failure)` for a
+    /// typed language failure — the failure participates as an ordinary value,
+    /// referenced by its identity. No task runs and no demand key is minted:
+    /// the operand demand IS the memoized computation; the catch only reframes
+    /// its published outcome.
+    pub fn publish_catch(
+        &mut self,
+        result_type: &Type,
+        operand: &Evaluation,
+    ) -> Result<Evaluation, Box<MachineError>> {
+        let malformed = || {
+            Box::new(MachineError::runtime(
+                MachineOperation::Result,
+                RuntimeFault::MalformedEffectIsland,
+                None,
+                None,
+            ))
+        };
+        let Type::Enum(enumeration) = result_type else {
+            return Err(malformed());
+        };
+        let payload_type = |tag: usize| -> Result<Type, Box<MachineError>> {
+            match &enumeration.variants.get(tag).ok_or_else(malformed)?.payload {
+                VariantPayload::Tuple(elements) if elements.len() == 1 => Ok(elements[0].clone()),
+                _ => Err(malformed()),
+            }
+        };
+        let (tag, field_schema_ty, field, frozen_field) = match &operand.failure {
+            None => {
+                let ok_ty = payload_type(0)?;
+                let entry = self.store.entry(operand.handle).ok_or_else(malformed)?;
+                let (value, frozen) = match &ok_ty {
+                    Type::Bool | Type::Int => {
+                        let mut word = [0u8; 8];
+                        let bytes = entry.resident_bytes().ok_or_else(malformed)?;
+                        let width = bytes.len().min(8);
+                        word[..width].copy_from_slice(&bytes[..width]);
+                        (
+                            FramedValue::Bytes(word.to_vec()),
+                            FrozenValue::Inline(word.to_vec()),
+                        )
+                    }
+                    Type::String
+                    | Type::Path
+                    | Type::Array(_)
+                    | Type::Map { .. }
+                    | Type::Set(_) => (
+                        FramedValue::Optional(Some(operand.identity)),
+                        FrozenValue::Reference(operand.identity),
+                    ),
+                    _ => (
+                        FramedValue::Optional(Some(operand.identity)),
+                        entry.frozen().cloned().ok_or_else(malformed)?,
+                    ),
+                };
+                (0u64, ok_ty, value, frozen)
+            }
+            Some(_) => {
+                // The caught failure, as a value: an opaque record carrying the
+                // failure's identity. The full typed failure stays in the store
+                // under that identity.
+                let err_ty = payload_type(1)?;
+                let rendered = format!(
+                    "{}:{}",
+                    operand.identity.schema.0.hex(),
+                    operand.identity.content.hex()
+                );
+                let string_schema = semantic_schema_id(&Type::String);
+                let leaf = FramedNode::leaf(string_schema, rendered.as_bytes().to_vec());
+                let marker = FramedNode::Variant {
+                    schema: semantic_schema_id(&err_ty),
+                    tag: 0,
+                    fields: vec![FramedField {
+                        schema: string_schema,
+                        value: FramedValue::Optional(Some(leaf.identity())),
+                    }],
+                };
+                let frozen = FrozenValue::Product(vec![FrozenValue::Opaque(rendered.into_bytes())]);
+                (
+                    1u64,
+                    err_ty.clone(),
+                    FramedValue::Optional(Some(marker.identity())),
+                    frozen,
+                )
+            }
+        };
+        let node = FramedNode::Variant {
+            schema: semantic_schema_id(result_type),
+            tag,
+            fields: vec![FramedField {
+                schema: semantic_schema_id(&field_schema_ty),
+                value: field,
+            }],
+        };
+        let interned = self.store.intern_tree(&node, &[]);
+        self.store.attach_frozen(
+            interned.handle,
+            FrozenValue::Variant {
+                tag: u32::try_from(tag).expect("result tag fits u32"),
+                fields: vec![frozen_field],
+            },
+        );
+        self.observe_interned(interned);
+        Ok(Evaluation {
+            handle: interned.handle,
+            identity: interned.identity,
+            passed: true,
+            memo: MemoVerdict::Miss,
+            failure: None,
+            failure_context: None,
+        })
+    }
+
     /// Render a published snapshot value structurally from its frozen store tree.
     /// The walk is type-directed and resolves string and aggregate references
     /// through the store, so the text is a stable harness artifact — byte-
@@ -2801,7 +3332,27 @@ fn failure_context(
         | FailureValue::InvalidInteger { .. }
         | FailureValue::IntegerOverflow { .. }
         | FailureValue::DivisionByZero { .. } => None,
+        // A process failure's recipe is the exec plan identity, never a Weavy
+        // island recipe; its context is attributed at the effect site.
+        FailureValue::ProcessFailure { .. } => None,
     }
+}
+
+/// Tier-1 exec plan identity: the normalized command. The v1 ratchet capability
+/// packages' command grammar is fully positional, so the normalized plan is the
+/// parsed argv itself, framed element by element.
+///
+/// r[impl machine.primitive.exec-identity]
+/// r[impl machine.primitive.exec-plan-normalized]
+fn exec_plan_recipe(argv: &[String]) -> RecipeId {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"vix.exec.plan.v1");
+    bytes.extend_from_slice(&(argv.len() as u64).to_le_bytes());
+    for argument in argv {
+        bytes.extend_from_slice(&(argument.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(argument.as_bytes());
+    }
+    RecipeId::from_canonical_vir(&bytes)
 }
 
 enum DecodedResult {

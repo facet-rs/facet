@@ -450,7 +450,12 @@ impl<'a> TypeResolver<'a> {
                 }
             }
             ast::Expr::Paren(expression) => self.resolve_expr_types(&expression.inner)?,
-            ast::Expr::Identifier(_)
+            ast::Expr::Try(expression) => self.resolve_expr_types(&expression.value)?,
+            // A command's tag is a value reference and its template a scalar
+            // token; neither mentions a type.
+            ast::Expr::Exec(_)
+            | ast::Expr::Command(_)
+            | ast::Expr::Identifier(_)
             | ast::Expr::Path(_)
             | ast::Expr::Str(_)
             | ast::Expr::Number(_)
@@ -710,6 +715,11 @@ impl<'a> TypeResolver<'a> {
             ast::Type::Path(path) if path_is(path, "String") => Ok(Type::String),
             ast::Type::Path(path) if path_is(path, "Path") => Ok(Type::Path),
             ast::Type::Path(path) if path_is(path, "Check") => Ok(Type::Check),
+            ast::Type::Path(path)
+                if CAPABILITY_TYPE_NAMES.iter().any(|name| path_is(path, name)) =>
+            {
+                Ok(capability_type(&path_name(path)))
+            }
             ast::Type::Generic(_) if is_stream_check_type(ty) => Ok(Type::StreamCheck),
             ast::Type::Generic(generic) if path_is(&generic.base, "Option") => {
                 if generic.args.len() != 1 {
@@ -785,8 +795,82 @@ impl<'a> TypeResolver<'a> {
     }
 }
 
+/// The capability types the ratchet harness can supply to a `#[test]` as
+/// parameters. A capability value is opaque: its single `$program` field is
+/// not a legal surface identifier, so a program can neither construct nor
+/// project one — it can only receive it and tag a command template with it.
+///
+/// r[impl machine.primitive.capabilities-by-identity]
+pub const CAPABILITY_TYPE_NAMES: &[&str] = &["Echo", "Sh"];
+
+/// The single opaque field carrying a capability's executable identity.
+pub const CAPABILITY_PROGRAM_FIELD: &str = "$program";
+
+#[must_use]
+pub fn capability_type(name: &str) -> Type {
+    Type::Record(RecordType {
+        name: name.to_owned(),
+        fields: vec![RecordField {
+            name: CAPABILITY_PROGRAM_FIELD.to_owned(),
+            ty: Type::String,
+        }],
+    })
+}
+
+#[must_use]
+pub fn is_capability_type(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::Record(record)
+            if record.fields.len() == 1 && record.fields[0].name == CAPABILITY_PROGRAM_FIELD
+    )
+}
+
+/// The completed view of one exec output stream under the ratchet capability
+/// packages' output protocol: line-framed text codata, keyed by line number.
+/// The payload field is not a legal surface identifier; `.collect()` is the
+/// only projection.
+#[must_use]
+pub fn byte_stream_type() -> Type {
+    Type::Record(RecordType {
+        name: "ByteStream".to_owned(),
+        fields: vec![RecordField {
+            name: "$lines".to_owned(),
+            ty: Type::map(Type::Int, Type::String),
+        }],
+    })
+}
+
+/// `exec`'s result type. There is no exit-status field: termination becomes
+/// the typed answer or a typed failure. (`answer`/`tree` await their rungs:
+/// unit values and `Tree` are not yet representable surface types here.)
+///
+/// r[impl machine.primitive.exec-outcome]
+/// r[impl machine.primitive.exit-status-is-not-a-value]
+#[must_use]
+pub fn exec_outcome_type() -> Type {
+    Type::Record(RecordType {
+        name: "ExecOutcome".to_owned(),
+        fields: vec![
+            RecordField {
+                name: "stdout".to_owned(),
+                ty: byte_stream_type(),
+            },
+            RecordField {
+                name: "stderr".to_owned(),
+                ty: byte_stream_type(),
+            },
+        ],
+    })
+}
+
 fn lower_module(source: &ast::SourceFile, config: CompilerConfig) -> Result<Module, Diagnostics> {
-    let types = TypeResolver::new(source)?.resolve_all(source)?;
+    let mut types = TypeResolver::new(source)?.resolve_all(source)?;
+    for name in CAPABILITY_TYPE_NAMES {
+        types
+            .entry((*name).to_owned())
+            .or_insert_with(|| capability_type(name));
+    }
     let declared_type_names = source
         .items
         .iter()
@@ -918,15 +1002,35 @@ fn anchor_function_diagnostics(
     mut diagnostics: Diagnostics,
 ) -> Diagnostics {
     for diagnostic in &mut diagnostics.entries {
-        if diagnostic.code != DiagnosticCode::NonExhaustiveMatch {
-            continue;
+        match diagnostic.code {
+            DiagnosticCode::NonExhaustiveMatch => {
+                let match_span = diagnostic.primary;
+                diagnostic.primary = function.name.span;
+                diagnostic.labels.push(Label {
+                    span: match_span,
+                    text: "non-exhaustive match occurs here".to_owned(),
+                });
+            }
+            // An unbound capability tag is the declaration's incompleteness:
+            // there is no way to name the tool HERE, so the primary span names
+            // the declaration (from its `#[test]` attribute — where capability
+            // parameters would have to be supplied) and the use site becomes a
+            // label. The CST item span absorbs leading trivia, so the anchor is
+            // the first attribute token, not the item span.
+            DiagnosticCode::UnboundIdentifier => {
+                let use_span = diagnostic.primary;
+                diagnostic.primary = function
+                    .attributes
+                    .first()
+                    .map(|attribute| attribute.span)
+                    .unwrap_or(function.name.span);
+                diagnostic.labels.push(Label {
+                    span: use_span,
+                    text: "used here without a declaring parameter".to_owned(),
+                });
+            }
+            _ => {}
         }
-        let match_span = diagnostic.primary;
-        diagnostic.primary = function.name.span;
-        diagnostic.labels.push(Label {
-            span: match_span,
-            text: "non-exhaustive match occurs here".to_owned(),
-        });
     }
     diagnostics
 }
@@ -941,11 +1045,24 @@ fn declare_function(
         .iter()
         .any(|attribute| attribute.name.value == "test");
     if is_test {
-        check_test_signature(function)?;
+        check_test_signature(function, types)?;
+        let mut names = BTreeSet::new();
+        let mut parameters = Vec::new();
+        for parameter in &function.params.params {
+            declare_parameter(
+                &mut parameters,
+                &mut names,
+                &parameter.name.value,
+                parameter.name.span,
+                &parameter.ty,
+                ParameterKind::Positional,
+                types,
+            )?;
+        }
         return Ok(FunctionSignature {
             id,
             is_test,
-            parameters: Vec::new(),
+            parameters,
             return_type: Type::StreamCheck,
             metadata: parse_test_metadata(function)?,
         });
@@ -1052,12 +1169,21 @@ fn declare_parameter(
     Ok(())
 }
 
-fn check_test_signature(function: &ast::FnItem) -> Result<(), Diagnostics> {
+fn check_test_signature(
+    function: &ast::FnItem,
+    types: &BTreeMap<String, Type>,
+) -> Result<(), Diagnostics> {
     let valid_return = function
         .return_type
         .as_ref()
         .is_some_and(is_stream_check_type);
-    if !function.params.params.is_empty()
+    // A test's positional parameters are exactly its capability inputs —
+    // typed values the harness (the demand root) supplies by identity.
+    // Anything else in the signature stays invalid.
+    let capability_params_only = function.params.params.iter().all(|parameter| {
+        lower_declared_type(&parameter.ty, types).is_ok_and(|ty| is_capability_type(&ty))
+    });
+    if !capability_params_only
         || function.where_params.is_some()
         || !valid_return
         || function.generics.is_some()
@@ -1067,7 +1193,7 @@ fn check_test_signature(function: &ast::FnItem) -> Result<(), Diagnostics> {
             primary: function.span,
             labels: Vec::new(),
             payload: DiagnosticPayload::Type {
-                expected: "fn() -> Stream<Check>".to_owned(),
+                expected: "fn(capabilities…) -> Stream<Check>".to_owned(),
                 found: function.name.value.clone(),
             },
         }));
@@ -1905,6 +2031,14 @@ fn bind_irrefutable_pattern(
             pattern.span,
             "refutable pattern",
         ))),
+        ast::Pattern::Ok(pattern) => Err(Diagnostics::one(Diagnostic::unsupported(
+            pattern.span,
+            "refutable pattern",
+        ))),
+        ast::Pattern::Err(pattern) => Err(Diagnostics::one(Diagnostic::unsupported(
+            pattern.span,
+            "refutable pattern",
+        ))),
         ast::Pattern::None(span) => Err(Diagnostics::one(Diagnostic::unsupported(
             *span,
             "refutable pattern",
@@ -2037,6 +2171,11 @@ fn lower_check(
         "demanded_once" => {
             return Ok(CheckRecipe::Trace(TraceCheck::DemandedOnce {
                 wire: described_wire(context, call)?,
+            }));
+        }
+        "ran_processes" => {
+            return Ok(CheckRecipe::Trace(TraceCheck::RanProcesses {
+                count: trace_bound(call)?,
             }));
         }
         _ => {}
@@ -2296,6 +2435,7 @@ enum PreludeReceiverType {
     Stream,
     Int,
     Path,
+    ByteStream,
 }
 
 impl PreludeReceiverType {
@@ -2308,6 +2448,7 @@ impl PreludeReceiverType {
             Type::Stream { .. } => Some(Self::Stream),
             Type::Int => Some(Self::Int),
             Type::Path => Some(Self::Path),
+            Type::Record(record) if record.name == "ByteStream" => Some(Self::ByteStream),
             _ => None,
         }
     }
@@ -2347,6 +2488,7 @@ enum PreludeMethod {
     StreamSplitMin,
     PathToString,
     IntToString,
+    ByteStreamCollect,
 }
 
 #[derive(Clone, Copy)]
@@ -2527,6 +2669,12 @@ impl PreludeMethodRegistry {
                 method: PreludeMethod::StreamCollect,
             },
             PreludeMethodEntry {
+                receiver: PreludeReceiverType::ByteStream,
+                name: "collect",
+                arity: 0,
+                method: PreludeMethod::ByteStreamCollect,
+            },
+            PreludeMethodEntry {
                 receiver: PreludeReceiverType::Stream,
                 name: "find_min",
                 arity: 1,
@@ -2673,6 +2821,9 @@ fn lower_value_expected(
         }
         ast::Expr::Call(call) => lower_call(nodes, bindings, context, call),
         ast::Expr::WhereCall(call) => lower_where_call(nodes, bindings, context, call),
+        ast::Expr::Command(command) => lower_command(nodes, bindings, context, command),
+        ast::Expr::Exec(exec) => lower_exec(nodes, bindings, context, exec),
+        ast::Expr::Try(try_expr) => lower_try(nodes, bindings, context, try_expr),
         ast::Expr::Binary(binary) => lower_binary(nodes, bindings, context, binary),
         ast::Expr::Variant(variant) => lower_variant(nodes, bindings, context, variant, expected),
         ast::Expr::Match(match_expr) => lower_match(nodes, bindings, context, match_expr, expected),
@@ -3950,6 +4101,24 @@ fn lower_method_call(
             ),
             ty: Type::String,
         }),
+        // Completing an exec output stream to its semantic content: under the
+        // ratchet capability packages' line-framed output protocol the
+        // completed value is the line-keyed map, physically the stream
+        // record's single payload field.
+        PreludeMethod::ByteStreamCollect => {
+            let ty = Type::map(Type::Int, Type::String);
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::PURE,
+                    vec![receiver.node],
+                    Op::Project { index: 0 },
+                ),
+                ty,
+            })
+        }
         PreludeMethod::IntToString => {
             require_type(&receiver, &Type::Int, expr_span(&call.receiver))?;
             Ok(LoweredValue {
@@ -4298,6 +4467,8 @@ fn collect_pattern_names(pattern: &ast::Pattern, out: &mut BTreeSet<String>) {
             }
         }
         ast::Pattern::Some(some) => collect_pattern_names(&some.payload, out),
+        ast::Pattern::Ok(pattern) => collect_pattern_names(&pattern.payload, out),
+        ast::Pattern::Err(pattern) => collect_pattern_names(&pattern.payload, out),
         ast::Pattern::Variant(variant) => {
             if let Some(payload) = &variant.tuple_payload {
                 for element in &payload.elems {
@@ -4416,6 +4587,18 @@ fn collect_free_idents_expr(
             }
         }
         ast::Expr::Field(field) => collect_free_idents_expr(&field.receiver, bound, out),
+        // A command tag is a value reference to a capability binding.
+        ast::Expr::Command(command) => {
+            if !bound.contains(&command.tag.value) {
+                out.insert(command.tag.value.clone());
+            }
+        }
+        ast::Expr::Exec(exec) => {
+            if !bound.contains(&exec.command.tag.value) {
+                out.insert(exec.command.tag.value.clone());
+            }
+        }
+        ast::Expr::Try(try_expr) => collect_free_idents_expr(&try_expr.value, bound, out),
         ast::Expr::Variant(variant) => {
             if let Some(payload) = &variant.tuple_payload {
                 for argument in &payload.args {
@@ -5205,6 +5388,9 @@ fn expr_references_name(expression: &ast::Expr, name: &str) -> bool {
         | ast::Expr::Bool(_) => false,
         ast::Expr::Paren(paren) => expr_references_name(&paren.inner, name),
         ast::Expr::Unary(unary) => expr_references_name(&unary.value, name),
+        ast::Expr::Command(command) => command.tag.value == name,
+        ast::Expr::Exec(exec) => exec.command.tag.value == name,
+        ast::Expr::Try(try_expr) => expr_references_name(&try_expr.value, name),
         ast::Expr::Binary(binary) => {
             expr_references_name(&binary.left, name) || expr_references_name(&binary.right, name)
         }
@@ -6419,6 +6605,14 @@ fn lower_ordered_pattern(
             pattern.span,
             "guarded option pattern",
         ))),
+        ast::Pattern::Ok(pattern) => Err(Diagnostics::one(Diagnostic::unsupported(
+            pattern.span,
+            "guarded result pattern",
+        ))),
+        ast::Pattern::Err(pattern) => Err(Diagnostics::one(Diagnostic::unsupported(
+            pattern.span,
+            "guarded result pattern",
+        ))),
         ast::Pattern::None(span) => Err(Diagnostics::one(Diagnostic::unsupported(
             *span,
             "guarded option pattern",
@@ -6513,6 +6707,8 @@ fn pattern_span(pattern: &ast::Pattern) -> Span {
     match pattern {
         ast::Pattern::Some(pattern) => pattern.span,
         ast::Pattern::None(span) => *span,
+        ast::Pattern::Ok(pattern) => pattern.span,
+        ast::Pattern::Err(pattern) => pattern.span,
         ast::Pattern::Record(pattern) => pattern.span,
         ast::Pattern::Variant(pattern) => pattern.span,
         ast::Pattern::Binding(pattern) => pattern.span,
@@ -6692,6 +6888,8 @@ fn find_variant<'a>(
 enum EnumPattern<'a> {
     Some(&'a ast::SomePattern),
     None(Span),
+    Ok(&'a ast::OkPattern),
+    Err(&'a ast::ErrPattern),
     Variant(&'a ast::VariantPattern),
     Record(&'a ast::RecordPattern),
 }
@@ -6700,6 +6898,8 @@ fn enum_pattern(pattern: &ast::Pattern) -> Option<EnumPattern<'_>> {
     match pattern {
         ast::Pattern::Some(pattern) => Some(EnumPattern::Some(pattern)),
         ast::Pattern::None(span) => Some(EnumPattern::None(*span)),
+        ast::Pattern::Ok(pattern) => Some(EnumPattern::Ok(pattern)),
+        ast::Pattern::Err(pattern) => Some(EnumPattern::Err(pattern)),
         ast::Pattern::Variant(pattern) => Some(EnumPattern::Variant(pattern)),
         ast::Pattern::Record(pattern) => Some(EnumPattern::Record(pattern)),
         _ => None,
@@ -6710,6 +6910,8 @@ fn enum_pattern_span(pattern: EnumPattern<'_>) -> Span {
     match pattern {
         EnumPattern::Some(pattern) => pattern.span,
         EnumPattern::None(span) => span,
+        EnumPattern::Ok(pattern) => pattern.span,
+        EnumPattern::Err(pattern) => pattern.span,
         EnumPattern::Variant(pattern) => pattern.span,
         EnumPattern::Record(pattern) => pattern.span,
     }
@@ -6742,6 +6944,34 @@ fn find_enum_pattern_variant<'a>(
                 OPTION_NONE_VARIANT as usize,
                 &enumeration.variants[OPTION_NONE_VARIANT as usize],
                 span,
+            ))
+        }
+        EnumPattern::Ok(pattern) => {
+            if enumeration.result_inner().is_none() {
+                return Err(type_mismatch(
+                    pattern.span,
+                    "Result<_>",
+                    enumeration.name.clone(),
+                ));
+            }
+            Ok((
+                crate::vir::RESULT_OK_VARIANT as usize,
+                &enumeration.variants[crate::vir::RESULT_OK_VARIANT as usize],
+                pattern.span,
+            ))
+        }
+        EnumPattern::Err(pattern) => {
+            if enumeration.result_inner().is_none() {
+                return Err(type_mismatch(
+                    pattern.span,
+                    "Result<_>",
+                    enumeration.name.clone(),
+                ));
+            }
+            Ok((
+                crate::vir::RESULT_ERR_VARIANT as usize,
+                &enumeration.variants[crate::vir::RESULT_ERR_VARIANT as usize],
+                pattern.span,
             ))
         }
         EnumPattern::Variant(pattern) => {
@@ -6808,6 +7038,28 @@ fn bind_enum_pattern(
             bind_irrefutable_pattern(nodes, bindings, &pattern.payload, &projected)
         }
         (EnumPattern::None(_), VariantPayload::Unit) => Ok(()),
+        (EnumPattern::Ok(pattern), VariantPayload::Tuple(types)) if types.len() == 1 => {
+            let projected = project_variant_field(
+                nodes,
+                scrutinee,
+                variant_index,
+                0,
+                &types[0],
+                pattern_span(&pattern.payload),
+            )?;
+            bind_irrefutable_pattern(nodes, bindings, &pattern.payload, &projected)
+        }
+        (EnumPattern::Err(pattern), VariantPayload::Tuple(types)) if types.len() == 1 => {
+            let projected = project_variant_field(
+                nodes,
+                scrutinee,
+                variant_index,
+                0,
+                &types[0],
+                pattern_span(&pattern.payload),
+            )?;
+            bind_irrefutable_pattern(nodes, bindings, &pattern.payload, &projected)
+        }
         (EnumPattern::Variant(pattern), VariantPayload::Unit)
             if pattern.tuple_payload.is_none() =>
         {
@@ -6971,6 +7223,151 @@ fn expr_span_of_named(named: &ast::WhereArgs, name: &str) -> Span {
         .find(|field| field.name.value == name)
         .and_then(|field| field.value.as_ref())
         .map_or(named.span, expr_span)
+}
+
+/// Resolve a command template's capability tag. The tag is an ordinary value
+/// reference — a root injects a capability value or a solve returns one; there
+/// is no ambient tool namespace to fall back to — so a tag that names nothing
+/// is an unbound identifier, not a special capability error.
+///
+/// r[impl machine.primitive.capabilities-by-identity]
+fn resolve_command_capability(
+    bindings: &BTreeMap<String, LoweredValue>,
+    command: &ast::CommandExpr,
+) -> Result<LoweredValue, Diagnostics> {
+    bindings.get(&command.tag.value).cloned().ok_or_else(|| {
+        Diagnostics::one(Diagnostic {
+            code: DiagnosticCode::UnboundIdentifier,
+            primary: command.tag.span,
+            labels: Vec::new(),
+            payload: DiagnosticPayload::Name {
+                name: command.tag.value.clone(),
+            },
+        })
+    })
+}
+
+/// A bare command template names a `Command<A>` value. Constructing one
+/// without demanding it awaits a later rung; the capability tag still resolves
+/// first so an undeclared tool fails as an unbound identifier.
+fn lower_command(
+    _nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    _context: &ModuleContext<'_>,
+    command: &ast::CommandExpr,
+) -> Result<LoweredValue, Diagnostics> {
+    let _capability = resolve_command_capability(bindings, command)?;
+    Err(Diagnostics::one(Diagnostic::unsupported(
+        command.span,
+        "a command value outside `exec`",
+    )))
+}
+
+/// The ratchet capability packages' command grammar: whitespace-separated
+/// argv elements; a double-quoted element keeps interior whitespace and drops
+/// its quotes. The band's templates are fully literal (no `{expr}` splices
+/// yet), so the parse is closed at compile time and the argv enters the
+/// canonical recipe.
+///
+/// r[impl lang.command.typed]
+fn parse_command_template(template: &Spanned<String>) -> Result<Vec<String>, Diagnostics> {
+    let text = template
+        .value
+        .strip_prefix('`')
+        .and_then(|rest| rest.strip_suffix('`'))
+        .unwrap_or(&template.value);
+    let mut argv = Vec::new();
+    let mut chars = text.chars().peekable();
+    loop {
+        while chars.peek().is_some_and(|c| c.is_whitespace()) {
+            chars.next();
+        }
+        let Some(&next) = chars.peek() else {
+            break;
+        };
+        if next == '"' {
+            chars.next();
+            let mut element = String::new();
+            loop {
+                match chars.next() {
+                    Some('"') => break,
+                    Some(ch) => element.push(ch),
+                    None => {
+                        return Err(Diagnostics::one(Diagnostic::unsupported(
+                            template.span,
+                            "unterminated quoted command argument",
+                        )));
+                    }
+                }
+            }
+            argv.push(element);
+        } else {
+            let mut element = String::new();
+            while let Some(&ch) = chars.peek() {
+                if ch.is_whitespace() {
+                    break;
+                }
+                element.push(ch);
+                chars.next();
+            }
+            argv.push(element);
+        }
+    }
+    Ok(argv)
+}
+
+/// `exec command` — an effect demand. The capability value is the node's only
+/// input, so its identity enters the demand preimage; the parsed argv enters
+/// the canonical recipe. The result is the `ExecOutcome` value; a nonzero exit
+/// is a typed language failure at this node's site.
+fn lower_exec(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    _context: &ModuleContext<'_>,
+    exec: &ast::ExecExpr,
+) -> Result<LoweredValue, Diagnostics> {
+    let capability = resolve_command_capability(bindings, &exec.command)?;
+    if !is_capability_type(&capability.ty) {
+        return Err(type_mismatch(
+            exec.command.tag.span,
+            "a capability value",
+            capability.ty.name(),
+        ));
+    }
+    let argv = parse_command_template(&exec.command.template)?;
+    let ty = exec_outcome_type();
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            exec.span,
+            ty.clone(),
+            EffectFacts::EFFECT,
+            vec![capability.node],
+            Op::Exec { argv },
+        ),
+        ty,
+    })
+}
+
+fn lower_try(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    try_expr: &ast::TryExpr,
+) -> Result<LoweredValue, Diagnostics> {
+    let operand = lower_value(nodes, bindings, context, &try_expr.value)?;
+    let ty = Type::Enum(EnumType::result(operand.ty.clone()));
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            try_expr.span,
+            ty.clone(),
+            EffectFacts::PURE,
+            vec![operand.node],
+            Op::Try,
+        ),
+        ty,
+    })
 }
 
 fn lower_call(
@@ -7525,6 +7922,111 @@ fn push_equality_condition(
             let right_values = push_project(nodes, span, right.node, element_array, Op::SetValues);
             push_eq(nodes, span, left_values, right_values)
         }
+        // Product equality only descends through fields when a field carries an
+        // opaque collection handle. Fixed-width products keep the primitive
+        // structural equality path so existing word-level equality certificates
+        // remain stable, while `ByteStream { $lines: Map<Int, String> }` still
+        // reaches the canonical map equality path.
+        Type::Record(record) => {
+            if record
+                .fields
+                .iter()
+                .all(|field| field.ty.equality_is_structural())
+            {
+                return push_node(
+                    nodes,
+                    span,
+                    Type::Bool,
+                    EffectFacts::PURE,
+                    vec![left.node, right.node],
+                    if negate { Op::Ne } else { Op::Eq },
+                );
+            }
+            let mut fields = record.fields.iter().enumerate();
+            let Some((first_index, first)) = fields.next() else {
+                let unit_equal = lower_bool_constant(nodes, span, true);
+                if negate {
+                    let false_value = lower_bool_constant(nodes, span, false);
+                    return push_eq(nodes, span, unit_equal.node, false_value.node);
+                }
+                return unit_equal.node;
+            };
+            let first_index = u32::try_from(first_index).expect("record field index fits u32");
+            let left_field = push_project(
+                nodes,
+                span,
+                left.node,
+                first.ty.clone(),
+                Op::Project { index: first_index },
+            );
+            let right_field = push_project(
+                nodes,
+                span,
+                right.node,
+                first.ty.clone(),
+                Op::Project { index: first_index },
+            );
+            let mut equal = push_equality_condition(
+                nodes,
+                span,
+                &LoweredValue {
+                    node: left_field,
+                    ty: first.ty.clone(),
+                },
+                &LoweredValue {
+                    node: right_field,
+                    ty: first.ty.clone(),
+                },
+                false,
+            );
+            for (index, field) in fields {
+                let consequent_start = nodes.len();
+                let index = u32::try_from(index).expect("record field index fits u32");
+                let left_field = push_project(
+                    nodes,
+                    span,
+                    left.node,
+                    field.ty.clone(),
+                    Op::Project { index },
+                );
+                let right_field = push_project(
+                    nodes,
+                    span,
+                    right.node,
+                    field.ty.clone(),
+                    Op::Project { index },
+                );
+                let field_equal = push_equality_condition(
+                    nodes,
+                    span,
+                    &LoweredValue {
+                        node: left_field,
+                        ty: field.ty.clone(),
+                    },
+                    &LoweredValue {
+                        node: right_field,
+                        ty: field.ty.clone(),
+                    },
+                    false,
+                );
+                let consequent = control_region(nodes, consequent_start, field_equal);
+                let alternative_start = nodes.len();
+                let alternative = lower_bool_constant(nodes, span, false);
+                let alternative = control_region(nodes, alternative_start, alternative.node);
+                equal = push_node(
+                    nodes,
+                    span,
+                    Type::Bool,
+                    EffectFacts::PURE,
+                    vec![equal],
+                    Op::If {
+                        consequent,
+                        alternative,
+                    },
+                );
+            }
+            equal
+        }
         _ => {
             return push_node(
                 nodes,
@@ -7711,6 +8213,9 @@ fn expr_span(expression: &ast::Expr) -> Span {
         ast::Expr::Record(value) => value.span,
         ast::Expr::Tuple(value) => value.span,
         ast::Expr::Paren(value) => value.span,
+        ast::Expr::Exec(value) => value.span,
+        ast::Expr::Command(value) => value.span,
+        ast::Expr::Try(value) => value.span,
         ast::Expr::Identifier(value) => value.span,
         ast::Expr::Path(value) => value.span,
         ast::Expr::Str(value) => value.span,

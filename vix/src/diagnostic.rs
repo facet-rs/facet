@@ -28,6 +28,10 @@ pub enum DiagnosticCode {
     VariantPayloadMismatch,
     NonExhaustiveMatch,
     ExpressionStatement,
+    /// A command template's capability tag names nothing in scope: a test's
+    /// capabilities are parameters the harness supplies, so an undeclared tool
+    /// is an ordinary unbound identifier, not a special capability error.
+    UnboundIdentifier,
     UnusedMustUse,
     UnknownMethod,
     /// A compile-time constant-fold decode of a literal document failed: the
@@ -154,6 +158,7 @@ impl Diagnostic {
                 // keeps the offending name; the message is the diagnostic.
                 DiagnosticCode::PrivateImport => "private".to_owned(),
                 DiagnosticCode::DuplicateDefinition => "duplicate name".to_owned(),
+                DiagnosticCode::UnboundIdentifier => format!("unbound identifier `{name}`"),
                 _ => name.clone(),
             },
             DiagnosticPayload::Type { expected, found } => match self.code {

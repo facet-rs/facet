@@ -78,6 +78,26 @@ pub enum FailureValue {
         recipe: RecipeId,
         site: u32,
     },
+    /// A process termination the command package's termination grammar did not
+    /// map to an answer: the raw termination information in a typed payload.
+    /// `recipe` is the exec plan identity (normalized command × capability
+    /// axis), `site` the exec node's stable source site. No naked status
+    /// integer escapes into a language value.
+    ///
+    /// r[impl machine.primitive.exit-status-is-not-a-value]
+    ProcessFailure {
+        recipe: RecipeId,
+        site: u32,
+        termination: ProcessTermination,
+    },
+}
+
+/// Raw process-termination information carried by a [`FailureValue::ProcessFailure`].
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ProcessTermination {
+    Exited { code: i64 },
+    Signaled { signal: i64 },
 }
 
 /// Context rebuilt while reporting a language failure. It is deliberately not

@@ -120,6 +120,13 @@ pub enum EventKind {
         task: TaskId,
         function: FunctionId,
     },
+    /// An effect primitive began external work for this demand: a process was
+    /// spawned. A memoized effect demand emits no spawn — that absence is what
+    /// rung 069 certifies.
+    EffectSpawned {
+        task: TaskId,
+        key: DemandKey,
+    },
     WeavyParked {
         task: TaskId,
         input: u32,

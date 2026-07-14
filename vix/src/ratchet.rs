@@ -316,6 +316,7 @@ struct TraceSnapshot {
     scheduler_requests: u64,
     memo_entries: u64,
     store_interns: u64,
+    effect_spawns: u64,
     value_island_spawns: u64,
     successful_aggregate_freezes: u64,
     active_molten_selections: u64,
@@ -419,6 +420,10 @@ impl TraceSnapshot {
             TraceCheck::DemandedOnce { wire } => {
                 let observed = self.wire_matches(wire);
                 (observed, observed == 1)
+            }
+            TraceCheck::RanProcesses { count } => {
+                let observed = self.effect_spawns;
+                (observed, i128::from(observed) == i128::from(*count))
             }
         };
         CheckRun {
@@ -710,6 +715,9 @@ fn prepare_modules_with_cache(
         // snapshot and lowers nothing, so it is skipped here.
         let partitioned = compilation.module.try_partition_test(test)?;
         for value in &partitioned.values {
+            if value.island.effect_output().is_some() {
+                continue;
+            }
             cache.get_or_lower(&value.island)?;
         }
         // Argument islands demanded lazily through force-on-park are compiled now
@@ -1019,34 +1027,56 @@ fn run_lane(
             .map(|wire| (wire.id, wire))
             .collect();
         let mut published_values = BTreeMap::new();
+        for capability in &partitioned.capabilities {
+            let evaluation = runtime.publish_capability(&capability.ty, &capability.name);
+            published_values.insert(capability.id, evaluation);
+        }
         for value in &partitioned.values {
-            let lowered = cache.get_or_lower(&value.island)?;
-            let attribution = attribution_for(&value.island);
             let location = Location::for_test_value(&partitioned.name, &value.id.stable_segment());
-            let arguments = value
-                .island
-                .value_inputs
-                .iter()
-                .map(|input| {
-                    published_values
-                        .get(input)
-                        .cloned()
-                        .expect("value islands are ordered after their dependencies")
-                })
-                .collect::<Vec<_>>();
-            let evaluation = runtime.evaluate(
-                value.island.id,
-                &location,
-                lowered,
-                &attribution,
-                IslandInputs {
-                    arguments: &arguments,
-                    wires: &[],
-                },
-                ChaosPolicy {
-                    kill_first_running_task: kill_available,
-                },
-            )?;
+            let evaluation = if value.island.effect_output().is_some() {
+                let capability = value
+                    .island
+                    .value_inputs
+                    .first()
+                    .and_then(|input| published_values.get(input))
+                    .cloned()
+                    .expect("effect island has its declared capability input");
+                runtime.evaluate_exec(
+                    &value.island,
+                    &location,
+                    &capability,
+                    ChaosPolicy {
+                        kill_first_running_task: kill_available,
+                    },
+                )?
+            } else {
+                let lowered = cache.get_or_lower(&value.island)?;
+                let attribution = attribution_for(&value.island);
+                let arguments = value
+                    .island
+                    .value_inputs
+                    .iter()
+                    .map(|input| {
+                        published_values
+                            .get(input)
+                            .cloned()
+                            .expect("value islands are ordered after their dependencies")
+                    })
+                    .collect::<Vec<_>>();
+                runtime.evaluate(
+                    value.island.id,
+                    &location,
+                    lowered,
+                    &attribution,
+                    IslandInputs {
+                        arguments: &arguments,
+                        wires: &[],
+                    },
+                    ChaosPolicy {
+                        kill_first_running_task: kill_available,
+                    },
+                )?
+            };
             kill_available = false;
             // A hoisted wire island that actually computed (a memo miss) records
             // one realized demand for its described invocation. A memoized
@@ -1064,6 +1094,19 @@ fn run_lane(
                 failure: evaluation.failure.clone(),
             });
             published_values.insert(value.id, evaluation);
+        }
+        for catch in &partitioned.catches {
+            let operand = published_values
+                .get(&catch.operand)
+                .cloned()
+                .expect("catch operand was published before its result");
+            let evaluation = runtime.publish_catch(&catch.result_type, &operand)?;
+            values.push(ValuePublicationRun {
+                provenance: catch.id,
+                identity: evaluation.identity,
+                failure: None,
+            });
+            published_values.insert(catch.id, evaluation);
         }
         // A branch-dependent generator runs its real Match/If control through one
         // verified generator task that publishes only the taken sites; each taken
@@ -1266,6 +1309,7 @@ fn run_lane(
         scheduler_requests: counters.scheduler_requests,
         memo_entries: runtime.memo_entries(),
         store_interns: counters.store_interns,
+        effect_spawns: counters.effect_spawns,
         value_island_spawns: counters.value_island_spawns,
         successful_aggregate_freezes: counters.successful_aggregate_freezes,
         active_molten_selections: counters.active_molten_selections,
@@ -1290,7 +1334,7 @@ fn run_lane(
     let receipt_count = runtime.receipts().count() as u64;
     let all_demands_ready = runtime
         .demands()
-        .all(|demand| demand.state == DemandState::Ready);
+        .all(|demand| matches!(demand.state, DemandState::Ready | DemandState::Failed));
     let all_tasks_terminal = runtime
         .tasks()
         .all(|task| matches!(task.state, TaskState::Completed | TaskState::Discarded));
