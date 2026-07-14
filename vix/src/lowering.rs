@@ -5883,6 +5883,13 @@ fn lower_node(
                  Weavy frame",
             ));
         }
+        Op::Try => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "Try is a scheduler-owned catch publication; a catch is never lowered to a Weavy \
+                 frame",
+            ));
+        }
         Op::Bool(value) => {
             require_input_count(node, 0)?;
             require_node_type(node, Type::Bool)?;

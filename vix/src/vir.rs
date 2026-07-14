@@ -106,6 +106,8 @@ pub const ORDERING_EQUAL_VARIANT: u32 = 1;
 pub const ORDERING_GREATER_VARIANT: u32 = 2;
 pub const OPTION_SOME_VARIANT: u32 = 0;
 pub const OPTION_NONE_VARIANT: u32 = 1;
+pub const RESULT_OK_VARIANT: u32 = 0;
+pub const RESULT_ERR_VARIANT: u32 = 1;
 
 impl EnumType {
     /// r[impl lang.value.ordering-is-enum]
@@ -139,6 +141,57 @@ impl EnumType {
                 },
             ],
         }
+    }
+
+    /// The type a caught failure presents as: an opaque record carrying the
+    /// failure value's identity. Its field is not a legal surface identifier,
+    /// so programs can branch on `Err(_)` and pass the failure along, but not
+    /// forge one.
+    #[must_use]
+    pub fn failure_value() -> Type {
+        Type::Record(RecordType {
+            name: "Failure".to_owned(),
+            fields: vec![RecordField {
+                name: "$failure".to_owned(),
+                ty: Type::String,
+            }],
+        })
+    }
+
+    /// The `Result` a postfix `?` produces: `Ok` carries the operand's value,
+    /// `Err` the caught typed failure.
+    #[must_use]
+    pub fn result(inner: Type) -> Self {
+        Self {
+            name: format!("Result<{}>", inner.name()),
+            variants: vec![
+                EnumVariant {
+                    name: "Ok".to_owned(),
+                    payload: VariantPayload::Tuple(vec![inner]),
+                },
+                EnumVariant {
+                    name: "Err".to_owned(),
+                    payload: VariantPayload::Tuple(vec![Self::failure_value()]),
+                },
+            ],
+        }
+    }
+
+    /// The `Ok` payload when this enum is the `?` Result shape, `None` otherwise.
+    #[must_use]
+    pub fn result_inner(&self) -> Option<&Type> {
+        let [ok, err] = self.variants.as_slice() else {
+            return None;
+        };
+        let (VariantPayload::Tuple(ok_payload), VariantPayload::Tuple(err_payload)) =
+            (&ok.payload, &err.payload)
+        else {
+            return None;
+        };
+        let ([inner], [failure]) = (ok_payload.as_slice(), err_payload.as_slice()) else {
+            return None;
+        };
+        (ok.name == "Ok" && err.name == "Err" && *failure == Self::failure_value()).then_some(inner)
     }
 
     #[must_use]
@@ -952,6 +1005,11 @@ pub enum Op {
     Exec {
         argv: Vec<String>,
     },
+    /// Postfix `?`: catch the operand's demand edge. The operand becomes its
+    /// own demanded island; this node's value is `Result::Ok(value)` when that
+    /// demand publishes and `Result::Err(failure)` when it language-fails —
+    /// the failure participates as an ordinary value, address intact.
+    Try,
 }
 
 /// One SSA-like operation. Dependencies are explicit node ids; no Rust
@@ -1231,12 +1289,27 @@ pub struct PartitionedCapability {
     pub ty: Type,
 }
 
+/// One `?` catch: after the operand island publishes (value or typed failure),
+/// the runner constructs the `Result` value under this id, so consuming check
+/// islands receive it as an ordinary pre-published enum input.
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct PartitionedCatch {
+    /// The Try node's published identity.
+    pub id: ValueIslandId,
+    /// The caught operand island (an effect island or an ordinary value island).
+    pub operand: ValueIslandId,
+    /// The `Result<T>` enum type the catch constructs.
+    pub result_type: Type,
+}
+
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct PartitionedTest {
     pub name: String,
     /// Harness-supplied capability inputs, published before `values`.
     pub capabilities: Vec<PartitionedCapability>,
     pub values: Vec<PartitionedValue>,
+    /// `?` catches, constructed after `values` publish and before any site runs.
+    pub catches: Vec<PartitionedCatch>,
     /// Argument islands demanded lazily through force-on-park, keyed by their
     /// [`ValueIslandId`]. A consuming island's [`Island::wire_inputs`] names one
     /// of these; the runner builds a `WireDemand` from it and drives it through
@@ -1510,13 +1583,53 @@ impl Module {
             .iter()
             .map(|node| (node.id, self.value_island_id(function.id, node.id)))
             .collect::<BTreeMap<_, _>>();
+        // `?` catches: each consumed Try node publishes a constructed Result
+        // value; its operand becomes its own demanded island — the expression
+        // edge the catch holds — unless it is already an effect island.
+        let catch_nodes = function
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.op, Op::Try) && consumer_sets.contains_key(&node.id))
+            .collect::<Vec<_>>();
+        let mut catch_operand_nodes: Vec<&Node> = Vec::new();
+        for catch in &catch_nodes {
+            let operand = catch.inputs[0];
+            if effect_ids.contains_key(&operand)
+                || shared_ids.contains_key(&operand)
+                || catch_operand_nodes.iter().any(|node| node.id == operand)
+            {
+                continue;
+            }
+            catch_operand_nodes.push(&function.nodes[operand.0 as usize]);
+        }
+        let catch_operand_ids = catch_operand_nodes
+            .iter()
+            .map(|node| (node.id, self.value_island_id(function.id, node.id)))
+            .collect::<BTreeMap<_, _>>();
+        let catches = catch_nodes
+            .iter()
+            .map(|node| PartitionedCatch {
+                id: self.value_island_id(function.id, node.id),
+                operand: self.value_island_id(function.id, node.inputs[0]),
+                result_type: node.ty.clone(),
+            })
+            .collect::<Vec<_>>();
         // The pre-published inputs every island may name: ordinary shared
-        // publications, harness-supplied capability values, and effect
-        // publications all arrive through the same value-input seam.
+        // publications, harness-supplied capability values, effect
+        // publications, and constructed catches all arrive through the same
+        // value-input seam.
         let published_ids = {
             let mut map = shared_ids.clone();
             map.extend(capability_ids.iter().map(|(node, value)| (*node, *value)));
             map.extend(effect_ids.iter().map(|(node, value)| (*node, *value)));
+            map.extend(
+                catch_operand_ids
+                    .iter()
+                    .map(|(node, value)| (*node, *value)),
+            );
+            for node in &catch_nodes {
+                map.insert(node.id, self.value_island_id(function.id, node.id));
+            }
             map
         };
         // The non-strict argument nodes of every lazy call site: a call whose
@@ -1573,6 +1686,11 @@ impl Module {
             .iter()
             .map(|node| (node, IslandPurpose::Value))
             .chain(effect_nodes.iter().map(|node| (node, IslandPurpose::Value)))
+            .chain(
+                catch_operand_nodes
+                    .iter()
+                    .map(|node| (node, IslandPurpose::Value)),
+            )
             .enumerate()
             .map(|(ordinal, (node, purpose))| {
                 // A value island computes itself; only OTHER pre-published
@@ -1692,6 +1810,7 @@ impl Module {
             name: test.name.clone(),
             capabilities,
             values,
+            catches,
             wire_islands,
             generator,
             islands,
@@ -2675,6 +2794,12 @@ fn collect_publication_materializers(
     if is_shared_publication_candidate(node) {
         materializers.insert(node.id);
     }
+    // A `?` catch is consumed as a pre-published value like a shared aggregate:
+    // registering it here makes its consumption visible so the partitioner can
+    // island its operand and publish the constructed Result.
+    if matches!(node.op, Op::Try) {
+        materializers.insert(node.id);
+    }
     for &input in &node.inputs {
         collect_publication_materializers(function, input, visited, materializers);
     }
@@ -2787,10 +2912,7 @@ impl Island {
     /// primitive, never lowered to a Weavy frame.
     #[must_use]
     pub fn effect_output(&self) -> Option<&Node> {
-        let output = self
-            .nodes
-            .iter()
-            .find(|node| node.id == self.output)?;
+        let output = self.nodes.iter().find(|node| node.id == self.output)?;
         matches!(output.op, Op::Exec { .. }).then_some(output)
     }
 
@@ -3074,6 +3196,7 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
                 frame(&mut op, argument.as_bytes());
             }
         }
+        Op::Try => op.push(86),
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());
