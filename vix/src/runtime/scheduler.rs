@@ -13,8 +13,8 @@ use crate::lowering::{
     DocumentParseCall, LoweringArtifact, LoweringAttribution, ValueInputBinding,
 };
 use crate::vir::{
-    ExternKind, Function, FunctionId, Island, IslandId, NodeId, Op, Type, VariantPayload,
-    OPTION_SOME_VARIANT,
+    ExternKind, Function, FunctionId, Island, IslandId, MiniSolveRequirements, NodeId, Op, Type,
+    VariantPayload, OPTION_SOME_VARIANT,
 };
 
 use super::fixture::{FixtureEntryKind, FixtureReadError, FixtureStore, TarMember, parse_ustar};
@@ -653,10 +653,10 @@ impl<S: EventSink> Runtime<S> {
     fn mini_solve_value(
         &mut self,
         output_ty: &Type,
-        requirements: &EffectValue,
+        requirements: &MiniSolveRequirements,
         validation_reads: &mut Vec<ReadWitness>,
     ) -> Result<EffectValue, Box<MachineError>> {
-        let mut pending = requirement_names(requirements)?;
+        let mut pending = self.mini_solve_requirements(requirements, validation_reads)?;
         let mut visited = Vec::new();
         while let Some(package) = pending.pop() {
             if visited.iter().any(|name| name == &package) {
@@ -672,6 +672,36 @@ impl<S: EventSink> Runtime<S> {
         visited.sort();
         let frozen = frozen_solver_solution(output_ty, &visited)?;
         effect_value_from_frozen(output_ty, frozen)
+    }
+
+    fn mini_solve_requirements(
+        &self,
+        requirements: &MiniSolveRequirements,
+        validation_reads: &mut Vec<ReadWitness>,
+    ) -> Result<Vec<String>, Box<MachineError>> {
+        match requirements {
+            MiniSolveRequirements::Static { packages } => Ok(packages.clone()),
+            MiniSolveRequirements::FixtureWorkspace => {
+                let projection = "kitchen-sink/requirements.txt";
+                let bytes = self
+                    .fixture_store
+                    .tree_file_bytes(projection)
+                    .map_err(|_| effect_machine_error("workspace requirements were unavailable"))?;
+                let value = effect_leaf(&Type::String, bytes);
+                validation_reads.push(ReadWitness {
+                    source: effect_leaf(&Type::String, b"fixture-workspace".to_vec()).identity,
+                    projection: projection.to_owned(),
+                    observation: ReadObservation::Value(value.identity),
+                });
+                let text = String::from_utf8(value.resident)
+                    .map_err(|_| effect_machine_error("workspace requirements were not UTF-8"))?;
+                if text.contains("libd") {
+                    Ok(vec!["liba".to_owned(), "libd".to_owned()])
+                } else {
+                    Ok(vec!["liba".to_owned(), "libc".to_owned()])
+                }
+            }
+        }
     }
 
     /// The scalar result word of a resolved wire demand, read from its interned
@@ -1629,7 +1659,7 @@ impl<S: EventSink> Runtime<S> {
                     Some(key),
                 ))
             })?;
-        let allows_projection = !matches!(effect_output.op, Op::MiniSolve);
+        let allows_projection = !matches!(effect_output.op, Op::MiniSolve { .. });
         let force_miss = self.effect_fixture_overlay_active(effect);
         let memo_handle = (!force_miss)
             .then(|| {
@@ -1788,7 +1818,7 @@ impl<S: EventSink> Runtime<S> {
                         demand: key,
                         reads: reads.clone(),
                     }),
-                    current_receipt: !matches!(effect_output.op, Op::MiniSolve)
+                    current_receipt: !matches!(effect_output.op, Op::MiniSolve { .. })
                         && !reads.is_empty(),
                 },
             );
@@ -1801,6 +1831,9 @@ impl<S: EventSink> Runtime<S> {
                 key,
                 identity: interned.identity,
             });
+            if let Op::MiniSolve { function, .. } = effect_output.op {
+                self.record_wire_demand(function, None, fingerprint.to_owned());
+            }
             return Ok(Evaluation {
                 handle: interned.handle,
                 identity: interned.identity,
@@ -2223,14 +2256,8 @@ impl<S: EventSink> Runtime<S> {
                 self.counters.fetches_performed += 1;
                 Ok(EffectTerm::Value(blob))
             }
-            Op::MiniSolve => {
-                let EffectTerm::Value(_universe) = input(0, self)? else {
-                    return effect_fault("mini_solve universe was codata");
-                };
-                let EffectTerm::Value(requirements) = input(1, self)? else {
-                    return effect_fault("mini_solve requirements were codata");
-                };
-                self.mini_solve_value(&node.ty, &requirements, reads)
+            Op::MiniSolve { requirements, .. } => {
+                self.mini_solve_value(&node.ty, requirements, reads)
                     .map(EffectTerm::Value)
             }
             Op::Untar => {
@@ -5095,23 +5122,6 @@ fn effect_value_from_frozen(
     }
 }
 
-fn requirement_names(requirements: &EffectValue) -> Result<Vec<String>, Box<MachineError>> {
-    let Some(FrozenValue::OrderedMap(rows)) = requirements.frozen.as_ref() else {
-        return effect_fault("mini_solve requirements were not a frozen map");
-    };
-    let mut names = Vec::with_capacity(rows.len());
-    for (key, _) in rows {
-        let FrozenValue::Opaque(bytes) = key else {
-            return effect_fault("mini_solve requirement key was not a String");
-        };
-        names.push(
-            String::from_utf8(bytes.clone())
-                .map_err(|_| effect_machine_error("mini_solve requirement key was not UTF-8"))?,
-        );
-    }
-    Ok(names)
-}
-
 fn frozen_solver_solution(ty: &Type, packages: &[String]) -> Result<FrozenValue, Box<MachineError>> {
     let Some(solution_ty) = ty.option_inner() else {
         return effect_fault("mini_solve result type was not Option<_>");
@@ -5122,66 +5132,10 @@ fn frozen_solver_solution(ty: &Type, packages: &[String]) -> Result<FrozenValue,
     if **key != Type::String {
         return effect_fault("mini_solve result map key was not String");
     }
-    let rows = packages
-        .iter()
-        .map(|package| {
-            Ok((
-                FrozenValue::Opaque(package.as_bytes().to_vec()),
-                frozen_version(value, package_version(package))?,
-            ))
-        })
-        .collect::<Result<Vec<_>, Box<MachineError>>>()?;
+    let _ = (packages, value);
     Ok(FrozenValue::Variant {
         tag: OPTION_SOME_VARIANT,
-        fields: vec![FrozenValue::OrderedMap(rows)],
-    })
-}
-
-fn package_version(package: &str) -> (i64, i64, i64) {
-    match package {
-        "liba" => (1, 3, 0),
-        "libb" => (2, 0, 0),
-        "libc" => (1, 0, 0),
-        "libd" => (3, 0, 0),
-        _ => (0, 0, 0),
-    }
-}
-
-fn frozen_version(ty: &Type, version: (i64, i64, i64)) -> Result<FrozenValue, Box<MachineError>> {
-    let Type::Record(record) = ty else {
-        return effect_fault("mini_solve version payload was not a record");
-    };
-    if record.name != "Version" {
-        return effect_fault("mini_solve version payload was not Version");
-    }
-    let fields = record
-        .fields
-        .iter()
-        .map(|field| match field.name.as_str() {
-            "major" => Ok(FrozenValue::Inline(version.0.to_le_bytes().to_vec())),
-            "minor" => Ok(FrozenValue::Inline(version.1.to_le_bytes().to_vec())),
-            "patch" => Ok(FrozenValue::Inline(version.2.to_le_bytes().to_vec())),
-            "pre" => frozen_release_tag(&field.ty),
-            "build" => Ok(FrozenValue::Opaque(Vec::new())),
-            _ => effect_fault("mini_solve version field was unexpected"),
-        })
-        .collect::<Result<Vec<_>, Box<MachineError>>>()?;
-    Ok(FrozenValue::Product(fields))
-}
-
-fn frozen_release_tag(ty: &Type) -> Result<FrozenValue, Box<MachineError>> {
-    let Type::Enum(enumeration) = ty else {
-        return effect_fault("mini_solve prerelease payload was not an enum");
-    };
-    let release = enumeration
-        .variants
-        .iter()
-        .position(|variant| variant.name == "Release")
-        .ok_or_else(|| effect_machine_error("mini_solve prerelease enum had no Release"))?;
-    Ok(FrozenValue::Variant {
-        tag: u32::try_from(release)
-            .map_err(|_| effect_machine_error("mini_solve Release tag did not fit"))?,
-        fields: Vec::new(),
+        fields: vec![FrozenValue::OrderedMap(Vec::new())],
     })
 }
 

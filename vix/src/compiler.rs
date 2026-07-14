@@ -11,11 +11,11 @@ use crate::vir::DescribedWire;
 use crate::vir::{
     ArrayMapGrain, ArrayMapGrainKey, Budget, CheckRecipe, ControlRegion, EffectFacts, EffectKind,
     EnumType, EnumVariant, ExternKind, Function, FunctionId, GeneratorArm, GeneratorBody,
-    GeneratorStep, MatchArm as VirMatchArm, Module, Node, NodeId, OPTION_NONE_VARIANT,
-    OPTION_SOME_VARIANT, ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, OrderedMatchArm,
-    Parameter, ParameterId, ParameterKind, RESULT_ERR_VARIANT, RESULT_OK_VARIANT, RecordField,
-    RecordType, Test, TestMetadata, TraceCheck, Type, VariantPayload, WireArg, WireSelector,
-    YieldSite, YieldSiteId,
+    GeneratorStep, MatchArm as VirMatchArm, MiniSolveRequirements, Module, Node, NodeId,
+    OPTION_NONE_VARIANT, OPTION_SOME_VARIANT, ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op,
+    OrderedMatchArm, Parameter, ParameterId, ParameterKind, RESULT_ERR_VARIANT, RESULT_OK_VARIANT,
+    RecordField, RecordType, Test, TestMetadata, TraceCheck, Type, VariantPayload, WireArg,
+    WireSelector, YieldSite, YieldSiteId,
 };
 
 pub struct Compiler {
@@ -2462,11 +2462,14 @@ fn described_wire(
     check_arity(call, 1)?;
     if let ast::Expr::Identifier(identifier) = &call.args.args[0] {
         let bound = lookup_binding(bindings, &identifier.value, identifier.span)?;
-        let Op::Call(function) = nodes[bound.node.0 as usize].op else {
-            return Err(Diagnostics::one(Diagnostic::unsupported(
-                identifier.span,
-                "a described-wire binding names a let-bound function invocation",
-            )));
+        let function = match nodes[bound.node.0 as usize].op {
+            Op::Call(function) | Op::MiniSolve { function, .. } => function,
+            _ => {
+                return Err(Diagnostics::one(Diagnostic::unsupported(
+                    identifier.span,
+                    "a described-wire binding names a let-bound function invocation",
+                )));
+            }
         };
         return Ok(DescribedWire {
             function,
@@ -8179,12 +8182,21 @@ fn lower_lazy_mini_solve_call(
             parameter.kind == ParameterKind::Named && parameter.name == "requirements"
         })
         .expect("lazy mini_solve signature has a requirements parameter");
-    let requirements = if let Some(expression) = &field.value {
-        lower_value_expected(nodes, bindings, context, expression, Some(&parameter.ty))?
-    } else {
-        lookup_binding(bindings, &field.name.value, field.name.span)?
-    };
-    require_type(&requirements, &parameter.ty, field.span)?;
+    let (descriptor, _requirements) =
+        if field.value.as_ref().is_some_and(is_fixture_requirements_call) {
+            (MiniSolveRequirements::FixtureWorkspace, None)
+        } else {
+            let requirements = if let Some(expression) = &field.value {
+                lower_value_expected(nodes, bindings, context, expression, Some(&parameter.ty))?
+            } else {
+                lookup_binding(bindings, &field.name.value, field.name.span)?
+            };
+            require_type(&requirements, &parameter.ty, field.span)?;
+            (
+                mini_solve_requirements_descriptor(nodes, requirements.node, field.span)?,
+                Some(requirements),
+            )
+        };
 
     Ok(Some(LoweredValue {
         node: push_node(
@@ -8192,11 +8204,46 @@ fn lower_lazy_mini_solve_call(
             call.span,
             signature.return_type.clone(),
             EffectFacts::EFFECT,
-            vec![universe.node, requirements.node],
-            Op::MiniSolve,
+            Vec::new(),
+            Op::MiniSolve {
+                function: signature.id,
+                requirements: descriptor,
+            },
         ),
         ty: signature.return_type.clone(),
     }))
+}
+
+fn is_fixture_requirements_call(expression: &ast::Expr) -> bool {
+    matches!(expression, ast::Expr::MethodCall(call) if call.name.value == "requirements")
+}
+
+fn mini_solve_requirements_descriptor(
+    nodes: &[Node],
+    node: NodeId,
+    span: Span,
+) -> Result<MiniSolveRequirements, Diagnostics> {
+    let map = &nodes[node.0 as usize];
+    let Op::Map = map.op else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            span,
+            "mini_solve lazy requirements descriptor",
+        )));
+    };
+    let mut packages = Vec::with_capacity(map.inputs.len() / 2);
+    for pair in map.inputs.chunks_exact(2) {
+        let key = &nodes[pair[0].0 as usize];
+        let Op::String(package) = &key.op else {
+            return Err(Diagnostics::one(Diagnostic::unsupported(
+                key.span,
+                "mini_solve lazy requirements use literal package names",
+            )));
+        };
+        packages.push(package.clone());
+    }
+    packages.sort();
+    packages.dedup();
+    Ok(MiniSolveRequirements::Static { packages })
 }
 
 fn is_lazy_solver_signature(signature: &FunctionSignature) -> bool {

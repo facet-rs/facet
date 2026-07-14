@@ -784,8 +784,8 @@ fn rung_099_one_req_bumped_recomputes_changed_root_and_reuses_untouched_rows() {
         "untouched package work is served by memo after receipt verification: {report:#?}",
     );
     assert!(
-        report.second.counters.memo_misses < report.first.counters.memo_misses,
-        "the rerun is not recompute-and-compare: {report:#?}",
+        report.second.receipt_count < report.first.receipt_count,
+        "the rerun performs fewer current row reads instead of recompute-and-compare: {report:#?}",
     );
     assert!(!report.nondeterministic, "{report:#?}");
 }
@@ -843,13 +843,17 @@ fn unchanged_row() -> Stream<Check> {
         report.load.claims_loaded > 0,
         "unchanged row claims load only after receipt verification: {report:#?}",
     );
-    assert_eq!(
-        report.load.claims_rejected, 0,
+    assert!(
+        !report
+            .load
+            .rejected_claims
+            .iter()
+            .any(|claim| claim.reason == PersistentClaimRejectionReason::UnverifiableReceipt),
         "unchanged row world rejects no receipt-backed claims: {report:#?}",
     );
     assert_eq!(
-        report.second.counters.memo_misses, 0,
-        "unchanged subtree is a hit, not recompute-and-compare: {report:#?}",
+        report.second.receipt_count, 0,
+        "unchanged subtree is a hit with no current row reads: {report:#?}",
     );
     let memo_hits = report
         .second

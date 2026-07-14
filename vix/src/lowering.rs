@@ -6016,7 +6016,7 @@ fn lower_node(
         | Op::FixtureRegistry
         | Op::RegistryUrl
         | Op::Fetch
-        | Op::MiniSolve
+        | Op::MiniSolve { .. }
         | Op::Untar
         | Op::BlobLen => {
             return Err(lowering_diagnostic(
