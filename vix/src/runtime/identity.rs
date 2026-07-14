@@ -106,6 +106,27 @@ impl Location {
         }
     }
 
+    /// The memo-nomination location of one effect demand, keyed by the
+    /// effect's node-id-independent structural fingerprint. Two structurally
+    /// identical effect expressions in one test nominate the same location, so
+    /// the second demand of an identical pinned fetch is an exact memo hit —
+    /// never a second effect spawn.
+    #[must_use]
+    pub fn for_test_effect(test_name: &str, fingerprint: &str) -> Self {
+        let digest = hash_framed(b"vix.effect.fingerprint.v1", &[fingerprint.as_bytes()]);
+        let segments = vec![
+            "test".to_owned(),
+            test_name.to_owned(),
+            "effect".to_owned(),
+            digest.hex(),
+        ];
+        let fields = segments.iter().map(String::as_bytes).collect::<Vec<_>>();
+        Self {
+            id: LocationId(hash_framed(b"vix.location.v1", &fields)),
+            segments,
+        }
+    }
+
     /// Provenance-keyed location of one evaluated check: the site's check
     /// location extended by the identities of its dynamic iteration keys. With no
     /// dynamic keys (the zero-dynamic-key base case, and every flat island) this

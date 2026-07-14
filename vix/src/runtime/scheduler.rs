@@ -2815,13 +2815,9 @@ fn failure_context(
                 demand_chain: vec![lowered.demand_key],
             })
         }
-        FailureValue::IndexOutOfBounds { .. }
-        | FailureValue::MissingKey { .. }
-        | FailureValue::DuplicateKey { .. }
-        | FailureValue::MissingDelimiter { .. }
-        | FailureValue::InvalidInteger { .. }
-        | FailureValue::IntegerOverflow { .. }
-        | FailureValue::DivisionByZero { .. } => None,
+        // Effect-plane failures carry an effect recipe, never a lowered
+        // island's; their context is attached where the effect evaluates.
+        _ => None,
     }
 }
 
