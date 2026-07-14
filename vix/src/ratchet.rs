@@ -11,8 +11,9 @@ use crate::lowering::{
 use crate::runtime::{
     ChaosPolicy, Counters, DemandState, Evaluation, Event, EventKind, EventLog, FailureContext,
     FailureValue, FramedNode, GeneratorOutcome, IslandInputs, Location, MachineError, MemoVerdict,
-    PersistentRuntimeState, RealizedWireDemand, Runtime, SchemaId, SnapshotCapture,
-    SnapshotOutcome, TaskState, ValueId, WireDemand,
+    PersistentRuntimeJournal, PersistentRuntimeJournalError, PersistentRuntimeJournalLoadReport,
+    PersistentRuntimeState, RealizedWireDemand, Runtime, SchemaId, SnapshotCapture, SnapshotOutcome,
+    TaskState, ValueId, WireDemand,
 };
 use crate::vir::{
     DescribedWire, FunctionId, Island, IslandId, Module, Op, PartitionedRecipe, PartitionedValue,
@@ -265,6 +266,7 @@ pub enum RunError {
         failure: Box<FailureValue>,
         context: Option<FailureContext>,
     },
+    PersistentRuntime(PersistentRuntimeJournalError),
 }
 
 /// The stable provenance key of a published check: the yield site's selector
@@ -313,6 +315,12 @@ impl From<MachineError> for RunError {
 impl From<Box<MachineError>> for RunError {
     fn from(error: Box<MachineError>) -> Self {
         Self::Machine(error)
+    }
+}
+
+impl From<PersistentRuntimeJournalError> for RunError {
+    fn from(error: PersistentRuntimeJournalError) -> Self {
+        Self::PersistentRuntime(error)
     }
 }
 
@@ -541,6 +549,17 @@ pub struct RerunAuditReport {
     pub warnings: Diagnostics,
     pub first: SuiteRun,
     pub second: SuiteRun,
+    pub nondeterministic: bool,
+    pub lowering_cache: LoweringCacheCounters,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct PersistenceAuditReport {
+    pub warnings: Diagnostics,
+    pub first: SuiteRun,
+    pub second: SuiteRun,
+    pub load: PersistentRuntimeJournalLoadReport,
+    pub journal_bytes: u64,
     pub nondeterministic: bool,
     pub lowering_cache: LoweringCacheCounters,
 }
@@ -876,6 +895,8 @@ impl PreparedRun {
             false,
             None,
             Some(&mut state),
+            None,
+            None,
         )?;
         let mut second_state = PersistentRuntimeState::default();
         let second = run_lane(
@@ -890,6 +911,8 @@ impl PreparedRun {
             true,
             Some(state),
             Some(&mut second_state),
+            None,
+            None,
         )?;
         let first_value_checks = first
             .checks
@@ -912,6 +935,77 @@ impl PreparedRun {
         })
     }
 
+    pub fn execute_persistence_audit(self) -> Result<PersistenceAuditReport, RunError> {
+        self.execute_persistence_audit_with_journal_mutator(|journal| journal)
+    }
+
+    pub fn execute_persistence_audit_with_journal_mutator(
+        mut self,
+        mutate: impl FnOnce(PersistentRuntimeJournal) -> PersistentRuntimeJournal,
+    ) -> Result<PersistenceAuditReport, RunError> {
+        let mut state = PersistentRuntimeState::default();
+        let first = run_lane(
+            &self.compilation.module,
+            &mut self.cache,
+            ChaosPolicy::default(),
+            ExecutionPhase::PlainRuntimeReady,
+            ExecutionPhase::PlainCompleted,
+            &SnapshotExpectations::new(),
+            &mut |_| {},
+            false,
+            false,
+            None,
+            Some(&mut state),
+            None,
+            None,
+        )?;
+        let journal = state.to_journal();
+        let journal_json = journal.to_json()?;
+        let loaded_journal = PersistentRuntimeJournal::from_json(&journal_json)?;
+        let loaded_journal = mutate(loaded_journal);
+        let journal_json = loaded_journal.to_json()?;
+        let loaded_journal = PersistentRuntimeJournal::from_json(&journal_json)?;
+        let journal_bytes = journal_json.len() as u64;
+        let mut second_state = PersistentRuntimeState::default();
+        let mut load = PersistentRuntimeJournalLoadReport::default();
+        let second = run_lane(
+            &self.compilation.module,
+            &mut self.cache,
+            ChaosPolicy::default(),
+            ExecutionPhase::PlainRuntimeReady,
+            ExecutionPhase::PlainCompleted,
+            &SnapshotExpectations::new(),
+            &mut |_| {},
+            true,
+            true,
+            None,
+            Some(&mut second_state),
+            Some(&loaded_journal),
+            Some(&mut load),
+        )?;
+        let first_value_checks = first
+            .checks
+            .iter()
+            .filter(|check| check.identity.is_some())
+            .collect::<Vec<_>>();
+        let second_value_checks = second
+            .checks
+            .iter()
+            .filter(|check| check.identity.is_some())
+            .collect::<Vec<_>>();
+        let nondeterministic = first.value_family() != second.value_family()
+            || first_value_checks != second_value_checks;
+        Ok(PersistenceAuditReport {
+            warnings: self.compilation.warnings,
+            first,
+            second,
+            load,
+            journal_bytes,
+            nondeterministic,
+            lowering_cache: self.cache.counters(),
+        })
+    }
+
     fn execute_inner(
         mut self,
         expectations: &SnapshotExpectations,
@@ -929,6 +1023,8 @@ impl PreparedRun {
             false,
             None,
             None,
+            None,
+            None,
         )?;
         let chaos = run_lane(
             &self.compilation.module,
@@ -942,6 +1038,8 @@ impl PreparedRun {
             &mut observe,
             true,
             false,
+            None,
+            None,
             None,
             None,
         )?;
@@ -1157,8 +1255,16 @@ fn run_lane(
     use_rerun_overlays: bool,
     persistent_in: Option<PersistentRuntimeState>,
     persistent_out: Option<&mut PersistentRuntimeState>,
+    persistent_journal_in: Option<&PersistentRuntimeJournal>,
+    mut persistent_journal_report: Option<&mut PersistentRuntimeJournalLoadReport>,
 ) -> Result<SuiteRun, RunError> {
-    let mut runtime = if let Some(state) = persistent_in {
+    let mut journal_load_report = None;
+    let mut runtime = if let Some(journal) = persistent_journal_in {
+        let (runtime, report) =
+            Runtime::with_persistent_journal_values(EventLog::default(), journal)?;
+        journal_load_report = Some(report);
+        runtime
+    } else if let Some(state) = persistent_in {
         Runtime::with_persistent_state(EventLog::default(), state)
     } else {
         Runtime::new(EventLog::default())
@@ -1177,6 +1283,7 @@ fn run_lane(
     // observer, so equal preimages share one realized-demand entry.
     let mut observed_invocations: BTreeSet<String> = BTreeSet::new();
     let mut kill_available = chaos.kill_first_running_task;
+    let mut journal_claims_loaded = false;
 
     for test in &module.tests {
         runtime.set_fixture_rerun_overlay(
@@ -1184,6 +1291,14 @@ fn run_lane(
                 .then(|| test.metadata.rerun_with.clone())
                 .flatten(),
         );
+        if let Some(journal) = persistent_journal_in
+            && !journal_claims_loaded
+        {
+            if let Some(report) = journal_load_report.as_mut() {
+                runtime.load_persistent_journal_claims(journal, report);
+            }
+            journal_claims_loaded = true;
+        }
         let partitioned = module.try_partition_test(test)?;
         let selected = selected_wire_functions(&partitioned);
         let mut evaluated_islands: Vec<usize> = Vec::new();
@@ -1564,6 +1679,11 @@ fn run_lane(
     let (sink, state) = runtime.into_sink_and_persistent_state();
     if let Some(out) = persistent_out {
         *out = state;
+    }
+    if let (Some(report_out), Some(report)) =
+        (persistent_journal_report.as_deref_mut(), journal_load_report)
+    {
+        *report_out = report;
     }
     let events = sink.into_events();
     Ok(SuiteRun {

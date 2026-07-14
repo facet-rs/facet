@@ -38,6 +38,62 @@ pub struct StoreEntry {
     frozen: Option<FrozenValue>,
 }
 
+const STORE_JOURNAL_VERSION: u32 = 1;
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct StoreIdentityAuthority {
+    pub value_epoch: String,
+    pub store_epoch: String,
+}
+
+impl Default for StoreIdentityAuthority {
+    fn default() -> Self {
+        Self {
+            value_epoch: "vix.identity.value.framed.v1".to_owned(),
+            store_epoch: "vix.store.persistence.v1".to_owned(),
+        }
+    }
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct StoreJournal {
+    pub version: u32,
+    pub authority: StoreIdentityAuthority,
+    pub values: Vec<StoreJournalValue>,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct StoreJournalValue {
+    pub identity: ValueId,
+    pub resident: Vec<u8>,
+}
+
+#[derive(facet::Facet, Clone, Debug, Default, PartialEq, Eq)]
+pub struct StoreJournalLoadReport {
+    pub values_loaded: u64,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum StoreJournalError {
+    UnsupportedVersion {
+        version: u32,
+    },
+    AuthorityMismatch {
+        expected: StoreIdentityAuthority,
+        found: StoreIdentityAuthority,
+    },
+    DuplicateValue {
+        index: u64,
+        identity: ValueId,
+    },
+    CorruptValue {
+        index: u64,
+        claimed: ValueId,
+        observed: ValueId,
+    },
+}
+
 /// Scheduler-owned semantic execution representation for a published value.
 /// References are retained by `ValueId`, never by task-local or store handle.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -93,6 +149,75 @@ pub struct Store {
 }
 
 impl Store {
+    #[must_use]
+    pub fn to_journal(&self) -> StoreJournal {
+        let values = self
+            .entries
+            .iter()
+            .filter_map(|entry| {
+                let resident = entry.resident_bytes()?;
+                if entry.failure.is_some() {
+                    return None;
+                }
+                let observed =
+                    FramedNode::leaf(entry.identity.schema, resident.to_vec()).identity();
+                (observed == entry.identity).then(|| StoreJournalValue {
+                    identity: entry.identity,
+                    resident: resident.to_vec(),
+                })
+            })
+            .collect();
+        StoreJournal {
+            version: STORE_JOURNAL_VERSION,
+            authority: StoreIdentityAuthority::default(),
+            values,
+        }
+    }
+
+    pub fn from_journal(
+        journal: StoreJournal,
+    ) -> Result<(Self, StoreJournalLoadReport), StoreJournalError> {
+        if journal.version != STORE_JOURNAL_VERSION {
+            return Err(StoreJournalError::UnsupportedVersion {
+                version: journal.version,
+            });
+        }
+        let expected = StoreIdentityAuthority::default();
+        if journal.authority != expected {
+            return Err(StoreJournalError::AuthorityMismatch {
+                expected,
+                found: journal.authority,
+            });
+        }
+        let mut store = Store::default();
+        let mut seen = BTreeMap::new();
+        for (index, value) in journal.values.into_iter().enumerate() {
+            let observed =
+                FramedNode::leaf(value.identity.schema, value.resident.clone()).identity();
+            if observed != value.identity {
+                return Err(StoreJournalError::CorruptValue {
+                    index: index as u64,
+                    claimed: value.identity,
+                    observed,
+                });
+            }
+            if seen.insert(value.identity, index).is_some() {
+                return Err(StoreJournalError::DuplicateValue {
+                    index: index as u64,
+                    identity: value.identity,
+                });
+            }
+            let interned = store.intern_realized(value.identity.schema, &value.resident);
+            debug_assert_eq!(interned.identity, value.identity);
+        }
+        Ok((
+            store,
+            StoreJournalLoadReport {
+                values_loaded: seen.len() as u64,
+            },
+        ))
+    }
+
     /// Intern a realized scalar/opaque value. The value becomes a framed
     /// scalar/opaque leaf whose identity is computed by the closed writer, then
     /// deduplicated and stored through the single `intern_tree` path.

@@ -16,20 +16,24 @@ use crate::vir::{
     ExternKind, Function, FunctionId, Island, IslandId, NodeId, Op, Type, VariantPayload,
 };
 
-use super::fixture::{FixtureStore, TarMember, parse_ustar};
+use super::fixture::{FixtureEntryKind, FixtureReadError, FixtureStore, TarMember, parse_ustar};
 use super::identity::{
-    DemandKey, DemandPreimage, Location, LocationId, RecipeId, SchemaId, ValueId,
+    DemandKey, DemandPreimage, Digest, Location, LocationId, RecipeId, SchemaId, ValueId,
+    hash_framed,
 };
 use super::identity::{FramedField, FramedNode, FramedValue};
 use super::model::{
     DemandRecord, DemandState, FailureContext, FailureValue, MemoVerdict, ProcessTermination,
-    ReadWitness, Receipt, TaskId, TaskRecord, TaskState,
+    ReadObservation, ReadWitness, Receipt, TaskId, TaskRecord, TaskState,
 };
 use super::observe::{
     Counters, Event, EventKind, EventSink, ExecutionFacts, ExecutionFallbackFact,
     ExecutionLaneFact, SafePointClass,
 };
-use super::store::{FrozenValue, Handle, Interned, Store, StoreEntry};
+use super::store::{
+    FrozenValue, Handle, Interned, Store, StoreEntry, StoreJournal, StoreJournalError,
+    StoreJournalLoadReport,
+};
 use super::{MachineAttribution, MachineError, MachineOperation, RuntimeFault};
 
 #[derive(Clone, Debug)]
@@ -231,6 +235,96 @@ pub struct PersistentRuntimeState {
     memo: BTreeMap<LocationId, MemoEntry>,
 }
 
+impl PersistentRuntimeState {
+    #[must_use]
+    pub fn to_journal(&self) -> PersistentRuntimeJournal {
+        PersistentRuntimeJournal {
+            store: self.store.to_journal(),
+            claims: self
+                .memo
+                .values()
+                .filter_map(|entry| {
+                    Some(PersistentMemoClaim {
+                        location: entry.location.clone(),
+                        key: entry.key,
+                        preimage: entry.preimage.clone(),
+                        result: self.store.entry(entry.result)?.identity,
+                        receipt: entry.receipt.clone(),
+                    })
+                })
+                .collect(),
+        }
+    }
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct PersistentRuntimeJournal {
+    pub store: StoreJournal,
+    pub claims: Vec<PersistentMemoClaim>,
+}
+
+impl PersistentRuntimeJournal {
+    pub fn to_json(&self) -> Result<String, PersistentRuntimeJournalError> {
+        facet_json::to_string(self).map_err(|error| PersistentRuntimeJournalError::Json {
+            detail: error.to_string(),
+        })
+    }
+
+    pub fn from_json(text: &str) -> Result<Self, PersistentRuntimeJournalError> {
+        facet_json::from_str(text).map_err(|error| PersistentRuntimeJournalError::Json {
+            detail: error.to_string(),
+        })
+    }
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct PersistentMemoClaim {
+    pub location: Location,
+    pub key: DemandKey,
+    pub preimage: DemandPreimage,
+    pub result: ValueId,
+    pub receipt: Option<Receipt>,
+}
+
+#[derive(facet::Facet, Clone, Debug, Default, PartialEq, Eq)]
+pub struct PersistentRuntimeJournalLoadReport {
+    pub store: StoreJournalLoadReport,
+    pub claims_seen: u64,
+    pub claims_loaded: u64,
+    pub claims_rejected: u64,
+    pub rejected_claims: Vec<PersistentClaimRejection>,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct PersistentClaimRejection {
+    pub location: Location,
+    pub key: DemandKey,
+    pub reason: PersistentClaimRejectionReason,
+}
+
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum PersistentClaimRejectionReason {
+    KeyMismatch,
+    MissingValue,
+    MissingReceipt,
+    ReceiptDemandMismatch,
+    UnverifiableReceipt,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum PersistentRuntimeJournalError {
+    Json { detail: String },
+    Store(StoreJournalError),
+}
+
+impl From<StoreJournalError> for PersistentRuntimeJournalError {
+    fn from(error: StoreJournalError) -> Self {
+        Self::Store(error)
+    }
+}
+
 impl<S: EventSink> Runtime<S> {
     #[must_use]
     pub fn new(sink: S) -> Self {
@@ -276,6 +370,88 @@ impl<S: EventSink> Runtime<S> {
         self.authoritative_rerun_audit = enabled;
     }
 
+    pub fn with_persistent_journal_values(
+        sink: S,
+        journal: &PersistentRuntimeJournal,
+    ) -> Result<(Self, PersistentRuntimeJournalLoadReport), PersistentRuntimeJournalError> {
+        let (store, store_report) = Store::from_journal(journal.store.clone())?;
+        Ok((
+            Self {
+                sink,
+                sequence: 0,
+                store,
+                memo: BTreeMap::new(),
+                demands: BTreeMap::new(),
+                tasks: BTreeMap::new(),
+                counters: Counters::default(),
+                next_task: 0,
+                wire_demands: Vec::new(),
+                generator_document_receipts: Vec::new(),
+                fixture_store: FixtureStore::default(),
+                authoritative_rerun_audit: false,
+            },
+            PersistentRuntimeJournalLoadReport {
+                store: store_report,
+                ..PersistentRuntimeJournalLoadReport::default()
+            },
+        ))
+    }
+
+    pub fn load_persistent_journal_claims(
+        &mut self,
+        journal: &PersistentRuntimeJournal,
+        report: &mut PersistentRuntimeJournalLoadReport,
+    ) {
+        for claim in &journal.claims {
+            report.claims_seen += 1;
+            let reason = if DemandKey::from_preimage(&claim.preimage) != claim.key {
+                Some(PersistentClaimRejectionReason::KeyMismatch)
+            } else if self.store.handle_for_identity(claim.result).is_none() {
+                Some(PersistentClaimRejectionReason::MissingValue)
+            } else if claim.receipt.is_none() {
+                Some(PersistentClaimRejectionReason::MissingReceipt)
+            } else if claim
+                .receipt
+                .as_ref()
+                .is_some_and(|receipt| receipt.demand != claim.key)
+            {
+                Some(PersistentClaimRejectionReason::ReceiptDemandMismatch)
+            } else if !claim
+                .receipt
+                .as_ref()
+                .is_some_and(|receipt| self.reverify_receipt(receipt))
+            {
+                Some(PersistentClaimRejectionReason::UnverifiableReceipt)
+            } else {
+                None
+            };
+            if let Some(reason) = reason {
+                report.claims_rejected += 1;
+                report.rejected_claims.push(PersistentClaimRejection {
+                    location: claim.location.clone(),
+                    key: claim.key,
+                    reason,
+                });
+                continue;
+            }
+            let result = self
+                .store
+                .handle_for_identity(claim.result)
+                .expect("claim result was checked above");
+            self.memo.insert(
+                claim.location.id,
+                MemoEntry {
+                    location: claim.location.clone(),
+                    key: claim.key,
+                    preimage: claim.preimage.clone(),
+                    result,
+                    receipt: claim.receipt.clone(),
+                },
+            );
+            report.claims_loaded += 1;
+        }
+    }
+
     #[must_use]
     pub fn into_persistent_state(self) -> PersistentRuntimeState {
         PersistentRuntimeState {
@@ -317,22 +493,41 @@ impl<S: EventSink> Runtime<S> {
     }
 
     fn reverify_read_witness(&self, read: &ReadWitness) -> bool {
-        let Some(observed) = read.observed else {
-            return false;
-        };
-        if read.projection == "typed-doc-parse" {
-            return observed == read.source;
+        match read.observation {
+            ReadObservation::Value(observed) => {
+                if read.projection == "typed-doc-parse" {
+                    return observed == read.source;
+                }
+                if read.projection == "registry/manifest" {
+                    return self
+                        .fixture_store
+                        .registry_manifest()
+                        .is_ok_and(|manifest| {
+                            effect_leaf(&Type::String, manifest.into_bytes()).identity == observed
+                        });
+                }
+                if let Ok(bytes) = self.fixture_store.tree_file_bytes(&read.projection) {
+                    return effect_leaf(&Type::String, bytes).identity == observed;
+                }
+                if let Ok(bytes) = self
+                    .fixture_store
+                    .fetch_url(&format!("fixture://{}", read.projection))
+                {
+                    return effect_leaf(&Type::Extern(ExternKind::Blob), bytes).identity
+                        == observed;
+                }
+                false
+            }
+            ReadObservation::Missing => matches!(
+                self.fixture_store.tree_file_bytes(&read.projection),
+                Err(FixtureReadError::Missing)
+            ),
+            ReadObservation::Directory { digest } => self
+                .fixture_store
+                .tree_dir_entries(&read.projection)
+                .is_ok_and(|entries| directory_observation_digest(&entries) == digest),
+            ReadObservation::Unverifiable => false,
         }
-        if let Ok(bytes) = self.fixture_store.tree_file_bytes(&read.projection) {
-            return effect_leaf(&Type::String, bytes).identity == observed;
-        }
-        if let Ok(bytes) = self
-            .fixture_store
-            .fetch_url(&format!("fixture://{}", read.projection))
-        {
-            return effect_leaf(&Type::Extern(ExternKind::Blob), bytes).identity == observed;
-        }
-        false
     }
 
     fn exact_memo_replayable(&self, entry: &MemoEntry) -> bool {
@@ -1702,7 +1897,7 @@ impl<S: EventSink> Runtime<S> {
                 reads.push(ReadWitness {
                     source: document.identity,
                     projection: "typed-doc-parse".to_owned(),
-                    observed: Some(document.identity),
+                    observation: ReadObservation::Value(document.identity),
                 });
                 let decoded = decode::decode(*format, text, target)
                     .map_err(|_| effect_machine_error("effect decode failed"))?;
@@ -1773,7 +1968,7 @@ impl<S: EventSink> Runtime<S> {
                 reads.push(super::model::ReadWitness {
                     source,
                     projection,
-                    observed: Some(value.identity),
+                    observation: ReadObservation::Value(value.identity),
                 });
                 Ok(EffectTerm::Value(value))
             }
@@ -1833,7 +2028,9 @@ impl<S: EventSink> Runtime<S> {
                 reads.push(super::model::ReadWitness {
                     source: registry.identity,
                     projection: "registry/manifest".to_owned(),
-                    observed: None,
+                    observation: ReadObservation::Value(
+                        effect_leaf(&Type::String, manifest.clone().into_bytes()).identity,
+                    ),
                 });
                 let row = manifest.lines().find_map(|line| {
                     let mut fields = line.split_whitespace();
@@ -1872,7 +2069,7 @@ impl<S: EventSink> Runtime<S> {
                 reads.push(super::model::ReadWitness {
                     source: pinned_identity,
                     projection: projection.to_owned(),
-                    observed: Some(blob.identity),
+                    observation: ReadObservation::Value(blob.identity),
                 });
                 self.counters.fetches_performed += 1;
                 Ok(EffectTerm::Value(blob))
@@ -1979,7 +2176,9 @@ impl<S: EventSink> Runtime<S> {
             reads.push(super::model::ReadWitness {
                 source: tree.identity,
                 projection,
-                observed: None,
+                observation: ReadObservation::Directory {
+                    digest: directory_observation_digest(&entries),
+                },
             });
             let mut paths = entries
                 .into_iter()
@@ -2624,7 +2823,7 @@ impl<S: EventSink> Runtime<S> {
         reads.push(ReadWitness {
             source: entry.identity,
             projection: "typed-doc-parse".to_owned(),
-            observed: Some(entry.identity),
+            observation: ReadObservation::Value(entry.identity),
         });
 
         let result = decode::decode(plan.format, &input, &plan.target);
@@ -3034,7 +3233,7 @@ impl<S: EventSink> Runtime<S> {
             reads: vec![ReadWitness {
                 source: capability.identity,
                 projection: "capability.program".to_owned(),
-                observed: Some(capability.identity),
+                observation: ReadObservation::Unverifiable,
             }],
         };
         self.emit(EventKind::Demanded { key: demand_key });
@@ -3528,6 +3727,19 @@ impl<S: EventSink> Runtime<S> {
             },
         )
     }
+}
+
+fn directory_observation_digest(entries: &[(String, FixtureEntryKind)]) -> Digest {
+    let mut fields = Vec::with_capacity(entries.len() * 2);
+    for (name, kind) in entries {
+        fields.push(name.as_bytes());
+        fields.push(match kind {
+            FixtureEntryKind::File => b"file".as_slice(),
+            FixtureEntryKind::Dir => b"dir".as_slice(),
+            FixtureEntryKind::Symlink => b"symlink".as_slice(),
+        });
+    }
+    hash_framed(b"vix.fixture.directory-observation.v1", &fields)
 }
 
 /// Type-directed structural rendering of a published snapshot value. It mirrors

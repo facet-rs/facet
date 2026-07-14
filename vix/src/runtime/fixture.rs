@@ -74,6 +74,7 @@ impl FixtureStore {
             (Some("readme-changed"), "readme-changed/README.md") => {
                 Some(b"# readme-changed\n\nupdated readme\n")
             }
+            (Some("path-appears"), "path-appears/src/new.rs") => Some(b"pub fn new() {}\n"),
             _ => None,
         }
     }
@@ -84,6 +85,9 @@ impl FixtureStore {
             return Ok(FixtureEntryKind::File);
         }
         if projection == "readme-changed/src" {
+            return Ok(FixtureEntryKind::Dir);
+        }
+        if projection == "path-appears/src" {
             return Ok(FixtureEntryKind::Dir);
         }
         let metadata = std::fs::symlink_metadata(self.tree_path(projection))
@@ -119,6 +123,13 @@ impl FixtureStore {
     ) -> Result<Vec<(String, FixtureEntryKind)>, FixtureReadError> {
         if projection == "readme-changed/src" {
             return Ok(vec![("main.c".to_owned(), FixtureEntryKind::File)]);
+        }
+        if projection == "path-appears/src" {
+            let mut entries = Vec::new();
+            if self.rerun_with.as_deref() == Some("path-appears") {
+                entries.push(("new.rs".to_owned(), FixtureEntryKind::File));
+            }
+            return Ok(entries);
         }
         let dir =
             std::fs::read_dir(self.tree_path(projection)).map_err(|_| FixtureReadError::NotADir)?;
