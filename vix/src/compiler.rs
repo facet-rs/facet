@@ -7706,6 +7706,8 @@ fn push_variant_payload_equality(
     })
 }
 
+type FieldProject<'a> = dyn FnMut(&mut Vec<Node>, u32, &Type) -> (NodeId, NodeId) + 'a;
+
 /// Short-circuit conjunction over per-field equalities: field `i + 1` is
 /// projected and compared only inside the region where field `i` already
 /// compared equal. An empty field list is `true`.
@@ -7714,7 +7716,7 @@ fn push_field_conjunction(
     span: Span,
     field_types: &[Type],
     index: usize,
-    project: &mut dyn FnMut(&mut Vec<Node>, u32, &Type) -> (NodeId, NodeId),
+    project: &mut FieldProject<'_>,
 ) -> NodeId {
     let Some(ty) = field_types.get(index) else {
         return lower_bool_constant(nodes, span, true).node;
