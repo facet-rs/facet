@@ -125,13 +125,12 @@ fn unsupported_generic_call_span(source: &str) -> Option<Span> {
                 }
                 if bytes.get(index) == Some(&b'<')
                     && !is_allowed_type_application(&bytes[start..index])
+                    && let Some(end) = generic_call_end(bytes, index)
                 {
-                    if let Some(end) = generic_call_end(bytes, index) {
-                        return Some(Span {
-                            start: u32::try_from(start).unwrap_or(u32::MAX),
-                            end: u32::try_from(end).unwrap_or(u32::MAX),
-                        });
-                    }
+                    return Some(Span {
+                        start: u32::try_from(start).unwrap_or(u32::MAX),
+                        end: u32::try_from(end).unwrap_or(u32::MAX),
+                    });
                 }
             }
             _ => index += 1,

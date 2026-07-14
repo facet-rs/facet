@@ -620,42 +620,43 @@ impl<S: EventSink> Runtime<S> {
             let mut document_reads = Vec::new();
             loop {
                 let mut document_host_queue = DocumentHostQueue::default();
-                let mut document_host = |frame: &mut [u8]| document_host_queue.call(frame);
-                let step = match self.store.with_value_memory_overrides(
-                    &value_memory_overrides,
-                    |value_memories| {
-                        // Every scheduler task receives the one generic document
-                        // primitive. Verified programs that do not contain a
-                        // `HostCallYield` never invoke it; a program that does
-                        // is admitted only with a sufficient host table and is
-                        // routed back through the typed plan below.
-                        let mut hosts: Vec<HostFn<'_>> = vec![&mut document_host];
-                        task.drive_hosted_with_value_memories(
-                            &mut ready,
-                            &awaited,
-                            &mut hosts,
-                            value_memories,
-                        )
-                        .map_err(Box::new)
-                    },
-                ) {
-                    Ok(step) => step,
-                    Err(fault) => {
-                        let error = self.task_fault(
-                            MachineOperation::Drive,
-                            *fault,
-                            lowered,
-                            attribution,
-                            None,
-                        );
-                        return Err(Box::new(self.terminate_machine_fault(
-                            task_id,
-                            lowered.demand_key,
-                            error,
-                        )));
+                let step = {
+                    let mut document_host = |frame: &mut [u8]| document_host_queue.call(frame);
+                    match self.store.with_value_memory_overrides(
+                        &value_memory_overrides,
+                        |value_memories| {
+                            // Every scheduler task receives the one generic document
+                            // primitive. Verified programs that do not contain a
+                            // `HostCallYield` never invoke it; a program that does
+                            // is admitted only with a sufficient host table and is
+                            // routed back through the typed plan below.
+                            let mut hosts: Vec<HostFn<'_>> = vec![&mut document_host];
+                            task.drive_hosted_with_value_memories(
+                                &mut ready,
+                                &awaited,
+                                &mut hosts,
+                                value_memories,
+                            )
+                            .map_err(Box::new)
+                        },
+                    ) {
+                        Ok(step) => step,
+                        Err(fault) => {
+                            let error = self.task_fault(
+                                MachineOperation::Drive,
+                                *fault,
+                                lowered,
+                                attribution,
+                                None,
+                            );
+                            return Err(Box::new(self.terminate_machine_fault(
+                                task_id,
+                                lowered.demand_key,
+                                error,
+                            )));
+                        }
                     }
                 };
-                drop(document_host);
                 match step {
                     TaskStep::Done => break,
                     TaskStep::Yielded => {
@@ -1857,37 +1858,38 @@ impl<S: EventSink> Runtime<S> {
             let mut document_reads = Vec::new();
             loop {
                 let mut document_host_queue = DocumentHostQueue::default();
-                let mut document_host = |frame: &mut [u8]| document_host_queue.call(frame);
-                let step = match self.store.with_value_memory_overrides(
-                    &value_memory_overrides,
-                    |value_memories| {
-                        let mut hosts: Vec<HostFn<'_>> = vec![&mut document_host];
-                        task.drive_hosted_with_value_memories(
-                            &mut [],
-                            &[],
-                            &mut hosts,
-                            value_memories,
-                        )
-                        .map_err(Box::new)
-                    },
-                ) {
-                    Ok(step) => step,
-                    Err(fault) => {
-                        let error = self.task_fault(
-                            MachineOperation::Drive,
-                            *fault,
-                            lowered,
-                            attribution,
-                            None,
-                        );
-                        return Err(Box::new(self.terminate_machine_fault(
-                            task_id,
-                            lowered.demand_key,
-                            error,
-                        )));
+                let step = {
+                    let mut document_host = |frame: &mut [u8]| document_host_queue.call(frame);
+                    match self.store.with_value_memory_overrides(
+                        &value_memory_overrides,
+                        |value_memories| {
+                            let mut hosts: Vec<HostFn<'_>> = vec![&mut document_host];
+                            task.drive_hosted_with_value_memories(
+                                &mut [],
+                                &[],
+                                &mut hosts,
+                                value_memories,
+                            )
+                            .map_err(Box::new)
+                        },
+                    ) {
+                        Ok(step) => step,
+                        Err(fault) => {
+                            let error = self.task_fault(
+                                MachineOperation::Drive,
+                                *fault,
+                                lowered,
+                                attribution,
+                                None,
+                            );
+                            return Err(Box::new(self.terminate_machine_fault(
+                                task_id,
+                                lowered.demand_key,
+                                error,
+                            )));
+                        }
                     }
                 };
-                drop(document_host);
                 match step {
                     TaskStep::Done => break,
                     TaskStep::Yielded => {

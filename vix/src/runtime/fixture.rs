@@ -151,6 +151,11 @@ pub enum TarMember {
     },
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UstarParseError {
+    Malformed,
+}
+
 impl TarMember {
     #[must_use]
     pub fn path(&self) -> &str {
@@ -177,7 +182,7 @@ fn header_string(bytes: &[u8]) -> Option<String> {
 /// Parse a plain (uncompressed) ustar archive into its members. Trailing
 /// zero-block padding of any length is accepted; PAX/GNU extension records are
 /// a malformed archive for this band.
-pub fn parse_ustar(bytes: &[u8]) -> Result<Vec<TarMember>, ()> {
+pub fn parse_ustar(bytes: &[u8]) -> Result<Vec<TarMember>, UstarParseError> {
     const BLOCK: usize = 512;
     let mut members = Vec::new();
     let mut offset = 0usize;
@@ -188,20 +193,22 @@ pub fn parse_ustar(bytes: &[u8]) -> Result<Vec<TarMember>, ()> {
             if bytes[offset..].iter().all(|&b| b == 0) {
                 return Ok(members);
             }
-            return Err(());
+            return Err(UstarParseError::Malformed);
         }
-        let mut path = header_string(&header[0..100]).ok_or(())?;
+        let mut path = header_string(&header[0..100]).ok_or(UstarParseError::Malformed)?;
         let prefix = header_string(&header[345..500]).unwrap_or_default();
         if !prefix.is_empty() {
             path = format!("{prefix}/{path}");
         }
-        let size = octal_field(&header[124..136]).ok_or(())? as usize;
-        let mode = octal_field(&header[100..108]).ok_or(())?;
+        let size = octal_field(&header[124..136]).ok_or(UstarParseError::Malformed)? as usize;
+        let mode = octal_field(&header[100..108]).ok_or(UstarParseError::Malformed)?;
         let typeflag = header[156];
         let data_start = offset + BLOCK;
-        let data_end = data_start.checked_add(size).ok_or(())?;
+        let data_end = data_start
+            .checked_add(size)
+            .ok_or(UstarParseError::Malformed)?;
         if data_end > bytes.len() {
-            return Err(());
+            return Err(UstarParseError::Malformed);
         }
         match typeflag {
             b'0' | 0 => members.push(TarMember::File {
@@ -214,11 +221,11 @@ pub fn parse_ustar(bytes: &[u8]) -> Result<Vec<TarMember>, ()> {
             }),
             b'2' => members.push(TarMember::Symlink {
                 path,
-                target: header_string(&header[157..257]).ok_or(())?,
+                target: header_string(&header[157..257]).ok_or(UstarParseError::Malformed)?,
             }),
             // Extension records and exotic member kinds are out of this
             // band's archive model.
-            _ => return Err(()),
+            _ => return Err(UstarParseError::Malformed),
         }
         let padded = size.div_ceil(BLOCK) * BLOCK;
         offset = data_start + padded;
@@ -227,7 +234,7 @@ pub fn parse_ustar(bytes: &[u8]) -> Result<Vec<TarMember>, ()> {
     if offset == bytes.len() {
         Ok(members)
     } else {
-        Err(())
+        Err(UstarParseError::Malformed)
     }
 }
 
