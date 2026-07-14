@@ -5681,42 +5681,46 @@ fn t() -> Stream<Check> {
 fn dynamic_json_and_toml_decode_use_the_scheduler_host_once_per_document() {
     const JSON_OK: &str = "\
 struct PkgRow { name: String }
+fn check(src: String) -> Bool {
+    match try_json_decode<PkgRow>(src) {
+        Ok(row) => row.name == \"mio\",
+        Err(_) => false,
+    }
+}
 #[test]
 fn t() -> Stream<Check> {
     let src = \"{\\\"name\\\":\\\"mio\\\"}\";
-    let decoded = try_json_decode<PkgRow>(src);
-    yield match decoded {
-        Ok(row) => expect_eq(row.name, \"mio\"),
-        Err(_) => expect(false),
-    };
+    yield expect(check(src));
 }
 ";
     const JSON_ERR: &str = "\
 struct PkgRow { name: String }
+fn check(src: String) -> Bool {
+    match try_json_decode<PkgRow>(src) {
+        Ok(_) => false,
+        Err(error) => error.path == \"name\"
+            && error.document_offset == 8
+            && error.document_len == 2,
+    }
+}
 #[test]
 fn t() -> Stream<Check> {
     let src = \"{\\\"name\\\":42}\";
-    let decoded = try_json_decode<PkgRow>(src);
-    yield match decoded {
-        Ok(_) => expect(false),
-        Err(error) => expect(
-            error.path == \"name\"
-                && error.document_offset == 8
-                && error.document_len == 2,
-        ),
-    };
+    yield expect(check(src));
 }
 ";
     const TOML_OK: &str = "\
 struct PkgRow { name: String }
+fn check(src: String) -> Bool {
+    match try_toml_decode<PkgRow>(src) {
+        Ok(row) => row.name == \"mio\",
+        Err(_) => false,
+    }
+}
 #[test]
 fn t() -> Stream<Check> {
     let src = \"name = \\\"mio\\\"\\n\";
-    let decoded = try_toml_decode<PkgRow>(src);
-    yield match decoded {
-        Ok(row) => expect_eq(row.name, \"mio\"),
-        Err(_) => expect(false),
-    };
+    yield expect(check(src));
 }
 ";
 
