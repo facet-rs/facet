@@ -3,19 +3,22 @@ use std::fmt::Write as _;
 use std::ops::Deref;
 
 use weavy::exec::{
-    FallbackReason, FaultSite, LaneKind, ResolvedTaskValue, TaskFault, TaskStructuralValue,
-    TaskValueResolver,
+    FallbackReason, FaultSite, LaneKind, ResolvedTaskValue, StoreHandle, TaskFault,
+    TaskStructuralValue, TaskValueResolver,
 };
-use weavy::task::{FnId, TaskEvent as WeavyTaskEvent, TaskStep};
+use weavy::task::{FnId, HostFn, TaskEvent as WeavyTaskEvent, TaskStep};
 
-use crate::lowering::{LoweringArtifact, LoweringAttribution, ValueInputBinding};
+use crate::decode::{self, DecodedValue};
+use crate::lowering::{
+    DocumentParseCall, LoweringArtifact, LoweringAttribution, ValueInputBinding,
+};
 use crate::vir::{FunctionId, IslandId, Type, VariantPayload};
 
 use super::identity::{DemandKey, DemandPreimage, Location, LocationId, SchemaId, ValueId};
 use super::identity::{FramedField, FramedNode, FramedValue};
 use super::model::{
-    DemandRecord, DemandState, FailureContext, FailureValue, MemoVerdict, Receipt, TaskId,
-    TaskRecord, TaskState,
+    DemandRecord, DemandState, FailureContext, FailureValue, MemoVerdict, ReadWitness, Receipt,
+    TaskId, TaskRecord, TaskState,
 };
 use super::observe::{
     Counters, Event, EventKind, EventSink, ExecutionFacts, ExecutionFallbackFact,
@@ -59,6 +62,34 @@ impl Deref for DemandExecution<'_> {
 
     fn deref(&self) -> &Self::Target {
         self.artifact
+    }
+}
+
+/// The single generic document host table entry records its request and yields.
+/// It does not parse, own a store, or choose a schema: those are scheduler-owned
+/// responsibilities performed after Weavy has returned the suspended frame.
+#[derive(Clone, Copy, Debug)]
+struct DocumentHostRequest {
+    plan: usize,
+    input: i64,
+}
+
+#[derive(Default)]
+struct DocumentHostQueue {
+    requests: Vec<DocumentHostRequest>,
+    fault: Option<String>,
+}
+
+impl DocumentHostQueue {
+    fn call(&mut self, frame: &mut [u8]) {
+        let plan = super::FrameSlot::for_word(0)
+            .and_then(|slot| slot.read(frame))
+            .and_then(|value| usize::try_from(value).ok());
+        let input = super::FrameSlot::for_word(1).and_then(|slot| slot.read(frame));
+        match (plan, input) {
+            (Some(plan), Some(input)) => self.requests.push(DocumentHostRequest { plan, input }),
+            _ => self.fault = Some("invalid document host ABI header".to_owned()),
+        }
     }
 }
 
@@ -532,14 +563,23 @@ impl<S: EventSink> Runtime<S> {
             // branch's argument — is never evaluated, entered, or failed.
             let mut ready = vec![false; wires.len()];
             let mut awaited = vec![0i64; wires.len()];
+            let mut document_reads = Vec::new();
             loop {
+                let mut document_host_queue = DocumentHostQueue::default();
+                let mut document_host = |frame: &mut [u8]| document_host_queue.call(frame);
                 let step = match self.store.with_value_memory_overrides(
                     &value_memory_overrides,
                     |value_memories| {
+                        let mut hosts: Vec<HostFn<'_>> = if lowered.document_parse_calls.is_empty()
+                        {
+                            Vec::new()
+                        } else {
+                            vec![&mut document_host]
+                        };
                         task.drive_hosted_with_value_memories(
                             &mut ready,
                             &awaited,
-                            &mut [],
+                            &mut hosts,
                             value_memories,
                         )
                         .map_err(Box::new)
@@ -561,20 +601,66 @@ impl<S: EventSink> Runtime<S> {
                         )));
                     }
                 };
+                drop(document_host);
                 match step {
                     TaskStep::Done => break,
                     TaskStep::Yielded => {
-                        let error = MachineError::runtime(
-                            MachineOperation::Drive,
-                            RuntimeFault::PureIslandYielded,
-                            None,
-                            Some(lowered.demand_key),
-                        );
-                        return Err(Box::new(self.terminate_machine_fault(
-                            task_id,
-                            lowered.demand_key,
-                            error,
-                        )));
+                        let request = match document_host_queue.requests.as_slice() {
+                            [request] if document_host_queue.fault.is_none() => *request,
+                            _ => {
+                                let error = MachineError::runtime(
+                                    MachineOperation::Drive,
+                                    RuntimeFault::DocumentParseHost {
+                                        detail: document_host_queue.fault.unwrap_or_else(|| {
+                                            "document host yielded without exactly one request"
+                                                .to_owned()
+                                        }),
+                                    },
+                                    None,
+                                    Some(lowered.demand_key),
+                                );
+                                return Err(Box::new(self.terminate_machine_fault(
+                                    task_id,
+                                    lowered.demand_key,
+                                    error,
+                                )));
+                            }
+                        };
+                        let Some(plan) = lowered.document_parse_calls.get(request.plan) else {
+                            let error = MachineError::runtime(
+                                MachineOperation::Drive,
+                                RuntimeFault::DocumentParseHost {
+                                    detail:
+                                        "document host plan is absent from the lowered artifact"
+                                            .to_owned(),
+                                },
+                                None,
+                                Some(lowered.demand_key),
+                            );
+                            return Err(Box::new(self.terminate_machine_fault(
+                                task_id,
+                                lowered.demand_key,
+                                error,
+                            )));
+                        };
+                        if let Err(detail) = self.complete_document_parse(
+                            &mut task,
+                            plan,
+                            request,
+                            &mut document_reads,
+                        ) {
+                            let error = MachineError::runtime(
+                                MachineOperation::Drive,
+                                RuntimeFault::DocumentParseHost { detail },
+                                None,
+                                Some(lowered.demand_key),
+                            );
+                            return Err(Box::new(self.terminate_machine_fault(
+                                task_id,
+                                lowered.demand_key,
+                                error,
+                            )));
+                        }
                     }
                     TaskStep::Parked { input } => {
                         // The task has fully returned control — its frame arena is
@@ -694,7 +780,7 @@ impl<S: EventSink> Runtime<S> {
                             key: lowered.demand_key,
                             preimage: lowered.demand_preimage.clone(),
                             result: interned.handle,
-                            receipt: None,
+                            receipt: document_receipt(lowered.demand_key, &document_reads),
                         },
                     );
                     if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
@@ -760,7 +846,7 @@ impl<S: EventSink> Runtime<S> {
                             key: lowered.demand_key,
                             preimage: lowered.demand_preimage.clone(),
                             result: interned.handle,
-                            receipt: None,
+                            receipt: document_receipt(lowered.demand_key, &document_reads),
                         },
                     );
                     if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
@@ -1500,6 +1586,78 @@ impl<S: EventSink> Runtime<S> {
                 interned.handle
             })
             .collect()
+    }
+
+    fn complete_document_parse(
+        &mut self,
+        task: &mut weavy::exec::ExecTask<'_>,
+        plan: &DocumentParseCall,
+        request: DocumentHostRequest,
+        reads: &mut Vec<ReadWitness>,
+    ) -> Result<(), String> {
+        if plan.target_schema != semantic_schema_id(&plan.target) {
+            return Err(
+                "document host target schema does not match its declared target type".to_owned(),
+            );
+        }
+        let handle = StoreHandle::new(
+            usize::try_from(request.input)
+                .map_err(|_| "document host input is not a store handle".to_owned())?,
+        )
+        .ok_or_else(|| "document host input store handle is invalid".to_owned())?;
+        let entry = self
+            .store
+            .entry_by_weavy_handle(handle)
+            .ok_or_else(|| "document host input store entry is absent".to_owned())?;
+        let input = std::str::from_utf8(
+            entry
+                .resident_bytes()
+                .ok_or_else(|| "document host input is not resident".to_owned())?,
+        )
+        .map_err(|_| "document host input is not UTF-8 String data".to_owned())?
+        .to_owned();
+        reads.push(ReadWitness {
+            source: entry.identity,
+            projection: "typed-doc-parse".to_owned(),
+        });
+
+        let result = decode::decode(plan.format, &input, &plan.target);
+        let mut interned = Vec::new();
+        zero_host_region(task, plan.output)?;
+        match result {
+            Ok(value) => {
+                write_host_word(task, plan.output, 0, 0)?;
+                let mut cursor = 1;
+                materialize_decoded_value(
+                    task,
+                    plan.output,
+                    &plan.target,
+                    &value,
+                    &mut cursor,
+                    &mut self.store,
+                    &mut interned,
+                )?;
+            }
+            Err(error) => {
+                write_host_word(task, plan.output, 0, 1)?;
+                let error_ty = runtime_decode_error_type();
+                let mut cursor = 1;
+                materialize_decode_error(
+                    task,
+                    plan.output,
+                    &error_ty,
+                    &error,
+                    &mut cursor,
+                    &mut self.store,
+                    &mut interned,
+                )?;
+            }
+        }
+        for interned in interned {
+            self.observe_interned(interned);
+        }
+        self.counters.document_parse_host_calls += 1;
+        Ok(())
     }
 
     fn observe_interned(&mut self, interned: Interned) {
@@ -2760,6 +2918,159 @@ fn read_payload_word(bytes: &[u8], offset: usize) -> Option<i64> {
 
 fn semantic_schema_id(ty: &Type) -> SchemaId {
     SchemaId::named(&format!("vix.semantic.v1:{}", ty.name()))
+}
+
+fn runtime_decode_error_type() -> Type {
+    Type::Record(crate::vir::RecordType {
+        name: "DecodeError".to_owned(),
+        fields: vec![
+            crate::vir::RecordField {
+                name: "kind".to_owned(),
+                ty: Type::String,
+            },
+            crate::vir::RecordField {
+                name: "path".to_owned(),
+                ty: Type::String,
+            },
+            crate::vir::RecordField {
+                name: "document_offset".to_owned(),
+                ty: Type::Int,
+            },
+            crate::vir::RecordField {
+                name: "document_len".to_owned(),
+                ty: Type::Int,
+            },
+        ],
+    })
+}
+
+fn document_receipt(demand: DemandKey, reads: &[ReadWitness]) -> Option<Receipt> {
+    (!reads.is_empty()).then(|| Receipt {
+        demand,
+        reads: reads.to_vec(),
+    })
+}
+
+fn zero_host_region(
+    task: &mut weavy::exec::ExecTask<'_>,
+    region: super::FrameRegion,
+) -> Result<(), String> {
+    for index in 0..region.words().as_usize() {
+        write_host_word(task, region, index, 0)?;
+    }
+    Ok(())
+}
+
+fn write_host_word(
+    task: &mut weavy::exec::ExecTask<'_>,
+    region: super::FrameRegion,
+    index: usize,
+    value: i64,
+) -> Result<(), String> {
+    let slot = region
+        .word(index)
+        .ok_or_else(|| "document host wrote outside its typed result region".to_owned())?;
+    task.write_host_word(slot.byte_offset(), value)
+        .map_err(|fault| format!("document host frame materialization failed: {fault:?}"))
+}
+
+fn materialize_decoded_value(
+    task: &mut weavy::exec::ExecTask<'_>,
+    region: super::FrameRegion,
+    ty: &Type,
+    value: &DecodedValue,
+    cursor: &mut usize,
+    store: &mut Store,
+    interned: &mut Vec<Interned>,
+) -> Result<(), String> {
+    match (ty, value) {
+        (Type::Int, DecodedValue::Int(value)) => {
+            write_host_word(task, region, *cursor, *value)?;
+            *cursor += 1;
+        }
+        (Type::Bool, DecodedValue::Bool(value)) => {
+            write_host_word(task, region, *cursor, i64::from(*value))?;
+            *cursor += 1;
+        }
+        (Type::String, DecodedValue::Str(value)) => {
+            let allocated = store.intern_realized(semantic_schema_id(ty), value.as_bytes());
+            let handle = store
+                .weavy_handle(allocated.handle)
+                .ok_or_else(|| "document host allocated a missing String handle".to_owned())?;
+            write_host_word(task, region, *cursor, handle.as_i64())?;
+            interned.push(allocated);
+            *cursor += 1;
+        }
+        (Type::Record(record), DecodedValue::Record(values)) => {
+            if record.fields.len() != values.len() {
+                return Err("decoded record field count disagrees with its schema".to_owned());
+            }
+            for (field, value) in record.fields.iter().zip(values) {
+                materialize_decoded_value(task, region, &field.ty, value, cursor, store, interned)?;
+            }
+        }
+        (Type::Enum(enumeration), DecodedValue::OptionSome(value))
+            if ty.option_inner().is_some() =>
+        {
+            write_host_word(task, region, *cursor, 0)?;
+            *cursor += 1;
+            let inner = ty.option_inner().expect("guarded option inner");
+            materialize_decoded_value(task, region, inner, value, cursor, store, interned)?;
+            let _ = enumeration;
+        }
+        (Type::Enum(_), DecodedValue::OptionNone) if ty.option_inner().is_some() => {
+            write_host_word(task, region, *cursor, 1)?;
+            *cursor += 1;
+        }
+        (Type::Enum(enumeration), DecodedValue::Variant { index, fields }) => {
+            let variant = enumeration
+                .variants
+                .get(*index as usize)
+                .ok_or_else(|| "decoded enum variant is outside its schema".to_owned())?;
+            write_host_word(task, region, *cursor, i64::from(*index))?;
+            *cursor += 1;
+            let types: Vec<&Type> = match &variant.payload {
+                VariantPayload::Unit => Vec::new(),
+                VariantPayload::Tuple(fields) => fields.iter().collect(),
+                VariantPayload::Record(fields) => fields.iter().map(|field| &field.ty).collect(),
+            };
+            if types.len() != fields.len() {
+                return Err("decoded enum payload count disagrees with its schema".to_owned());
+            }
+            for (ty, value) in types.into_iter().zip(fields) {
+                materialize_decoded_value(task, region, ty, value, cursor, store, interned)?;
+            }
+        }
+        _ => {
+            return Err(format!(
+                "decoded value does not match target schema {}",
+                ty.name()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn materialize_decode_error(
+    task: &mut weavy::exec::ExecTask<'_>,
+    region: super::FrameRegion,
+    ty: &Type,
+    error: &decode::DecodeError,
+    cursor: &mut usize,
+    store: &mut Store,
+    interned: &mut Vec<Interned>,
+) -> Result<(), String> {
+    let Type::Record(record) = ty else {
+        return Err("decode error schema is not a record".to_owned());
+    };
+    let kind = DecodedValue::Str(error.kind.label().to_owned());
+    let path = DecodedValue::Str(error.path_names().join("."));
+    let offset = DecodedValue::Int(error.span.map_or(-1, |span| i64::from(span.offset)));
+    let len = DecodedValue::Int(error.span.map_or(-1, |span| i64::from(span.len)));
+    for (field, value) in record.fields.iter().zip([kind, path, offset, len]) {
+        materialize_decoded_value(task, region, &field.ty, &value, cursor, store, interned)?;
+    }
+    Ok(())
 }
 
 fn invalid_realized_result(lowered: &LoweringArtifact, size: usize) -> TaskFault {

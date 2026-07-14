@@ -30,10 +30,10 @@ use crate::runtime::{
 };
 use crate::support::Span;
 use crate::vir::{
-    ArrayMapExecutionShape, ArrayMapPartition, EnumType, EnumVariant, Function, FunctionId, Island,
-    IslandPurpose, Node, NodeId, NodeRef, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT,
-    ORDERING_EQUAL_VARIANT, ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, Type,
-    ValueIslandId, VariantPayload, YieldSiteId,
+    ArrayMapExecutionShape, ArrayMapPartition, DecodeFormat, EnumType, EnumVariant, Function,
+    FunctionId, Island, IslandPurpose, Node, NodeId, NodeRef, OPTION_NONE_VARIANT,
+    OPTION_SOME_VARIANT, ORDERING_EQUAL_VARIANT, ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT,
+    Op, Type, ValueIslandId, VariantPayload, YieldSiteId,
 };
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -97,6 +97,18 @@ pub struct ValueInputBinding {
     pub payload_element_schema: Option<WeavySchemaRef>,
     pub ty: Type,
     pub publication_schemas: Vec<(Type, WeavySchemaRef)>,
+}
+
+/// One schema-authoritative runtime document parse site. The generic Weavy host
+/// table has one decode entry; this plan supplies the concrete format, target
+/// type, and typed frame regions for one authored VIR node.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DocumentParseCall {
+    pub(crate) format: DecodeFormat,
+    pub(crate) target: Type,
+    pub(crate) target_schema: SchemaId,
+    pub(crate) input: FrameRegion,
+    pub(crate) output: FrameRegion,
 }
 
 /// The internal result ABI carried by every function in an array-bearing
@@ -199,6 +211,7 @@ pub struct LoweringArtifact {
     pub pc_nodes: Vec<Vec<NodeRef>>,
     pub constants: Vec<ValueConstant>,
     pub value_inputs: Vec<ValueInputBinding>,
+    pub(crate) document_parse_calls: Vec<DocumentParseCall>,
     pub output_type: Type,
     pub output_schema: SchemaId,
     pub forced_copy_value: bool,
@@ -288,6 +301,17 @@ impl LoweringArtifact {
                 constant.owner.schema,
                 constant.store_schema.0.hex(),
                 constant.bytes.len()
+            );
+        }
+        for (index, call) in self.document_parse_calls.iter().enumerate() {
+            let _ = writeln!(
+                out,
+                "doc-parse host[{index}] format={:?} target={} schema={} input=frame[{}] output=frame[{}]",
+                call.format,
+                call.target.name(),
+                call.target_schema.0.hex(),
+                call.input.start().byte_offset(),
+                call.output.start().byte_offset(),
             );
         }
         for (function_index, function) in self.program().fns.iter().enumerate() {
@@ -541,6 +565,7 @@ fn lower_island(
     };
 
     let mut pending_constants = BTreeMap::new();
+    let mut document_parse_calls = Vec::new();
     let mut functions_out = Vec::with_capacity(1 + island.callees.len());
     let mut pc_nodes = Vec::with_capacity(1 + island.callees.len());
     let lowered_root = lower_vir_function(
@@ -550,6 +575,7 @@ fn lower_island(
         island.output,
         &context,
         &mut pending_constants,
+        &mut document_parse_calls,
     )?;
     functions_out.push(lowered_root.function);
     pc_nodes.push(lowered_root.pc_nodes);
@@ -564,6 +590,7 @@ fn lower_island(
             output,
             &context,
             &mut pending_constants,
+            &mut document_parse_calls,
         )?;
         functions_out.push(lowered.function);
         pc_nodes.push(lowered.pc_nodes);
@@ -611,6 +638,7 @@ fn lower_island(
         pc_nodes,
         constants,
         value_inputs,
+        document_parse_calls,
         output_type: output.ty.clone(),
         output_schema: semantic_schema_id(&output.ty),
         forced_copy_value: island.forced_copy_value,
@@ -654,6 +682,30 @@ fn publication_capability_registered(ty: &Type) -> bool {
 
 fn semantic_schema_id(ty: &Type) -> SchemaId {
     SchemaId::named(&format!("vix.semantic.v1:{}", ty.name()))
+}
+
+fn decode_error_type() -> Type {
+    Type::Record(crate::vir::RecordType {
+        name: "DecodeError".to_owned(),
+        fields: vec![
+            crate::vir::RecordField {
+                name: "kind".to_owned(),
+                ty: Type::String,
+            },
+            crate::vir::RecordField {
+                name: "path".to_owned(),
+                ty: Type::String,
+            },
+            crate::vir::RecordField {
+                name: "document_offset".to_owned(),
+                ty: Type::Int,
+            },
+            crate::vir::RecordField {
+                name: "document_len".to_owned(),
+                ty: Type::Int,
+            },
+        ],
+    })
 }
 
 fn bind_value_inputs(
@@ -3366,6 +3418,20 @@ struct FunctionLayout {
     frame_size: usize,
 }
 
+// Every lowered function starts with the same two-word document-host ABI
+// header. A single generic Weavy host-table entry can therefore find the call
+// plan and input in any active frame; the schema-specialized output region is
+// carried by the corresponding `DocumentParseCall` plan.
+const DOCUMENT_HOST_ABI_WORDS: usize = 2;
+
+fn document_host_plan_slot() -> FrameSlot {
+    FrameSlot::for_word(0).expect("document host plan slot fits")
+}
+
+fn document_host_input_slot() -> FrameSlot {
+    FrameSlot::for_word(1).expect("document host input slot fits")
+}
+
 #[derive(Clone)]
 struct TemporaryRegion {
     region: FrameRegion,
@@ -3403,7 +3469,7 @@ impl FunctionLayout {
             tail_self_call_nodes(function, nodes, parameters, output)
         };
         let mut regions = BTreeMap::new();
-        let mut next_word = 0usize;
+        let mut next_word = DOCUMENT_HOST_ABI_WORDS;
         for node in nodes {
             let width = node.ty.word_width().ok_or_else(|| {
                 lowering_diagnostic(
@@ -4511,6 +4577,7 @@ fn lower_vir_function(
     output: NodeId,
     context: &LoweringContext<'_>,
     constants: &mut BTreeMap<NodeRef, PendingValueConstant>,
+    document_parse_calls: &mut Vec<DocumentParseCall>,
 ) -> Result<LoweredWeavyFunction, Diagnostics> {
     let layout = context
         .layouts
@@ -4547,6 +4614,7 @@ fn lower_vir_function(
         };
         let mut outputs = SequenceOutputs {
             constants,
+            document_parse_calls,
             code: &mut code,
         };
         lower_node_sequence(&node_ids, &mut values, &sequence, &mut outputs, None)?;
@@ -4629,6 +4697,7 @@ struct SequenceContext<'nodes, 'function, 'lowering> {
 
 struct SequenceOutputs<'constants, 'code> {
     constants: &'constants mut BTreeMap<NodeRef, PendingValueConstant>,
+    document_parse_calls: &'constants mut Vec<DocumentParseCall>,
     code: &'code mut CodeBuilder,
 }
 
@@ -4808,6 +4877,7 @@ fn lower_node_sequence(
                     context: sequence.lowering,
                     nodes: sequence.nodes,
                     constants: outputs.constants,
+                    document_parse_calls: outputs.document_parse_calls,
                 };
                 let lowered = lower_node(node, dst, dst_region_id, values, &mut lowering)?;
                 outputs.code.extend(lowered.ops);
@@ -5857,6 +5927,7 @@ struct NodeLoweringContext<'function, 'lowering, 'constants> {
     context: &'lowering LoweringContext<'lowering>,
     nodes: &'function BTreeMap<NodeId, &'function Node>,
     constants: &'constants mut BTreeMap<NodeRef, PendingValueConstant>,
+    document_parse_calls: &'constants mut Vec<DocumentParseCall>,
 }
 
 fn lower_node(
@@ -5902,6 +5973,46 @@ fn lower_node(
             (
                 vec![WeavyOp::Await { dst, input: *input }],
                 ValueRepresentation::Word,
+            )
+        }
+        Op::Decode { format, target } => {
+            require_input_count(node, 1)?;
+            let input = input_value(node, values, 0)?;
+            require_value(
+                node,
+                &input,
+                &Type::String,
+                ValueRepresentation::RealizedHandle,
+            )?;
+            let result = Type::result(target.clone(), decode_error_type());
+            require_node_type(node, result)?;
+            let host = i64::try_from(lowering.document_parse_calls.len()).map_err(|_| {
+                lowering_diagnostic(node.span, "document parse host plan index overflow")
+            })?;
+            lowering.document_parse_calls.push(DocumentParseCall {
+                format: *format,
+                target: target.clone(),
+                target_schema: semantic_schema_id(target),
+                input: input.region,
+                output: dst_region,
+            });
+            (
+                vec![
+                    WeavyOp::ConstI64 {
+                        dst: document_host_plan_slot().byte_offset(),
+                        value: host,
+                    },
+                    WeavyOp::CopyI64 {
+                        dst: document_host_input_slot().byte_offset(),
+                        src: input.region.start().byte_offset(),
+                    },
+                    // The host returns control to the scheduler before this
+                    // node's typed result is materialized. The scheduler owns
+                    // Store mutation and then resumes this same Weavy task with
+                    // a fresh immutable value-memory view.
+                    WeavyOp::HostCallYield { host: 0 },
+                ],
+                ValueRepresentation::InlineComposite,
             )
         }
         Op::String(value) => {

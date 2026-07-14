@@ -2673,7 +2673,7 @@ fn lower_value_expected(
             lower_some(nodes, bindings, context, call, expected)
         }
         ast::Expr::Call(call) if try_decode_format(&call.callee.value).is_some() => {
-            lower_try_decode(nodes, context, call)
+            lower_try_decode(nodes, bindings, context, call)
         }
         ast::Expr::Call(call) if decode_format(&call.callee.value).is_some() => {
             lower_decode(nodes, call, expected)
@@ -4110,6 +4110,7 @@ fn runtime_decode_unavailable(
 fn try_decode_format(name: &str) -> Option<DecodeFormat> {
     match name {
         "try_json_decode" => Some(DecodeFormat::Json),
+        "try_toml_decode" => Some(DecodeFormat::Toml),
         _ => None,
     }
 }
@@ -4135,6 +4136,14 @@ fn decode_error_type() -> Type {
             RecordField {
                 name: "path".to_owned(),
                 ty: Type::String,
+            },
+            RecordField {
+                name: "document_offset".to_owned(),
+                ty: Type::Int,
+            },
+            RecordField {
+                name: "document_len".to_owned(),
+                ty: Type::Int,
             },
         ],
     })
@@ -4167,6 +4176,22 @@ fn lower_decode_error_value(
 ) -> LoweredValue {
     let kind = push_string_literal(nodes, span, error.kind.label().to_owned());
     let path = push_string_literal(nodes, span, error.path_names().join("."));
+    let document_offset = push_node(
+        nodes,
+        span,
+        Type::Int,
+        EffectFacts::PURE,
+        Vec::new(),
+        Op::Int(error.span.map_or(-1, |span| i64::from(span.offset))),
+    );
+    let document_len = push_node(
+        nodes,
+        span,
+        Type::Int,
+        EffectFacts::PURE,
+        Vec::new(),
+        Op::Int(error.span.map_or(-1, |span| i64::from(span.len))),
+    );
     let ty = decode_error_type();
     LoweredValue {
         node: push_node(
@@ -4174,7 +4199,7 @@ fn lower_decode_error_value(
             span,
             ty.clone(),
             EffectFacts::PURE,
-            vec![kind, path],
+            vec![kind, path, document_offset, document_len],
             Op::Record,
         ),
         ty,
@@ -4260,6 +4285,7 @@ fn lower_decode_error_message(
 /// the same value the runtime primitive produces for that document.
 fn lower_try_decode(
     nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
     call: &ast::Call,
 ) -> Result<LoweredValue, Diagnostics> {
@@ -4284,20 +4310,25 @@ fn lower_try_decode(
     let result_ty = Type::result(target.clone(), decode_error_type());
 
     let ast::Expr::Str(document) = &call.args.args[0] else {
-        // A dynamic document is the runtime doc-parse primitive proper — one host
-        // call per document, typed store values out
-        // (`r[machine.primitive.typed-deserialization]`). The constant fold below
-        // is the constant-input case of that primitive; the dynamic case needs a
-        // runtime decode op whose scheduler-edge evaluation reads the document
-        // String, calls `decode::decode` once, and materializes the resulting
-        // `Result<T, DecodeError>` into the Store. Until that executor lands the
-        // boundary is a named, structured diagnostic — never a host-evaluation of
-        // the dynamic string here in `Compiler::compile`.
-        return Err(runtime_decode_unavailable(
-            expr_span(&call.args.args[0]),
-            format,
-            Some(&target),
-        ));
+        let document = lower_value_expected(
+            nodes,
+            bindings,
+            context,
+            &call.args.args[0],
+            Some(&Type::String),
+        )?;
+        require_type(&document, &Type::String, expr_span(&call.args.args[0]))?;
+        return Ok(LoweredValue {
+            node: push_node(
+                nodes,
+                call.span,
+                result_ty.clone(),
+                EffectFacts::PURE,
+                vec![document.node],
+                Op::Decode { format, target },
+            ),
+            ty: result_ty,
+        });
     };
 
     // Constant fold: decode the literal once and emit the resulting Result value.

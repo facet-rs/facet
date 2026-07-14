@@ -9,6 +9,7 @@
 //! those raw APIs remain public, the full `machine.execution.verified-admission`
 //! rule is not claimed.
 
+use std::mem::size_of;
 use std::sync::Arc;
 
 use crate::jit::task_lane::{JitExecutable, JitTask};
@@ -171,7 +172,9 @@ impl StoreHandle {
         self.index
     }
 
-    fn as_i64(self) -> i64 {
+    /// The frame-ABI word for this verified store handle.
+    #[must_use]
+    pub fn as_i64(self) -> i64 {
         i64::try_from(self.index).expect("StoreHandle constructor checked i64 range")
     }
 }
@@ -1137,6 +1140,38 @@ impl ExecTask<'_> {
             Lane::Native(task) => task.write_bytes(declared.offset, &bytes),
         }
         self.entries_initialized[index] = true;
+        Ok(())
+    }
+
+    /// Materialize one scheduler-owned host result into the active frame after
+    /// a synchronous [`crate::task::Op::HostCallYield`] has returned control.
+    /// The caller owns the typed ABI plan; this boundary only validates word
+    /// alignment and the verified frame extent before writing the word into the
+    /// suspended task on either execution lane.
+    pub fn write_host_word(&mut self, offset: u32, value: i64) -> Result<(), TaskFault> {
+        self.check_not_poisoned()?;
+        let function = self.executable.function(self.entry)?;
+        let frame = &self.executable.program().program().fns[self.entry.0 as usize].frame;
+        let offset = usize::try_from(offset).map_err(|_| TaskFault::InvalidResultShape {
+            entry: self.entry,
+            region: function.result,
+            size: 0,
+        })?;
+        if offset % size_of::<i64>() != 0
+            || offset
+                .checked_add(size_of::<i64>())
+                .is_none_or(|end| end > frame.size)
+        {
+            return Err(TaskFault::InvalidResultShape {
+                entry: self.entry,
+                region: function.result,
+                size: offset,
+            });
+        }
+        match &mut self.lane {
+            Lane::Interpreter(task) => task.write_i64(offset as u32, value),
+            Lane::Native(task) => task.write_i64(offset as u32, value),
+        }
         Ok(())
     }
 

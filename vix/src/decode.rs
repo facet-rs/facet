@@ -30,12 +30,7 @@ use facet_toml::TomlParser;
 
 use crate::vir::{EnumType, RecordField, Type, VariantPayload};
 
-/// Which document grammar a decode targets.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DecodeFormat {
-    Json,
-    Toml,
-}
+pub use crate::vir::DecodeFormat;
 
 impl DecodeFormat {
     fn label(self) -> &'static str {

@@ -799,6 +799,18 @@ pub enum EffectKind {
     Codata,
 }
 
+/// The grammar owned by the typed document-deserialization primitive.
+///
+/// This lives in VIR rather than in the parser implementation: a dynamic
+/// decode is a semantic operation whose format and target schema participate in
+/// the recipe identity and are carried across the compiler/runtime boundary.
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum DecodeFormat {
+    Json,
+    Toml,
+}
+
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EffectFacts {
     pub kind: EffectKind,
@@ -845,6 +857,14 @@ pub enum Op {
     /// where it is consumed, so an unconsumed wire issues no demand.
     AwaitWire {
         input: u32,
+    },
+    /// Parse one runtime String directly into `target` through the scheduler's
+    /// document host primitive. The node result is always
+    /// `Result<target, DecodeError>`; both success and structured parse failure
+    /// are ordinary typed frame values.
+    Decode {
+        format: DecodeFormat,
+        target: Type,
     },
     Tuple,
     Record,
@@ -2949,6 +2969,14 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::AwaitWire { input } => {
             op.push(84);
             op.extend_from_slice(&input.to_le_bytes());
+        }
+        Op::Decode { format, target } => {
+            op.push(85);
+            op.push(match format {
+                DecodeFormat::Json => 0,
+                DecodeFormat::Toml => 1,
+            });
+            frame(&mut op, &canonical_type(target));
         }
         Op::Div => op.push(23),
         Op::IsVariant { variant } => {

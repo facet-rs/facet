@@ -5671,40 +5671,76 @@ fn t() -> Stream<Check> {
     );
 }
 
-/// The fallible surface names the same runtime seam for a dynamic document: a
-/// `try_json_decode<T>` whose argument is not a compile-time-constant literal is
-/// exactly the runtime doc-parse primitive proper (one host call per document),
-/// which the constant fold does not cover. The target schema is carried from the
-/// turbofish; the boundary is a named, structured diagnostic, never a
-/// host-evaluation of the dynamic string.
+/// A nonliteral fallible decode crosses the real scheduler-owned document host
+/// primitive. This is deliberately not a fold: the verified program contains a
+/// `HostCallYield`, the runtime records exactly one document host call and one
+/// source-read receipt per dynamic document, and both the success and the
+/// structured `Err(DecodeError)` branch execute through the ordinary Result
+/// match machinery.
 #[test]
-fn try_decode_of_a_dynamic_document_names_the_runtime_seam() {
-    const SOURCE: &str = "\
+fn dynamic_json_and_toml_decode_use_the_scheduler_host_once_per_document() {
+    const JSON_OK: &str = "\
 struct PkgRow { name: String }
 #[test]
 fn t() -> Stream<Check> {
-    let src = \"{}\";
+    let src = \"{\\\"name\\\":\\\"mio\\\"}\";
     yield match try_json_decode<PkgRow>(src) {
-        Ok(_) => expect(true),
+        Ok(row) => expect_eq(row.name, \"mio\"),
         Err(_) => expect(false),
     };
 }
 ";
-    let diagnostics = Compiler::new()
-        .compile(SOURCE)
-        .expect_err("a dynamic try-decode document is the runtime primitive, not a fold");
-    assert_eq!(diagnostics.entries.len(), 1);
-    assert_eq!(
-        diagnostics.entries[0].code,
-        DiagnosticCode::RuntimeDecodeUnavailable
-    );
-    assert_eq!(
-        diagnostics.entries[0].payload,
-        DiagnosticPayload::RuntimeDecode {
-            format: "JSON".to_owned(),
-            target: Some("PkgRow".to_owned()),
+    const JSON_ERR: &str = "\
+struct PkgRow { name: String }
+#[test]
+fn t() -> Stream<Check> {
+    let src = \"{\\\"name\\\":42}\";
+    yield match try_json_decode<PkgRow>(src) {
+        Ok(_) => expect(false),
+        Err(error) => expect_eq(error.path, \"name\"),
+    };
+}
+";
+    const TOML_OK: &str = "\
+struct PkgRow { name: String }
+#[test]
+fn t() -> Stream<Check> {
+    let src = \"name = \\\"mio\\\"\\n\";
+    yield match try_toml_decode<PkgRow>(src) {
+        Ok(row) => expect_eq(row.name, \"mio\"),
+        Err(_) => expect(false),
+    };
+}
+";
+
+    for source in [JSON_OK, JSON_ERR, TOML_OK] {
+        let module = Compiler::new()
+            .compile(source)
+            .expect("dynamic decode compiles");
+        let partitioned = module.partition_test(&module.tests[0]);
+        let mut lowering = LoweringCache::default();
+        let lowered = lowering
+            .get_or_lower(&partitioned.islands[0])
+            .expect("dynamic decode lowers");
+        assert_eq!(
+            lowered
+                .program()
+                .fns
+                .iter()
+                .flat_map(|function| &function.code)
+                .filter(|op| matches!(op, WeavyOp::HostCallYield { .. }))
+                .count(),
+            1,
+            "one verified host edge for one dynamic document",
+        );
+        let report = run_source(source).expect("dynamic decode runs");
+        assert!(report.passed() && report.agrees());
+        for lane in [&report.plain, &report.chaos] {
+            assert_eq!(lane.counters.document_parse_host_calls, 1);
+            assert_eq!(lane.counters.pure_host_calls, 0);
+            assert_eq!(lane.receipt_count, 1);
         }
-    );
+    }
 }
 
 /// A malformed constant document fails as a *structured typed* diagnostic — a
