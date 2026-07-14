@@ -1784,6 +1784,7 @@ mod tests {
             entries: entries.iter().copied().map(RegionId).collect(),
             result: RegionId(result),
             call_contract: call_contract.map(CallContractId),
+            call_abi: None,
             environment: Vec::new(),
         }
     }

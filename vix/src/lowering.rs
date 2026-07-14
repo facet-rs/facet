@@ -10,9 +10,9 @@ use weavy::task::{
     Program as WeavyProgram, StructuralFieldSource, TraceMode,
 };
 use weavy::{
-    CallContract as WeavyCallContract, CallContractId as WeavyCallContractId,
-    FrameContract as WeavyFrameContract, FrameRegion as WeavyFrameRegion,
-    FunctionContract as WeavyFunctionContract,
+    CallAbiProjection as WeavyCallAbiProjection, CallContract as WeavyCallContract,
+    CallContractId as WeavyCallContractId, FrameContract as WeavyFrameContract,
+    FrameRegion as WeavyFrameRegion, FunctionContract as WeavyFunctionContract,
     OrderedCollectionContract as WeavyOrderedCollectionContract,
     OrderedCollectionKind as WeavyOrderedCollectionKind, PayloadKind as WeavyPayloadKind,
     ProgramContract as WeavyProgramContract, RegionId as WeavyRegionId,
@@ -2437,24 +2437,18 @@ impl<'a> ProgramContractBuilder<'a> {
                 lowering_diagnostic(function.span, "output node has no frame region")
             })?,
         };
-        // A closure whose captures exceed one inline word, or whose body owns
-        // resident constants, carries every non-argument entry in its
-        // task-lifetime environment box. Its public call contract stays the
-        // plain semantic signature — argument in, result out — so all values of
-        // one function type share a copyable value shape.
-        let capture_entries = if self.closure_targets.contains(&function.id) {
+        // A closure's captures are always materialized from its task-lifetime
+        // environment.  The public callable ABI contains only its argument and
+        // result; physical capture slots, like scheduler-private header words,
+        // remain outside that semantic view.
+        let closure_target = self.closure_targets.contains(&function.id);
+        let capture_entries = if closure_target {
             entries.get(1..function.parameters.len()).unwrap_or(&[])
         } else {
             &[]
         };
         let constant_entries = entries.get(function.parameters.len()..).unwrap_or(&[]);
-        let capture_words: usize = capture_entries
-            .iter()
-            .map(|entry| regions[entry.0 as usize].shape.words.len())
-            .sum();
-        let boxed = self.closure_targets.contains(&function.id)
-            && (capture_words > 1 || !constant_entries.is_empty());
-        let environment = if boxed {
+        let environment = if closure_target {
             let mut offset = 0u32;
             capture_entries
                 .iter()
@@ -2471,7 +2465,7 @@ impl<'a> ProgramContractBuilder<'a> {
         };
         let call_contract = if !self.call_contract_targets.contains(&function.id) {
             None
-        } else if boxed {
+        } else if closure_target {
             let result_type = function
                 .nodes
                 .iter()
@@ -2488,6 +2482,17 @@ impl<'a> ProgramContractBuilder<'a> {
         } else {
             Some(self.call_contract_for_function(&entries, result, &regions)?)
         };
+        let call_abi = if closure_target {
+            let entry = entries.first().copied().ok_or_else(|| {
+                lowering_diagnostic(function.span, "closure function has no callable entry")
+            })?;
+            Some(WeavyCallAbiProjection {
+                entries: vec![entry],
+                result,
+            })
+        } else {
+            None
+        };
         Ok(WeavyFunctionContract {
             frame: WeavyFrameContract {
                 layout: lowered.frame,
@@ -2497,6 +2502,7 @@ impl<'a> ProgramContractBuilder<'a> {
             environment,
             result,
             call_contract,
+            call_abi,
         })
     }
 
@@ -6213,12 +6219,9 @@ fn lower_node(
                     .closure(lowering.function.id, node.id, node.span)?;
             let (callee_temp, environment_temp) =
                 lowering.function.layout.closure_temps(node.id, node.span)?;
-            // The total inline width of the captures decides the environment
-            // representation: a single word rides inline in the environment
-            // word (the optimized static path); anything wider — notably a
-            // captured callable — is boxed behind a task-lifetime environment
-            // handle, since a uniform recursive closure cannot inline a value of
-            // its own two-word width.
+            // Captures never enter the semantic call ABI.  They travel through
+            // the closure environment, while the call itself supplies only its
+            // public argument to the callee's projected physical entry region.
             let capture_slots = (0..node.inputs.len())
                 .map(|index| input_value(node, values, index))
                 .collect::<Result<Vec<_>, _>>()?;
@@ -6236,7 +6239,7 @@ fn lower_node(
                         .constant(lowering.function.id, *constant, node.span)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            let environment = if capture_words > 1 || !constant_regions.is_empty() {
+            let environment = if capture_words != 0 || !constant_regions.is_empty() {
                 WeavyOp::EnvBox {
                     dst: environment_region,
                     callee: WeavyFnId(callee),
@@ -6245,12 +6248,6 @@ fn lower_node(
                         .map(|slot| slot.region_id)
                         .chain(constant_regions)
                         .collect(),
-                }
-            } else if let [capture] = capture_slots.as_slice() {
-                require_value(node, capture, &Type::Int, ValueRepresentation::Word)?;
-                WeavyOp::CopyI64 {
-                    dst: environment_temp.start().byte_offset(),
-                    src: capture.region.start().byte_offset(),
                 }
             } else {
                 WeavyOp::ConstI64 {
@@ -11759,46 +11756,10 @@ fn static_closure_call_args(
             "closure capture inputs do not match the callable ABI",
         ));
     }
-    let target_layout = context
-        .layouts
-        .get(&target_id)
-        .ok_or_else(|| lowering_diagnostic(span, "closure target has no frame layout"))?;
-    let capture_words = closure.inputs.iter().try_fold(0usize, |words, capture| {
-        let source = caller_layout.region(*capture, span)?;
-        words
-            .checked_add(source.words().as_usize())
-            .ok_or_else(|| lowering_diagnostic(span, "closure capture width overflow"))
-    })?;
-    let boxed = capture_words > 1 || !target_layout.constant_slots.is_empty();
-    let mut args = Vec::with_capacity(
-        closure
-            .inputs
-            .len()
-            .saturating_add(target_layout.constant_slots.len()),
-    );
-    if !boxed {
-        for (index, capture) in closure.inputs.iter().enumerate() {
-            let source = caller_layout.region(*capture, span)?;
-            let destination = target.parameters[index + 1].node;
-            let destination = target_layout.region(destination, span)?;
-            args.push(ArgCopy {
-                src: source.start().byte_offset(),
-                dst: destination.start().byte_offset(),
-                size: source
-                    .byte_size()
-                    .ok_or_else(|| lowering_diagnostic(span, "closure capture size overflow"))?,
-            });
-        }
-        for (&constant, &destination) in &target_layout.constant_slots {
-            let source = caller_layout.constant_slot(constant, span)?;
-            args.push(ArgCopy {
-                src: source.byte_offset(),
-                dst: destination.byte_offset(),
-                size: FrameSlot::word_size(),
-            });
-        }
-    }
-    Ok(Some((target_id, args)))
+    // The closure environment is the sole carrier for captures.  Keeping this
+    // static lookup lets lowering retain its structural target check without
+    // leaking capture slots into the semantic indirect-call ABI.
+    Ok(Some((target_id, Vec::new())))
 }
 
 fn lower_call_value_node(
