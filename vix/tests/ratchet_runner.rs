@@ -5,9 +5,10 @@ use vix::budget::{BudgetOutcome, ChildReport, run_source_under_declared_budget};
 use vix::compiler::Compiler;
 use vix::diagnostic::{DiagnosticCode, DiagnosticPayload, DiagnosticSeverity};
 use vix::lowering::{LoweringCache, attribution_for, source_map_for};
+use vix::modules::ModuleSource;
 use vix::ratchet::{
-    RunError, SnapshotExpectations, run_source, run_source_innards, run_source_with_snapshots,
-    run_source_with_snapshots_and_lane,
+    RunError, SnapshotExpectations, run_source, run_source_innards, run_source_with_modules,
+    run_source_with_snapshots, run_source_with_snapshots_and_lane,
 };
 use vix::runtime::{
     DemandState, EventKind, FailureValue, MemoVerdict, SchemaId, SnapshotOutcome, TaskState,
@@ -79,6 +80,12 @@ const RUNG_063: &str = include_str!("ratchet/063-toml-decode.vix");
 const RUNG_064: &str = include_str!("ratchet/064-decode-optional.vix");
 const RUNG_065: &str = include_str!("ratchet/065-decode-enum-forms.vix");
 const RUNG_066: &str = include_str!("ratchet/066-decode-failure.vix");
+const RUNG_106: &str = include_str!("ratchet/106-imports.vix");
+const RUNG_107: &str = include_str!("ratchet/107-visibility.reject.vix");
+const RUNG_108: &str = include_str!("ratchet/108-import-std.vix");
+const RUNG_109: &str = include_str!("ratchet/109-name-collision.reject.vix");
+const RUNG_110: &str = include_str!("ratchet/110-module-memo-boundary.vix");
+const LIB_GEOMETRY: &str = include_str!("ratchet/lib/geometry.vix");
 const RUNG_138: &str = include_str!("ratchet/138-map-accumulator.vix");
 const RUNG_144: &str = include_str!("ratchet/144-unused-collection-result.warn.vix");
 const RUNG_145: &str = include_str!("ratchet/145-push.reject.vix");
@@ -5396,6 +5403,120 @@ fn mutation_shaped_collection_methods_are_unknown() {
         assert_eq!(diagnostic.message(), expected_message);
         assert_eq!(source_line(source, diagnostic.primary.start), expected_line);
     }
+}
+
+/// The `//! uses:` harness directive (testing.md, "The two kinds of `Check`" /
+/// directives section): each header line names a library module file presented
+/// to the compiler as the module its file stem names. The directive lines are
+/// consumed — removed, not blanked — so `//! at:` line numbers in reject
+/// headers refer to the source as compiled.
+fn modules_fixture(source: &str) -> (String, Vec<ModuleSource<'static>>) {
+    let mut modules = Vec::new();
+    let mut body = String::new();
+    for line in source.lines() {
+        if let Some(path) = line.strip_prefix("//! uses: ") {
+            let stem = path
+                .rsplit('/')
+                .next()
+                .and_then(|file| file.strip_suffix(".vix"))
+                .expect("uses: directive names a .vix file");
+            let module = match stem {
+                "geometry" => ModuleSource {
+                    name: "geometry",
+                    source: LIB_GEOMETRY,
+                },
+                other => panic!("uses: directive names an unbundled module `{other}`"),
+            };
+            modules.push(module);
+            continue;
+        }
+        body.push_str(line);
+        body.push('\n');
+    }
+    (body, modules)
+}
+
+/// Rung 106 — modules exist: a type and a function import from another file
+/// and compose through the production path, plain and chaos agreeing.
+#[test]
+fn rung_106_imports_run_through_production_path() {
+    let (source, modules) = modules_fixture(RUNG_106);
+    let report =
+        run_source_with_modules(&source, &modules).expect("rung 106 compiles and runs");
+    assert!(report.passed(), "rung 106 checks pass: {report:?}");
+    assert!(report.agrees(), "plain and chaos agree");
+    assert_eq!(report.plain.checks.len(), 1);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+}
+
+/// Rung 107 (reject) — a non-`pub` item is not importable: exactly the
+/// declared diagnostic (`private`) at the declared line, anchored on the
+/// import that names the private item.
+#[test]
+fn rung_107_private_import_is_rejected() {
+    let (source, modules) = modules_fixture(RUNG_107);
+    let (expected_message, expected_line) = reject_header(RUNG_107);
+    let diagnostics = Compiler::new()
+        .compile_with_modules(&source, &modules)
+        .expect_err("private items do not import");
+    assert_eq!(diagnostics.entries.len(), 1);
+    let diagnostic = &diagnostics.entries[0];
+    assert_eq!(diagnostic.code, DiagnosticCode::PrivateImport);
+    assert_eq!(diagnostic.message(), expected_message);
+    assert_eq!(
+        source_line(&source, diagnostic.primary.start),
+        expected_line
+    );
+    assert_eq!(
+        diagnostic.payload,
+        DiagnosticPayload::Name {
+            name: "geometry::private_helper".to_owned(),
+        },
+        "the typed payload names the private item",
+    );
+}
+
+/// Rung 108 — imported modules compose with std across the boundary: an
+/// imported function flows through `map`, and `sorted` orders the results
+/// (the seam the old corpus couldn't cross: appended fixture code calling
+/// imported std helpers).
+#[test]
+fn rung_108_std_composes_across_module_boundaries() {
+    let (source, modules) = modules_fixture(RUNG_108);
+    let report =
+        run_source_with_modules(&source, &modules).expect("rung 108 compiles and runs");
+    assert!(report.passed(), "rung 108 checks pass: {report:?}");
+    assert!(report.agrees(), "plain and chaos agree");
+    assert_eq!(report.plain.checks.len(), 1);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+}
+
+/// Rung 109 (reject) — importing a name that's also declared locally is an
+/// unqualified collision: exactly the declared diagnostic (`duplicate name`)
+/// at the declared line, anchored on the *second* binding site (the local
+/// declaration following the import).
+#[test]
+fn rung_109_import_local_collision_is_rejected() {
+    let (source, modules) = modules_fixture(RUNG_109);
+    let (expected_message, expected_line) = reject_header(RUNG_109);
+    let diagnostics = Compiler::new()
+        .compile_with_modules(&source, &modules)
+        .expect_err("an imported name may not be redeclared locally");
+    assert_eq!(diagnostics.entries.len(), 1);
+    let diagnostic = &diagnostics.entries[0];
+    assert_eq!(diagnostic.code, DiagnosticCode::DuplicateDefinition);
+    assert_eq!(diagnostic.message(), expected_message);
+    assert_eq!(
+        source_line(&source, diagnostic.primary.start),
+        expected_line
+    );
+    assert_eq!(
+        diagnostic.payload,
+        DiagnosticPayload::Name {
+            name: "Point".to_owned(),
+        },
+        "the typed payload names the colliding name",
+    );
 }
 
 fn reject_header(source: &str) -> (&str, usize) {

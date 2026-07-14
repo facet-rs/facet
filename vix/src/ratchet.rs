@@ -570,6 +570,29 @@ pub fn run_source(source: &str) -> Result<RatchetReport, RunError> {
     run_source_with_config(source, CompilerConfig::default())
 }
 
+/// Run a root source alongside named library modules (the `//! uses:` harness
+/// directive of rungs 106–110): identical to [`run_source`] in every lane
+/// aspect, with imports resolved against the presented module set.
+pub fn run_source_with_modules(
+    source: &str,
+    modules: &[crate::modules::ModuleSource<'_>],
+) -> Result<RatchetReport, RunError> {
+    prepare_source_with_modules(source, modules)?.execute()
+}
+
+/// The readiness-boundary form of [`run_source_with_modules`].
+pub fn prepare_source_with_modules(
+    source: &str,
+    modules: &[crate::modules::ModuleSource<'_>],
+) -> Result<PreparedRun, RunError> {
+    prepare_modules_with_cache(
+        source,
+        modules,
+        CompilerConfig::default(),
+        LoweringCache::default(),
+    )
+}
+
 /// Run every declared test twice against a snapshot oracle. Snapshot checks
 /// compare their rendering to `expectations`; every other check is unaffected.
 pub fn run_source_with_snapshots(
@@ -666,9 +689,18 @@ pub fn prepare_source_with_config(
 fn prepare_source_with_cache(
     source: &str,
     config: CompilerConfig,
+    cache: LoweringCache,
+) -> Result<PreparedRun, RunError> {
+    prepare_modules_with_cache(source, &[], config, cache)
+}
+
+fn prepare_modules_with_cache(
+    source: &str,
+    modules: &[crate::modules::ModuleSource<'_>],
+    config: CompilerConfig,
     mut cache: LoweringCache,
 ) -> Result<PreparedRun, RunError> {
-    let compilation = Compiler::with_config(config).compile(source)?;
+    let compilation = Compiler::with_config(config).compile_with_modules(source, modules)?;
 
     // Lower every island the lanes will demand so its native code is compiled
     // and cached now, before execution. `get_or_lower` keys on canonical recipe
