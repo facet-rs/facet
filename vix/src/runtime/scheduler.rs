@@ -1043,7 +1043,7 @@ impl<S: EventSink> Runtime<S> {
                     key: lowered.demand_key,
                     preimage: lowered.demand_preimage.clone(),
                     result: interned.handle,
-                    receipt: None,
+                    receipt: document_receipt(lowered.demand_key, &document_reads),
                 },
             );
             if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
