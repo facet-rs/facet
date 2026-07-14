@@ -2976,8 +2976,7 @@ fn structural_fingerprint(
 fn is_effect_root(node: &Node) -> bool {
     matches!(
         node.op,
-        Op::Decode { .. }
-            | Op::Exec { .. }
+        Op::Exec { .. }
             | Op::FixtureTree
             | Op::TreeProject
             | Op::TreeEntryText
