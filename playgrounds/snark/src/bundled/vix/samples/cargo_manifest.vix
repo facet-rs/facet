@@ -203,7 +203,7 @@ pub fn package_name(manifest: Tree) -> String {
     doc_string(package_doc(manifest), "name")
 }
 
-fn package_version(manifest: Tree) -> String {
+pub fn package_version(manifest: Tree) -> String {
     doc_string(package_doc(manifest), "version")
 }
 
@@ -1878,6 +1878,32 @@ fn solution_dependency_clause_active(index: Index, result: SolveResult, parent: 
         true => selected_pkg_contains(result.selected, index.consequent_pkgs.get(clause_id).unwrap()),
         false => false,
     }
+}
+
+fn solution_dependency_clause_kind_active(index: Index, result: SolveResult, parent: Int, clause_id: Int, target: String, kind: String) -> Bool {
+    match solution_dependency_clause_active(index, result, parent, clause_id, target) {
+        true => index.gate_kinds.get(clause_id).unwrap() == kind,
+        false => false,
+    }
+}
+
+pub fn solution_dep_ids_for_kind(index: Index, result: SolveResult, parent: Int, target: String, kind: String) -> [Int] {
+    solution_dep_ids_for_kind_from(index, result, parent, target, kind, index.clause_ids, [])
+}
+
+fn solution_dep_ids_for_kind_from(index: Index, result: SolveResult, parent: Int, target: String, kind: String, clause_ids: [Int], out: [Int]) -> [Int] {
+    match clause_ids.len() == 0 {
+        true => out,
+        false => solution_dep_ids_for_kind_tuple(index, result, parent, target, kind, clause_ids.pop(), out),
+    }
+}
+
+fn solution_dep_ids_for_kind_tuple(index: Index, result: SolveResult, parent: Int, target: String, kind: String, popped: (Int, [Int]), out: [Int]) -> [Int] {
+    let next = match solution_dependency_clause_kind_active(index, result, parent, popped.0, target, kind) {
+        true => out.push(index.consequent_pkgs.get(popped.0).unwrap()),
+        false => out,
+    };
+    solution_dep_ids_for_kind_from(index, result, parent, target, kind, popped.1, next)
 }
 
 pub fn solution_dep_names_text(state: WorkspaceIndexState, index: Index, result: SolveResult, parent: Int, target: String) -> String {
