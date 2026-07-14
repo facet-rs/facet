@@ -715,6 +715,17 @@ impl<'a> TypeResolver<'a> {
             ast::Type::Path(path) if path_is(path, "Int") => Ok(Type::Int),
             ast::Type::Path(path) if path_is(path, "String") => Ok(Type::String),
             ast::Type::Path(path) if path_is(path, "Path") => Ok(Type::Path),
+            ast::Type::Path(path) if path_is(path, "Tree") => Ok(Type::Extern(ExternKind::Tree)),
+            ast::Type::Path(path) if path_is(path, "TreeEntry") => {
+                Ok(Type::Extern(ExternKind::TreeEntry))
+            }
+            ast::Type::Path(path) if path_is(path, "Blob") => Ok(Type::Extern(ExternKind::Blob)),
+            ast::Type::Path(path) if path_is(path, "Registry") => {
+                Ok(Type::Extern(ExternKind::Registry))
+            }
+            ast::Type::Path(path) if path_is(path, "PinnedUrl") => {
+                Ok(Type::Extern(ExternKind::PinnedUrl))
+            }
             ast::Type::Path(path) if path_is(path, "Check") => Ok(Type::Check),
             ast::Type::Path(path)
                 if CAPABILITY_TYPE_NAMES.iter().any(|name| path_is(path, name)) =>
@@ -964,7 +975,7 @@ fn lower_module(source: &ast::SourceFile, config: CompilerConfig) -> Result<Modu
                 generator: lowered
                     .generator
                     .expect("test function lowering produces a generator body"),
-                metadata: signature.metadata,
+                metadata: signature.metadata.clone(),
             });
         }
         module.functions.push(lowered.function);
@@ -1217,6 +1228,7 @@ fn check_test_signature(
 /// Unit-bearing literals are accepted only here, never in ordinary values.
 fn parse_test_metadata(function: &ast::FnItem) -> Result<TestMetadata, Diagnostics> {
     let mut budget = Budget::default();
+    let mut rerun_with = None;
     let mut seen: BTreeSet<String> = BTreeSet::new();
     for attribute in &function.attributes {
         if attribute.name.value != "test" {
@@ -1244,6 +1256,10 @@ fn parse_test_metadata(function: &ast::FnItem) -> Result<TestMetadata, Diagnosti
                     let (text, span) = attribute_quantity(field)?;
                     budget.rss_bytes = Some(byte_count(text, span)?);
                 }
+                "rerun_with" => {
+                    let (value, _) = attribute_string(field)?;
+                    rerun_with = Some(value.to_owned());
+                }
                 _ => {
                     return Err(field_diagnostic(
                         DiagnosticCode::UnknownField,
@@ -1255,7 +1271,7 @@ fn parse_test_metadata(function: &ast::FnItem) -> Result<TestMetadata, Diagnosti
             }
         }
     }
-    Ok(TestMetadata { budget })
+    Ok(TestMetadata { budget, rerun_with })
 }
 
 /// A budget field value must be a unit-bearing literal (`5s`, `256MB`); a bare
@@ -1271,6 +1287,22 @@ fn attribute_quantity(field: &ast::NamedValue) -> Result<(&str, Span), Diagnosti
         None => Err(type_mismatch(
             field.name.span,
             "a unit-bearing literal",
+            "bare field",
+        )),
+    }
+}
+
+fn attribute_string(field: &ast::NamedValue) -> Result<(&str, Span), Diagnostics> {
+    match &field.value {
+        Some(ast::Expr::Str(value)) => Ok((value.value.as_str(), value.span)),
+        Some(other) => Err(type_mismatch(
+            expr_span(other),
+            "a string literal",
+            "expression",
+        )),
+        None => Err(type_mismatch(
+            field.name.span,
+            "a string literal",
             "bare field",
         )),
     }
@@ -1421,6 +1453,17 @@ fn lower_declared_type(
         ast::Type::Path(path) if path_is(path, "Int") => Ok(Type::Int),
         ast::Type::Path(path) if path_is(path, "String") => Ok(Type::String),
         ast::Type::Path(path) if path_is(path, "Path") => Ok(Type::Path),
+        ast::Type::Path(path) if path_is(path, "Tree") => Ok(Type::Extern(ExternKind::Tree)),
+        ast::Type::Path(path) if path_is(path, "TreeEntry") => {
+            Ok(Type::Extern(ExternKind::TreeEntry))
+        }
+        ast::Type::Path(path) if path_is(path, "Blob") => Ok(Type::Extern(ExternKind::Blob)),
+        ast::Type::Path(path) if path_is(path, "Registry") => {
+            Ok(Type::Extern(ExternKind::Registry))
+        }
+        ast::Type::Path(path) if path_is(path, "PinnedUrl") => {
+            Ok(Type::Extern(ExternKind::PinnedUrl))
+        }
         ast::Type::Path(path) if path_is(path, "Check") => Ok(Type::Check),
         ast::Type::Generic(_) if is_stream_check_type(ty) => Ok(Type::StreamCheck),
         ast::Type::Generic(generic) if path_is(&generic.base, "Option") => {
@@ -2197,6 +2240,11 @@ fn lower_check(
                 count: trace_bound(call)?,
             }));
         }
+        "read" => {
+            return Ok(CheckRecipe::Trace(TraceCheck::Read {
+                path: trace_path(call)?,
+            }));
+        }
         "never_read" => {
             return Ok(CheckRecipe::Trace(TraceCheck::NeverRead {
                 path: trace_path(call)?,
@@ -2455,11 +2503,25 @@ fn described_wire(
         .args
         .iter()
         .map(wire_argument_literal)
-        .collect::<Result<Vec<_>, _>>()?;
-    let selector = if arguments.is_empty() && !signature.parameters.is_empty() {
-        WireSelector::Name
-    } else {
-        WireSelector::CallSite(arguments)
+        .collect::<Result<Vec<_>, _>>();
+    let selector = match arguments {
+        Ok(arguments) => {
+            if arguments.is_empty() && !signature.parameters.is_empty() {
+                WireSelector::Name
+            } else {
+                WireSelector::CallSite(arguments)
+            }
+        }
+        Err(diagnostics)
+            if operand
+                .args
+                .args
+                .iter()
+                .any(|argument| matches!(argument, ast::Expr::Record(_))) =>
+        {
+            return Err(diagnostics);
+        }
+        Err(_) => WireSelector::Name,
     };
     Ok(DescribedWire {
         function: signature.id,
@@ -2480,6 +2542,17 @@ fn wire_argument_literal(argument: &ast::Expr) -> Result<WireArg, Diagnostics> {
             )
         }),
         ast::Expr::Bool(boolean) => Ok(WireArg::Bool(boolean.value)),
+        ast::Expr::Call(call) if call.callee.value == "fixture_tree" => {
+            check_arity(call, 1)?;
+            let ast::Expr::Str(name) = &call.args.args[0] else {
+                return Err(type_mismatch(
+                    expr_span(&call.args.args[0]),
+                    "a fixture_tree string literal",
+                    "expression",
+                ));
+            };
+            Ok(WireArg::FixtureTree(name.value.clone()))
+        }
         other => Err(Diagnostics::one(Diagnostic::unsupported(
             expr_span(other),
             "a described-wire argument must be a closed scalar literal",
@@ -2542,6 +2615,7 @@ enum PreludeMethod {
     StringSplitOnce,
     StringParseInt,
     StringIsNumeric,
+    StringLines,
     ArraySorted,
     ArrayStream,
     IntRem,
@@ -2650,6 +2724,12 @@ impl PreludeMethodRegistry {
                 name: "is_numeric",
                 arity: 0,
                 method: PreludeMethod::StringIsNumeric,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::String,
+                name: "lines",
+                arity: 0,
+                method: PreludeMethod::StringLines,
             },
             PreludeMethodEntry {
                 receiver: PreludeReceiverType::Array,
@@ -2923,7 +3003,7 @@ fn lower_value_expected(
             lower_try_decode(nodes, bindings, context, call)
         }
         ast::Expr::Call(call) if decode_format(&call.callee.value).is_some() => {
-            lower_decode(nodes, call, expected)
+            lower_decode(nodes, bindings, context, call, expected)
         }
         ast::Expr::Call(call) if effect_intrinsic(&call.callee.value) => {
             lower_effect_intrinsic(nodes, bindings, context, call)
@@ -3781,6 +3861,20 @@ fn lower_method_call(
             ),
             ty: Type::Bool,
         }),
+        PreludeMethod::StringLines => {
+            let ty = Type::array(Type::String);
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::PURE,
+                    vec![receiver.node],
+                    Op::StringLines,
+                ),
+                ty,
+            })
+        }
         PreludeMethod::ArrayStream => {
             let Type::Array(element) = &receiver.ty else {
                 unreachable!("array stream registry entry has an array receiver")
@@ -4777,6 +4871,8 @@ fn lower_try_decode(
 
 fn lower_decode(
     nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
     call: &ast::Call,
     expected: Option<&Type>,
 ) -> Result<LoweredValue, Diagnostics> {
@@ -4795,11 +4891,28 @@ fn lower_decode(
         return Err(runtime_decode_unavailable(call.span, format, None));
     };
     let ast::Expr::Str(document) = &call.args.args[0] else {
-        return Err(runtime_decode_unavailable(
-            expr_span(&call.args.args[0]),
-            format,
-            Some(target),
-        ));
+        let document = lower_value_expected(
+            nodes,
+            bindings,
+            context,
+            &call.args.args[0],
+            Some(&Type::String),
+        )?;
+        require_type(&document, &Type::String, expr_span(&call.args.args[0]))?;
+        return Ok(LoweredValue {
+            node: push_node(
+                nodes,
+                call.span,
+                target.clone(),
+                EffectFacts::PURE,
+                vec![document.node],
+                Op::Decode {
+                    format,
+                    target: target.clone(),
+                },
+            ),
+            ty: target.clone(),
+        });
     };
     let decoded = decode::decode(format, &document.value, target)
         .map_err(|error| decode_failed_diagnostic(call.span, format, target, &error))?;

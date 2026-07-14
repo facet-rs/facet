@@ -449,8 +449,10 @@ fn table_form_variant(enumeration: &EnumType) -> Result<(u32, &[RecordField]), D
 /// Decode one object's fields against a declared field list, in declaration
 /// order. Shared by struct records and record-variant table forms: fields are
 /// matched by name, absent `Option` fields resolve to `None`, and any other
-/// absence or unknown/duplicate field is a typed failure. `container` names the
-/// struct or enum for error attribution.
+/// absence or duplicate field is a typed failure. Unknown fields are consumed
+/// and ignored so open documents such as Cargo manifests can decode into a
+/// smaller typed projection. `container` names the struct or enum for error
+/// attribution.
 fn decode_fields<'de>(
     parser: &mut dyn FormatParser<'de>,
     container: &str,
@@ -499,13 +501,8 @@ fn decode_fields<'de>(
                         slots[index] = Some(value);
                     }
                     None => {
-                        return Err(span_opt(
-                            DecodeError::of(DecodeErrorKind::UnknownField {
-                                container: container.to_owned(),
-                                field: name,
-                            }),
-                            span,
-                        ));
+                        let _ = (container, name, span);
+                        skip_value(parser)?;
                     }
                 }
             }
@@ -535,6 +532,43 @@ fn decode_fields<'de>(
         }
     }
     Ok(out)
+}
+
+fn skip_value<'de>(parser: &mut dyn FormatParser<'de>) -> Result<(), DecodeError> {
+    match consume(parser)?.kind {
+        ParseEventKind::Scalar(_) => Ok(()),
+        ParseEventKind::StructStart(_) => loop {
+            match consume(parser)?.kind {
+                ParseEventKind::StructEnd => return Ok(()),
+                ParseEventKind::FieldKey(_) => skip_value(parser)?,
+                other => {
+                    return Err(DecodeError::of(DecodeErrorKind::ExpectedObject {
+                        container: "unknown field".to_owned(),
+                        found: event_label(&other),
+                    }));
+                }
+            }
+        },
+        ParseEventKind::SequenceStart(_) => loop {
+            match peek(parser)?.0 {
+                Some(ParseEventKind::SequenceEnd) => {
+                    consume(parser)?;
+                    return Ok(());
+                }
+                Some(_) => skip_value(parser)?,
+                None => {
+                    return Err(DecodeError::of(DecodeErrorKind::UnexpectedEnd {
+                        container: "unknown array".to_owned(),
+                    }));
+                }
+            }
+        },
+        ParseEventKind::VariantTag(_) => skip_value(parser),
+        other => Err(DecodeError::of(DecodeErrorKind::ExpectedObject {
+            container: "unknown field".to_owned(),
+            found: event_label(&other),
+        })),
+    }
 }
 
 /// Consume one scalar, returning its value and document span. `expected` names

@@ -107,6 +107,7 @@ pub(crate) struct DocumentParseCall {
     pub(crate) format: DecodeFormat,
     pub(crate) target: Type,
     pub(crate) target_schema: SchemaId,
+    pub(crate) infallible: bool,
     pub(crate) input: FrameRegion,
     pub(crate) output: FrameRegion,
 }
@@ -868,6 +869,7 @@ fn nodes_contain_checked_collection_ops(nodes: &[Node]) -> bool {
                 | Op::SetValues
                 | Op::StringSplitOnce
                 | Op::StringParseInt
+                | Op::StringLines
                 | Op::StreamCollect
                 | Op::StreamFindMin
                 | Op::StreamFindMax
@@ -6059,7 +6061,12 @@ fn lower_node(
                 ValueRepresentation::RealizedHandle,
             )?;
             let result = Type::result(target.clone(), decode_error_type());
-            require_node_type(node, result)?;
+            let infallible = if node.ty == *target {
+                true
+            } else {
+                require_node_type(node, result)?;
+                false
+            };
             let host = i64::try_from(lowering.document_parse_calls.len()).map_err(|_| {
                 lowering_diagnostic(node.span, "document parse host plan index overflow")
             })?;
@@ -6067,6 +6074,7 @@ fn lower_node(
                 format: *format,
                 target: target.clone(),
                 target_schema: semantic_schema_id(target),
+                infallible,
                 input: input.region,
                 output: dst_region,
             });
@@ -6614,7 +6622,11 @@ fn lower_node(
                 ValueRepresentation::RealizedHandle,
             )
         }
-        Op::StringContains | Op::StringIsNumeric | Op::StringSplitOnce | Op::StringParseInt => {
+        Op::StringContains
+        | Op::StringIsNumeric
+        | Op::StringSplitOnce
+        | Op::StringParseInt
+        | Op::StringLines => {
             return Err(lowering_diagnostic(
                 node.span,
                 "string operation did not reach checked lowering",

@@ -370,6 +370,11 @@ pub enum TraceCheck {
     RanProcesses {
         count: i64,
     },
+    /// The named external path was read during the run: it appears in at least
+    /// one demand receipt.
+    Read {
+        path: String,
+    },
     /// The named external path was never read during the run: it appears in no
     /// demand receipt. Read-recording is complete by construction — external
     /// reads go through the recording fixture-store accessors — so absence in
@@ -421,11 +426,12 @@ pub enum WireSelector {
 /// One scalar argument literal of a [`DescribedWire`]. Only closed scalar
 /// literals participate in a described selector; the wire never evaluates a
 /// sub-expression to obtain an argument.
-#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
 pub enum WireArg {
     Int(i64),
     Bool(bool),
+    FixtureTree(String),
 }
 
 /// One arm of a generator [`GeneratorStep::Match`]. The arm body is itself a
@@ -1091,6 +1097,8 @@ pub enum Op {
     StringParseInt,
     /// Test whether a string is a non-empty run of ASCII decimal digits.
     StringIsNumeric,
+    /// Split a string into its line-framed dense array view.
+    StringLines,
     /// Join a compiler-validated segment suffix onto a relative Path.
     PathJoin,
     /// Render a relative Path as its String spelling.
@@ -1286,9 +1294,10 @@ pub struct Test {
 
 /// Typed, in-language `#[test]` metadata. Parsed once at compile time from the
 /// attribute arguments; the outer enforcing runner reads it before execution.
-#[derive(facet::Facet, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(facet::Facet, Clone, Debug, Default, PartialEq, Eq)]
 pub struct TestMetadata {
     pub budget: Budget,
+    pub rerun_with: Option<String>,
 }
 
 /// A test execution budget. Each dimension is independently optional; a ceiling
@@ -1683,7 +1692,7 @@ impl Module {
         let effect_nodes = function
             .nodes
             .iter()
-            .filter(|node| is_effect_root(node))
+            .filter(|node| self.is_effect_root(node))
             .collect::<Vec<_>>();
         let effect_ids = effect_nodes
             .iter()
@@ -2013,6 +2022,34 @@ impl Module {
 
     fn value_island_id(&self, function: FunctionId, node: NodeId) -> ValueIslandId {
         ValueIslandId { function, node }
+    }
+
+    fn is_effect_root(&self, node: &Node) -> bool {
+        if is_effect_root(node) {
+            return true;
+        }
+        let Op::Call(callee) = node.op else {
+            return false;
+        };
+        self.function_contains_effect(callee, &mut BTreeSet::new())
+    }
+
+    fn function_contains_effect(
+        &self,
+        function: FunctionId,
+        seen: &mut BTreeSet<FunctionId>,
+    ) -> bool {
+        if !seen.insert(function) {
+            return false;
+        }
+        self.functions
+            .get(function.0 as usize)
+            .is_some_and(|function| {
+                function.nodes.iter().any(|node| {
+                    is_effect_root(node)
+                        || matches!(node.op, Op::Call(callee) if self.function_contains_effect(callee, seen))
+                })
+            })
     }
 
     /// The canonical structural preimage of the subtree rooted at `node` in
@@ -3414,6 +3451,7 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::StringSplitOnce => op.push(63),
         Op::StringParseInt => op.push(64),
         Op::StringIsNumeric => op.push(65),
+        Op::StringLines => op.push(66),
         Op::PathJoin => op.push(81),
         Op::PathToString => op.push(82),
         Op::IntToString => op.push(84),
