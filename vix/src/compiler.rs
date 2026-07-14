@@ -2197,6 +2197,11 @@ fn lower_check(
                 count: trace_bound(call)?,
             }));
         }
+        "read" => {
+            return Ok(CheckRecipe::Trace(TraceCheck::Read {
+                path: trace_path(call)?,
+            }));
+        }
         "never_read" => {
             return Ok(CheckRecipe::Trace(TraceCheck::NeverRead {
                 path: trace_path(call)?,

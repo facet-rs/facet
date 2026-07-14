@@ -7,8 +7,9 @@ use vix::diagnostic::{DiagnosticCode, DiagnosticPayload, DiagnosticSeverity};
 use vix::lowering::{LoweringCache, attribution_for, source_map_for};
 use vix::modules::ModuleSource;
 use vix::ratchet::{
-    RunError, SnapshotExpectations, run_source, run_source_innards, run_source_with_modules,
-    run_source_with_snapshots, run_source_with_snapshots_and_lane,
+    RunError, SnapshotExpectations, run_source, run_source_innards, run_source_rerun_audit,
+    run_source_rerun_audit_with_lane, run_source_with_modules, run_source_with_snapshots,
+    run_source_with_snapshots_and_lane,
 };
 use vix::runtime::{
     DemandState, EventKind, FailureValue, MemoVerdict, ProcessTermination, SchemaId,
@@ -90,6 +91,11 @@ const RUNG_072: &str = include_str!("ratchet/072-glob.vix");
 const RUNG_075: &str = include_str!("ratchet/075-fetch-pinned.vix");
 const RUNG_076: &str = include_str!("ratchet/076-fetch-memoized.vix");
 const RUNG_077: &str = include_str!("ratchet/077-archive-extract.vix");
+const RUNG_078: &str = include_str!("ratchet/078-receipts-record-reads.vix");
+const RUNG_079: &str = include_str!("ratchet/079-cross-run-reuse.vix");
+const RUNG_080: &str = include_str!("ratchet/080-early-cutoff.vix");
+const RUNG_081: &str = include_str!("ratchet/081-projection-reuse.vix");
+const RUNG_082: &str = include_str!("ratchet/082-flaky-detected.vix");
 const RUNG_106: &str = include_str!("ratchet/106-imports.vix");
 const RUNG_107: &str = include_str!("ratchet/107-visibility.reject.vix");
 const RUNG_108: &str = include_str!("ratchet/108-import-std.vix");
@@ -7094,4 +7100,98 @@ fn assert_effect_rung(rung: &str, source: &str) {
         report.passed(),
         "rung {rung} agrees across plain and chaos: {report:#?}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Rungs 078-082: receipts, cross-run reuse, projection reuse, and rerun audit.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn rung_078_receipts_record_tree_and_decode_reads() {
+    let report = run_source(RUNG_078).expect("rung 078 runs through production receipts");
+    assert!(report.passed(), "rung 078 report: {report:#?}");
+    for lane in [&report.plain, &report.chaos] {
+        assert!(
+            lane.receipt_count >= 2,
+            "tree projection and typed TOML decode both record receipts: {lane:#?}",
+        );
+        assert!(lane.checks.iter().all(|check| check.passed));
+    }
+}
+
+#[test]
+fn rung_079_cross_run_reuses_without_recompute() {
+    let audit = run_source_rerun_audit(RUNG_079).expect("rung 079 rerun audit executes");
+    assert!(
+        audit.second.checks.iter().all(|check| check.passed),
+        "second run trace checks pass: {audit:#?}",
+    );
+    assert_eq!(audit.second.counters.memo_misses, 0, "second run recomputes nothing");
+    assert!(audit.second.counters.memo_hits_exact > 0, "second run is served by memo hits");
+    assert!(!audit.nondeterministic, "pure rerun stays deterministic");
+}
+
+#[test]
+fn rung_080_early_cutoff_reuses_downstream_render() {
+    let audit = run_source_rerun_audit(RUNG_080).expect("rung 080 rerun audit executes");
+    assert!(
+        audit.second.checks.iter().all(|check| check.passed),
+        "second run trace checks pass: {audit:#?}",
+    );
+    assert!(
+        audit.second.counters.memo_hits_exact + audit.second.counters.memo_hits_projection > 0,
+        "rerun uses memo/projection hits: {:?}",
+        audit.second.counters,
+    );
+}
+
+#[test]
+fn rung_081_projection_reuses_build_step_when_unread_path_changes() {
+    let audit = run_source_rerun_audit(RUNG_081).expect("rung 081 rerun audit executes");
+    assert!(
+        audit.second.checks.iter().all(|check| check.passed),
+        "second run trace checks pass: {audit:#?}",
+    );
+    assert!(
+        audit.second.counters.memo_hits_projection > 0,
+        "changed tree outside witnessed read projection is a projection hit: {:?}",
+        audit.second.counters,
+    );
+}
+
+#[test]
+fn rung_082_rerun_audit_flags_nondeterministic_exec() {
+    let audit = run_source_rerun_audit(RUNG_082).expect("rung 082 rerun audit executes");
+    assert!(
+        audit.nondeterministic,
+        "authoritative rerun output/value families diverge: {audit:#?}",
+    );
+}
+
+#[test]
+fn incrementality_band_agrees_across_native_and_interpreter_lanes() {
+    if !weavy::jit::task_lane::available() {
+        return;
+    }
+    for (name, source) in [
+        ("078", RUNG_078),
+        ("079", RUNG_079),
+        ("080", RUNG_080),
+        ("081", RUNG_081),
+    ] {
+        let native = run_source_rerun_audit_with_lane(source, LaneRequest::Native)
+            .unwrap_or_else(|error| panic!("rung {name} native rerun audit: {error:?}"));
+        let interp = run_source_rerun_audit_with_lane(source, LaneRequest::Interpreter)
+            .unwrap_or_else(|error| panic!("rung {name} interpreter rerun audit: {error:?}"));
+        assert_eq!(
+            native.second.check_family(),
+            interp.second.check_family(),
+            "rung {name} second-run check family diverges across lanes",
+        );
+        assert_eq!(
+            native.second.value_family(),
+            interp.second.value_family(),
+            "rung {name} second-run value family diverges across lanes",
+        );
+    }
 }

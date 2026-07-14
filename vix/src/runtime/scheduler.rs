@@ -12,7 +12,7 @@ use crate::decode::{self, DecodedValue};
 use crate::lowering::{
     DocumentParseCall, LoweringArtifact, LoweringAttribution, ValueInputBinding,
 };
-use crate::vir::{FunctionId, Island, IslandId, NodeId, Op, Type, VariantPayload};
+use crate::vir::{ExternKind, FunctionId, Island, IslandId, NodeId, Op, Type, VariantPayload};
 
 use super::fixture::{FixtureStore, TarMember, parse_ustar};
 use super::identity::{
@@ -221,6 +221,12 @@ pub struct Runtime<S> {
     generator_document_receipts: Vec<Receipt>,
 }
 
+#[derive(Clone, Default)]
+pub struct PersistentRuntimeState {
+    store: Store,
+    memo: BTreeMap<LocationId, MemoEntry>,
+}
+
 impl<S: EventSink> Runtime<S> {
     #[must_use]
     pub fn new(sink: S) -> Self {
@@ -235,6 +241,30 @@ impl<S: EventSink> Runtime<S> {
             next_task: 0,
             wire_demands: Vec::new(),
             generator_document_receipts: Vec::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn with_persistent_state(sink: S, state: PersistentRuntimeState) -> Self {
+        Self {
+            sink,
+            sequence: 0,
+            store: state.store,
+            memo: state.memo,
+            demands: BTreeMap::new(),
+            tasks: BTreeMap::new(),
+            counters: Counters::default(),
+            next_task: 0,
+            wire_demands: Vec::new(),
+            generator_document_receipts: Vec::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn into_persistent_state(self) -> PersistentRuntimeState {
+        PersistentRuntimeState {
+            store: self.store,
+            memo: self.memo,
         }
     }
 
@@ -260,6 +290,31 @@ impl<S: EventSink> Runtime<S> {
             arguments,
             preimage,
         });
+    }
+
+    fn reverify_receipt(&self, receipt: &Receipt) -> bool {
+        !receipt.reads.is_empty()
+            && receipt
+                .reads
+                .iter()
+                .all(|read| self.reverify_read_witness(read))
+    }
+
+    fn reverify_read_witness(&self, read: &ReadWitness) -> bool {
+        let Some(observed) = read.observed else {
+            return false;
+        };
+        if read.projection == "typed-doc-parse" {
+            return observed == read.source;
+        }
+        let store = FixtureStore::default();
+        if let Ok(bytes) = store.tree_file_bytes(&read.projection) {
+            return effect_leaf(&Type::String, bytes).identity == observed;
+        }
+        if let Ok(bytes) = store.fetch_url(&format!("fixture://{}", read.projection)) {
+            return effect_leaf(&Type::Extern(ExternKind::Blob), bytes).identity == observed;
+        }
+        false
     }
 
     /// The scalar result word of a resolved wire demand, read from its interned
@@ -333,6 +388,57 @@ impl<S: EventSink> Runtime<S> {
                 identity,
                 passed,
                 memo: MemoVerdict::Exact,
+                failure_context: failure
+                    .as_ref()
+                    .and_then(|failure| failure_context(failure, lowered, attribution)),
+                failure,
+            });
+        }
+        if let Some(entry) = self.memo.get(&location.id).cloned()
+            && entry.location == *location
+            && entry
+                .receipt
+                .as_ref()
+                .is_some_and(|receipt| self.reverify_receipt(receipt))
+        {
+            let handle = entry.result;
+            let failure = self
+                .store
+                .entry(handle)
+                .and_then(StoreEntry::failure)
+                .cloned();
+            let identity = self
+                .store
+                .entry(handle)
+                .ok_or_else(|| {
+                    MachineError::runtime(
+                        MachineOperation::MemoRead,
+                        RuntimeFault::MissingMemoStoreHandle,
+                        None,
+                        None,
+                    )
+                })?
+                .identity;
+            let passed = failure.is_none()
+                && self
+                    .store
+                    .entry(handle)
+                    .and_then(StoreEntry::resident_bytes)
+                    .is_some_and(|bytes| bytes == [1]);
+            self.counters.memo_hits_projection += 1;
+            self.emit(EventKind::Memo {
+                location: location.id,
+                verdict: MemoVerdict::Projection,
+                verified: entry
+                    .receipt
+                    .as_ref()
+                    .map_or(0, |receipt| receipt.reads.len() as u32),
+            });
+            return Ok(Evaluation {
+                handle,
+                identity,
+                passed,
+                memo: MemoVerdict::Projection,
                 failure_context: failure
                     .as_ref()
                     .and_then(|failure| failure_context(failure, lowered, attribution)),
@@ -1176,6 +1282,42 @@ impl<S: EventSink> Runtime<S> {
                 failure_context: None,
             });
         }
+        if let Some(entry) = self.memo.get(&location.id).cloned()
+            && entry.location == *location
+            && entry
+                .receipt
+                .as_ref()
+                .is_some_and(|receipt| self.reverify_receipt(receipt))
+        {
+            let (identity, failure) = match self.store.entry(entry.result) {
+                Some(stored) => (stored.identity, stored.failure().cloned()),
+                None => {
+                    return Err(Box::new(MachineError::runtime(
+                        MachineOperation::MemoRead,
+                        RuntimeFault::MissingMemoStoreHandle,
+                        None,
+                        Some(key),
+                    )));
+                }
+            };
+            self.counters.memo_hits_projection += 1;
+            self.emit(EventKind::Memo {
+                location: location.id,
+                verdict: MemoVerdict::Projection,
+                verified: entry
+                    .receipt
+                    .as_ref()
+                    .map_or(0, |receipt| receipt.reads.len() as u32),
+            });
+            return Ok(Evaluation {
+                handle: entry.result,
+                identity,
+                passed: failure.is_none(),
+                memo: MemoVerdict::Projection,
+                failure,
+                failure_context: None,
+            });
+        }
         self.counters.memo_misses += 1;
         self.emit(EventKind::Memo {
             location: location.id,
@@ -1394,8 +1536,13 @@ impl<S: EventSink> Runtime<S> {
                     return effect_fault("tree text receiver was codata");
                 };
                 let (source, projection, bytes) = self.tree_entry_text(&entry)?;
-                reads.push(super::model::ReadWitness { source, projection });
-                Ok(EffectTerm::Value(effect_leaf(&node.ty, bytes)))
+                let value = effect_leaf(&node.ty, bytes);
+                reads.push(super::model::ReadWitness {
+                    source,
+                    projection,
+                    observed: Some(value.identity),
+                });
+                Ok(EffectTerm::Value(value))
             }
             Op::TreeGlob => {
                 let EffectTerm::Value(tree) = input(0, self)? else {
@@ -1453,6 +1600,7 @@ impl<S: EventSink> Runtime<S> {
                 reads.push(super::model::ReadWitness {
                     source: registry.identity,
                     projection: "registry/manifest".to_owned(),
+                    observed: None,
                 });
                 let row = manifest.lines().find_map(|line| {
                     let mut fields = line.split_whitespace();
@@ -1490,6 +1638,7 @@ impl<S: EventSink> Runtime<S> {
                 reads.push(super::model::ReadWitness {
                     source: pinned_identity,
                     projection: projection.to_owned(),
+                    observed: Some(blob.identity),
                 });
                 self.counters.fetches_performed += 1;
                 Ok(EffectTerm::Value(blob))
@@ -1594,6 +1743,7 @@ impl<S: EventSink> Runtime<S> {
             reads.push(super::model::ReadWitness {
                 source: tree.identity,
                 projection,
+                observed: None,
             });
             let mut paths = entries
                 .into_iter()
@@ -2238,6 +2388,7 @@ impl<S: EventSink> Runtime<S> {
         reads.push(ReadWitness {
             source: entry.identity,
             projection: "typed-doc-parse".to_owned(),
+            observed: Some(entry.identity),
         });
 
         let result = decode::decode(plan.format, &input, &plan.target);
@@ -2632,6 +2783,7 @@ impl<S: EventSink> Runtime<S> {
             reads: vec![ReadWitness {
                 source: capability.identity,
                 projection: "capability.program".to_owned(),
+                observed: Some(capability.identity),
             }],
         };
         self.emit(EventKind::Demanded { key: demand_key });
@@ -3112,6 +3264,17 @@ impl<S: EventSink> Runtime<S> {
     #[must_use]
     pub fn into_sink(self) -> S {
         self.sink
+    }
+
+    #[must_use]
+    pub fn into_sink_and_persistent_state(self) -> (S, PersistentRuntimeState) {
+        (
+            self.sink,
+            PersistentRuntimeState {
+                store: self.store,
+                memo: self.memo,
+            },
+        )
     }
 }
 

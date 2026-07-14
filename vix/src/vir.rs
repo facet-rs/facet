@@ -370,6 +370,11 @@ pub enum TraceCheck {
     RanProcesses {
         count: i64,
     },
+    /// The named external path was read during the run: it appears in at least
+    /// one demand receipt.
+    Read {
+        path: String,
+    },
     /// The named external path was never read during the run: it appears in no
     /// demand receipt. Read-recording is complete by construction — external
     /// reads go through the recording fixture-store accessors — so absence in

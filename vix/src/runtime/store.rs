@@ -86,7 +86,7 @@ pub struct Interned {
     pub bytes_hashed: u64,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Store {
     entries: Vec<StoreEntry>,
     by_identity: BTreeMap<StoreKey, Handle>,

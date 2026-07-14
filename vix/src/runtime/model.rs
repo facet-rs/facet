@@ -202,6 +202,7 @@ pub enum MemoVerdict {
 pub struct ReadWitness {
     pub source: ValueId,
     pub projection: String,
+    pub observed: Option<ValueId>,
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]

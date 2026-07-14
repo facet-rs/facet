@@ -11,8 +11,8 @@ use crate::lowering::{
 use crate::runtime::{
     ChaosPolicy, Counters, DemandState, Evaluation, Event, EventKind, EventLog, FailureContext,
     FailureValue, FramedNode, GeneratorOutcome, IslandInputs, Location, MachineError, MemoVerdict,
-    RealizedWireDemand, Runtime, SchemaId, SnapshotCapture, SnapshotOutcome, TaskState, ValueId,
-    WireDemand,
+    PersistentRuntimeState, RealizedWireDemand, Runtime, SchemaId, SnapshotCapture,
+    SnapshotOutcome, TaskState, ValueId, WireDemand,
 };
 use crate::vir::{
     DescribedWire, FunctionId, Island, IslandId, Module, Op, PartitionedRecipe, PartitionedValue,
@@ -479,6 +479,10 @@ impl TraceSnapshot {
                 let observed = self.effect_spawns;
                 (observed, i128::from(observed) == i128::from(*count))
             }
+            TraceCheck::Read { path } => {
+                let observed = u64::from(self.reads.contains(path));
+                (observed, observed == 1)
+            }
             TraceCheck::NeverRead { path } => {
                 let observed = u64::from(self.reads.contains(path));
                 (observed, observed == 0)
@@ -524,6 +528,15 @@ pub struct RatchetReport {
     pub warnings: Diagnostics,
     pub plain: SuiteRun,
     pub chaos: SuiteRun,
+    pub lowering_cache: LoweringCacheCounters,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct RerunAuditReport {
+    pub warnings: Diagnostics,
+    pub first: SuiteRun,
+    pub second: SuiteRun,
+    pub nondeterministic: bool,
     pub lowering_cache: LoweringCacheCounters,
 }
 
@@ -721,6 +734,17 @@ pub fn run_source_with_lane(
     prepare_source_with_lane(source, lane)?.execute()
 }
 
+pub fn run_source_rerun_audit(source: &str) -> Result<RerunAuditReport, RunError> {
+    prepare_source_with_config(source, CompilerConfig::default())?.execute_rerun_audit()
+}
+
+pub fn run_source_rerun_audit_with_lane(
+    source: &str,
+    lane: weavy::exec::LaneRequest,
+) -> Result<RerunAuditReport, RunError> {
+    prepare_source_with_lane(source, lane)?.execute_rerun_audit()
+}
+
 /// The readiness-boundary form of [`run_source_with_lane`]: compile, lower, and
 /// verify every demanded island through the requested lane without running a
 /// test.
@@ -833,6 +857,44 @@ impl PreparedRun {
         self.execute_inner(&SnapshotExpectations::new(), observe)
     }
 
+    pub fn execute_rerun_audit(mut self) -> Result<RerunAuditReport, RunError> {
+        let mut state = PersistentRuntimeState::default();
+        let first = run_lane(
+            &self.compilation.module,
+            &mut self.cache,
+            ChaosPolicy::default(),
+            ExecutionPhase::PlainRuntimeReady,
+            ExecutionPhase::PlainCompleted,
+            &SnapshotExpectations::new(),
+            &mut |_| {},
+            false,
+            None,
+            Some(&mut state),
+        )?;
+        let mut second_state = PersistentRuntimeState::default();
+        let second = run_lane(
+            &self.compilation.module,
+            &mut self.cache,
+            ChaosPolicy::default(),
+            ExecutionPhase::PlainRuntimeReady,
+            ExecutionPhase::PlainCompleted,
+            &SnapshotExpectations::new(),
+            &mut |_| {},
+            true,
+            Some(state),
+            Some(&mut second_state),
+        )?;
+        let nondeterministic = first.value_family() != second.value_family()
+            || first.check_family() != second.check_family();
+        Ok(RerunAuditReport {
+            warnings: self.compilation.warnings,
+            first,
+            second,
+            nondeterministic,
+            lowering_cache: self.cache.counters(),
+        })
+    }
+
     fn execute_inner(
         mut self,
         expectations: &SnapshotExpectations,
@@ -846,6 +908,9 @@ impl PreparedRun {
             ExecutionPhase::PlainCompleted,
             expectations,
             &mut observe,
+            true,
+            None,
+            None,
         )?;
         let chaos = run_lane(
             &self.compilation.module,
@@ -857,6 +922,9 @@ impl PreparedRun {
             ExecutionPhase::ChaosCompleted,
             expectations,
             &mut observe,
+            true,
+            None,
+            None,
         )?;
         Ok(RatchetReport {
             warnings: self.compilation.warnings,
@@ -1066,8 +1134,15 @@ fn run_lane(
     completed_phase: ExecutionPhase,
     expectations: &SnapshotExpectations,
     observe: &mut impl FnMut(ExecutionPhase),
+    evaluate_trace_checks: bool,
+    persistent_in: Option<PersistentRuntimeState>,
+    persistent_out: Option<&mut PersistentRuntimeState>,
 ) -> Result<SuiteRun, RunError> {
-    let mut runtime = Runtime::new(EventLog::default());
+    let mut runtime = if let Some(state) = persistent_in {
+        Runtime::with_persistent_state(EventLog::default(), state)
+    } else {
+        Runtime::new(EventLog::default())
+    };
     observe(ready_phase);
     let mut checks = Vec::new();
     let mut values = Vec::new();
@@ -1309,11 +1384,13 @@ fn run_lane(
                             )?);
                         }
                         PartitionedRecipe::Trace(trace) => {
-                            deferred_traces.push((
-                                ProvenanceKey::site(site),
-                                trace.clone(),
-                                binding_preimage(module, test.function, trace),
-                            ));
+                            if evaluate_trace_checks {
+                                deferred_traces.push((
+                                    ProvenanceKey::site(site),
+                                    trace.clone(),
+                                    binding_preimage(module, test.function, trace),
+                                ));
+                            }
                         }
                     }
                 }
@@ -1367,11 +1444,13 @@ fn run_lane(
                             kill_available = false;
                         }
                         PartitionedRecipe::Trace(trace) => {
-                            deferred_traces.push((
-                                ProvenanceKey::site(site),
-                                trace.clone(),
-                                binding_preimage(module, test.function, trace),
-                            ));
+                            if evaluate_trace_checks {
+                                deferred_traces.push((
+                                    ProvenanceKey::site(site),
+                                    trace.clone(),
+                                    binding_preimage(module, test.function, trace),
+                                ));
+                            }
                         }
                     }
                 }
@@ -1440,7 +1519,11 @@ fn run_lane(
         .tasks()
         .all(|task| matches!(task.state, TaskState::Completed | TaskState::Discarded));
     observe(completed_phase);
-    let events = runtime.into_sink().into_events();
+    let (sink, state) = runtime.into_sink_and_persistent_state();
+    if let Some(out) = persistent_out {
+        *out = state;
+    }
+    let events = sink.into_events();
     Ok(SuiteRun {
         checks,
         values,
