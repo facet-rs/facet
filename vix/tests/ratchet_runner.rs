@@ -180,9 +180,9 @@ fn rung_001_certifies_the_new_compiler_and_runtime_spine() {
     let rendered_weavy = lowered.render();
     let recipe = lowered.recipe;
     assert!(rendered_weavy.contains("Trace { id: 0 }"));
-    assert!(rendered_weavy.contains("ConstI64 { dst: 0, value: 1 }"));
-    assert!(rendered_weavy.contains("CopyI64 { dst: 8, src: 0 }"));
-    assert!(rendered_weavy.contains("Ret { src: 8, size: 8 }"));
+    assert!(rendered_weavy.contains("ConstI64 { dst: 16, value: 1 }"));
+    assert!(rendered_weavy.contains("CopyI64 { dst: 24, src: 16 }"));
+    assert!(rendered_weavy.contains("Ret { src: 24, size: 8 }"));
 
     let shifted_source = format!("\n{RUNG_001}");
     let shifted_module = Compiler::new()
