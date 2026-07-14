@@ -217,6 +217,7 @@ fn strict() -> Stream<Check> {
         SOURCE,
         CompilerConfig {
             force_molten_copy: true,
+            ..CompilerConfig::default()
         },
     );
     assert!(
@@ -277,6 +278,7 @@ fn differential() -> Stream<Check> {
         SOURCE,
         CompilerConfig {
             force_molten_copy: true,
+            ..CompilerConfig::default()
         },
     )
     .expect("forced-copy differential runs");
@@ -324,6 +326,7 @@ fn duplicates() -> Stream<Check> {
         SOURCE,
         CompilerConfig {
             force_molten_copy: true,
+            ..CompilerConfig::default()
         },
     )
     .expect("forced-copy duplicates run");

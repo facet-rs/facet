@@ -32,6 +32,11 @@ pub struct CompilerConfig {
     /// When set, every `Array.fold` keeps the semantic copy path even where the
     /// strict one-item-append shape would otherwise be admitted molten.
     pub force_molten_copy: bool,
+    /// Force scalar user calls in observable source-revision audits to become
+    /// scheduler-owned demand boundaries. Strict scalar arguments publish first
+    /// as value inputs, so downstream demand keys are over `ValueId`s rather
+    /// than recompute-and-compare results.
+    pub force_scalar_call_boundaries: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -941,6 +946,7 @@ fn lower_module(source: &ast::SourceFile, config: CompilerConfig) -> Result<Modu
     };
     let mut module = Module {
         force_molten_copy: config.force_molten_copy,
+        force_scalar_call_boundaries: config.force_scalar_call_boundaries,
         records: source
             .items
             .iter()
@@ -2168,6 +2174,11 @@ fn lower_check(
         }
         "memo_entries_at_most" => {
             return Ok(CheckRecipe::Trace(TraceCheck::MemoEntriesAtMost {
+                bound: trace_bound(call)?,
+            }));
+        }
+        "memo_hits_at_least" => {
+            return Ok(CheckRecipe::Trace(TraceCheck::MemoHitsAtLeast {
                 bound: trace_bound(call)?,
             }));
         }
