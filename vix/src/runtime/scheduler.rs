@@ -1004,11 +1004,12 @@ impl<S: EventSink> Runtime<S> {
         &mut self,
         island: IslandId,
         location: &Location,
+        fingerprint: &str,
         effect: &Island,
         arguments: &[Evaluation],
         chaos: ChaosPolicy,
     ) -> Result<Evaluation, Box<MachineError>> {
-        let recipe = RecipeId::from_canonical_vir(&effect.canonical_recipe_bytes());
+        let recipe = RecipeId::from_effect_fingerprint(fingerprint);
         let preimage = DemandPreimage {
             closure: recipe,
             arguments: arguments.iter().map(|argument| argument.identity).collect(),
@@ -1060,6 +1061,21 @@ impl<S: EventSink> Runtime<S> {
                 result: None,
             },
         );
+        let output_ty = effect
+            .nodes
+            .iter()
+            .find(|node| node.id == effect.output)
+            .map(|node| node.ty.clone())
+            .ok_or_else(|| {
+                Box::new(MachineError::runtime(
+                    MachineOperation::Effect,
+                    RuntimeFault::EffectPlane {
+                        detail: "effect island output node was missing",
+                    },
+                    None,
+                    Some(key),
+                ))
+            })?;
         self.emit(EventKind::DemandTransition {
             key,
             from: DemandState::Absent,
@@ -1101,10 +1117,7 @@ impl<S: EventSink> Runtime<S> {
                 )));
             };
             let node = value.node.unwrap_or_else(|| {
-                FramedNode::leaf(
-                    effect_schema(&effect.nodes[effect.output.0 as usize].ty),
-                    value.resident.clone(),
-                )
+                FramedNode::leaf(effect_schema(&output_ty), value.resident.clone())
             });
             let interned = self.store.intern_tree(&node, &value.resident);
             if let Some(frozen) = value.frozen {
@@ -1148,16 +1161,20 @@ impl<S: EventSink> Runtime<S> {
         arguments: &[Evaluation],
         reads: &mut Vec<super::model::ReadWitness>,
     ) -> Result<EffectTerm, Box<MachineError>> {
-        let node = island.nodes.get(node.0 as usize).ok_or_else(|| {
-            Box::new(MachineError::runtime(
-                MachineOperation::Effect,
-                RuntimeFault::EffectPlane {
-                    detail: "effect island referenced a missing node",
-                },
-                None,
-                None,
-            ))
-        })?;
+        let node = island
+            .nodes
+            .iter()
+            .find(|candidate| candidate.id == node)
+            .ok_or_else(|| {
+                Box::new(MachineError::runtime(
+                    MachineOperation::Effect,
+                    RuntimeFault::EffectPlane {
+                        detail: "effect island referenced a missing node",
+                    },
+                    None,
+                    None,
+                ))
+            })?;
         let mut input = |index: usize, this: &mut Self| {
             let id = *node.inputs.get(index).ok_or_else(|| {
                 Box::new(MachineError::runtime(
@@ -3105,6 +3122,11 @@ fn frozen_to_weavy(
     store: &Store,
 ) -> Result<weavy::exec::FrozenValue, ()> {
     match (frozen, ty) {
+        (FrozenValue::Inline(_), Type::Bool | Type::Int | Type::Check) => {
+            Ok(weavy::exec::FrozenValue::Inline(
+                frozen_inline(frozen, ty, binding, store)?.into_weavy(),
+            ))
+        }
         (FrozenValue::Reference(identity), _) => {
             let schema = publication_schema(binding, ty)?;
             let handle = store

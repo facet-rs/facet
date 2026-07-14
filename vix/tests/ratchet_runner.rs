@@ -6449,5 +6449,8 @@ fn rung_077_runs_through_effect_plane() {
 fn assert_effect_rung(rung: &str, source: &str) {
     let report = run_source(source)
         .unwrap_or_else(|error| panic!("rung {rung} runs through the effect plane: {error:?}"));
-    assert!(report.passed(), "rung {rung} agrees across plain and chaos");
+    assert!(
+        report.passed(),
+        "rung {rung} agrees across plain and chaos: {report:#?}"
+    );
 }

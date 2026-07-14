@@ -1026,6 +1026,7 @@ fn run_lane(
                 runtime.evaluate_effect(
                     value.island.id,
                     &Location::for_test_effect(&partitioned.name, fingerprint),
+                    fingerprint,
                     &value.island,
                     &arguments,
                     chaos,

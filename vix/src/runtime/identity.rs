@@ -26,6 +26,18 @@ impl RecipeId {
     pub fn from_canonical_vir(bytes: &[u8]) -> Self {
         Self(hash_framed(b"vix.recipe.v1", &[bytes]))
     }
+
+    /// Recipe identity for a machine-plane effect expression. The caller
+    /// supplies the VIR structural fingerprint, which intentionally excludes
+    /// partition-local node ids so duplicate pinned demands share one memo
+    /// preimage while their input identities remain part of that preimage.
+    #[must_use]
+    pub fn from_effect_fingerprint(fingerprint: &str) -> Self {
+        Self(hash_framed(
+            b"vix.effect.recipe.v1",
+            &[fingerprint.as_bytes()],
+        ))
+    }
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
