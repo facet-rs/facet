@@ -570,12 +570,12 @@ impl<S: EventSink> Runtime<S> {
                 let step = match self.store.with_value_memory_overrides(
                     &value_memory_overrides,
                     |value_memories| {
-                        let mut hosts: Vec<HostFn<'_>> = if lowered.document_parse_calls.is_empty()
-                        {
-                            Vec::new()
-                        } else {
-                            vec![&mut document_host]
-                        };
+                        // Every scheduler task receives the one generic document
+                        // primitive. Verified programs that do not contain a
+                        // `HostCallYield` never invoke it; a program that does
+                        // is admitted only with a sufficient host table and is
+                        // routed back through the typed plan below.
+                        let mut hosts: Vec<HostFn<'_>> = vec![&mut document_host];
                         task.drive_hosted_with_value_memories(
                             &mut ready,
                             &awaited,
