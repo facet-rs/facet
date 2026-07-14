@@ -267,6 +267,7 @@ impl LoweringArtifact {
             pc_nodes: self.pc_nodes.clone(),
             constants: self.constants.clone(),
             value_inputs: self.value_inputs.clone(),
+            document_parse_calls: self.document_parse_calls.clone(),
             output_type: self.output_type.clone(),
             output_schema: self.output_schema,
             forced_copy_value: self.forced_copy_value,
