@@ -3530,6 +3530,12 @@ impl Task {
         self.frames.len()
     }
 
+    /// The function owning the currently suspended frame.
+    #[must_use]
+    pub fn active_function(&self) -> FnId {
+        self.frames.last().expect("live frame").fn_id
+    }
+
     #[must_use]
     pub fn frame_arena_bytes(&self) -> usize {
         self.arena.len()

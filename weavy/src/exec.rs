@@ -1150,10 +1150,14 @@ impl ExecTask<'_> {
     /// suspended task on either execution lane.
     pub fn write_host_word(&mut self, offset: u32, value: i64) -> Result<(), TaskFault> {
         self.check_not_poisoned()?;
-        let function = self.executable.function(self.entry)?;
-        let frame = &self.executable.program().program().fns[self.entry.0 as usize].frame;
+        let active = match &self.lane {
+            Lane::Interpreter(task) => task.active_function(),
+            Lane::Native(task) => task.active_function(),
+        };
+        let function = self.executable.function(active)?;
+        let frame = &self.executable.program().program().fns[active.0 as usize].frame;
         let offset = usize::try_from(offset).map_err(|_| TaskFault::InvalidResultShape {
-            entry: self.entry,
+            entry: active,
             region: function.result,
             size: 0,
         })?;
@@ -1163,7 +1167,7 @@ impl ExecTask<'_> {
                 .is_none_or(|end| end > frame.size)
         {
             return Err(TaskFault::InvalidResultShape {
-                entry: self.entry,
+                entry: active,
                 region: function.result,
                 size: offset,
             });
