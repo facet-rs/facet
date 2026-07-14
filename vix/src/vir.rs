@@ -1149,6 +1149,10 @@ pub enum Op {
     /// r[impl machine.primitive.fetch-returns-a-blob]
     /// r[impl machine.primitive.fetch-integrity-vs-identity]
     Fetch,
+    /// Resolve the canonical package solver fixture lazily through visited
+    /// package-row reads. Inputs are the authored universe value and the
+    /// requirements map; receipts carry the package rows actually read.
+    MiniSolve,
     /// Extract an archive Blob into a Tree whose identity is the canonical
     /// tree encoding — never the archive bytes' ContentHash.
     ///
@@ -2958,7 +2962,21 @@ fn structural_fingerprint(
 /// lower into a Weavy program. A codata effect recipe (`Op::TreeGlob`, type
 /// `Stream<..>`) is not itself a root — the collection realizing it is.
 fn is_effect_root(node: &Node) -> bool {
-    node.effect.kind == EffectKind::Effect && !matches!(node.ty, Type::Stream { .. })
+    matches!(
+        node.op,
+        Op::Exec { .. }
+            | Op::FixtureTree
+            | Op::TreeProject
+            | Op::TreeEntryText
+            | Op::FixtureRegistry
+            | Op::RegistryUrl
+            | Op::Fetch
+            | Op::MiniSolve
+            | Op::Untar
+            | Op::BlobLen
+    ) || (node.effect.kind == EffectKind::Effect
+        && matches!(node.op, Op::StreamCollect)
+        && !matches!(node.ty, Type::Stream { .. }))
 }
 
 fn is_shared_publication_candidate(node: &Node) -> bool {
@@ -3471,6 +3489,7 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::FixtureRegistry => op.push(94),
         Op::RegistryUrl => op.push(95),
         Op::Fetch => op.push(96),
+        Op::MiniSolve => op.push(99),
         Op::Untar => op.push(97),
         Op::BlobLen => op.push(98),
     }
