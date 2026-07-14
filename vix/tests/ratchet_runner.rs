@@ -5699,6 +5699,14 @@ fn t() -> Stream<Check> {
         Ok(_) => expect(false),
         Err(error) => expect_eq(error.path, \"name\"),
     };
+    yield match try_json_decode<PkgRow>(src) {
+        Ok(_) => expect(false),
+        Err(error) => expect_eq(error.document_offset, 8),
+    };
+    yield match try_json_decode<PkgRow>(src) {
+        Ok(_) => expect(false),
+        Err(error) => expect_eq(error.document_len, 2),
+    };
 }
 ";
     const TOML_OK: &str = "\
