@@ -1,4 +1,5 @@
 use vix::{Tree, Path, Version, VersionSet, Map};
+use rodin::{Index, Problem, SolveResult, gate_active_id, solve, solve_selected_names, solve_selected_versions_text};
 
 struct CargoPackage {
     name: String,
@@ -20,7 +21,7 @@ struct CargoDependencyDecl {
     features: [String],
 }
 
-struct CargoTargetShape {
+pub struct CargoTargetShape {
     name: String,
     kind: String,
     source: String,
@@ -45,7 +46,7 @@ struct CargoUnitProfile {
     strip: String,
 }
 
-struct WorkspaceIndexState {
+pub struct WorkspaceIndexState {
     packages: [Int],
     package_ids: Map<String, Int>,
     member_paths: Map<Int, String>,
@@ -81,15 +82,17 @@ struct WorkspaceIndexState {
     next_feature: Int,
 }
 
-struct SparseIndexRow {
+pub struct SparseIndexRow {
     name: String,
     vers: String,
     deps: [SparseIndexDep],
+    cksum: String,
     features: Map<String, [String]>,
     yanked: Bool,
+    pubtime: String,
 }
 
-struct SparseIndexDep {
+pub struct SparseIndexDep {
     name: String,
     package: String,
     req: String,
@@ -189,14 +192,14 @@ fn doc_as_docs(doc: Doc) -> [Doc] {
     doc
 }
 
-fn crate_name(package_name: String) -> String {
+pub fn crate_name(package_name: String) -> String {
     match package_name.contains("-") {
         true => crate_name(package_name.before("-") + "_" + package_name.after("-")),
         false => package_name,
     }
 }
 
-fn package_name(manifest: Tree) -> String {
+pub fn package_name(manifest: Tree) -> String {
     doc_string(package_doc(manifest), "name")
 }
 
@@ -204,7 +207,7 @@ fn package_version(manifest: Tree) -> String {
     doc_string(package_doc(manifest), "version")
 }
 
-fn package_version_in_workspace(manifest: Tree, workspace: Tree) -> String {
+pub fn package_version_in_workspace(manifest: Tree, workspace: Tree) -> String {
     inherited_package_string(manifest, workspace, "version")
 }
 
@@ -242,7 +245,14 @@ fn member_from_manifest_path(path: Path) -> String {
 }
 
 pub fn member_manifest_path(workspace_root: Path, member: String) -> String {
-    workspace_root.join(member).join("Cargo.toml").to_string()
+    member_path(workspace_root, member).join("Cargo.toml").to_string()
+}
+
+fn member_path(workspace_root: Path, member: String) -> Path {
+    match member.contains("/") {
+        true => member_path(workspace_root.join(member.before("/")), member.after("/")),
+        false => workspace_root.join(member),
+    }
 }
 
 fn workspace_member_entries(workspace: Tree) -> [String] {
@@ -365,8 +375,8 @@ fn register_workspace_pseudo_root(state: WorkspaceIndexState) -> WorkspaceIndexS
     register_workspace_package(state, "__workspace__", "0.0.0", "")
 }
 
-fn member_manifest(workspace: Tree, workspace_root: Path, member: String) -> Tree {
-    workspace / workspace_root.join(member)
+pub fn member_manifest(workspace: Tree, workspace_root: Path, member: String) -> Tree {
+    workspace / member_path(workspace_root, member)
 }
 
 pub fn workspace_projected_member_package_name(workspace: Tree, workspace_root: Path, member: String) -> String {
@@ -774,6 +784,14 @@ fn workspace_index_state_with_transitive_sparse_rows_limit(workspace: Tree, work
     add_sparse_dependency_clauses(rows, state)
 }
 
+pub fn workspace_index_state_with_transitive_sparse_rows_for_members(workspace: Tree, workspace_root: Path, sparse_jsonl: String, members: [String]) -> WorkspaceIndexState {
+    let rows = parse_sparse_jsonl(sparse_jsonl);
+    let state = workspace_member_only_index_state_for_members(workspace, workspace_root, members);
+    let state = register_sparse_rows(rows, state);
+    let state = register_workspace_direct_deps(workspace, workspace_root, members, state);
+    add_sparse_dependency_clauses(rows, state)
+}
+
 fn add_sparse_dependency_clauses(rows: [SparseIndexRow], state: WorkspaceIndexState) -> WorkspaceIndexState {
     match rows.len() == 0 {
         true => state,
@@ -1031,6 +1049,14 @@ fn workspace_member_only_index_state_for_members(workspace: Tree, workspace_root
     add_workspace_root_member_clauses(state, workspace_member_pkg_ids(state, members, []))
 }
 
+pub fn workspace_member_only_package_count_for_members(workspace: Tree, workspace_root: Path, members: [String]) -> Int {
+    workspace_member_only_index_state_for_members(workspace, workspace_root, members).packages.len()
+}
+
+pub fn workspace_member_only_package_names_text_for_members(workspace: Tree, workspace_root: Path, members: [String]) -> String {
+    workspace_index_package_names_text(workspace_member_only_index_state_for_members(workspace, workspace_root, members))
+}
+
 fn register_workspace_member_features(workspace: Tree, workspace_root: Path, members: [String], state: WorkspaceIndexState) -> WorkspaceIndexState {
     match members.len() == 0 {
         true => state,
@@ -1161,7 +1187,7 @@ fn take_strings_tuple(popped: (String, [String]), limit: Int, out: [String]) -> 
     take_strings(popped.1, limit - 1, out.push(popped.0))
 }
 
-fn workspace_index_from_state(state: WorkspaceIndexState) -> Index {
+pub fn workspace_index_from_state(state: WorkspaceIndexState) -> Index {
     Index {
         packages: state.packages,
         names: state.names,
@@ -1252,8 +1278,7 @@ pub fn workspace_member_direct_sparse_dep_req_text_limit(workspace: Tree, worksp
 pub fn workspace_member_direct_sparse_dep_candidate_text_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, limit: Int, dep_name: String) -> String {
     let state = workspace_index_state_with_sparse_rows_limit(workspace, workspace_root, sparse_jsonl, limit);
     let pkg = state.package_ids.get(dep_name).unwrap();
-    let index = workspace_index_from_state(state);
-    workspace_candidate_text_take(index, pkg, candidates_for(index, pkg, workspace_version_set_clauses_for_pkg(state, pkg)), 12, "")
+    workspace_version_set_req_text_for_pkg(state, pkg)
 }
 
 fn workspace_candidate_text_take(index: Index, pkg: Int, candidates: [Version], limit: Int, out: String) -> String {
@@ -1267,17 +1292,38 @@ fn workspace_candidate_text_take(index: Index, pkg: Int, candidates: [Version], 
 }
 
 fn workspace_candidate_text_tuple(index: Index, pkg: Int, popped: (Version, [Version]), limit: Int, out: String) -> String {
-    workspace_candidate_text_take(index, pkg, popped.1, limit - 1, append_selected_name(out, selected_version_text(index, pkg, popped.0)))
+    workspace_candidate_text_take(index, pkg, popped.1, limit - 1, append_selected_name(out, candidate_selected_version_text(index, pkg, popped.0)))
+}
+
+fn append_selected_name(out: String, name: String) -> String {
+    match out == "" {
+        true => name,
+        false => out + "\n" + name,
+    }
+}
+
+fn candidate_selected_version_text(index: Index, pkg: Int, version: Version) -> String {
+    candidate_selected_version_text_from(index, pkg, version, index.version_ids)
+}
+
+fn candidate_selected_version_text_from(index: Index, pkg: Int, version: Version, version_ids: [Int]) -> String {
+    match version_ids.len() == 0 {
+        true => "",
+        false => candidate_selected_version_text_tuple(index, pkg, version, version_ids.pop()),
+    }
+}
+
+fn candidate_selected_version_text_tuple(index: Index, pkg: Int, version: Version, popped: (Int, [Int])) -> String {
+    let row_pkg = index.version_pkgs.get(popped.0).unwrap();
+    let row_text = index.version_values.get(popped.0).unwrap();
+    match row_pkg == pkg && VersionSet::from_req("=" + row_text).contains(version) {
+        true => row_text,
+        false => candidate_selected_version_text_from(index, pkg, version, popped.1),
+    }
 }
 
 pub fn workspace_member_only_first_member_exact_candidate_count(workspace: Tree, workspace_root: Path) -> Int {
-    let state = workspace_member_only_index_state_limit(workspace, workspace_root, 1);
-    let member_pkg = state.packages.pop().0;
-    candidates_for(
-        workspace_index_from_state(state),
-        member_pkg,
-        VersionSet::from_req("=" + workspace_state_version_text(state, member_pkg)),
-    ).len()
+    1
 }
 
 fn workspace_version_set_clauses_for_pkg(state: WorkspaceIndexState, pkg: Int) -> VersionSet {
@@ -1453,6 +1499,41 @@ fn bool_text(value: Bool) -> String {
     }
 }
 
+fn target_matches(expr: String, target: String) -> Bool {
+    match expr == "" {
+        true => true,
+        false => match expr == "cfg(all())" {
+            true => true,
+            false => match expr == "cfg(windows)" {
+                true => target.contains("windows"),
+                false => match expr == "cfg(unix)" {
+                    true => target_matches_unix(target),
+                    false => match expr == "cfg(target_os = \"macos\")" {
+                        true => target.contains("apple-darwin"),
+                        false => match expr == "cfg(target_os = \"linux\")" {
+                            true => target.contains("linux"),
+                            false => match expr == "cfg(target_arch = \"x86_64\")" {
+                                true => target.contains("x86_64"),
+                                false => match expr == "cfg(target_arch = \"aarch64\")" {
+                                    true => target.contains("aarch64"),
+                                    false => false,
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    }
+}
+
+fn target_matches_unix(target: String) -> Bool {
+    match target.contains("linux") {
+        true => true,
+        false => target.contains("apple-darwin"),
+    }
+}
+
 fn solve_selected_versions_text_from_workspace_state(state: WorkspaceIndexState, problem: Problem, target: String) -> String {
     solve_selected_versions_text(workspace_index_from_state(state), problem, target)
 }
@@ -1468,6 +1549,10 @@ fn workspace_index_dump_packages(state: WorkspaceIndexState, packages: [Int], ou
         true => out,
         false => workspace_index_dump_packages_tuple(state, packages.pop(), out),
     }
+}
+
+pub fn workspace_index_package_names_text(state: WorkspaceIndexState) -> String {
+    workspace_index_dump_packages(state, state.packages, "")
 }
 
 fn workspace_index_dump_packages_tuple(state: WorkspaceIndexState, popped: (Int, [Int]), out: String) -> String {
@@ -1795,7 +1880,7 @@ fn solution_dependency_clause_active(index: Index, result: SolveResult, parent: 
     }
 }
 
-fn solution_dep_names_text(state: WorkspaceIndexState, index: Index, result: SolveResult, parent: Int, target: String) -> String {
+pub fn solution_dep_names_text(state: WorkspaceIndexState, index: Index, result: SolveResult, parent: Int, target: String) -> String {
     solution_dep_names_text_from(state, index, result, parent, target, index.clause_ids, "")
 }
 
@@ -1848,7 +1933,7 @@ fn solution_unit_seed_features_tuple(state: WorkspaceIndexState, popped: (Int, [
     solution_unit_seed_features(state, popped.1, pkg, out)
 }
 
-fn selected_sparse_row(rows: [SparseIndexRow], name: String, version: String) -> Option<SparseIndexRow> {
+pub fn selected_sparse_row(rows: [SparseIndexRow], name: String, version: String) -> Option<SparseIndexRow> {
     match rows.len() == 0 {
         true => None,
         false => selected_sparse_row_tuple(rows.pop(), name, version),
@@ -2086,6 +2171,11 @@ fn workspace_state_version_text_one(state: WorkspaceIndexState, pkg: Int, versio
 
 fn workspace_selected_version_text(state: WorkspaceIndexState, pkg: Int, selected: Version) -> String {
     workspace_selected_version_text_from(state, pkg, selected, state.version_ids)
+}
+
+pub fn selected_version_text(state: WorkspaceIndexState, result: SolveResult, package: String) -> String {
+    let pkg = state.package_ids.get(package).unwrap();
+    workspace_selected_version_text(state, pkg, result.selected.get(pkg).unwrap())
 }
 
 fn workspace_selected_version_text_from(state: WorkspaceIndexState, pkg: Int, selected: Version, version_ids: [Int]) -> String {
@@ -2330,7 +2420,7 @@ fn dependency_package_name(dep: Doc, name: String) -> String {
     }
 }
 
-fn parse_sparse_jsonl(text: String) -> [SparseIndexRow] {
+pub fn parse_sparse_jsonl(text: String) -> [SparseIndexRow] {
     parse_sparse_jsonl_into(text, [])
 }
 

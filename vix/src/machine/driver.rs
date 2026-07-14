@@ -7797,7 +7797,7 @@ impl Driver {
                 mounts.push(ExecMount::PendingTree {
                     at: root,
                     tree,
-                    projected_path: Some(subpath),
+                    projected_path: None,
                 });
                 Ok(vec![text])
             }

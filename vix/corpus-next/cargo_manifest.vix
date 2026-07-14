@@ -1,4 +1,5 @@
 use vix::{Tree, Path, Version, VersionSet, Map, Set};
+use rodin::{Index, Problem, SolveResult, gate_active_id, solve};
 
 struct CargoPackage {
     name: String,
@@ -20,7 +21,7 @@ struct CargoDependencyDecl {
     features: [String],
 }
 
-struct CargoTargetShape {
+pub struct CargoTargetShape {
     name: String,
     kind: String,
     source: String,
@@ -54,7 +55,6 @@ struct CargoPackageToml {
     name: String,
     version: PackageScalar,
     edition: PackageScalar,
-    #[decode(rename = "rust-version")]
     rust_version: Option<PackageScalar>,
     license: Option<PackageScalar>,
     repository: Option<PackageScalar>,
@@ -69,7 +69,6 @@ struct CargoWorkspaceToml {
 struct CargoWorkspacePackageToml {
     version: Option<String>,
     edition: Option<String>,
-    #[decode(rename = "rust-version")]
     rust_version: Option<String>,
     license: Option<String>,
     repository: Option<String>,
@@ -86,7 +85,6 @@ struct CargoDependencyTable {
     package: Option<String>,
     workspace: Option<Bool>,
     optional: Option<Bool>,
-    #[decode(rename = "default-features")]
     default_features: Option<Bool>,
     features: Option<[String]>,
 }
@@ -94,9 +92,7 @@ struct CargoDependencyTable {
 struct CargoLibToml {
     name: Option<String>,
     path: Option<String>,
-    #[decode(rename = "proc-macro")]
     proc_macro: Option<Bool>,
-    #[decode(rename = "crate-type")]
     crate_type: Option<[String]>,
 }
 
@@ -107,9 +103,7 @@ struct CargoBinToml {
 
 struct CargoTargetToml {
     dependencies: Option<Map<String, CargoDependencySpec>>,
-    #[decode(rename = "build-dependencies")]
     build_dependencies: Option<Map<String, CargoDependencySpec>>,
-    #[decode(rename = "dev-dependencies")]
     dev_dependencies: Option<Map<String, CargoDependencySpec>>,
 }
 
@@ -117,9 +111,7 @@ struct CargoManifestToml {
     package: CargoPackageToml,
     workspace: Option<CargoWorkspaceToml>,
     dependencies: Option<Map<String, CargoDependencySpec>>,
-    #[decode(rename = "build-dependencies")]
     build_dependencies: Option<Map<String, CargoDependencySpec>>,
-    #[decode(rename = "dev-dependencies")]
     dev_dependencies: Option<Map<String, CargoDependencySpec>>,
     target: Option<Map<String, CargoTargetToml>>,
     features: Option<Map<String, [String]>>,
@@ -127,7 +119,7 @@ struct CargoManifestToml {
     bin: Option<[CargoBinToml]>,
 }
 
-struct WorkspaceIndexState {
+pub struct WorkspaceIndexState {
     packages: [Int],
     package_ids: Map<String, Int>,
     member_paths: Map<Int, String>,
@@ -163,22 +155,23 @@ struct WorkspaceIndexState {
     next_feature: Int,
 }
 
-struct SparseIndexRow {
+pub struct SparseIndexRow {
     name: String,
     vers: String,
     deps: [SparseIndexDep],
+    cksum: String,
     features: Map<String, [String]>,
     yanked: Bool,
+    pubtime: String,
 }
 
-struct SparseIndexDep {
+pub struct SparseIndexDep {
     name: String,
     package: String,
     req: String,
     kind: String,
     target: String,
     optional: Bool,
-    #[decode(rename = "default_features")]
     default_features: Bool,
     features: [String],
 }
@@ -322,7 +315,7 @@ fn inherited_package_option(field: Option<PackageScalar>, workspace_value: Optio
     }
 }
 
-fn crate_name(package_name: String) -> String {
+pub fn crate_name(package_name: String) -> String {
     if package_name.contains("-") {
         crate_name(package_name.before("-") + "_" + package_name.after("-"))
     } else {
@@ -330,7 +323,7 @@ fn crate_name(package_name: String) -> String {
     }
 }
 
-fn package_name(manifest: Tree) -> String {
+pub fn package_name(manifest: Tree) -> String {
     package_toml(manifest).name
 }
 
@@ -338,7 +331,7 @@ fn package_version(manifest: Tree) -> String {
     package_scalar_value(package_toml(manifest).version)
 }
 
-fn package_version_in_workspace(manifest: Tree, workspace: Tree) -> String {
+pub fn package_version_in_workspace(manifest: Tree, workspace: Tree) -> String {
     inherited_package_scalar(package_toml(manifest).version, workspace_package_toml(workspace).version.unwrap())
 }
 
@@ -363,7 +356,14 @@ fn member_from_manifest_path(path: Path) -> String {
 }
 
 fn member_manifest_path(workspace_root: Path, member: String) -> String {
-    (workspace_root / member / "Cargo.toml").to_string()
+    (member_path(workspace_root, member) / "Cargo.toml").to_string()
+}
+
+fn member_path(workspace_root: Path, member: String) -> Path {
+    match member.contains("/") {
+        true => member_path(workspace_root / member.before("/"), member.after("/")),
+        false => workspace_root / member,
+    }
 }
 
 fn workspace_member_glob_pattern(member: String) -> String {
@@ -381,7 +381,7 @@ fn workspace_members_from_entry(workspace: Tree, member: String) -> [String] {
     }
 }
 
-fn workspace_members(workspace: Tree) -> [String] {
+pub fn workspace_members(workspace: Tree) -> [String] {
     workspace_toml(workspace).members.fold([], |out, member| [..out, ..workspace_members_from_entry(workspace, member)])
 }
 
@@ -435,8 +435,8 @@ fn register_workspace_pseudo_root(state: WorkspaceIndexState) -> WorkspaceIndexS
     register_workspace_package(state, "__workspace__", "0.0.0", "")
 }
 
-fn member_manifest(workspace: Tree, workspace_root: Path, member: String) -> Tree {
-    workspace / workspace_root / member
+pub fn member_manifest(workspace: Tree, workspace_root: Path, member: String) -> Tree {
+    workspace / member_path(workspace_root, member)
 }
 
 fn workspace_projected_member_package_name(workspace: Tree, workspace_root: Path, member: String) -> String {
@@ -1192,6 +1192,14 @@ fn workspace_member_only_index_state_for_members(workspace: Tree, workspace_root
     add_workspace_root_member_clauses(state, workspace_member_pkg_ids(state, members))
 }
 
+pub fn workspace_member_only_package_count_for_members(workspace: Tree, workspace_root: Path, members: [String]) -> Int {
+    workspace_member_only_index_state_for_members(workspace, workspace_root, members).packages.len()
+}
+
+pub fn workspace_member_only_package_names_text_for_members(workspace: Tree, workspace_root: Path, members: [String]) -> String {
+    workspace_index_package_names_text(workspace_member_only_index_state_for_members(workspace, workspace_root, members))
+}
+
 fn workspace_member_only_index_state(workspace: Tree, workspace_root: Path) -> WorkspaceIndexState {
     workspace_member_only_index_state_for_members(workspace, workspace_root, workspace_members(workspace))
 }
@@ -1220,6 +1228,14 @@ fn workspace_index_state_with_sparse_rows_limit(workspace: Tree, workspace_root:
     register_workspace_direct_deps(workspace, workspace_root, members, state)
 }
 
+pub fn workspace_index_state_with_transitive_sparse_rows_for_members(workspace: Tree, workspace_root: Path, sparse_jsonl: String, members: [String]) -> WorkspaceIndexState {
+    let rows = parse_sparse_jsonl(sparse_jsonl);
+    let state = workspace_member_only_index_state_for_members(workspace, workspace_root, members);
+    let state = register_sparse_rows(rows, state);
+    let state = register_workspace_direct_deps(workspace, workspace_root, members, state);
+    add_sparse_dependency_clauses(rows, state)
+}
+
 fn workspace_index_state_with_transitive_sparse_rows_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, limit: Int) -> WorkspaceIndexState {
     let members = take_strings(workspace_members(workspace), limit);
     let rows = parse_sparse_jsonl(sparse_jsonl);
@@ -1229,7 +1245,7 @@ fn workspace_index_state_with_transitive_sparse_rows_limit(workspace: Tree, work
     add_sparse_dependency_clauses(rows, state)
 }
 
-fn workspace_index_from_state(state: WorkspaceIndexState) -> Index {
+pub fn workspace_index_from_state(state: WorkspaceIndexState) -> Index {
     Index {
         packages: state.packages,
         names: state.names,
@@ -1263,7 +1279,7 @@ fn workspace_problem() -> Problem {
     }
 }
 
-fn problem_of_member(root_pkg: Int, root_default_feature: Int) -> Problem {
+pub fn problem_of_member(root_pkg: Int, root_default_feature: Int) -> Problem {
     Problem {
         root_pkg: root_pkg,
         root_req: VersionSet::from_req("*"),
@@ -1491,6 +1507,10 @@ fn workspace_index_dump(state: WorkspaceIndexState) -> String {
     state.clause_ids.fold(out, |out, clause_id| append_index_dump_line(out, workspace_index_dump_clause(state, clause_id)))
 }
 
+pub fn workspace_index_package_names_text(state: WorkspaceIndexState) -> String {
+    state.packages.fold("", |out, pkg| append_index_dump_line(out, "p\t" + state.names.get(pkg)))
+}
+
 fn workspace_member_direct_sparse_index_dump_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, limit: Int) -> String {
     workspace_index_dump(workspace_index_state_with_sparse_rows_limit(workspace, workspace_root, sparse_jsonl, limit))
 }
@@ -1521,7 +1541,7 @@ fn append_dep_name(out: String, name: String) -> String {
     if out == "" { name } else { out + "," + name }
 }
 
-fn solution_dep_names_text(state: WorkspaceIndexState, index: Index, result: SolveResult, parent: Int, target: String) -> String {
+pub fn solution_dep_names_text(state: WorkspaceIndexState, index: Index, result: SolveResult, parent: Int, target: String) -> String {
     index.clause_ids.fold("", |out, clause_id| {
         if solution_dependency_clause_active(index, result, parent, clause_id, target) {
             append_dep_name(out, crate_name(state.names.get(index.consequent_pkgs.get(clause_id))))
@@ -1531,7 +1551,7 @@ fn solution_dep_names_text(state: WorkspaceIndexState, index: Index, result: Sol
     })
 }
 
-fn selected_sparse_row(rows: [SparseIndexRow], name: String, version: String) -> Option<SparseIndexRow> {
+pub fn selected_sparse_row(rows: [SparseIndexRow], name: String, version: String) -> Option<SparseIndexRow> {
     rows.fold(None, |found, row| {
         if row.name == name && row.vers == version {
             Some(row)
@@ -2098,7 +2118,7 @@ fn version_dependency_of(manifest: Tree, name: String, kind: String) -> CargoDep
     }
 }
 
-fn parse_sparse_jsonl(text: String) -> [SparseIndexRow] {
+pub fn parse_sparse_jsonl(text: String) -> [SparseIndexRow] {
     parse_sparse_jsonl_into(text, [])
 }
 

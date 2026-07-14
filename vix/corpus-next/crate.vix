@@ -1,5 +1,6 @@
 use vix::{Arg, Map, Os, Path, Target, Tree, Version};
 use caps::Rustc;
+use rodin::{Index, Problem, SolveResult, gate_active_id, solve};
 
 struct CargoToml {
     package: CargoPackage,
@@ -70,7 +71,7 @@ struct CargoProfileData {
     release_package: CargoProfileSpec,
 }
 
-struct CargoResolvedProfile {
+pub struct CargoResolvedProfile {
     name: String,
     opt_level: Int,
     debuginfo: Int,
@@ -82,12 +83,12 @@ struct CargoResolvedProfile {
     strip: String,
 }
 
-enum BuildMode {
+pub enum BuildMode {
     Metadata,
     Link,
 }
 
-enum CargoUnitKind {
+pub enum CargoUnitKind {
     Lib,
     Bin,
     ProcMacro,
@@ -95,7 +96,7 @@ enum CargoUnitKind {
     BuildDependency,
 }
 
-struct ResolvedUnit {
+pub struct ResolvedUnit {
     name: String,
     kind: CargoUnitKind,
     manifest: Path,
@@ -109,12 +110,12 @@ struct ResolvedUnit {
     profile: CargoResolvedProfile,
 }
 
-struct ResolvedGraph {
+pub struct ResolvedGraph {
     root: Int,
     units: Map<Int, ResolvedUnit>,
 }
 
-struct UnitTarget {
+pub struct UnitTarget {
     kind: CargoUnitKind,
     manifest: Path,
     source: Path,
@@ -125,7 +126,7 @@ struct UnitTarget {
     link_file: String,
 }
 
-struct UnitTargetTable {
+pub struct UnitTargetTable {
     root: Int,
     targets: Map<Int, UnitTarget>,
 }
@@ -137,17 +138,17 @@ struct UnitArtifactRef {
     compat_file: String,
 }
 
-struct RustExtern {
+pub struct RustExtern {
     name: String,
     tree: Tree,
     subpath: Path,
 }
 
-struct RustToolchainSpec {
+pub struct RustToolchainSpec {
     name: String,
 }
 
-struct RustUnit {
+pub struct RustUnit {
     crate_name: String,
     crate_type: CargoUnitKind,
     toolchain: RustToolchainSpec,
@@ -199,7 +200,7 @@ struct BuildScriptDirectives {
     metadata: [BuildScriptMetadata],
 }
 
-fn default_rust_toolchain() -> RustToolchainSpec {
+pub fn default_rust_toolchain() -> RustToolchainSpec {
     RustToolchainSpec { name: "rustc" }
 }
 
@@ -208,20 +209,32 @@ fn manifest_toml(manifest: Tree) -> CargoToml {
 }
 
 fn package(manifest: Tree) -> CargoPackage {
-    (manifest_toml manifest).package
+    let toml = manifest_toml manifest;
+    toml.package
+}
+
+fn manifest_package_name(manifest: Tree) -> String {
+    let package = package manifest;
+    package.name
 }
 
 fn package_edition_from_source(source: Tree) where {
     manifest: Tree,
 } -> String {
-    match (package manifest).edition {
+    let package = package manifest;
+    match package.edition {
         Some(CargoEdition::Literal(edition)) => edition,
         Some(CargoEdition::Workspace { workspace }) => match workspace {
-            true => (manifest_toml source).workspace.unwrap().package.unwrap().edition.unwrap().literal(),
+            true => workspace_edition(source),
             false => "2015",
         },
         None => "2015",
     }
+}
+
+fn workspace_edition(source: Tree) -> String {
+    let manifest = manifest_toml source;
+    manifest.workspace.unwrap().package.unwrap().edition.unwrap().literal()
 }
 
 namespace CargoEdition {
@@ -246,10 +259,27 @@ fn lock_package(lock: CargoLock) where {
     lock.package.find_min(|pkg| pkg.name == name).unwrap()
 }
 
+fn lock_package_name(lock: CargoLock) where {
+    name: String,
+} -> String {
+    let package = lock_package lock where { name };
+    package.name
+}
+
+fn lock_package_version_from_graph(graph: Tree) where {
+    name: String,
+} -> String {
+    let lock = lock_doc graph;
+    let package = lock_package lock where { name };
+    package.version
+}
+
 pub fn lock_fixture_deps(graph: Tree) where {
     name: String,
 } -> String {
-    (lock_package (lock_doc graph) where { name }).dependencies.unwrap().join(",")
+    let lock = lock_doc graph;
+    let package = lock_package lock where { name };
+    package.dependencies.unwrap().join(",")
 }
 
 fn crate_name(package_name: String) -> String {
@@ -299,7 +329,8 @@ fn profile_source_spec(source: CargoProfileSource) -> CargoProfileSpec {
 fn profile_spec_from_root(source: Tree) where {
     name: String,
 } -> CargoProfileSpec {
-    match (manifest_toml source).profile {
+    let manifest = manifest_toml source;
+    match manifest.profile {
         Some(profiles) => match name == "release" {
             true => match profiles.release {
                 Some(profile) => profile_source_spec profile,
@@ -317,7 +348,8 @@ fn profile_spec_from_root(source: Tree) where {
 fn profile_build_override_spec_from_root(source: Tree) where {
     name: String,
 } -> CargoProfileSpec {
-    match (manifest_toml source).profile {
+    let manifest = manifest_toml source;
+    match manifest.profile {
         Some(profiles) => match name == "release" {
             true => match profiles.release {
                 Some(profile) => match profile.build_override {
@@ -342,14 +374,14 @@ fn profile_package_spec_from_root(source: Tree) where {
     name: String,
     package_name: String,
 } -> CargoProfileSpec {
-    match (manifest_toml source).profile {
+    let manifest = manifest_toml source;
+    match manifest.profile {
         Some(profiles) => match name == "release" {
             true => match profiles.release {
                 Some(profile) => match profile.package {
-                    Some(packages) => if packages.has(package_name) {
-                        packages.get(package_name)
-                    } else {
-                        empty_profile_spec()
+                    Some(packages) => match packages.has(package_name) {
+                        true => packages.get(package_name),
+                        false => empty_profile_spec(),
                     },
                     None => empty_profile_spec(),
                 },
@@ -357,10 +389,9 @@ fn profile_package_spec_from_root(source: Tree) where {
             },
             false => match profiles.dev {
                 Some(profile) => match profile.package {
-                    Some(packages) => if packages.has(package_name) {
-                        packages.get(package_name)
-                    } else {
-                        empty_profile_spec()
+                    Some(packages) => match packages.has(package_name) {
+                        true => packages.get(package_name),
+                        false => empty_profile_spec(),
                     },
                     None => empty_profile_spec(),
                 },
@@ -543,7 +574,7 @@ fn resolved_profile(data: CargoProfileData) where {
     profile_apply build_override where { spec: package_profile_spec data where { name } }
 }
 
-fn default_resolved_profile(kind: CargoUnitKind) where {
+pub fn default_resolved_profile(kind: CargoUnitKind) where {
     package_name: String,
 } -> CargoResolvedProfile {
     resolved_profile (CargoProfileData {
@@ -628,7 +659,7 @@ fn rustc_crate_type(kind: CargoUnitKind) -> String {
     }
 }
 
-fn compile_rust_unit(unit: RustUnit) -> Tree {
+pub fn compile_rust_unit(unit: RustUnit) -> Tree {
     let rustc = Rustc::acquire(unit.toolchain);
     let edition = package_edition_from_source unit.edition_source where { manifest: unit.manifest };
     let profile_args = rustc_profile_args unit.profile;
@@ -700,7 +731,7 @@ fn manifest_rust_unit(target: Target) where {
     link: Option<Path>,
 } -> RustUnit {
     RustUnit {
-        crate_name: crate_name (package manifest).name,
+        crate_name: crate_name (manifest_package_name manifest),
         crate_type: kind,
         toolchain: default_rust_toolchain(),
         edition_source: manifest,
@@ -717,7 +748,7 @@ fn manifest_rust_unit(target: Target) where {
     }
 }
 
-fn tree_union(trees: [Tree]) -> Tree {
+pub fn tree_union(trees: [Tree]) -> Tree {
     trees.collect()
 }
 
@@ -871,7 +902,7 @@ fn lock_bin(target: Target) where {
         BuildMode::Link => p"libformatting_lib.rlib",
     };
     compile_rust_unit (RustUnit {
-        crate_name: (lock_package lock where { name: "mini_app" }).name,
+        crate_name: lock_package_name lock where { name: "mini_app" },
         deps_tree: Some(tree_union [alpha, formatting, core]),
         externs: [
             RustExtern { name: "alpha_lib", tree: alpha, subpath: alpha_path },
@@ -902,7 +933,7 @@ pub fn crate_lock_bin(target: Target) where {
 }
 
 pub fn crate_lock_root_version(graph: Tree) -> String {
-    (lock_package (lock_doc graph) where { name: "mini_app" }).version
+    lock_package_version_from_graph graph where { name: "mini_app" }
 }
 
 fn resolved_unit(graph: ResolvedGraph) where {
@@ -1121,10 +1152,9 @@ fn guard_is_parent_in_graph(index: Index) where {
 } -> Bool {
     match index.guard_clause_ids.get(guard_id) == clause_id
         && index.guard_pkgs.get(guard_id) == parent {
-        true => if index.guard_version_values.has(guard_id) {
-            false
-        } else {
-            index.guard_kinds.get(guard_id) == 0
+        true => match index.guard_version_values.has(guard_id) {
+            true => false,
+            false => index.guard_kinds.get(guard_id) == 0,
         },
         false => false,
     }
@@ -1173,7 +1203,7 @@ fn solution_unit(index: Index) where {
 } -> ResolvedUnit {
     let target_shape = unit_target targets where { pkg };
     let manifest = source / target_shape.manifest;
-    let package_name = (package manifest).name;
+    let package_name = manifest_package_name(manifest);
     let name = match target_shape.kind {
         CargoUnitKind::BuildScript => "build_script_build",
         _ => crate_name package_name,
@@ -1355,11 +1385,18 @@ fn target_after_arch(target_name: String) -> String {
 }
 
 fn target_vendor_env(target_name: String) -> String {
-    (target_after_arch target_name).before("-")
+    let rest = target_after_arch target_name;
+    rest.before("-")
 }
 
 fn target_after_vendor(target_name: String) -> String {
-    (target_after_arch target_name).after("-")
+    let rest = target_after_arch target_name;
+    rest.after("-")
+}
+
+fn target_after_vendor_before_dash(target_name: String) -> String {
+    let rest = target_after_vendor target_name;
+    rest.before("-")
 }
 
 fn target_os_env(target_name: String) -> String {
@@ -1369,15 +1406,16 @@ fn target_os_env(target_name: String) -> String {
             true => "linux",
             false => match target_name.contains("pc-windows") {
                 true => "windows",
-                false => (target_after_vendor target_name).before("-"),
+                false => target_after_vendor_before_dash target_name,
             },
         },
     }
 }
 
 fn target_env_env(target_name: String) -> String {
-    match (target_after_vendor target_name).contains("-") {
-        true => (target_after_vendor target_name).after("-"),
+    let rest = target_after_vendor target_name;
+    match rest.contains("-") {
+        true => rest.after("-"),
         false => "",
     }
 }
@@ -1386,7 +1424,7 @@ fn target_endian_env(target_name: String) -> String {
     "little"
 }
 
-fn build_script_env(source: Tree) where {
+pub fn build_script_env(source: Tree) where {
     target_name: String,
     unit: ResolvedUnit,
     opt_level: Int,
@@ -1427,7 +1465,7 @@ fn solution_build_script_compile(target: Target) where {
     solution_compile_rust_unit target where { source, index, result, targets, target_name, unit, mode: BuildMode::Link }
 }
 
-fn solution_build_script_run(source: Tree) where {
+pub fn solution_build_script_run(source: Tree) where {
     target_name: String,
     unit: ResolvedUnit,
     binary: Tree,
@@ -1648,24 +1686,30 @@ fn directive_field(key: String) where {
     value: String,
     directives: BuildScriptDirectives,
 } -> BuildScriptDirectives {
-    if key == "rustc-cfg" {
-        BuildScriptDirectives { rustc_cfg: [..directives.rustc_cfg, value], ..directives }
-    } else if key == "rustc-check-cfg" {
-        BuildScriptDirectives { rustc_check_cfg: [..directives.rustc_check_cfg, value], ..directives }
-    } else if key == "rustc-env" {
-        BuildScriptDirectives { rustc_env: [..directives.rustc_env, value], ..directives }
-    } else if key == "rustc-link-lib" {
-        BuildScriptDirectives { rustc_link_lib: [..directives.rustc_link_lib, value], ..directives }
-    } else if key == "rustc-link-search" {
-        BuildScriptDirectives { rustc_link_search: [..directives.rustc_link_search, value], ..directives }
-    } else if key == "rerun-if-changed" {
-        BuildScriptDirectives { rerun_if_changed: [..directives.rerun_if_changed, value], ..directives }
-    } else if key == "rerun-if-env-changed" {
-        BuildScriptDirectives { rerun_if_env_changed: [..directives.rerun_if_env_changed, value], ..directives }
-    } else if key == "warning" {
-        BuildScriptDirectives { warning: [..directives.warning, value], ..directives }
-    } else {
-        BuildScriptDirectives { metadata: [..directives.metadata, metadata_directive key where { value }], ..directives }
+    match key == "rustc-cfg" {
+        true => BuildScriptDirectives { rustc_cfg: [..directives.rustc_cfg, value], ..directives },
+        false => match key == "rustc-check-cfg" {
+            true => BuildScriptDirectives { rustc_check_cfg: [..directives.rustc_check_cfg, value], ..directives },
+            false => match key == "rustc-env" {
+                true => BuildScriptDirectives { rustc_env: [..directives.rustc_env, value], ..directives },
+                false => match key == "rustc-link-lib" {
+                    true => BuildScriptDirectives { rustc_link_lib: [..directives.rustc_link_lib, value], ..directives },
+                    false => match key == "rustc-link-search" {
+                        true => BuildScriptDirectives { rustc_link_search: [..directives.rustc_link_search, value], ..directives },
+                        false => match key == "rerun-if-changed" {
+                            true => BuildScriptDirectives { rerun_if_changed: [..directives.rerun_if_changed, value], ..directives },
+                            false => match key == "rerun-if-env-changed" {
+                                true => BuildScriptDirectives { rerun_if_env_changed: [..directives.rerun_if_env_changed, value], ..directives },
+                                false => match key == "warning" {
+                                    true => BuildScriptDirectives { warning: [..directives.warning, value], ..directives },
+                                    false => BuildScriptDirectives { metadata: [..directives.metadata, metadata_directive key where { value }], ..directives },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        },
     }
 }
 
@@ -1705,8 +1749,28 @@ fn build_script_directives(run: Tree) -> BuildScriptDirectives {
     build_script_directives_from_stdout (run.text(p"build.stdout"))
 }
 
-fn build_script_rustc_cfgs(run: Tree) -> [String] {
-    (build_script_directives run).rustc_cfg
+fn build_script_directives_rustc_cfg(run: Tree) -> [String] {
+    let directives = build_script_directives run;
+    directives.rustc_cfg
+}
+
+fn build_script_directives_from_stdout_rustc_cfg(stdout: String) -> [String] {
+    let directives = build_script_directives_from_stdout stdout;
+    directives.rustc_cfg
+}
+
+fn build_script_directives_from_stdout_rustc_env(stdout: String) -> [String] {
+    let directives = build_script_directives_from_stdout stdout;
+    directives.rustc_env
+}
+
+fn build_script_directives_from_stdout_metadata(stdout: String) -> [BuildScriptMetadata] {
+    let directives = build_script_directives_from_stdout stdout;
+    directives.metadata
+}
+
+pub fn build_script_rustc_cfgs(run: Tree) -> [String] {
+    build_script_directives_rustc_cfg run
 }
 
 fn build_script_out_dir(run: Tree) -> Tree {
@@ -1769,7 +1833,7 @@ fn build_script_lib(target: Target) where {
     let env_args = [..rustc_env_args(effects.rustc_env), ..out_dir_env_arg(effects.out_dir)];
 
     compile_rust_unit (RustUnit {
-        crate_name: crate_name (package manifest).name,
+        crate_name: crate_name (manifest_package_name manifest),
         crate_type: CargoUnitKind::Lib,
         toolchain: default_rust_toolchain(),
         edition_source: manifest,
@@ -1814,15 +1878,18 @@ pub fn crate_build_script_directive_cfg(target: Target) where {
     let manifest = graph / p"app";
     let binary = build_script_compile target where { manifest };
     let run = build_script_run manifest where { binary };
-    (build_script_directives run).rustc_cfg.join(" ")
+    let cfgs = build_script_directives_rustc_cfg run;
+    cfgs.join(" ")
 }
 
 pub fn crate_build_script_directive_cfg_from_stdout(stdout: String) -> String {
-    (build_script_directives_from_stdout stdout).rustc_cfg.join(" ")
+    let cfgs = build_script_directives_from_stdout_rustc_cfg stdout;
+    cfgs.join(" ")
 }
 
 pub fn crate_build_script_directive_env_from_stdout(stdout: String) -> String {
-    (build_script_directives_from_stdout stdout).rustc_env.join(",")
+    let env = build_script_directives_from_stdout_rustc_env stdout;
+    env.join(",")
 }
 
 pub fn crate_build_script_directive_links_from_stdout(stdout: String) -> String {
@@ -1838,7 +1905,8 @@ pub fn crate_build_script_directive_rerun_from_stdout(stdout: String) -> String 
 pub fn crate_build_script_dep_metadata_env_from_stdout(stdout: String) where {
     links: String,
 } -> String {
-    dep_metadata_env_values links where { metadata: (build_script_directives_from_stdout stdout).metadata }.join(",")
+    let metadata = build_script_directives_from_stdout_metadata stdout;
+    dep_metadata_env_values links where { metadata }.join(",")
 }
 
 pub fn crate_build_script_out_dir(target: Target) where {
@@ -1878,7 +1946,7 @@ fn proc_macro_dylib(target: Target) where {
     manifest: Tree,
 } -> Tree {
     compile_rust_unit (RustUnit {
-        crate_name: crate_name (package manifest).name,
+        crate_name: crate_name (manifest_package_name manifest),
         crate_type: CargoUnitKind::ProcMacro,
         toolchain: default_rust_toolchain(),
         edition_source: manifest,
@@ -1901,7 +1969,7 @@ fn proc_macro_bin_link(target: Target) where {
 } -> Tree {
     let dylib = proc_macro_dylib_path target;
     compile_rust_unit (RustUnit {
-        crate_name: crate_name (package manifest).name,
+        crate_name: crate_name (manifest_package_name manifest),
         crate_type: CargoUnitKind::Bin,
         toolchain: default_rust_toolchain(),
         edition_source: manifest,

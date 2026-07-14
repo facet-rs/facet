@@ -1,0 +1,549 @@
+use vix::{Arg, Map, Path, Target, Tree, VersionSet};
+use cargo_manifest::{
+    SparseIndexRow,
+    WorkspaceIndexState,
+    crate_name,
+    member_manifest,
+    package_name,
+    package_version_in_workspace,
+    parse_sparse_jsonl,
+    problem_of_member,
+    selected_version_text,
+    selected_sparse_row,
+    solution_dep_names_text,
+    workspace_index_package_names_text,
+    workspace_index_from_state,
+    workspace_member_only_package_count_for_members,
+    workspace_member_only_package_names_text_for_members,
+    workspace_index_state_with_transitive_sparse_rows_for_members,
+};
+use crate_build::{
+    CargoResolvedProfile,
+    CargoUnitKind,
+    RustExtern,
+    RustUnit,
+    build_script_rustc_cfgs,
+    compile_rust_unit,
+    default_rust_toolchain,
+};
+use rodin::{Index, Problem, SolveResult, root_candidate_count, root_version_count, solve, solve_selected_versions_text};
+
+fn taxon_members() -> [String] {
+    ["rust/taxon"]
+}
+
+fn taxon_workspace_root() -> Path {
+    p"phon"
+}
+
+fn taxon_state(workspace: Tree, sparse_jsonl: String) -> WorkspaceIndexState {
+    workspace_index_state_with_transitive_sparse_rows_for_members(workspace, taxon_workspace_root(), sparse_jsonl, taxon_members())
+}
+
+fn taxon_root_pkg(state: WorkspaceIndexState) -> Int {
+    state.package_ids.get("taxon").unwrap()
+}
+
+fn taxon_index(state: WorkspaceIndexState) -> Index {
+    workspace_index_from_state(state)
+}
+
+fn taxon_root_version(workspace: Tree) -> String {
+    package_version_in_workspace(member_manifest(workspace, taxon_workspace_root(), "rust/taxon"), workspace)
+}
+
+fn taxon_problem(workspace: Tree, state: WorkspaceIndexState) -> Problem {
+    Problem {
+        root_pkg: taxon_root_pkg(state),
+        root_req: VersionSet::from_req("=" + taxon_root_version(workspace)),
+        root_features: [],
+        root_default_feature: 0,
+        root_default_features: false,
+    }
+}
+
+pub fn taxon_member_package_name(workspace: Tree, sparse_jsonl: String, target_name: String) -> String {
+    package_name(member_manifest(workspace, taxon_workspace_root(), "rust/taxon"))
+}
+
+pub fn taxon_literal_member_package_name(workspace: Tree, sparse_jsonl: String, target_name: String) -> String {
+    package_name(workspace / p"phon/rust/taxon")
+}
+
+pub fn taxon_member_package_version(workspace: Tree, sparse_jsonl: String, target_name: String) -> String {
+    package_version_in_workspace(member_manifest(workspace, taxon_workspace_root(), "rust/taxon"), workspace)
+}
+
+fn taxon_result(workspace: Tree, state: WorkspaceIndexState, target_name: String) -> SolveResult {
+    solve(taxon_index(state), taxon_problem(workspace, state), target_name)
+}
+
+fn selected_version(state: WorkspaceIndexState, result: SolveResult, name: String) -> String {
+    selected_version_text(state, result, name)
+}
+
+fn selected_row(rows: [SparseIndexRow], state: WorkspaceIndexState, result: SolveResult, name: String) -> SparseIndexRow {
+    let found = selected_sparse_row(rows, name, selected_version(state, result, name));
+    found.unwrap()
+}
+
+fn crate_url(row: SparseIndexRow) -> String {
+    "https://static.crates.io/crates/" + row.name + "/" + row.name + "-" + row.vers + ".crate"
+}
+
+fn crate_source(row: SparseIndexRow) -> Tree {
+    crate_archive(fetch(url: crate_url(row), sha256: row.cksum))
+}
+
+fn dev_lib_profile(package_name: String) -> CargoResolvedProfile {
+    CargoResolvedProfile {
+        name: "dev",
+        opt_level: "0",
+        debuginfo: "2",
+        debug_assertions: "true",
+        overflow_checks: "true",
+        panic: "unwind",
+        lto: "false",
+        codegen_units: "",
+        strip: "none",
+    }
+}
+
+fn build_dep_profile(package_name: String) -> CargoResolvedProfile {
+    CargoResolvedProfile {
+        name: "dev",
+        opt_level: "0",
+        debuginfo: "0",
+        debug_assertions: "true",
+        overflow_checks: "true",
+        panic: "unwind",
+        lto: "false",
+        codegen_units: "",
+        strip: "none",
+    }
+}
+
+fn build_script_profile() -> CargoResolvedProfile {
+    build_dep_profile("build_script_build")
+}
+
+fn target_arch_env(target_name: String) -> String {
+    target_name.before("-")
+}
+
+fn target_after_arch(target_name: String) -> String {
+    target_name.after("-")
+}
+
+fn target_vendor_env(target_name: String) -> String {
+    let rest = target_after_arch(target_name);
+    rest.before("-")
+}
+
+fn target_after_vendor(target_name: String) -> String {
+    let rest = target_after_arch(target_name);
+    rest.after("-")
+}
+
+fn target_after_vendor_before_dash(target_name: String) -> String {
+    let rest = target_after_vendor(target_name);
+    rest.before("-")
+}
+
+fn target_os_env(target_name: String) -> String {
+    match target_name.contains("apple-darwin") {
+        true => "macos",
+        false => match target_name.contains("unknown-linux") {
+            true => "linux",
+            false => match target_name.contains("pc-windows") {
+                true => "windows",
+                false => target_after_vendor_before_dash(target_name),
+            },
+        },
+    }
+}
+
+fn target_env_env(target_name: String) -> String {
+    let rest = target_after_vendor(target_name);
+    match rest.contains("-") {
+        true => rest.after("-"),
+        false => "",
+    }
+}
+
+fn taxon_build_script_env(source: Tree, target_name: String, package_name: String, version: String) -> [Arg] {
+    [
+        Arg::Str("--env"), Arg::Str("CARGO_PKG_NAME=" + package_name),
+        Arg::Str("--env"), Arg::Str("CARGO_PKG_VERSION=" + version),
+        Arg::Str("--env"), Arg::Str("CARGO_PKG_VERSION_MAJOR=1"),
+        Arg::Str("--env"), Arg::Str("CARGO_PKG_VERSION_MINOR=6"),
+        Arg::Str("--env"), Arg::Str("CARGO_PKG_VERSION_PATCH=1"),
+        Arg::Str("--env"), Arg::Str("CARGO_PKG_VERSION_PRE="),
+        Arg::Str("--env"), Arg::Str("TARGET=" + target_name),
+        Arg::Str("--env"), Arg::Str("HOST=" + target_name),
+        Arg::Str("--env"), Arg::Str("RUSTC=rustc"),
+        Arg::Str("--env"), Arg::Str("OPT_LEVEL=3"),
+        Arg::Str("--env"), Arg::Str("PROFILE=debug"),
+        Arg::Str("--env"), Arg::Str("CARGO_CFG_TARGET_ARCH=" + target_arch_env(target_name)),
+        Arg::Str("--env"), Arg::Str("CARGO_CFG_TARGET_VENDOR=" + target_vendor_env(target_name)),
+        Arg::Str("--env"), Arg::Str("CARGO_CFG_TARGET_OS=" + target_os_env(target_name)),
+        Arg::Str("--env"), Arg::Str("CARGO_CFG_TARGET_ENV=" + target_env_env(target_name)),
+        Arg::Str("--env"), Arg::Str("CARGO_CFG_TARGET_ENDIAN=little"),
+    ]
+}
+
+fn rust_lib_unit(source: Tree, target: Target, package: String, metadata: Path, link: Path, deps_trees: [Tree], externs: [RustExtern], cfgs: [String], profile: CargoResolvedProfile) -> RustUnit {
+    let name = crate_name(package);
+    RustUnit {
+        crate_name: name,
+        crate_type: CargoUnitKind::Lib,
+        toolchain: default_rust_toolchain(),
+        edition_source: source,
+        manifest: source,
+        source: p"src/lib.rs",
+        target: target,
+        emit_metadata: Some(metadata),
+        emit_link: Some(link),
+        deps_trees: deps_trees,
+        externs: externs,
+        cfgs: cfgs,
+        env: [Arg::Str("--env"), Arg::Str("CARGO_MANIFEST_DIR="), Arg::Interpolation { tree: source, subpath: p"" }],
+        profile: Some(profile),
+    }
+}
+
+fn rust_lib_artifact(source: Tree, target: Target, package: String, metadata: Path, link: Path, deps_trees: [Tree], externs: [RustExtern], cfgs: [String], profile: CargoResolvedProfile) -> Tree {
+    compile_rust_unit(rust_lib_unit(source, target, package, metadata, link, deps_trees, externs, cfgs, profile))
+}
+
+fn extern_for(package: String, tree: Tree, subpath: Path) -> RustExtern {
+    let name = crate_name(package);
+    RustExtern {
+        name: name,
+        tree: tree,
+        subpath: subpath,
+    }
+}
+
+fn taxon_rows(sparse_jsonl: String) -> [SparseIndexRow] {
+    parse_sparse_jsonl(sparse_jsonl)
+}
+
+fn taxon_sources(workspace: Tree, sparse_jsonl: String, target_name: String) -> Map<String, Tree> {
+    let state = taxon_state(workspace, sparse_jsonl);
+    let result = taxon_result(workspace, state, target_name);
+    let rows = taxon_rows(sparse_jsonl);
+    let out: Map<String, Tree> = {};
+    let out = out.insert("arrayref", crate_source(selected_row(rows, state, result, "arrayref")));
+    let out = out.insert("arrayvec", crate_source(selected_row(rows, state, result, "arrayvec")));
+    let out = out.insert("cfg-if", crate_source(selected_row(rows, state, result, "cfg-if")));
+    let out = out.insert("constant_time_eq", crate_source(selected_row(rows, state, result, "constant_time_eq")));
+    let out = out.insert("shlex", crate_source(selected_row(rows, state, result, "shlex")));
+    let out = out.insert("cc", crate_source(selected_row(rows, state, result, "cc")));
+    let out = out.insert("blake3", crate_source(selected_row(rows, state, result, "blake3")));
+    out
+}
+
+fn source_tree(sources: Map<String, Tree>, package: String) -> Tree {
+    sources.get(package).unwrap()
+}
+
+pub fn taxon_selected_versions(workspace: Tree, sparse_jsonl: String, target_name: String) -> String {
+    let state = taxon_state(workspace, sparse_jsonl);
+    solve_selected_versions_text(taxon_index(state), taxon_problem(workspace, state), target_name)
+}
+
+pub fn taxon_index_packages_text(workspace: Tree, sparse_jsonl: String, target_name: String) -> String {
+    workspace_index_package_names_text(taxon_state(workspace, sparse_jsonl))
+}
+
+pub fn taxon_index_package_count(workspace: Tree, sparse_jsonl: String, target_name: String) -> Int {
+    taxon_state(workspace, sparse_jsonl).packages.len()
+}
+
+pub fn taxon_root_pkg_id(workspace: Tree, sparse_jsonl: String, target_name: String) -> Int {
+    taxon_root_pkg(taxon_state(workspace, sparse_jsonl))
+}
+
+pub fn taxon_root_candidate_count(workspace: Tree, sparse_jsonl: String, target_name: String) -> Int {
+    let state = taxon_state(workspace, sparse_jsonl);
+    root_candidate_count(taxon_index(state), taxon_problem(workspace, state))
+}
+
+pub fn taxon_root_version_count(workspace: Tree, sparse_jsonl: String, target_name: String) -> Int {
+    let state = taxon_state(workspace, sparse_jsonl);
+    root_version_count(taxon_index(state), taxon_problem(workspace, state))
+}
+
+pub fn taxon_member_only_package_count(workspace: Tree, sparse_jsonl: String, target_name: String) -> Int {
+    workspace_member_only_package_count_for_members(workspace, taxon_workspace_root(), taxon_members())
+}
+
+pub fn taxon_member_only_packages_text(workspace: Tree, sparse_jsonl: String, target_name: String) -> String {
+    workspace_member_only_package_names_text_for_members(workspace, taxon_workspace_root(), taxon_members())
+}
+
+pub fn taxon_root_deps_text(workspace: Tree, sparse_jsonl: String, target_name: String) -> String {
+    let state = taxon_state(workspace, sparse_jsonl);
+    let index = taxon_index(state);
+    let result = taxon_result(workspace, state, target_name);
+    solution_dep_names_text(state, index, result, taxon_root_pkg(state), target_name)
+}
+
+fn source_package_line(out: String, sources: Map<String, Tree>, package: String) -> String {
+    let line = package + "\t" + package_name(source_tree(sources, package));
+    match out == "" {
+        true => line,
+        false => out + "\n" + line,
+    }
+}
+
+pub fn taxon_source_package_names_text(workspace: Tree, sparse_jsonl: String, target_name: String) -> String {
+    let sources = taxon_sources(workspace, sparse_jsonl, target_name);
+    let out = source_package_line("", sources, "shlex");
+    let out = source_package_line(out, sources, "cc");
+    let out = source_package_line(out, sources, "blake3");
+    source_package_line(out, sources, "arrayref")
+}
+
+pub fn taxon_blake3_build_rs(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {
+    let sources = taxon_sources(workspace, sparse_jsonl, target_name);
+    source_tree(sources, "blake3") / p"build.rs"
+}
+
+pub fn taxon_shlex_link(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {
+    let sources = taxon_sources(workspace, sparse_jsonl, target_name);
+    rust_lib_artifact(source_tree(sources, "shlex"), Target::host(), "shlex", p"libshlex.rmeta", p"libshlex.rlib", [], [], [], build_dep_profile("shlex"))
+}
+
+pub fn taxon_cc_host_unit(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {
+    let sources = taxon_sources(workspace, sparse_jsonl, target_name);
+    let shlex = taxon_shlex_link(workspace, sparse_jsonl, target_name);
+    rust_lib_artifact(
+        source_tree(sources, "cc"),
+        Target::host(),
+        "cc",
+        p"libcc.rmeta",
+        p"libcc.rlib",
+        [shlex],
+        [extern_for("shlex", shlex, p"libshlex.rlib")],
+        [],
+        build_dep_profile("cc"),
+    )
+}
+
+fn taxon_arrayref_link(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {
+    let sources = taxon_sources(workspace, sparse_jsonl, target_name);
+    rust_lib_artifact(source_tree(sources, "arrayref"), Target::host(), "arrayref", p"libarrayref.rmeta", p"libarrayref.rlib", [], [], [], dev_lib_profile("arrayref"))
+}
+
+fn taxon_arrayvec_link(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {
+    let sources = taxon_sources(workspace, sparse_jsonl, target_name);
+    rust_lib_artifact(source_tree(sources, "arrayvec"), Target::host(), "arrayvec", p"libarrayvec.rmeta", p"libarrayvec.rlib", [], [], [], dev_lib_profile("arrayvec"))
+}
+
+fn taxon_cfg_if_link(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {
+    let sources = taxon_sources(workspace, sparse_jsonl, target_name);
+    rust_lib_artifact(source_tree(sources, "cfg-if"), Target::host(), "cfg-if", p"libcfg_if.rmeta", p"libcfg_if.rlib", [], [], [], dev_lib_profile("cfg-if"))
+}
+
+fn taxon_constant_time_eq_link(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {
+    let sources = taxon_sources(workspace, sparse_jsonl, target_name);
+    rust_lib_artifact(source_tree(sources, "constant_time_eq"), Target::host(), "constant_time_eq", p"libconstant_time_eq.rmeta", p"libconstant_time_eq.rlib", [], [], [], dev_lib_profile("constant_time_eq"))
+}
+
+fn taxon_blake3_normal_deps(workspace: Tree, sparse_jsonl: String, target_name: String) -> [Tree] {
+    [
+        taxon_arrayref_link(workspace, sparse_jsonl, target_name),
+        taxon_arrayvec_link(workspace, sparse_jsonl, target_name),
+        taxon_cfg_if_link(workspace, sparse_jsonl, target_name),
+        taxon_constant_time_eq_link(workspace, sparse_jsonl, target_name),
+    ]
+}
+
+fn prepend_tree(head: Tree, tail: [Tree]) -> [Tree] {
+    tail.push(head)
+}
+
+fn taxon_blake3_externs(workspace: Tree, sparse_jsonl: String, target_name: String) -> [RustExtern] {
+    [
+        extern_for("arrayref", taxon_arrayref_link(workspace, sparse_jsonl, target_name), p"libarrayref.rlib"),
+        extern_for("arrayvec", taxon_arrayvec_link(workspace, sparse_jsonl, target_name), p"libarrayvec.rlib"),
+        extern_for("cfg-if", taxon_cfg_if_link(workspace, sparse_jsonl, target_name), p"libcfg_if.rlib"),
+        extern_for("constant_time_eq", taxon_constant_time_eq_link(workspace, sparse_jsonl, target_name), p"libconstant_time_eq.rlib"),
+    ]
+}
+
+pub fn taxon_blake3_build_script_run(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {
+    let sources = taxon_sources(workspace, sparse_jsonl, target_name);
+    let blake3_source = source_tree(sources, "blake3");
+    let binary = taxon_blake3_build_script_binary(workspace, sparse_jsonl, target_name);
+    let build_script = "build-script-runner";
+    let arch = target_arch_env(target_name);
+    let vendor = target_vendor_env(target_name);
+    let os = target_os_env(target_name);
+    let target_env = target_env_env(target_name);
+
+    build_script! {
+        --requires-toolchain=cc
+        --executable {binary / p"build_script"}
+        --stdout {p"build.stdout"}
+        --out-dir {p"out"}
+        --env OUT_DIR={p"out"}
+        --env CARGO_MANIFEST_DIR={blake3_source}
+        --env CARGO_PKG_NAME=blake3
+        --env CARGO_PKG_VERSION=1.6.1
+        --env CARGO_PKG_VERSION_MAJOR=1
+        --env CARGO_PKG_VERSION_MINOR=6
+        --env CARGO_PKG_VERSION_PATCH=1
+        --env CARGO_PKG_VERSION_PRE=
+        --env TARGET={target_name}
+        --env HOST={target_name}
+        --env RUSTC=rustc
+        --env OPT_LEVEL=3
+        --env PROFILE=debug
+        --env CARGO_CFG_TARGET_ARCH={arch}
+        --env CARGO_CFG_TARGET_VENDOR={vendor}
+        --env CARGO_CFG_TARGET_OS={os}
+        --env CARGO_CFG_TARGET_ENV={target_env}
+        --env CARGO_CFG_TARGET_ENDIAN=little
+    }
+}
+
+fn taxon_blake3_build_script_binary(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {
+    let sources = taxon_sources(workspace, sparse_jsonl, target_name);
+    let cc = taxon_cc_host_unit(workspace, sparse_jsonl, target_name);
+    let blake3_source = source_tree(sources, "blake3");
+    compile_rust_unit(RustUnit {
+        crate_name: "build_script_build",
+        crate_type: CargoUnitKind::BuildScript,
+        toolchain: default_rust_toolchain(),
+        edition_source: blake3_source,
+        manifest: blake3_source,
+        source: p"build.rs",
+        target: Target::host(),
+        emit_metadata: None,
+        emit_link: Some(p"build_script"),
+        deps_trees: [cc, taxon_shlex_link(workspace, sparse_jsonl, target_name)],
+        externs: [extern_for("cc", cc, p"libcc.rlib")],
+        cfgs: [],
+        env: [Arg::Str("--env"), Arg::Str("CARGO_MANIFEST_DIR="), Arg::Interpolation { tree: blake3_source, subpath: p"" }],
+        profile: Some(build_script_profile()),
+    })
+}
+
+pub fn taxon_blake3_build_script_run_without_declared_cc(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {
+    let sources = taxon_sources(workspace, sparse_jsonl, target_name);
+    let binary = taxon_blake3_build_script_binary(workspace, sparse_jsonl, target_name);
+    let blake3_source = source_tree(sources, "blake3");
+    let build_script = "build-script-runner";
+    let arch = target_arch_env(target_name);
+    let vendor = target_vendor_env(target_name);
+    let os = target_os_env(target_name);
+    let target_env = target_env_env(target_name);
+
+    build_script! {
+        --executable {binary / p"build_script"}
+        --stdout {p"build.stdout"}
+        --out-dir {p"out"}
+        --env OUT_DIR={p"out"}
+        --env CARGO_MANIFEST_DIR={blake3_source}
+        --env CARGO_PKG_NAME=blake3
+        --env CARGO_PKG_VERSION=1.6.1
+        --env CARGO_PKG_VERSION_MAJOR=1
+        --env CARGO_PKG_VERSION_MINOR=6
+        --env CARGO_PKG_VERSION_PATCH=1
+        --env CARGO_PKG_VERSION_PRE=
+        --env TARGET={target_name}
+        --env HOST={target_name}
+        --env RUSTC=rustc
+        --env OPT_LEVEL=3
+        --env PROFILE=debug
+        --env CARGO_CFG_TARGET_ARCH={arch}
+        --env CARGO_CFG_TARGET_VENDOR={vendor}
+        --env CARGO_CFG_TARGET_OS={os}
+        --env CARGO_CFG_TARGET_ENV={target_env}
+        --env CARGO_CFG_TARGET_ENDIAN=little
+    }
+}
+
+pub fn taxon_blake3_build_script_run_with_wrong_toolchain(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {
+    let sources = taxon_sources(workspace, sparse_jsonl, target_name);
+    let binary = taxon_blake3_build_script_binary(workspace, sparse_jsonl, target_name);
+    let blake3_source = source_tree(sources, "blake3");
+    let build_script = "build-script-runner";
+    let arch = target_arch_env(target_name);
+    let vendor = target_vendor_env(target_name);
+    let os = target_os_env(target_name);
+    let target_env = target_env_env(target_name);
+
+    build_script! {
+        --requires-toolchain=zigcc
+        --executable {binary / p"build_script"}
+        --stdout {p"build.stdout"}
+        --out-dir {p"out"}
+        --env OUT_DIR={p"out"}
+        --env CARGO_MANIFEST_DIR={blake3_source}
+        --env CARGO_PKG_NAME=blake3
+        --env CARGO_PKG_VERSION=1.6.1
+        --env CARGO_PKG_VERSION_MAJOR=1
+        --env CARGO_PKG_VERSION_MINOR=6
+        --env CARGO_PKG_VERSION_PATCH=1
+        --env CARGO_PKG_VERSION_PRE=
+        --env TARGET={target_name}
+        --env HOST={target_name}
+        --env RUSTC=rustc
+        --env OPT_LEVEL=3
+        --env PROFILE=debug
+        --env CARGO_CFG_TARGET_ARCH={arch}
+        --env CARGO_CFG_TARGET_VENDOR={vendor}
+        --env CARGO_CFG_TARGET_OS={os}
+        --env CARGO_CFG_TARGET_ENV={target_env}
+        --env CARGO_CFG_TARGET_ENDIAN=little
+    }
+}
+
+pub fn taxon_blake3_cfgs(workspace: Tree, sparse_jsonl: String, target_name: String) -> String {
+    let run = taxon_blake3_build_script_run(workspace, sparse_jsonl, target_name);
+    build_script_rustc_cfgs(run).join("\n")
+}
+
+pub fn taxon_blake3_link(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {
+    let sources = taxon_sources(workspace, sparse_jsonl, target_name);
+    rust_lib_artifact(
+        source_tree(sources, "blake3"),
+        Target::host(),
+        "blake3",
+        p"libblake3.rmeta",
+        p"libblake3.rlib",
+        taxon_blake3_normal_deps(workspace, sparse_jsonl, target_name),
+        taxon_blake3_externs(workspace, sparse_jsonl, target_name),
+        build_script_rustc_cfgs(taxon_blake3_build_script_run(workspace, sparse_jsonl, target_name)),
+        dev_lib_profile("blake3"),
+    )
+}
+
+pub fn taxon_root_link(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {
+    let taxon_manifest = member_manifest(workspace, taxon_workspace_root(), "rust/taxon");
+    let blake3 = taxon_blake3_link(workspace, sparse_jsonl, target_name);
+    let version = package_version_in_workspace(taxon_manifest, workspace);
+    compile_rust_unit(RustUnit {
+        crate_name: "taxon",
+        crate_type: CargoUnitKind::Lib,
+        toolchain: default_rust_toolchain(),
+        edition_source: workspace,
+        manifest: taxon_manifest,
+        source: p"src/lib.rs",
+        target: Target::host(),
+        emit_metadata: Some(p"libtaxon.rmeta"),
+        emit_link: Some(p"libtaxon.rlib"),
+        deps_trees: prepend_tree(blake3, taxon_blake3_normal_deps(workspace, sparse_jsonl, target_name)),
+        externs: [extern_for("blake3", blake3, p"libblake3.rlib")],
+        cfgs: [],
+        env: [
+            Arg::Str("--env"), Arg::Str("CARGO_MANIFEST_DIR="), Arg::Interpolation { tree: taxon_manifest, subpath: p"" },
+            Arg::Str("--env"), Arg::Str("CARGO_PKG_VERSION=" + version),
+        ],
+        profile: Some(dev_lib_profile("taxon")),
+    })
+}
