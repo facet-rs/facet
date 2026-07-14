@@ -67,8 +67,28 @@ impl Compiler {
 
     /// Parse, check, and lower to architecture-neutral VIR.
     pub fn compile(&self, source: &str) -> Result<Compilation, Diagnostics> {
-        let ast = self.parser.parse(source)?;
-        let module = lower_module(&ast, self.config)?;
+        self.compile_with_modules(source, &[])
+    }
+
+    /// Parse a root source together with named library modules, resolve
+    /// imports and visibility, and lower the merged module set to VIR.
+    ///
+    /// Import-resolution diagnostics carry spans in the importing file's own
+    /// coordinates. Post-merge diagnostics in library code keep their own
+    /// file's byte spans, which may collide with root offsets — attribution
+    /// only; recipe identity is span-insensitive.
+    pub fn compile_with_modules(
+        &self,
+        source: &str,
+        modules: &[crate::modules::ModuleSource<'_>],
+    ) -> Result<Compilation, Diagnostics> {
+        let root = self.parser.parse(source)?;
+        let mut parsed = Vec::with_capacity(modules.len());
+        for module in modules {
+            parsed.push((module.name.to_owned(), self.parser.parse(module.source)?));
+        }
+        let merged = crate::modules::merge_module_set(root, &parsed)?;
+        let module = lower_module(&merged, self.config)?;
         let warnings = lint_module(&module);
         Ok(Compilation { module, warnings })
     }
@@ -244,7 +264,9 @@ impl<'a> TypeResolver<'a> {
                     enumeration.name.span,
                     TypeDeclaration::Enum(enumeration),
                 ),
-                ast::Item::Fn(_) => continue,
+                // Imports are consumed by the module front before lowering;
+                // a stray one contributes no type declaration.
+                ast::Item::Fn(_) | ast::Item::Import(_) => continue,
             };
             if name == "Ordering" {
                 return Err(Diagnostics::one(Diagnostic {
@@ -771,7 +793,7 @@ fn lower_module(source: &ast::SourceFile, config: CompilerConfig) -> Result<Modu
         .filter_map(|item| match item {
             ast::Item::Struct(record) => Some(record.name.value.as_str()),
             ast::Item::Enum(enumeration) => Some(enumeration.name.value.as_str()),
-            ast::Item::Fn(_) => None,
+            ast::Item::Fn(_) | ast::Item::Import(_) => None,
         })
         .collect::<BTreeSet<_>>();
     let mut signatures = BTreeMap::new();
@@ -822,7 +844,7 @@ fn lower_module(source: &ast::SourceFile, config: CompilerConfig) -> Result<Modu
                     Some(Type::Record(record)) => Some(record.clone()),
                     _ => None,
                 },
-                ast::Item::Enum(_) | ast::Item::Fn(_) => None,
+                ast::Item::Enum(_) | ast::Item::Fn(_) | ast::Item::Import(_) => None,
             })
             .collect(),
         enums: resolved_enum_declarations(source, &types),

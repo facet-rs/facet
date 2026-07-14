@@ -5,9 +5,10 @@ use vix::budget::{BudgetOutcome, ChildReport, run_source_under_declared_budget};
 use vix::compiler::Compiler;
 use vix::diagnostic::{DiagnosticCode, DiagnosticPayload, DiagnosticSeverity};
 use vix::lowering::{LoweringCache, attribution_for, source_map_for};
+use vix::modules::ModuleSource;
 use vix::ratchet::{
-    RunError, SnapshotExpectations, run_source, run_source_innards, run_source_with_snapshots,
-    run_source_with_snapshots_and_lane,
+    RunError, SnapshotExpectations, run_source, run_source_innards, run_source_with_modules,
+    run_source_with_snapshots, run_source_with_snapshots_and_lane,
 };
 use vix::runtime::{
     DemandState, EventKind, FailureValue, MemoVerdict, SchemaId, SnapshotOutcome, TaskState,
@@ -79,6 +80,12 @@ const RUNG_063: &str = include_str!("ratchet/063-toml-decode.vix");
 const RUNG_064: &str = include_str!("ratchet/064-decode-optional.vix");
 const RUNG_065: &str = include_str!("ratchet/065-decode-enum-forms.vix");
 const RUNG_066: &str = include_str!("ratchet/066-decode-failure.vix");
+const RUNG_106: &str = include_str!("ratchet/106-imports.vix");
+const RUNG_107: &str = include_str!("ratchet/107-visibility.reject.vix");
+const RUNG_108: &str = include_str!("ratchet/108-import-std.vix");
+const RUNG_109: &str = include_str!("ratchet/109-name-collision.reject.vix");
+const RUNG_110: &str = include_str!("ratchet/110-module-memo-boundary.vix");
+const LIB_GEOMETRY: &str = include_str!("ratchet/lib/geometry.vix");
 const RUNG_138: &str = include_str!("ratchet/138-map-accumulator.vix");
 const RUNG_144: &str = include_str!("ratchet/144-unused-collection-result.warn.vix");
 const RUNG_145: &str = include_str!("ratchet/145-push.reject.vix");
@@ -5396,6 +5403,278 @@ fn mutation_shaped_collection_methods_are_unknown() {
         assert_eq!(diagnostic.message(), expected_message);
         assert_eq!(source_line(source, diagnostic.primary.start), expected_line);
     }
+}
+
+/// The `//! uses:` harness directive (testing.md, "The two kinds of `Check`" /
+/// directives section): each header line names a library module file presented
+/// to the compiler as the module its file stem names. The directive lines are
+/// consumed — removed, not blanked — so `//! at:` line numbers in reject
+/// headers refer to the source as compiled.
+fn modules_fixture(source: &str) -> (String, Vec<ModuleSource<'static>>) {
+    let mut modules = Vec::new();
+    let mut body = String::new();
+    for line in source.lines() {
+        if let Some(path) = line.strip_prefix("//! uses: ") {
+            let stem = path
+                .rsplit('/')
+                .next()
+                .and_then(|file| file.strip_suffix(".vix"))
+                .expect("uses: directive names a .vix file");
+            let module = match stem {
+                "geometry" => ModuleSource {
+                    name: "geometry",
+                    source: LIB_GEOMETRY,
+                },
+                other => panic!("uses: directive names an unbundled module `{other}`"),
+            };
+            modules.push(module);
+            continue;
+        }
+        body.push_str(line);
+        body.push('\n');
+    }
+    (body, modules)
+}
+
+/// Rung 106 — modules exist: a type and a function import from another file
+/// and compose through the production path, plain and chaos agreeing.
+#[test]
+fn rung_106_imports_run_through_production_path() {
+    let (source, modules) = modules_fixture(RUNG_106);
+    let report =
+        run_source_with_modules(&source, &modules).expect("rung 106 compiles and runs");
+    assert!(report.passed(), "rung 106 checks pass: {report:?}");
+    assert!(report.agrees(), "plain and chaos agree");
+    assert_eq!(report.plain.checks.len(), 1);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+}
+
+/// Rung 107 (reject) — a non-`pub` item is not importable: exactly the
+/// declared diagnostic (`private`) at the declared line, anchored on the
+/// import that names the private item.
+#[test]
+fn rung_107_private_import_is_rejected() {
+    let (source, modules) = modules_fixture(RUNG_107);
+    let (expected_message, expected_line) = reject_header(RUNG_107);
+    let diagnostics = Compiler::new()
+        .compile_with_modules(&source, &modules)
+        .expect_err("private items do not import");
+    assert_eq!(diagnostics.entries.len(), 1);
+    let diagnostic = &diagnostics.entries[0];
+    assert_eq!(diagnostic.code, DiagnosticCode::PrivateImport);
+    assert_eq!(diagnostic.message(), expected_message);
+    assert_eq!(
+        source_line(&source, diagnostic.primary.start),
+        expected_line
+    );
+    assert_eq!(
+        diagnostic.payload,
+        DiagnosticPayload::Name {
+            name: "geometry::private_helper".to_owned(),
+        },
+        "the typed payload names the private item",
+    );
+}
+
+/// Rung 108 — imported modules compose with std across the boundary: an
+/// imported function flows through `map`, and `sorted` orders the results
+/// (the seam the old corpus couldn't cross: appended fixture code calling
+/// imported std helpers).
+#[test]
+fn rung_108_std_composes_across_module_boundaries() {
+    let (source, modules) = modules_fixture(RUNG_108);
+    let report =
+        run_source_with_modules(&source, &modules).expect("rung 108 compiles and runs");
+    assert!(report.passed(), "rung 108 checks pass: {report:?}");
+    assert!(report.agrees(), "plain and chaos agree");
+    assert_eq!(report.plain.checks.len(), 1);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+}
+
+/// Rung 109 (reject) — importing a name that's also declared locally is an
+/// unqualified collision: exactly the declared diagnostic (`duplicate name`)
+/// at the declared line, anchored on the *second* binding site (the local
+/// declaration following the import).
+#[test]
+fn rung_109_import_local_collision_is_rejected() {
+    let (source, modules) = modules_fixture(RUNG_109);
+    let (expected_message, expected_line) = reject_header(RUNG_109);
+    let diagnostics = Compiler::new()
+        .compile_with_modules(&source, &modules)
+        .expect_err("an imported name may not be redeclared locally");
+    assert_eq!(diagnostics.entries.len(), 1);
+    let diagnostic = &diagnostics.entries[0];
+    assert_eq!(diagnostic.code, DiagnosticCode::DuplicateDefinition);
+    assert_eq!(diagnostic.message(), expected_message);
+    assert_eq!(
+        source_line(&source, diagnostic.primary.start),
+        expected_line
+    );
+    assert_eq!(
+        diagnostic.payload,
+        DiagnosticPayload::Name {
+            name: "Point".to_owned(),
+        },
+        "the typed payload names the colliding name",
+    );
+}
+
+/// Rung 110's foundation contract, certified the way the decode identity
+/// oracle is: memo/lowering identity is stable across module boundaries — an
+/// island's canonical recipe must not depend on which module spelled it.
+///
+/// Two compilations demand the same `geometry::magnitude_sq(geometry::Point
+/// { x: 6, y: 8 })` invocation from *differently shaped* importers (spelling
+/// B adds an unrelated imported module and an unrelated root declaration, so
+/// every `FunctionId` and item ordinal shifts). The invocation's wire island
+/// must produce byte-identical canonical VIR, one lowered recipe, one demand
+/// key — and lowering the second spelling through the first's cache must be
+/// a lookup, not a recompute. A different argument value is the
+/// discriminating negative control.
+#[test]
+fn rung_110_recipe_identity_is_importer_independent() {
+    const SPELLING_A: &str = "\
+import geometry::{Point, magnitude_sq};
+
+#[test]
+fn t() -> Stream<Check> {
+    let a = magnitude_sq(Point { x: 6, y: 8 });
+    let b = magnitude_sq(Point { x: 6, y: 8 });
+    yield expect_eq(a, b);
+    yield expect_eq(a + b, 200);
+}
+";
+    const SPELLING_B: &str = "\
+import noise::{triple, Widget};
+import geometry::{Point, magnitude_sq};
+
+fn pad(w: Widget) -> Int { triple(w.id) + 1 }
+
+#[test]
+fn t() -> Stream<Check> {
+    let a = magnitude_sq(Point { x: 6, y: 8 });
+    let b = magnitude_sq(Point { x: 6, y: 8 });
+    yield expect_eq(a, b);
+    yield expect_eq(a + b, 200);
+}
+";
+    const CONTROL: &str = "\
+import geometry::{Point, magnitude_sq};
+
+#[test]
+fn t() -> Stream<Check> {
+    let a = magnitude_sq(Point { x: 8, y: 6 });
+    let b = magnitude_sq(Point { x: 8, y: 6 });
+    yield expect_eq(a, b);
+    yield expect_eq(a + b, 200);
+}
+";
+    const NOISE: &str = "\
+pub fn triple(n: Int) -> Int { n * 3 }
+pub struct Widget { id: Int }
+";
+    let geometry = ModuleSource {
+        name: "geometry",
+        source: LIB_GEOMETRY,
+    };
+    let noise = ModuleSource {
+        name: "noise",
+        source: NOISE,
+    };
+
+    // The two structurally equal spelled invocations collapse to ONE wire
+    // island before the runtime exists: one recipe is a compile-time fact.
+    let partition = |source: &str, modules: &[ModuleSource]| {
+        let module = Compiler::new()
+            .compile_with_modules(source, modules)
+            .expect("spelling compiles");
+        let partitioned = module.partition_test(&module.tests[0]);
+        assert_eq!(
+            partitioned.wire_islands.len(),
+            1,
+            "both spelled invocations share one wire island",
+        );
+        (module, partitioned)
+    };
+    let (_module_a, partitioned_a) = partition(SPELLING_A, &[geometry]);
+    let (_module_b, partitioned_b) = partition(SPELLING_B, &[noise, geometry]);
+    let (_module_c, partitioned_c) = partition(CONTROL, &[geometry]);
+    let wire_a = &partitioned_a.wire_islands[0].island;
+    let wire_b = &partitioned_b.wire_islands[0].island;
+    let wire_c = &partitioned_c.wire_islands[0].island;
+    assert_ne!(
+        wire_a.function, wire_b.function,
+        "the reshaped importer shifts raw FunctionIds — identity must not ride on them",
+    );
+    assert_eq!(
+        wire_a.canonical_recipe_bytes(),
+        wire_b.canonical_recipe_bytes(),
+        "one canonical recipe regardless of which module set spelled the demand",
+    );
+    assert_ne!(
+        wire_a.canonical_recipe_bytes(),
+        wire_c.canonical_recipe_bytes(),
+        "a different argument is a different recipe (discriminating control)",
+    );
+
+    // One lowered recipe, one demand key; the second spelling's lowering is a
+    // cache lookup, never a recompute.
+    let mut cache = LoweringCache::default();
+    let lowered_a = cache.get_or_lower(wire_a).expect("wire island lowers");
+    let (recipe_a, key_a) = (lowered_a.recipe, lowered_a.demand_key);
+    let lowered_b = cache.get_or_lower(wire_b).expect("wire island re-lowers");
+    assert_eq!(recipe_a, lowered_b.recipe, "one lowered recipe");
+    assert_eq!(key_a, lowered_b.demand_key, "one demand key");
+    assert_eq!(cache.counters().misses, 1);
+    assert_eq!(cache.counters().hits, 1);
+    let lowered_c = cache.get_or_lower(wire_c).expect("control lowers");
+    assert_ne!(key_a, lowered_c.demand_key, "control demand key diverges");
+
+    // Production path: both spellings run green, agree across lanes, and the
+    // second await of the shared cross-module demand is a memo lookup.
+    let report_a = run_source_with_modules(SPELLING_A, &[geometry]).expect("spelling A runs");
+    let report_b =
+        run_source_with_modules(SPELLING_B, &[noise, geometry]).expect("spelling B runs");
+    for report in [&report_a, &report_b] {
+        assert!(report.passed(), "cross-module memo run passes: {report:?}");
+        assert!(report.agrees(), "plain and chaos agree");
+        assert!(
+            report.plain.counters.memo_hits_exact >= 1,
+            "the second await of the shared invocation is a lookup: {:?}",
+            report.plain.counters,
+        );
+    }
+    assert_eq!(
+        report_a.plain.checks, report_b.plain.checks,
+        "identical check identities (ValueId) regardless of importer shape",
+    );
+}
+
+/// Rung 110's fixture itself stays red at a *typed* boundary, pinned exactly:
+/// its `never_demanded(magnitude_sq(Point { x: 6, y: 8 }))` names a
+/// described-wire selector with a record-literal argument, and described
+/// selectors admit only closed scalar literals today (`WireArg::Int/Bool`).
+/// The cross-run `//! rerun` scope is the second open seam (PORT-NOTES.md:
+/// rerun-phase scoping is an explicit design PROPOSAL, not implementable
+/// surface). This pin goes green-red loudly when either seam moves.
+#[test]
+fn rung_110_stops_at_the_described_wire_record_literal_boundary() {
+    let (source, modules) = modules_fixture(RUNG_110);
+    let diagnostics = Compiler::new()
+        .compile_with_modules(&source, &modules)
+        .expect_err("a record-literal described-wire argument is a typed boundary");
+    assert_eq!(diagnostics.entries.len(), 1);
+    let diagnostic = &diagnostics.entries[0];
+    assert_eq!(diagnostic.code, DiagnosticCode::UnsupportedExpression);
+    assert_eq!(
+        diagnostic.message(),
+        "a described-wire argument must be a closed scalar literal",
+    );
+    assert_eq!(
+        &source[diagnostic.primary.start as usize..diagnostic.primary.end as usize],
+        "Point { x: 6, y: 8 }",
+        "the boundary anchors on the record literal inside never_demanded",
+    );
 }
 
 fn reject_header(source: &str) -> (&str, usize) {

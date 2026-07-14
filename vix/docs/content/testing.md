@@ -225,6 +225,20 @@ The file must compile and emit the declared warning at the declared line. The
 ratchet treats a missing warning as a failed certificate; it does not change the
 language-level diagnostic into an unconditional error.
 
+A test spanning modules names its library files with a `//! uses:` directive:
+
+```vix
+//! uses: lib/geometry.vix
+
+import geometry::{Point, magnitude_sq};
+```
+
+Each named file is presented to the compiler as the module its file stem names
+(`lib/geometry.vix` is the module `geometry`). The harness consumes `uses:`
+lines before compiling — they are orchestration, not source — so `//! at:`
+line numbers in reject headers refer to the file as compiled, with its `uses:`
+lines removed.
+
 Fixture selection, rerun mutations, alternate source files, and expected harness
 flags are likewise file-level harness metadata when they describe orchestration
 rather than a Vix value. They remain leading `//!` directives until the ratchet
