@@ -575,10 +575,6 @@ impl<S: EventSink> Runtime<S> {
             && entry.location == *location
             && entry.key == lowered.demand_key
             && entry.preimage == lowered.demand_preimage
-            && self
-                .store
-                .entry(entry.result)
-                .is_some_and(|stored| stored.identity.schema == lowered.output_schema)
             && self.exact_memo_replayable(entry)
         {
             let handle = entry.result;
@@ -624,10 +620,6 @@ impl<S: EventSink> Runtime<S> {
         }
         if let Some(entry) = self.memo.get(&location.id).cloned()
             && entry.location == *location
-            && self
-                .store
-                .entry(entry.result)
-                .is_some_and(|stored| stored.identity.schema == lowered.output_schema)
             && entry
                 .receipt
                 .as_ref()
@@ -1482,7 +1474,6 @@ impl<S: EventSink> Runtime<S> {
             arguments: arguments.iter().map(|argument| argument.identity).collect(),
         };
         let key = DemandKey::from_preimage(&preimage);
-        let expected_schema = effect.effect_output().map(|node| effect_schema(&node.ty));
         self.emit(EventKind::Demanded { key });
         let force_miss = self.effect_fixture_overlay_active(effect);
         let memo_handle = (!force_miss)
@@ -1491,10 +1482,6 @@ impl<S: EventSink> Runtime<S> {
                     (entry.location == *location
                         && entry.key == key
                         && entry.preimage == preimage
-                        && self
-                            .store
-                            .entry(entry.result)
-                            .is_some_and(|stored| Some(stored.identity.schema) == expected_schema)
                         && self.exact_memo_replayable(entry))
                     .then_some(entry.result)
                 })
@@ -1530,10 +1517,6 @@ impl<S: EventSink> Runtime<S> {
         if !force_miss
             && let Some(entry) = self.memo.get(&location.id).cloned()
             && entry.location == *location
-            && self
-                .store
-                .entry(entry.result)
-                .is_some_and(|stored| Some(stored.identity.schema) == expected_schema)
             && entry
                 .receipt
                 .as_ref()
@@ -1659,7 +1642,7 @@ impl<S: EventSink> Runtime<S> {
                     key,
                     preimage: preimage.clone(),
                     result: interned.handle,
-                    receipt: document_receipt(key, &reads),
+                    receipt: Some(Receipt { demand: key, reads }),
                 },
             );
             if let Some(demand) = self.demands.get_mut(&key) {
