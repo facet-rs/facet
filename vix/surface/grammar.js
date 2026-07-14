@@ -198,14 +198,33 @@ module.exports = grammar({
     },
     unary: ($) => prec(PREC.unary, seq(field("op", choice("-", "!")), field("value", $._expr))),
     call: ($) =>
-      prec(
-        PREC.postfix,
-        seq(
-          field("callee", $.identifier),
-          field("args", $.arg_list),
-          optional(field("named_args", $.where_args)),
+      choice(
+        // Type application (turbofish) at a call site: names the target schema
+        // explicitly, e.g. `try_json_decode<PkgRow>(doc)`. Dynamic precedence
+        // resolves the GLR `f<T>(x)` vs `(f < T) > (x)` ambiguity in favor of
+        // the type application; the trailing `(` makes it a genuine call.
+        prec.dynamic(
+          1,
+          prec(
+            PREC.postfix,
+            seq(
+              field("callee", $.identifier),
+              field("type_args", $.type_args),
+              field("args", $.arg_list),
+              optional(field("named_args", $.where_args)),
+            ),
+          ),
+        ),
+        prec(
+          PREC.postfix,
+          seq(
+            field("callee", $.identifier),
+            field("args", $.arg_list),
+            optional(field("named_args", $.where_args)),
+          ),
         ),
       ),
+    type_args: ($) => seq("<", sepBy(",", field("arg", $._type)), ">"),
     // A subject-less named call: the callee names both its bounds through
     // `where`, with no positional subject and no parentheses. `range where
     // { from, to }` is the canonical instance (calling.md: "range acts on
@@ -304,6 +323,8 @@ module.exports = grammar({
       choice(
         $.some_pattern,
         $.none_pattern,
+        $.ok_pattern,
+        $.err_pattern,
         $.record_pattern,
         $.variant_pattern,
         $.binding_pattern,
@@ -314,6 +335,10 @@ module.exports = grammar({
       ),
     some_pattern: ($) => seq("Some", "(", field("payload", $._pattern), ")"),
     none_pattern: () => "None",
+    // `Result<T, E>` is a built-in enum; its `Ok`/`Err` patterns are built-in
+    // like `Option`'s `Some`/`None`.
+    ok_pattern: ($) => seq("Ok", "(", field("payload", $._pattern), ")"),
+    err_pattern: ($) => seq("Err", "(", field("payload", $._pattern), ")"),
     binding_pattern: ($) => field("binding", $.identifier),
     string_pattern: ($) => field("value", $.string),
     number_pattern: ($) => field("value", $.number),

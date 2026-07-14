@@ -13,8 +13,8 @@ use crate::vir::{
     EnumVariant, Function, FunctionId, GeneratorArm, GeneratorBody, GeneratorStep,
     MatchArm as VirMatchArm, Module, Node, NodeId, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT,
     ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, OrderedMatchArm, Parameter, ParameterId,
-    ParameterKind, RecordField, RecordType, Test, TestMetadata, TraceCheck, Type, VariantPayload,
-    WireArg, YieldSite, YieldSiteId,
+    ParameterKind, RESULT_ERR_VARIANT, RESULT_OK_VARIANT, RecordField, RecordType, Test,
+    TestMetadata, TraceCheck, Type, VariantPayload, WireArg, YieldSite, YieldSiteId,
 };
 
 pub struct Compiler {
@@ -1896,6 +1896,14 @@ fn bind_irrefutable_pattern(
             "refutable pattern",
         ))),
         ast::Pattern::Number(pattern) => Err(Diagnostics::one(Diagnostic::unsupported(
+            pattern.span,
+            "refutable pattern",
+        ))),
+        ast::Pattern::Ok(pattern) => Err(Diagnostics::one(Diagnostic::unsupported(
+            pattern.span,
+            "refutable pattern",
+        ))),
+        ast::Pattern::Err(pattern) => Err(Diagnostics::one(Diagnostic::unsupported(
             pattern.span,
             "refutable pattern",
         ))),
@@ -4276,6 +4284,8 @@ fn collect_pattern_names(pattern: &ast::Pattern, out: &mut BTreeSet<String>) {
             }
         }
         ast::Pattern::Some(some) => collect_pattern_names(&some.payload, out),
+        ast::Pattern::Ok(ok) => collect_pattern_names(&ok.payload, out),
+        ast::Pattern::Err(err) => collect_pattern_names(&err.payload, out),
         ast::Pattern::Variant(variant) => {
             if let Some(payload) = &variant.tuple_payload {
                 for element in &payload.elems {
@@ -6405,6 +6415,14 @@ fn lower_ordered_pattern(
             pattern.span,
             "guarded enum pattern",
         ))),
+        ast::Pattern::Ok(pattern) => Err(Diagnostics::one(Diagnostic::unsupported(
+            pattern.span,
+            "guarded result pattern",
+        ))),
+        ast::Pattern::Err(pattern) => Err(Diagnostics::one(Diagnostic::unsupported(
+            pattern.span,
+            "guarded result pattern",
+        ))),
         ast::Pattern::Tuple(pattern) => {
             let Type::Tuple(elements) = &scrutinee.ty else {
                 return Err(type_mismatch(pattern.span, "tuple", scrutinee.ty.name()));
@@ -6491,6 +6509,8 @@ fn pattern_span(pattern: &ast::Pattern) -> Span {
     match pattern {
         ast::Pattern::Some(pattern) => pattern.span,
         ast::Pattern::None(span) => *span,
+        ast::Pattern::Ok(pattern) => pattern.span,
+        ast::Pattern::Err(pattern) => pattern.span,
         ast::Pattern::Record(pattern) => pattern.span,
         ast::Pattern::Variant(pattern) => pattern.span,
         ast::Pattern::Binding(pattern) => pattern.span,
@@ -6670,6 +6690,8 @@ fn find_variant<'a>(
 enum EnumPattern<'a> {
     Some(&'a ast::SomePattern),
     None(Span),
+    Ok(&'a ast::OkPattern),
+    Err(&'a ast::ErrPattern),
     Variant(&'a ast::VariantPattern),
     Record(&'a ast::RecordPattern),
 }
@@ -6678,6 +6700,8 @@ fn enum_pattern(pattern: &ast::Pattern) -> Option<EnumPattern<'_>> {
     match pattern {
         ast::Pattern::Some(pattern) => Some(EnumPattern::Some(pattern)),
         ast::Pattern::None(span) => Some(EnumPattern::None(*span)),
+        ast::Pattern::Ok(pattern) => Some(EnumPattern::Ok(pattern)),
+        ast::Pattern::Err(pattern) => Some(EnumPattern::Err(pattern)),
         ast::Pattern::Variant(pattern) => Some(EnumPattern::Variant(pattern)),
         ast::Pattern::Record(pattern) => Some(EnumPattern::Record(pattern)),
         _ => None,
@@ -6688,6 +6712,8 @@ fn enum_pattern_span(pattern: EnumPattern<'_>) -> Span {
     match pattern {
         EnumPattern::Some(pattern) => pattern.span,
         EnumPattern::None(span) => span,
+        EnumPattern::Ok(pattern) => pattern.span,
+        EnumPattern::Err(pattern) => pattern.span,
         EnumPattern::Variant(pattern) => pattern.span,
         EnumPattern::Record(pattern) => pattern.span,
     }
@@ -6720,6 +6746,34 @@ fn find_enum_pattern_variant<'a>(
                 OPTION_NONE_VARIANT as usize,
                 &enumeration.variants[OPTION_NONE_VARIANT as usize],
                 span,
+            ))
+        }
+        EnumPattern::Ok(pattern) => {
+            if enumeration.result_inner().is_none() {
+                return Err(type_mismatch(
+                    pattern.span,
+                    "Result<_, _>",
+                    enumeration.name.clone(),
+                ));
+            }
+            Ok((
+                RESULT_OK_VARIANT as usize,
+                &enumeration.variants[RESULT_OK_VARIANT as usize],
+                pattern.span,
+            ))
+        }
+        EnumPattern::Err(pattern) => {
+            if enumeration.result_inner().is_none() {
+                return Err(type_mismatch(
+                    pattern.span,
+                    "Result<_, _>",
+                    enumeration.name.clone(),
+                ));
+            }
+            Ok((
+                RESULT_ERR_VARIANT as usize,
+                &enumeration.variants[RESULT_ERR_VARIANT as usize],
+                pattern.span,
             ))
         }
         EnumPattern::Variant(pattern) => {
@@ -6786,6 +6840,28 @@ fn bind_enum_pattern(
             bind_irrefutable_pattern(nodes, bindings, &pattern.payload, &projected)
         }
         (EnumPattern::None(_), VariantPayload::Unit) => Ok(()),
+        (EnumPattern::Ok(pattern), VariantPayload::Tuple(types)) if types.len() == 1 => {
+            let projected = project_variant_field(
+                nodes,
+                scrutinee,
+                variant_index,
+                0,
+                &types[0],
+                pattern_span(&pattern.payload),
+            )?;
+            bind_irrefutable_pattern(nodes, bindings, &pattern.payload, &projected)
+        }
+        (EnumPattern::Err(pattern), VariantPayload::Tuple(types)) if types.len() == 1 => {
+            let projected = project_variant_field(
+                nodes,
+                scrutinee,
+                variant_index,
+                0,
+                &types[0],
+                pattern_span(&pattern.payload),
+            )?;
+            bind_irrefutable_pattern(nodes, bindings, &pattern.payload, &projected)
+        }
         (EnumPattern::Variant(pattern), VariantPayload::Unit)
             if pattern.tuple_payload.is_none() =>
         {

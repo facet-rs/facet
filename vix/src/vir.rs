@@ -106,6 +106,8 @@ pub const ORDERING_EQUAL_VARIANT: u32 = 1;
 pub const ORDERING_GREATER_VARIANT: u32 = 2;
 pub const OPTION_SOME_VARIANT: u32 = 0;
 pub const OPTION_NONE_VARIANT: u32 = 1;
+pub const RESULT_OK_VARIANT: u32 = 0;
+pub const RESULT_ERR_VARIANT: u32 = 1;
 
 impl EnumType {
     /// r[impl lang.value.ordering-is-enum]
@@ -157,6 +159,50 @@ impl EnumType {
             && matches!(none.payload, VariantPayload::Unit)
             && self.name == format!("Option<{}>", inner.name()))
         .then_some(inner)
+    }
+
+    /// The built-in `Result<Ok, Err>` failure-as-value enum: `Ok(T)` and
+    /// `Err(E)` single-payload tuple variants. Failure is an ordinary domain
+    /// value, not an exception (`r[lang.failure.typed]`).
+    #[must_use]
+    pub fn result(ok: Type, err: Type) -> Self {
+        let name = format!("Result<{}, {}>", ok.name(), err.name());
+        Self {
+            name,
+            variants: vec![
+                EnumVariant {
+                    name: "Ok".to_owned(),
+                    payload: VariantPayload::Tuple(vec![ok]),
+                },
+                EnumVariant {
+                    name: "Err".to_owned(),
+                    payload: VariantPayload::Tuple(vec![err]),
+                },
+            ],
+        }
+    }
+
+    /// The `(ok, err)` payload types iff this enum is the built-in `Result`
+    /// shape (matched structurally and by canonical name, like [`option_inner`]).
+    ///
+    /// [`option_inner`]: EnumType::option_inner
+    #[must_use]
+    pub fn result_inner(&self) -> Option<(&Type, &Type)> {
+        let [ok, err] = self.variants.as_slice() else {
+            return None;
+        };
+        let (VariantPayload::Tuple(ok_payload), VariantPayload::Tuple(err_payload)) =
+            (&ok.payload, &err.payload)
+        else {
+            return None;
+        };
+        let ([ok_ty], [err_ty]) = (ok_payload.as_slice(), err_payload.as_slice()) else {
+            return None;
+        };
+        (ok.name == "Ok"
+            && err.name == "Err"
+            && self.name == format!("Result<{}, {}>", ok_ty.name(), err_ty.name()))
+        .then_some((ok_ty, err_ty))
     }
 }
 
@@ -611,6 +657,19 @@ impl Type {
             return None;
         };
         enumeration.option_inner()
+    }
+
+    #[must_use]
+    pub fn result(ok: Type, err: Type) -> Self {
+        Self::Enum(EnumType::result(ok, err))
+    }
+
+    #[must_use]
+    pub fn result_inner(&self) -> Option<(&Type, &Type)> {
+        let Self::Enum(enumeration) = self else {
+            return None;
+        };
+        enumeration.result_inner()
     }
 
     #[must_use]

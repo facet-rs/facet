@@ -35,6 +35,8 @@ ast({
   variant_pattern: { as: "Variant" },
   some_pattern: { as: "Some" },
   none_pattern: { as: "None" },
+  ok_pattern: { as: "Ok" },
+  err_pattern: { as: "Err" },
   binding_pattern: { as: "Binding" },
   string_pattern: { as: "Str" },
   number_pattern: { as: "Number" },
