@@ -303,6 +303,19 @@ pub enum TraceCheck {
     DemandedOnce {
         wire: DescribedWire,
     },
+    /// The named external path was never read during the run: it appears in no
+    /// demand receipt. Read-recording is complete by construction — external
+    /// reads go through the recording fixture-store accessors — so absence in
+    /// the receipts is absence of the read.
+    NeverRead {
+        path: String,
+    },
+    /// Exactly `times` fetch effects were actually performed. Memoized
+    /// re-demands of an identical pinned fetch are memo hits and spawn no
+    /// effect, so they do not count.
+    Fetched {
+        times: i64,
+    },
 }
 
 /// A held description of an unevaluated invocation: which user function is
@@ -521,6 +534,39 @@ pub enum Type {
     /// ordinary Vix closure; a consuming operation (`sorted`) reads it and never
     /// materializes an `Order<T>` value in a Weavy frame.
     Order(Box<Type>),
+    /// A store-backed machine-plane value: one handle word whose canonical
+    /// resident bytes are its byte-comparable content. These values are
+    /// constructed only by machine primitives (the effect plane), never by
+    /// lowered pure vocabulary.
+    Extern(ExternKind),
+}
+
+/// The machine-plane value kinds of the tree/fetch band. `Tree` and
+/// `TreeEntry` projections resolve lazily against the store or an external
+/// fixture root; `Blob` is immutable bytes named by its vix ContentHash
+/// (`machine.identity.blake3`); `Registry`/`PinnedUrl` are the lock-time
+/// fixture-registry surface (`machine.primitive.fetch-is-pinned`).
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ExternKind {
+    Tree,
+    TreeEntry,
+    Blob,
+    Registry,
+    PinnedUrl,
+}
+
+impl ExternKind {
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Tree => "Tree",
+            Self::TreeEntry => "TreeEntry",
+            Self::Blob => "Blob",
+            Self::Registry => "Registry",
+            Self::PinnedUrl => "PinnedUrl",
+        }
+    }
 }
 
 impl Type {
@@ -643,6 +689,7 @@ impl Type {
                 format!("Stream<{}, {}>", key.name(), value.name())
             }
             Self::Order(subject) => format!("Order<{}>", subject.name()),
+            Self::Extern(kind) => kind.name().to_owned(),
         }
     }
 
@@ -656,6 +703,7 @@ impl Type {
             | Self::Check
             | Self::String
             | Self::Path
+            | Self::Extern(_)
             | Self::Array(_)
             | Self::Map { .. }
             | Self::Set(_) => Some(1),
@@ -684,7 +732,9 @@ impl Type {
     #[must_use]
     pub fn equality_is_structural(&self) -> bool {
         match self {
-            Self::Bool | Self::Int | Self::String | Self::Path => true,
+            // An Extern value's canonical resident bytes are its content, so
+            // byte equality is content-identity equality.
+            Self::Bool | Self::Int | Self::String | Self::Path | Self::Extern(_) => true,
             Self::Array(element) => element.equality_is_structural(),
             Self::Map { .. } | Self::Set(_) => false,
             Self::Function { .. } => false,
@@ -706,6 +756,7 @@ impl Type {
     pub fn structural_order_is_defined(&self) -> bool {
         match self {
             Self::Bool | Self::Int | Self::String | Self::Path => true,
+            Self::Extern(_) => false,
             Self::Array(element) => element.structural_order_is_defined(),
             Self::Map { .. } | Self::Set(_) => false,
             Self::Function { .. } => false,
@@ -738,6 +789,11 @@ impl Type {
 pub enum EffectKind {
     Pure,
     Codata,
+    /// A machine-plane primitive demand (fixture tree projection, fetch,
+    /// extract, glob): evaluated by the runtime against the store or the
+    /// offline fixture root — never lowered into a Weavy program — with its
+    /// reads recorded into a receipt.
+    Effect,
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
@@ -757,6 +813,14 @@ impl EffectFacts {
     pub const CODATA: Self = Self {
         kind: EffectKind::Codata,
         fallible: false,
+        placed: false,
+    };
+
+    /// Machine-plane primitive: fallible (a projection can miss, a fetch can
+    /// fail integrity) and never lowered to Weavy.
+    pub const EFFECT: Self = Self {
+        kind: EffectKind::Effect,
+        fallible: true,
         placed: false,
     };
 }
@@ -922,6 +986,39 @@ pub enum Op {
     /// The operand is an inline scalar; the result is a fresh resident
     /// molten byte run, identical in byte semantics to a string literal.
     IntToString,
+    /// Open the named harness fixture tree as a lazy `Tree` value. Reads
+    /// nothing: the value's identity is the pending fixture-tree reference;
+    /// projections resolve — and record reads — only where demanded.
+    FixtureTree,
+    /// Project one segment (String) or a segment path (Path) through a Tree
+    /// or a Dir TreeEntry. Resolves lazily: it reads directory listings along
+    /// the projected path only, never sibling entries or file contents.
+    TreeProject,
+    /// Decode a File TreeEntry's content as UTF-8 text. This is the explicit
+    /// read of the file's bytes; it records the read in the demand's receipt.
+    TreeEntryText,
+    /// Glob over a Tree: a keyed codata recipe (`Stream<Path, Path>`) whose
+    /// collection reads only the directory listings the pattern traverses.
+    TreeGlob,
+    /// Open the offline harness fixture registry (the lock-time manifest).
+    FixtureRegistry,
+    /// Resolve an artifact name against the registry manifest into a
+    /// `PinnedUrl`: provenance URL plus the REQUIRED vix ContentHash
+    /// (`machine.primitive.fetch-is-pinned`).
+    RegistryUrl,
+    /// Fetch a pinned Blob by content identity: resolve the store first, only
+    /// then the (fixture) origin; verify the bytes against the pinned hash.
+    ///
+    /// r[impl machine.primitive.fetch-returns-a-blob]
+    /// r[impl machine.primitive.fetch-integrity-vs-identity]
+    Fetch,
+    /// Extract an archive Blob into a Tree whose identity is the canonical
+    /// tree encoding — never the archive bytes' ContentHash.
+    ///
+    /// r[impl machine.identity.tree-model]
+    Untar,
+    /// The byte length of a Blob, read from the store entry.
+    BlobLen,
 }
 
 /// One SSA-like operation. Dependencies are explicit node ids; no Rust
@@ -1133,6 +1230,11 @@ pub enum IslandPurpose {
     /// envelope is forced for every type — including scalars and strings — so the
     /// runtime always freezes a renderable structure.
     Snapshot,
+    /// A machine-plane primitive demand (tree projection, glob, fetch,
+    /// extract): its output node is an [`EffectKind::Effect`] op the runtime
+    /// evaluates directly against the store/fixture root with a recorded
+    /// read-set. Never lowered to a Weavy program.
+    Effect,
 }
 
 /// Content-free canonical graph provenance for a shared value producer. This
@@ -1161,6 +1263,12 @@ pub struct PartitionedValue {
     /// so a described-wire trace check can observe the invocation. Absent for an
     /// ordinary shared-publication island.
     pub wire: Option<WireProvenance>,
+    /// Present when this is an effect island ([`IslandPurpose::Effect`]): the
+    /// node-id-independent structural fingerprint of the effect's authored
+    /// subtree. Two structurally identical effect expressions nominate the
+    /// same memo location through this fingerprint, so the second demand of an
+    /// identical pinned fetch is an exact memo hit, never a second effect.
+    pub effect_fingerprint: Option<String>,
 }
 
 /// The described invocation a hoisted wire value island realizes: the callee
@@ -1375,6 +1483,21 @@ impl Module {
                     .insert(PublicationConsumer::GeneratorControl);
             }
         }
+        // Every effect root is an island boundary regardless of consumer count:
+        // a machine-plane primitive can never be lowered into a Weavy island, so
+        // it is hoisted into its own Effect island and consumed as a published
+        // value input. Effect roots are the non-codata Effect-kind nodes — a
+        // codata effect recipe (a tree glob) stays interior to the collection
+        // that realizes it.
+        let effect_nodes = function
+            .nodes
+            .iter()
+            .filter(|node| is_effect_root(node))
+            .collect::<Vec<_>>();
+        let effect_ids = effect_nodes
+            .iter()
+            .map(|node| (node.id, self.value_island_id(function.id, node.id)))
+            .collect::<BTreeMap<_, _>>();
         let mut shared = function
             .nodes
             .iter()
@@ -1384,6 +1507,7 @@ impl Module {
                     .is_some_and(|sites| sites.len() >= 2)
             })
             .filter(|node| is_shared_publication_candidate(node))
+            .filter(|node| !effect_ids.contains_key(&node.id))
             .collect::<Vec<_>>();
         let candidate_ids = shared.iter().map(|node| node.id).collect::<BTreeSet<_>>();
         shared.retain(|candidate| {
@@ -1421,6 +1545,14 @@ impl Module {
             .iter()
             .map(|node| (node.id, self.value_island_id(function.id, node.id)))
             .collect::<BTreeMap<_, _>>();
+        // The complete eager-publication boundary: shared aggregates plus every
+        // effect root. Islands stop at these nodes and consume them as value
+        // inputs; each publication island excludes itself when built.
+        let publication_ids = {
+            let mut combined = shared_ids.clone();
+            combined.extend(effect_ids.iter().map(|(node, value)| (*node, *value)));
+            combined
+        };
         // The non-strict argument nodes of every lazy call site: a call whose
         // callee has wire parameters demands each such argument inside the callee
         // through force-on-park, so the argument becomes its own wire island. Both
@@ -1471,14 +1603,30 @@ impl Module {
                 .collect::<BTreeMap<_, _>>();
             (wire_ids, lazy_arg_reps)
         };
-        let values = shared
+        // Eager publications: shared aggregates and effect roots, in one
+        // node-id-ordered (therefore dependency-ordered) vector, each built with
+        // every OTHER publication as a boundary. An effect island carries its
+        // structural fingerprint so identical effect expressions nominate one
+        // memo location.
+        let mut effect_fingerprints = BTreeMap::new();
+        let mut publications = shared
+            .iter()
+            .map(|node| (*node, IslandPurpose::Value))
+            .chain(
+                effect_nodes
+                    .iter()
+                    .map(|node| (*node, IslandPurpose::Effect)),
+            )
+            .collect::<Vec<_>>();
+        publications.sort_by_key(|(node, _)| node.id);
+        let values = publications
             .iter()
             .enumerate()
-            .map(|(ordinal, node)| {
-                // A value island computes itself; only OTHER shared aggregates are
+            .map(|(ordinal, (node, purpose))| {
+                // A value island computes itself; only OTHER publications are
                 // pre-published inputs.
                 let representative_id = self.value_island_id(function.id, node.id);
-                let shared_here = shared_ids
+                let publications_here = publication_ids
                     .iter()
                     .filter(|(candidate, _)| **candidate != node.id)
                     .map(|(candidate, value)| (*candidate, *value))
@@ -1490,14 +1638,17 @@ impl Module {
                         function,
                         node.id,
                         IslandId(u32::try_from(ordinal).expect("value island index fits u32")),
-                        IslandPurpose::Value,
+                        *purpose,
                         &IslandBoundary {
-                            shared: &shared_here,
+                            shared: &publications_here,
                             wires: &BTreeMap::new(),
                             lazy_arg_reps: &lazy_here,
                         },
                     ),
                     wire: None,
+                    effect_fingerprint: matches!(purpose, IslandPurpose::Effect).then(|| {
+                        structural_fingerprint(function, node.id, &mut effect_fingerprints)
+                    }),
                 }
             })
             .collect::<Vec<_>>();
@@ -1525,19 +1676,20 @@ impl Module {
                         IslandId(u32::try_from(ordinal).expect("wire island index fits u32")),
                         IslandPurpose::Value,
                         &IslandBoundary {
-                            shared: &shared_ids,
+                            shared: &publication_ids,
                             wires: &wires_here,
                             lazy_arg_reps: &lazy_here,
                         },
                     ),
                     wire: scalar_call_provenance(function, node),
+                    effect_fingerprint: None,
                 }
             })
             .collect::<Vec<_>>();
         let generator = test
             .generator
             .has_conditional_sites()
-            .then(|| self.generator_task_island_with_shared(test, &shared_ids))
+            .then(|| self.generator_task_island_with_shared(test, &publication_ids))
             .transpose()?;
         let mut islands = Vec::new();
         let mut sites = Vec::with_capacity(ordered.len());
@@ -1551,7 +1703,7 @@ impl Module {
                         IslandId(u32::try_from(island).expect("island index fits u32")),
                         IslandPurpose::Check,
                         &IslandBoundary {
-                            shared: &shared_ids,
+                            shared: &publication_ids,
                             wires: &wire_ids,
                             lazy_arg_reps: &lazy_arg_reps,
                         },
@@ -1570,7 +1722,7 @@ impl Module {
                         IslandId(u32::try_from(island).expect("island index fits u32")),
                         IslandPurpose::Snapshot,
                         &IslandBoundary {
-                            shared: &shared_ids,
+                            shared: &publication_ids,
                             wires: &wire_ids,
                             lazy_arg_reps: &lazy_arg_reps,
                         },
@@ -2482,6 +2634,14 @@ fn structural_fingerprint(
     fingerprint
 }
 
+/// An effect root is any machine-plane primitive node that publishes a value:
+/// it is an island boundary regardless of consumer count, because it can never
+/// lower into a Weavy program. A codata effect recipe (`Op::TreeGlob`, type
+/// `Stream<..>`) is not itself a root — the collection realizing it is.
+fn is_effect_root(node: &Node) -> bool {
+    node.effect.kind == EffectKind::Effect && !matches!(node.ty, Type::Stream { .. })
+}
+
 fn is_shared_publication_candidate(node: &Node) -> bool {
     if is_scalar_call_candidate(node) {
         return true;
@@ -2787,6 +2947,7 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
             match node.effect.kind {
                 EffectKind::Pure => 0,
                 EffectKind::Codata => 1,
+                EffectKind::Effect => 2,
             },
             u8::from(node.effect.fallible),
             u8::from(node.effect.placed),
@@ -2952,6 +3113,15 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::PathToString => op.push(82),
         Op::IntToString => op.push(84),
         Op::Range => op.push(83),
+        Op::FixtureTree => op.push(90),
+        Op::TreeProject => op.push(91),
+        Op::TreeEntryText => op.push(92),
+        Op::TreeGlob => op.push(93),
+        Op::FixtureRegistry => op.push(94),
+        Op::RegistryUrl => op.push(95),
+        Op::Fetch => op.push(96),
+        Op::Untar => op.push(97),
+        Op::BlobLen => op.push(98),
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());
@@ -3095,6 +3265,11 @@ pub(crate) fn canonical_type(ty: &Type) -> Vec<u8> {
         Type::Set(element) => {
             let mut bytes = b"set".to_vec();
             frame(&mut bytes, &canonical_type(element));
+            bytes
+        }
+        Type::Extern(kind) => {
+            let mut bytes = b"extern".to_vec();
+            frame(&mut bytes, kind.name().as_bytes());
             bytes
         }
         Type::Stream { key, value } => {

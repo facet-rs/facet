@@ -9,8 +9,9 @@ use crate::support::{Span, Spanned};
 use crate::surface::{SurfaceParser, ast};
 use crate::vir::DescribedWire;
 use crate::vir::{
-    ArrayMapGrain, ArrayMapGrainKey, Budget, CheckRecipe, ControlRegion, EffectFacts, EnumType,
-    EnumVariant, Function, FunctionId, GeneratorArm, GeneratorBody, GeneratorStep,
+    ArrayMapGrain, ArrayMapGrainKey, Budget, CheckRecipe, ControlRegion, EffectFacts, EffectKind,
+    EnumType, EnumVariant, ExternKind, Function, FunctionId, GeneratorArm, GeneratorBody,
+    GeneratorStep,
     MatchArm as VirMatchArm, Module, Node, NodeId, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT,
     ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, OrderedMatchArm, Parameter, ParameterId,
     ParameterKind, RecordField, RecordType, Test, TestMetadata, TraceCheck, Type, VariantPayload,
@@ -2017,6 +2018,16 @@ fn lower_check(
                 wire: described_wire(context, call)?,
             }));
         }
+        "never_read" => {
+            return Ok(CheckRecipe::Trace(TraceCheck::NeverRead {
+                path: trace_path(call)?,
+            }));
+        }
+        "fetched" => {
+            return Ok(CheckRecipe::Trace(TraceCheck::Fetched {
+                times: trace_bound(call)?,
+            }));
+        }
         _ => {}
     }
     let condition = match call.callee.value.as_str() {
@@ -2143,6 +2154,23 @@ fn trace_bound(call: &ast::Call) -> Result<i64, Diagnostics> {
             format!("number literal `{}`", number.value),
         )
     })
+}
+
+/// The path literal of a `never_read` trace check. It is read directly from
+/// the surface (`p"..."`) and validated as a relative path — never lowered or
+/// demanded, so pinning a never-read path costs no evaluation.
+fn trace_path(call: &ast::Call) -> Result<String, Diagnostics> {
+    check_arity(call, 1)?;
+    let argument = &call.args.args[0];
+    let ast::Expr::Path(path) = argument else {
+        return Err(type_mismatch(
+            expr_span(argument),
+            "a Path literal",
+            "expression",
+        ));
+    };
+    validate_path_literal(path.value.as_str(), path.span)?;
+    Ok(path.value.clone())
 }
 
 fn trace_function_calls(
@@ -2274,6 +2302,10 @@ enum PreludeReceiverType {
     Stream,
     Int,
     Path,
+    Tree,
+    TreeEntry,
+    Blob,
+    Registry,
 }
 
 impl PreludeReceiverType {
@@ -2286,6 +2318,10 @@ impl PreludeReceiverType {
             Type::Stream { .. } => Some(Self::Stream),
             Type::Int => Some(Self::Int),
             Type::Path => Some(Self::Path),
+            Type::Extern(ExternKind::Tree) => Some(Self::Tree),
+            Type::Extern(ExternKind::TreeEntry) => Some(Self::TreeEntry),
+            Type::Extern(ExternKind::Blob) => Some(Self::Blob),
+            Type::Extern(ExternKind::Registry) => Some(Self::Registry),
             _ => None,
         }
     }
@@ -2325,6 +2361,10 @@ enum PreludeMethod {
     StreamSplitMin,
     PathToString,
     IntToString,
+    TreeGlob,
+    TreeEntryText,
+    BlobLen,
+    RegistryUrl,
 }
 
 #[derive(Clone, Copy)]
@@ -2534,6 +2574,30 @@ impl PreludeMethodRegistry {
                 arity: 0,
                 method: PreludeMethod::IntToString,
             },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Tree,
+                name: "glob",
+                arity: 1,
+                method: PreludeMethod::TreeGlob,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::TreeEntry,
+                name: "text",
+                arity: 0,
+                method: PreludeMethod::TreeEntryText,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Blob,
+                name: "len",
+                arity: 0,
+                method: PreludeMethod::BlobLen,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Registry,
+                name: "url",
+                arity: 1,
+                method: PreludeMethod::RegistryUrl,
+            },
         ],
     };
 
@@ -2648,6 +2712,9 @@ fn lower_value_expected(
         }
         ast::Expr::Call(call) if decode_format(&call.callee.value).is_some() => {
             lower_decode(nodes, call, expected)
+        }
+        ast::Expr::Call(call) if effect_intrinsic(&call.callee.value) => {
+            lower_effect_intrinsic(nodes, bindings, context, call)
         }
         ast::Expr::Call(call) => lower_call(nodes, bindings, context, call),
         ast::Expr::WhereCall(call) => lower_where_call(nodes, bindings, context, call),
@@ -3821,17 +3888,89 @@ fn lower_method_call(
                 .stream_types()
                 .ok_or_else(|| type_mismatch(call.span, "Stream<K, V>", receiver.ty.name()))?;
             let ty = Type::map(key.clone(), value.clone());
+            // Collecting an effect codata recipe (a tree glob) is itself the
+            // machine-plane demand that realizes it; collecting a pure stream
+            // stays lowered vocabulary.
+            let receiver_kind = nodes
+                .iter()
+                .find(|node| node.id == receiver.node)
+                .map(|node| node.effect.kind);
+            let effect = if receiver_kind == Some(EffectKind::Effect) {
+                EffectFacts::EFFECT
+            } else {
+                EffectFacts {
+                    fallible: true,
+                    ..EffectFacts::PURE
+                }
+            };
             Ok(LoweredValue {
                 node: push_node(
                     nodes,
                     call.span,
                     ty.clone(),
-                    EffectFacts {
-                        fallible: true,
-                        ..EffectFacts::PURE
-                    },
+                    effect,
                     vec![receiver.node],
                     Op::StreamCollect,
+                ),
+                ty,
+            })
+        }
+        PreludeMethod::TreeGlob => {
+            let pattern = lower_value(nodes, bindings, context, &positional[0])?;
+            require_type(&pattern, &Type::String, expr_span(&positional[0]))?;
+            let ty = Type::stream(Type::Path, Type::Path);
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::EFFECT,
+                    vec![receiver.node, pattern.node],
+                    Op::TreeGlob,
+                ),
+                ty,
+            })
+        }
+        PreludeMethod::TreeEntryText => {
+            let ty = Type::String;
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::EFFECT,
+                    vec![receiver.node],
+                    Op::TreeEntryText,
+                ),
+                ty,
+            })
+        }
+        PreludeMethod::BlobLen => {
+            let ty = Type::Int;
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::EFFECT,
+                    vec![receiver.node],
+                    Op::BlobLen,
+                ),
+                ty,
+            })
+        }
+        PreludeMethod::RegistryUrl => {
+            let name = lower_value(nodes, bindings, context, &positional[0])?;
+            require_type(&name, &Type::String, expr_span(&positional[0]))?;
+            let ty = Type::Extern(ExternKind::PinnedUrl);
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::EFFECT,
+                    vec![receiver.node, name.node],
+                    Op::RegistryUrl,
                 ),
                 ty,
             })
@@ -4039,6 +4178,75 @@ fn decode_format(name: &str) -> Option<DecodeFormat> {
         "toml_decode" => Some(DecodeFormat::Toml),
         _ => None,
     }
+}
+
+/// The machine-plane primitive constructors of the tree/fetch band. Each
+/// lowers to an [`EffectKind::Effect`] node the partitioner hoists into its
+/// own effect island; nothing here is a Weavy-lowerable pure operation.
+fn effect_intrinsic(name: &str) -> bool {
+    matches!(
+        name,
+        "fixture_tree" | "fixture_registry" | "fetch" | "untar"
+    )
+}
+
+fn lower_effect_intrinsic(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    call: &ast::Call,
+) -> Result<LoweredValue, Diagnostics> {
+    if call.named_args.is_some() {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            call.span,
+            "named arguments on a primitive constructor",
+        )));
+    }
+    let (ty, op, inputs) = match call.callee.value.as_str() {
+        "fixture_tree" => {
+            check_arity(call, 1)?;
+            let name = lower_value(nodes, bindings, context, &call.args.args[0])?;
+            require_type(&name, &Type::String, expr_span(&call.args.args[0]))?;
+            (
+                Type::Extern(ExternKind::Tree),
+                Op::FixtureTree,
+                vec![name.node],
+            )
+        }
+        "fixture_registry" => {
+            check_arity(call, 0)?;
+            (
+                Type::Extern(ExternKind::Registry),
+                Op::FixtureRegistry,
+                Vec::new(),
+            )
+        }
+        "fetch" => {
+            check_arity(call, 1)?;
+            let pinned = lower_value(nodes, bindings, context, &call.args.args[0])?;
+            require_type(
+                &pinned,
+                &Type::Extern(ExternKind::PinnedUrl),
+                expr_span(&call.args.args[0]),
+            )?;
+            (Type::Extern(ExternKind::Blob), Op::Fetch, vec![pinned.node])
+        }
+        "untar" => {
+            check_arity(call, 1)?;
+            let blob = lower_value(nodes, bindings, context, &call.args.args[0])?;
+            require_type(
+                &blob,
+                &Type::Extern(ExternKind::Blob),
+                expr_span(&call.args.args[0]),
+            )?;
+            (Type::Extern(ExternKind::Tree), Op::Untar, vec![blob.node])
+        }
+        other => unreachable!("effect intrinsic dispatch matched `{other}`"),
+    };
+    Ok(LoweredValue {
+        node: push_node(nodes, call.span, ty.clone(), EffectFacts::EFFECT, inputs, op),
+        ty,
+    })
 }
 
 fn decode_format_label(format: DecodeFormat) -> &'static str {
@@ -7267,6 +7475,54 @@ fn lower_binary(
             require_type(&left, &Type::Int, expr_span(&binary.left))?;
             require_type(&right, &Type::Int, expr_span(&binary.right))?;
             (Type::Int, Op::Mul)
+        }
+        "/" if matches!(
+            left.ty,
+            Type::Extern(ExternKind::Tree) | Type::Extern(ExternKind::TreeEntry)
+        ) =>
+        {
+            // Tree projection: one Name segment (a string literal) or a Path
+            // (projection through several maps). The projection resolves
+            // lazily; undemanded siblings are never read.
+            let projector = match &right.ty {
+                Type::String => {
+                    let literal = nodes
+                        .iter()
+                        .find(|node| node.id == right.node)
+                        .and_then(|node| match &node.op {
+                            Op::String(value) => Some(value.clone()),
+                            _ => None,
+                        })
+                        .ok_or_else(|| {
+                            Diagnostics::one(Diagnostic::unsupported(
+                                expr_span(&binary.right),
+                                "dynamic tree Name segments",
+                            ))
+                        })?;
+                    validate_path_segment(&literal, expr_span(&binary.right))?;
+                    right.node
+                }
+                Type::Path => right.node,
+                _ => {
+                    return Err(type_mismatch(
+                        expr_span(&binary.right),
+                        "a Name segment literal or Path",
+                        right.ty.name(),
+                    ));
+                }
+            };
+            let ty = Type::Extern(ExternKind::TreeEntry);
+            return Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    binary.span,
+                    ty.clone(),
+                    EffectFacts::EFFECT,
+                    vec![left.node, projector],
+                    Op::TreeProject,
+                ),
+                ty,
+            });
         }
         "/" if left.ty == Type::Path => {
             let ast::Expr::Str(segment) = &binary.right else {

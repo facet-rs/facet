@@ -1860,6 +1860,19 @@ fn render_frozen(
                 .map_err(|_| "snapshot string is not utf-8".to_owned())?;
             escape_vix_string(text, out);
         }
+        Type::Extern(kind) => {
+            // Machine-plane values render as their kind plus canonical resident
+            // bytes: text when UTF-8, a hex spelling otherwise.
+            let bytes = leaf_bytes(store, frozen)?;
+            let _ = write!(out, "{}(", kind.name());
+            match core::str::from_utf8(&bytes) {
+                Ok(text) => escape_vix_string(text, out),
+                Err(_) => {
+                    let _ = write!(out, "0x{}", hex::encode(&bytes));
+                }
+            }
+            out.push(')');
+        }
         Type::Record(record) => {
             let FrozenValue::Product(fields) = frozen else {
                 return Err(render_mismatch(ty));
@@ -2241,7 +2254,7 @@ fn realize_structural_node<'task>(
                 8,
             ))
         }
-        Type::String | Type::Path => {
+        Type::String | Type::Path | Type::Extern(_) => {
             let resolved = resolver
                 .resolve(value.value_ref()?)
                 .ok_or_else(|| invalid_realized_result(lowered, 0))?;
@@ -2538,7 +2551,12 @@ fn realize_array<'task>(
 
 fn type_contains_handle(ty: &Type) -> bool {
     match ty {
-        Type::String | Type::Path | Type::Array(_) | Type::Map { .. } | Type::Set(_) => true,
+        Type::String
+        | Type::Path
+        | Type::Extern(_)
+        | Type::Array(_)
+        | Type::Map { .. }
+        | Type::Set(_) => true,
         Type::Tuple(elements) => elements.iter().any(type_contains_handle),
         Type::Record(record) => record
             .fields
@@ -2668,12 +2686,15 @@ fn frozen_inline(
                 references: Vec::new(),
             })
         }
-        Type::String | Type::Path | Type::Array(_) | Type::Map { .. } | Type::Set(_) => {
-            Ok(FrozenInline {
-                bytes: vec![0; 8],
-                references: vec![(0, frozen_to_weavy(frozen, ty, binding, store)?)],
-            })
-        }
+        Type::String
+        | Type::Path
+        | Type::Extern(_)
+        | Type::Array(_)
+        | Type::Map { .. }
+        | Type::Set(_) => Ok(FrozenInline {
+            bytes: vec![0; 8],
+            references: vec![(0, frozen_to_weavy(frozen, ty, binding, store)?)],
+        }),
         Type::Tuple(elements) => {
             let FrozenValue::Product(fields) = frozen else {
                 return Err(());

@@ -79,6 +79,11 @@ const RUNG_063: &str = include_str!("ratchet/063-toml-decode.vix");
 const RUNG_064: &str = include_str!("ratchet/064-decode-optional.vix");
 const RUNG_065: &str = include_str!("ratchet/065-decode-enum-forms.vix");
 const RUNG_066: &str = include_str!("ratchet/066-decode-failure.vix");
+const RUNG_071: &str = include_str!("ratchet/071-tree-projection.vix");
+const RUNG_072: &str = include_str!("ratchet/072-glob.vix");
+const RUNG_075: &str = include_str!("ratchet/075-fetch-pinned.vix");
+const RUNG_076: &str = include_str!("ratchet/076-fetch-memoized.vix");
+const RUNG_077: &str = include_str!("ratchet/077-archive-extract.vix");
 const RUNG_138: &str = include_str!("ratchet/138-map-accumulator.vix");
 const RUNG_144: &str = include_str!("ratchet/144-unused-collection-result.warn.vix");
 const RUNG_145: &str = include_str!("ratchet/145-push.reject.vix");
@@ -6382,4 +6387,31 @@ fn bad() -> Stream<Check> {
         matches!(run_source(BAD), Err(RunError::Diagnostics(_))),
         "a non-literal snapshot name is rejected at compile time"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Rungs 071–077 (skipping the parallel exec band's 073/074): trees, glob,
+// pinned fetch, fetch memoization, archive extraction. These certificates sit
+// above the current consecutive red boundary (066/067+) — progress, not score.
+// ---------------------------------------------------------------------------
+
+/// Every rung of the tree/fetch band compiles through the production surface
+/// grammar and checker into typed VIR: the machine-plane primitives
+/// (`fixture_tree`, `/` projection, `.text()`, `.glob().collect()`,
+/// `fixture_registry().url()`, `fetch`, `untar`, `.len()`) and the
+/// `never_read` / `fetched` trace descriptors all resolve.
+#[test]
+fn tree_fetch_band_compiles_to_typed_vir() {
+    for (rung, source) in [
+        ("071", RUNG_071),
+        ("072", RUNG_072),
+        ("075", RUNG_075),
+        ("076", RUNG_076),
+        ("077", RUNG_077),
+    ] {
+        let module = Compiler::new()
+            .compile(source)
+            .unwrap_or_else(|error| panic!("rung {rung} compiles to VIR: {error:?}"));
+        assert_eq!(module.tests.len(), 1, "rung {rung} declares one test");
+    }
 }

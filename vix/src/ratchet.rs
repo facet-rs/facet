@@ -323,6 +323,12 @@ struct TraceSnapshot {
     framed_bytes: u64,
     peak_molten_bytes: u64,
     peak_molten_nodes: u64,
+    /// Fetch effects actually performed during the run.
+    fetches_performed: u64,
+    /// The union of external read projections across every demand receipt.
+    /// Reads go through the recording fixture-store accessors, so this set is
+    /// complete by construction; `never_read` is absence in this set.
+    reads: BTreeSet<String>,
     function_calls: BTreeMap<FunctionId, u64>,
     /// One entry per realized wire demand (a computation the memo path actually
     /// ran). Repeated identical `recipe + argument` demands memoize to a single
@@ -419,6 +425,14 @@ impl TraceSnapshot {
             TraceCheck::DemandedOnce { wire } => {
                 let observed = self.wire_matches(wire);
                 (observed, observed == 1)
+            }
+            TraceCheck::NeverRead { path } => {
+                let observed = u64::from(self.reads.contains(path));
+                (observed, observed == 0)
+            }
+            TraceCheck::Fetched { times } => {
+                let observed = self.fetches_performed;
+                (observed, i128::from(observed) == i128::from(*times))
             }
         };
         CheckRun {
@@ -1241,6 +1255,12 @@ fn run_lane(
         framed_bytes: counters.framed_bytes,
         peak_molten_bytes: counters.peak_molten_bytes,
         peak_molten_nodes: counters.peak_molten_nodes,
+        fetches_performed: counters.fetches_performed,
+        reads: runtime
+            .receipts()
+            .flat_map(|receipt| receipt.reads.iter())
+            .map(|read| read.projection.clone())
+            .collect(),
         function_calls,
         wire_demands: runtime
             .realized_wire_demands()

@@ -624,7 +624,9 @@ fn lower_island(
 
 fn publication_capability_registered(ty: &Type) -> bool {
     match ty {
-        Type::Bool | Type::Int | Type::Check | Type::String | Type::Path => true,
+        Type::Bool | Type::Int | Type::Check | Type::String | Type::Path | Type::Extern(_) => {
+            true
+        }
         Type::Array(element) | Type::Set(element) => publication_capability_registered(element),
         Type::Map { key, value } => {
             publication_capability_registered(key) && publication_capability_registered(value)
@@ -710,7 +712,12 @@ fn publication_schemas(
     fn collect<'a>(ty: &'a Type, out: &mut Vec<&'a Type>) {
         if matches!(
             ty,
-            Type::String | Type::Path | Type::Array(_) | Type::Map { .. } | Type::Set(_)
+            Type::String
+                | Type::Path
+                | Type::Extern(_)
+                | Type::Array(_)
+                | Type::Map { .. }
+                | Type::Set(_)
         ) {
             out.push(ty);
         }
@@ -752,6 +759,7 @@ fn publication_schemas(
             | Type::Check
             | Type::String
             | Type::Path
+            | Type::Extern(_)
             | Type::Function { .. }
             | Type::StreamCheck
             | Type::Stream { .. }
@@ -852,9 +860,13 @@ fn type_contains_array(ty: &Type) -> bool {
         Type::Stream { key, value } => type_contains_array(key) || type_contains_array(value),
         // An `Order<T>` is never a realized frame value.
         Type::Order(_) => false,
-        Type::Bool | Type::Int | Type::Check | Type::StreamCheck | Type::String | Type::Path => {
-            false
-        }
+        Type::Bool
+        | Type::Int
+        | Type::Check
+        | Type::StreamCheck
+        | Type::String
+        | Type::Path
+        | Type::Extern(_) => false,
     }
 }
 
@@ -1218,7 +1230,13 @@ fn collect_schema_types(ty: &Type, out: &mut Vec<Type>) {
         Type::Set(element) => collect_schema_types(element, out),
         Type::Stream { .. } => unreachable!("stream schemas return before insertion"),
         Type::Order(_) => unreachable!("order recipes return before insertion"),
-        Type::Bool | Type::Int | Type::Check | Type::StreamCheck | Type::String | Type::Path => {}
+        Type::Bool
+        | Type::Int
+        | Type::Check
+        | Type::StreamCheck
+        | Type::String
+        | Type::Path
+        | Type::Extern(_) => {}
     }
 }
 
@@ -1361,7 +1379,7 @@ impl SemanticEqualityEmitter<'_, '_, '_> {
                     b: work.byte_offset(),
                 });
             }
-            Type::String | Type::Path => {
+            Type::String | Type::Path | Type::Extern(_) => {
                 self.code.push(WeavyOp::CompareValueBytes {
                     dst: work.byte_offset(),
                     a: a.region.start().byte_offset(),
@@ -1665,7 +1683,8 @@ impl SemanticOrderingEmitter<'_, '_, '_> {
             | Type::Check
             | Type::StreamCheck
             | Type::Stream { .. }
-            | Type::Order(_) => Err(lowering_diagnostic(
+            | Type::Order(_)
+            | Type::Extern(_) => Err(lowering_diagnostic(
                 self.node.span,
                 "structural order is not defined for this VIR type",
             )),
@@ -2471,9 +2490,9 @@ impl<'a> ProgramContractBuilder<'a> {
             Type::Bool | Type::Int | Type::Check => {
                 Ok(WeavyRegionShape::word(WeavyWordKind::Scalar))
             }
-            Type::String | Type::Path => Ok(WeavyRegionShape::word(WeavyWordKind::Handle(
-                self.schema_for_type(ty, span)?,
-            ))),
+            Type::String | Type::Path | Type::Extern(_) => Ok(WeavyRegionShape::word(
+                WeavyWordKind::Handle(self.schema_for_type(ty, span)?),
+            )),
             Type::StreamCheck => Err(lowering_diagnostic(
                 span,
                 "Stream<Check> has no contract frame shape",
@@ -2548,14 +2567,17 @@ impl<'a> ProgramContractBuilder<'a> {
         }
         self.schema_ready[index] = true;
         let inline = match ty {
-            Type::String | Type::Path | Type::Array(_) | Type::Map { .. } | Type::Set(_) => {
-                WeavyRegionShape::word(WeavyWordKind::Handle(schema))
-            }
+            Type::String
+            | Type::Path
+            | Type::Extern(_)
+            | Type::Array(_)
+            | Type::Map { .. }
+            | Type::Set(_) => WeavyRegionShape::word(WeavyWordKind::Handle(schema)),
             _ => self.shape_for_type(ty, span)?,
         };
         let value_shape = self.value_shape_for_type(ty, span)?;
         let payload = match ty {
-            Type::String | Type::Path => WeavyPayloadKind::OpaqueBytes {
+            Type::String | Type::Path | Type::Extern(_) => WeavyPayloadKind::OpaqueBytes {
                 byte_comparable: true,
             },
             Type::Array(element) => WeavyPayloadKind::DenseArray {
@@ -2606,6 +2628,7 @@ impl<'a> ProgramContractBuilder<'a> {
             | Type::Check
             | Type::String
             | Type::Path
+            | Type::Extern(_)
             | Type::Array(_)
             | Type::Map { .. }
             | Type::Set(_) => Ok(None),
@@ -4276,6 +4299,7 @@ fn ordering_temporary_types(ty: &Type, out: &mut Vec<Type>) {
         | Type::Check
         | Type::String
         | Type::Path
+        | Type::Extern(_)
         | Type::Map { .. }
         | Type::Set(_)
         | Type::Function { .. }
@@ -4374,6 +4398,7 @@ fn comparison_temporary_types(ty: &Type, out: &mut Vec<Type>) {
         | Type::Check
         | Type::String
         | Type::Path
+        | Type::Extern(_)
         | Type::Map { .. }
         | Type::Set(_)
         | Type::Function { .. }
@@ -5576,7 +5601,7 @@ fn collect_typed_compare_leaves(
             a: a.region.start(),
             b: b.region.start(),
         }),
-        Type::String | Type::Path => leaves.push(CompareLeaf {
+        Type::String | Type::Path | Type::Extern(_) => leaves.push(CompareLeaf {
             kind: CompareLeafKind::ValueBytes,
             a: a.region.start(),
             b: b.region.start(),
@@ -5874,6 +5899,20 @@ fn lower_node(
             return Err(lowering_diagnostic(
                 node.span,
                 "PublishSite is lowered by the generator-task control dispatch, not the value path",
+            ));
+        }
+        Op::FixtureTree
+        | Op::TreeProject
+        | Op::TreeEntryText
+        | Op::TreeGlob
+        | Op::FixtureRegistry
+        | Op::RegistryUrl
+        | Op::Fetch
+        | Op::Untar
+        | Op::BlobLen => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "a machine-plane primitive is evaluated by the runtime effect plane, never lowered to a Weavy island",
             ));
         }
         Op::Bool(value) => {
@@ -12111,7 +12150,7 @@ fn type_words(ty: &Type, span: Span) -> Result<FrameWords, Diagnostics> {
 fn representation_for_type(ty: &Type, span: Span) -> Result<ValueRepresentation, Diagnostics> {
     match ty {
         Type::Bool | Type::Int | Type::Check => Ok(ValueRepresentation::Word),
-        Type::String | Type::Path => Ok(ValueRepresentation::RealizedHandle),
+        Type::String | Type::Path | Type::Extern(_) => Ok(ValueRepresentation::RealizedHandle),
         Type::Function { .. } | Type::Tuple(_) | Type::Record(_) | Type::Enum(_) => {
             Ok(ValueRepresentation::InlineComposite)
         }
