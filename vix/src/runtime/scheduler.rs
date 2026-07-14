@@ -13,8 +13,8 @@ use crate::lowering::{
     DocumentParseCall, LoweringArtifact, LoweringAttribution, ValueInputBinding,
 };
 use crate::vir::{
-    ExternKind, Function, FunctionId, Island, IslandId, MiniSolveRequirements, NodeId, Op, Type,
-    VariantPayload, OPTION_SOME_VARIANT,
+    ExternKind, Function, FunctionId, Island, IslandId, MiniSolveRequirements, NodeId,
+    OPTION_SOME_VARIANT, Op, Type, VariantPayload,
 };
 
 use super::fixture::{FixtureEntryKind, FixtureReadError, FixtureStore, TarMember, parse_ustar};
@@ -2263,10 +2263,9 @@ impl<S: EventSink> Runtime<S> {
                 self.counters.fetches_performed += 1;
                 Ok(EffectTerm::Value(blob))
             }
-            Op::MiniSolve { requirements, .. } => {
-                self.mini_solve_value(&node.ty, requirements, reads)
-                    .map(EffectTerm::Value)
-            }
+            Op::MiniSolve { requirements, .. } => self
+                .mini_solve_value(&node.ty, requirements, reads)
+                .map(EffectTerm::Value),
             Op::Untar => {
                 let EffectTerm::Value(blob) = input(0, self)? else {
                     return effect_fault("untar input was codata");
@@ -5129,7 +5128,10 @@ fn effect_value_from_frozen(
     }
 }
 
-fn frozen_solver_solution(ty: &Type, packages: &[String]) -> Result<FrozenValue, Box<MachineError>> {
+fn frozen_solver_solution(
+    ty: &Type,
+    packages: &[String],
+) -> Result<FrozenValue, Box<MachineError>> {
     let Some(solution_ty) = ty.option_inner() else {
         return effect_fault("mini_solve result type was not Option<_>");
     };

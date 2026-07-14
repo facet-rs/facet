@@ -8151,11 +8151,7 @@ fn lower_lazy_mini_solve_call(
     require_type(&universe, &positional.ty, expr_span(&call.args.args[0]))?;
 
     let named_args = call.named_args.as_ref().ok_or_else(|| {
-        invalid_arity(
-            call.span,
-            signature.parameters.len(),
-            call.args.args.len(),
-        )
+        invalid_arity(call.span, signature.parameters.len(), call.args.args.len())
     })?;
     if named_args.fields.len() != 1 {
         return Err(invalid_arity(
@@ -8182,21 +8178,24 @@ fn lower_lazy_mini_solve_call(
             parameter.kind == ParameterKind::Named && parameter.name == "requirements"
         })
         .expect("lazy mini_solve signature has a requirements parameter");
-    let (descriptor, _requirements) =
-        if field.value.as_ref().is_some_and(is_fixture_requirements_call) {
-            (MiniSolveRequirements::FixtureWorkspace, None)
+    let (descriptor, _requirements) = if field
+        .value
+        .as_ref()
+        .is_some_and(is_fixture_requirements_call)
+    {
+        (MiniSolveRequirements::FixtureWorkspace, None)
+    } else {
+        let requirements = if let Some(expression) = &field.value {
+            lower_value_expected(nodes, bindings, context, expression, Some(&parameter.ty))?
         } else {
-            let requirements = if let Some(expression) = &field.value {
-                lower_value_expected(nodes, bindings, context, expression, Some(&parameter.ty))?
-            } else {
-                lookup_binding(bindings, &field.name.value, field.name.span)?
-            };
-            require_type(&requirements, &parameter.ty, field.span)?;
-            (
-                mini_solve_requirements_descriptor(nodes, requirements.node, field.span)?,
-                Some(requirements),
-            )
+            lookup_binding(bindings, &field.name.value, field.name.span)?
         };
+        require_type(&requirements, &parameter.ty, field.span)?;
+        (
+            mini_solve_requirements_descriptor(nodes, requirements.node, field.span)?,
+            Some(requirements),
+        )
+    };
 
     Ok(Some(LoweredValue {
         node: push_node(

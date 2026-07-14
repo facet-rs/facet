@@ -73,9 +73,7 @@ impl FixtureStore {
             (Some("one-req-bumped"), "kitchen-sink/requirements.txt") => {
                 Some(b"root=liba>=1.0\nroot=libd^3.0\n")
             }
-            (_, "kitchen-sink/requirements.txt") => {
-                Some(b"root=liba>=1.0\nroot=libc^1.0\n")
-            }
+            (_, "kitchen-sink/requirements.txt") => Some(b"root=liba>=1.0\nroot=libc^1.0\n"),
             (Some("liba-row-bumped"), "index/liba") => {
                 Some(b"liba 1.2.0 -> libb ^1.0\nliba 1.3.0 -> libb ^2.0\nnote=bumped\n")
             }

@@ -2921,7 +2921,10 @@ fn is_scalar_call_candidate(node: &Node) -> bool {
 /// (a lazy argument expression) carries no invocation provenance.
 fn invocation_provenance(function: &Function, node: &Node) -> Option<WireProvenance> {
     let callee = match node.op {
-        Op::Call(callee) | Op::MiniSolve { function: callee, .. } => callee,
+        Op::Call(callee)
+        | Op::MiniSolve {
+            function: callee, ..
+        } => callee,
         _ => return None,
     };
     let mut literals = Vec::with_capacity(node.inputs.len());
