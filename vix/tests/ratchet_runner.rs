@@ -213,9 +213,9 @@ fn rung_001_certifies_the_new_compiler_and_runtime_spine() {
     let rendered_weavy = lowered.render();
     let recipe = lowered.recipe;
     assert!(rendered_weavy.contains("Trace { id: 0 }"));
-    assert!(rendered_weavy.contains("ConstI64 { dst: 16, value: 1 }"));
-    assert!(rendered_weavy.contains("CopyI64 { dst: 24, src: 16 }"));
-    assert!(rendered_weavy.contains("Ret { src: 24, size: 8 }"));
+    assert!(rendered_weavy.contains("ConstI64 { dst: 8, value: 1 }"));
+    assert!(rendered_weavy.contains("CopyI64 { dst: 16, src: 8 }"));
+    assert!(rendered_weavy.contains("Ret { src: 16, size: 8 }"));
 
     let shifted_source = format!("\n{RUNG_001}");
     let shifted_module = Compiler::new()
@@ -549,11 +549,11 @@ fn direct_string_call() -> Stream<Check> {
         assert_eq!(lowered.program().fns.len(), 2);
         let root = &lowered.contract().functions[0];
         let callee = &lowered.contract().functions[1];
-        let scheduler_header_bytes: u32 = callee.frame.regions[..2]
-            .iter()
-            .map(|region| u32::try_from(region_byte_len(region)).expect("header region fits u32"))
-            .sum();
-        assert_eq!(scheduler_header_bytes, 16);
+        // One reserved word: the scheduler-owned primitive host plan slot.
+        let scheduler_header_bytes: u32 =
+            u32::try_from(region_byte_len(&callee.frame.regions[0]))
+                .expect("header region fits u32");
+        assert_eq!(scheduler_header_bytes, 8);
         assert_eq!(lowered.constants.len(), 2, "one publication per NodeRef");
         let root_function = lowered.constants[0].root.function;
         let string_schema = lowered.constants[0].root.schema;
@@ -3289,7 +3289,7 @@ fn rung_021_closure_parameters_destructure_callable_values() {
             .iter()
             .position(|candidate| candidate.id == node)
             .expect("closure node has a canonical contract region");
-        let shape = lowered.contract().functions[0].frame.regions[region + 2]
+        let shape = lowered.contract().functions[0].frame.regions[region + 1]
             .value_shape
             .expect("closure node has a structural value shape");
         let ValueShapeKind::Product { fields } =
@@ -6725,9 +6725,9 @@ fn tail_loop_interpreter_and_jit_agree() {
     let program = standalone_tail_loop("count_up");
 
     let mut interpreter = Task::spawn_with_mode(&program, FnId(0), TraceMode::Production);
-    interpreter.write_i64(16, 0);
-    interpreter.write_i64(24, 10_000_000);
-    interpreter.write_i64(32, 0);
+    interpreter.write_i64(8, 0);
+    interpreter.write_i64(16, 10_000_000);
+    interpreter.write_i64(24, 0);
     interpreter.run(&program, &mut [], &[]);
     let interpreted = interpreter.result_i64();
     assert_eq!(interpreted, 49_999_995_000_000);
@@ -6744,9 +6744,9 @@ fn tail_loop_interpreter_and_jit_agree() {
     match JitProgram::compile_with_mode(&program, TraceMode::Production) {
         Some(jit) => {
             let mut native = JitTask::spawn(&jit, FnId(0));
-            native.write_i64(16, 0);
-            native.write_i64(24, 10_000_000);
-            native.write_i64(32, 0);
+            native.write_i64(8, 0);
+            native.write_i64(16, 10_000_000);
+            native.write_i64(24, 0);
             native.run(&jit, &mut [], &[]);
             assert_eq!(
                 native.result_i64(),
@@ -6780,9 +6780,9 @@ fn tail_loop_backedge_adds_no_per_iteration_machinery() {
     let program = standalone_tail_loop("count_up");
     let run = |iterations: i64| {
         let mut task = Task::spawn_with_mode(&program, FnId(0), TraceMode::Production);
-        task.write_i64(16, 0);
-        task.write_i64(24, iterations);
-        task.write_i64(32, 0);
+        task.write_i64(8, 0);
+        task.write_i64(16, iterations);
+        task.write_i64(24, 0);
         task.run(&program, &mut [], &[]);
         let marks = task
             .trace
