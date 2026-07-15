@@ -475,18 +475,11 @@ fn member_path_for_package_step(names: (String, [String]), paths: (String, [Stri
     }
 }
 
-fn workspace_root_tree(workspace: Tree, workspace_root: Path) -> Tree {
-    match workspace_root.to_string() == "" {
-        true => workspace,
-        false => workspace / workspace_root,
-    }
-}
-
 fn resolved_workspace_source_for_package(workspace: Tree, workspace_root: Path, member_path: String) -> CargoUnitSource {
     let manifest = member_manifest(workspace, workspace_root, member_path);
     CargoUnitSource {
         manifest: manifest,
-        edition_source: workspace_root_tree(workspace, workspace_root),
+        edition_source: workspace,
     }
 }
 
