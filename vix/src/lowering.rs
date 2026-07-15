@@ -30,10 +30,10 @@ use crate::runtime::{
 };
 use crate::support::Span;
 use crate::vir::{
-    ArrayMapExecutionShape, ArrayMapPartition, EnumType, EnumVariant, Function, FunctionId, Island,
-    IslandPurpose, Node, NodeId, NodeRef, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT,
-    ORDERING_EQUAL_VARIANT, ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, Type,
-    ValueIslandId, VariantPayload, YieldSiteId,
+    ArrayMapExecutionShape, ArrayMapPartition, EffectId, EnumType, EnumVariant, Function,
+    FunctionId, Island, IslandPurpose, Node, NodeId, NodeRef, OPTION_NONE_VARIANT,
+    OPTION_SOME_VARIANT, ORDERING_EQUAL_VARIANT, ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT,
+    Op, Type, ValueIslandId, VariantPayload, YieldSiteId,
 };
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -91,6 +91,25 @@ pub struct ValueConstant {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ValueInputBinding {
     pub value: ValueIslandId,
+    pub entry: usize,
+    pub schema: Option<WeavySchemaRef>,
+    pub store_schema: SchemaId,
+    pub payload_element_schema: Option<WeavySchemaRef>,
+    pub ty: Type,
+    pub publication_schemas: Vec<(Type, WeavySchemaRef)>,
+}
+
+/// The lowering-side mirror of [`ValueInputBinding`] for one effect edge — the
+/// realized value input the phase-05 scheduler binds after resolving the
+/// primitive. It carries the generic [`crate::vir::EffectEdge`] fields
+/// (`primitive`/`request`) in place of a producer `value`, plus the same
+/// entry/schema binding facts. `entry` follows the value-input entries
+/// (`value_inputs.len() + k`). One generic binding for all primitives, keyed by
+/// the [`EffectId`] data (r[machine.primitive.registered]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EffectInputBinding {
+    pub primitive: EffectId,
+    pub request: ValueIslandId,
     pub entry: usize,
     pub schema: Option<WeavySchemaRef>,
     pub store_schema: SchemaId,
@@ -199,6 +218,12 @@ pub struct LoweringArtifact {
     pub pc_nodes: Vec<Vec<NodeRef>>,
     pub constants: Vec<ValueConstant>,
     pub value_inputs: Vec<ValueInputBinding>,
+    /// The effect edges this island consumes, one per [`crate::vir::EffectEdge`]
+    /// on the island. Precomputed facts (r[machine.execution.facts-precomputed]):
+    /// phase 04 records them, phase 05 resolves each at the demand layer and binds
+    /// the interned response into `entry`. Empty for an effect-free island, so no
+    /// pure hot path is touched.
+    pub effect_inputs: Vec<EffectInputBinding>,
     pub output_type: Type,
     pub output_schema: SchemaId,
     pub forced_copy_value: bool,
@@ -254,6 +279,7 @@ impl LoweringArtifact {
             pc_nodes: self.pc_nodes.clone(),
             constants: self.constants.clone(),
             value_inputs: self.value_inputs.clone(),
+            effect_inputs: self.effect_inputs.clone(),
             output_type: self.output_type.clone(),
             output_schema: self.output_schema,
             forced_copy_value: self.forced_copy_value,
@@ -585,6 +611,7 @@ fn lower_island(
         &function_ids,
     )?;
     let value_inputs = bind_value_inputs(island, &contract, &schemas)?;
+    let effect_inputs = bind_effect_inputs(island, &contract, &schemas)?;
     let demand_preimage = DemandPreimage {
         closure: recipe,
         arguments: Vec::new(),
@@ -611,6 +638,7 @@ fn lower_island(
         pc_nodes,
         constants,
         value_inputs,
+        effect_inputs,
         output_type: output.ty.clone(),
         output_schema: semantic_schema_id(&output.ty),
         forced_copy_value: island.forced_copy_value,
@@ -684,6 +712,70 @@ fn bind_value_inputs(
             };
             Ok(ValueInputBinding {
                 value: *value,
+                entry,
+                schema,
+                store_schema: semantic_schema_id(&parameter.ty),
+                payload_element_schema: match &parameter.ty {
+                    Type::Array(element) => Some(schemas.schema_for(element, span)?),
+                    _ => None,
+                },
+                ty: parameter.ty.clone(),
+                publication_schemas: publication_schemas(&parameter.ty, schemas, span)?,
+            })
+        })
+        .collect()
+}
+
+/// The effect-edge mirror of [`bind_value_inputs`]. Effect parameters occupy
+/// `parameters[value_inputs.len()..]`, so each edge binds at
+/// `entry = value_inputs.len() + k` with the same entry/schema logic — a distinct
+/// path that never disturbs the value-input positional binding above. Empty and
+/// cost-free for an effect-free island.
+fn bind_effect_inputs(
+    island: &Island,
+    contract: &WeavyProgramContract,
+    schemas: &SchemaAssignments,
+) -> Result<Vec<EffectInputBinding>, Diagnostics> {
+    if island.effect_inputs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let root = contract.functions.first().ok_or_else(|| {
+        lowering_diagnostic(Span { start: 0, end: 0 }, "island has no root contract")
+    })?;
+    let value_count = island.value_inputs.len();
+    island
+        .effect_inputs
+        .iter()
+        .enumerate()
+        .map(|(index, edge)| {
+            let entry = value_count + index;
+            let parameter = island.parameters.get(entry).ok_or_else(|| {
+                lowering_diagnostic(
+                    Span { start: 0, end: 0 },
+                    "effect edge has no bound parameter",
+                )
+            })?;
+            let span = island
+                .nodes
+                .iter()
+                .find(|node| node.id == parameter.node)
+                .map_or(Span { start: 0, end: 0 }, |node| node.span);
+            let region = root
+                .entries
+                .get(entry)
+                .copied()
+                .ok_or_else(|| lowering_diagnostic(span, "effect parameter has no root entry"))?;
+            let region = &contract.functions[0].frame.regions[region.0 as usize];
+            let schema = match region.shape.words.as_slice() {
+                [kinds] => match kinds.as_slice() {
+                    [WeavyWordKind::Handle(schema)] => Some(*schema),
+                    _ => None,
+                },
+                _ => None,
+            };
+            Ok(EffectInputBinding {
+                primitive: edge.primitive,
+                request: edge.request,
                 entry,
                 schema,
                 store_schema: semantic_schema_id(&parameter.ty),
@@ -5873,13 +5965,15 @@ fn lower_node(
             ));
         }
         Op::EffectRequest { .. } => {
-            // The compiler emits Op::EffectRequest (phase 03); the scheduler
-            // resolves it at the demand layer in phase 04/05. Until that lands,
-            // lowering a module that contains one is a typed not-yet-supported
-            // error rather than a silent miscompile.
+            // Partitioning cuts at Op::EffectRequest in a test-body value position:
+            // the node is rewritten to an Op::Parameter reading the interned
+            // response as a realized value input, so a properly-cut effect never
+            // reaches lower_node. Seeing one here means the effect sits in an
+            // un-partitioned position (e.g. embedded in a callee), which v1 does
+            // not support — a typed diagnostic, not a silent miscompile.
             return Err(lowering_diagnostic(
                 node.span,
-                "effect-primitive lowering is not wired yet (phase 04)",
+                "effect request in an un-partitioned position is not supported (v1 calls a primitive only from a test-body value expression)",
             ));
         }
         Op::Bool(value) => {

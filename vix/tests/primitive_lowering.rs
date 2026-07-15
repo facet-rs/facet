@@ -5,6 +5,7 @@
 
 use vix::compiler::{Compilation, Compiler, PrimitiveManifest, PrimitiveSignature};
 use vix::diagnostic::Diagnostics;
+use vix::lowering::LoweringCache;
 use vix::vir::{EffectId, Op, RecordField, RecordType, Type};
 
 const PRIMITIVE_EFFECT_ID: EffectId = EffectId([9u8; 32]);
@@ -137,5 +138,45 @@ fn an_effect_free_test_has_no_effect_machinery() {
             .islands
             .iter()
             .all(|island| island.effect_inputs.is_empty())
+    );
+}
+
+/// The effect response binds as a realized value input on the artifact, and the
+/// request island lowers (phase 05 finds it warm). No primitive is executed.
+#[test]
+fn the_response_binds_as_a_realized_value_input() {
+    let compilation = compile(EFFECT_SOURCE).expect("effect source compiles");
+    let partitioned = compilation
+        .module
+        .partition_test(&compilation.module.tests[0]);
+    let mut cache = LoweringCache::default();
+
+    let request = cache
+        .get_or_lower(&partitioned.effect_islands[0].island)
+        .expect("request island lowers");
+    assert!(
+        request.effect_inputs.is_empty(),
+        "a request island is a pure value producer"
+    );
+
+    let consumer = cache
+        .get_or_lower(&partitioned.islands[0])
+        .expect("consumer island lowers");
+    assert_eq!(
+        consumer.effect_inputs.len(),
+        1,
+        "the artifact carries the effect edge as a precomputed fact"
+    );
+    let binding = &consumer.effect_inputs[0];
+    assert_eq!(binding.primitive, PRIMITIVE_EFFECT_ID);
+    assert_eq!(binding.request, partitioned.effect_islands[0].id);
+    assert_eq!(
+        binding.entry,
+        consumer.value_inputs.len(),
+        "the effect param entry follows the value-input entries"
+    );
+    assert!(
+        binding.schema.is_some(),
+        "a String response binds as a RealizedHandle store-handle entry"
     );
 }
