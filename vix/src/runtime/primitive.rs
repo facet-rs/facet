@@ -97,6 +97,48 @@ pub trait OriginAdapter: Send + Sync {
     ) -> Result<Vec<u8>, PrimitiveMachineError>;
 }
 
+/// Runtime-installed services used by registered primitives. These are
+/// authorities, not semantic inputs: request values still carry every
+/// capability and coordinate that may affect admissibility or identity.
+#[derive(Clone, Default)]
+pub struct PrimitiveServices {
+    value_persistence: Option<Arc<dyn ValuePersistence>>,
+    origin: Option<Arc<dyn OriginAdapter>>,
+    fixture_store: Option<super::FixtureStore>,
+}
+
+impl PrimitiveServices {
+    #[must_use]
+    pub fn with_value_persistence(mut self, persistence: Arc<dyn ValuePersistence>) -> Self {
+        self.value_persistence = Some(persistence);
+        self
+    }
+
+    #[must_use]
+    pub fn with_origin_adapter(mut self, origin: Arc<dyn OriginAdapter>) -> Self {
+        self.origin = Some(origin);
+        self
+    }
+
+    #[must_use]
+    pub fn with_fixture_store(mut self, fixture_store: super::FixtureStore) -> Self {
+        self.fixture_store = Some(fixture_store);
+        self
+    }
+
+    pub(crate) fn value_persistence(&self) -> Option<Arc<dyn ValuePersistence>> {
+        self.value_persistence.clone()
+    }
+
+    pub(crate) fn origin(&self) -> Option<Arc<dyn OriginAdapter>> {
+        self.origin.clone()
+    }
+
+    pub(crate) fn fixture_store(&self) -> Option<super::FixtureStore> {
+        self.fixture_store.clone()
+    }
+}
+
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct PrimitivePublication {
     pub completion: PrimitiveCompletion,

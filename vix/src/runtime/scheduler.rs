@@ -230,6 +230,7 @@ pub struct Runtime<S> {
     wire_demands: Vec<RealizedWireDemand>,
     fixture_store: FixtureStore,
     primitive_dispatcher: PrimitiveDispatcher,
+    primitive_services: super::PrimitiveServices,
     authoritative_rerun_audit: bool,
 }
 
@@ -377,6 +378,7 @@ impl<S: EventSink> Runtime<S> {
             wire_demands: Vec::new(),
             fixture_store: FixtureStore::default(),
             primitive_dispatcher: default_primitive_dispatcher(),
+            primitive_services: super::PrimitiveServices::default(),
             authoritative_rerun_audit: false,
         }
     }
@@ -405,12 +407,20 @@ impl<S: EventSink> Runtime<S> {
             wire_demands: Vec::new(),
             fixture_store: FixtureStore::default(),
             primitive_dispatcher: default_primitive_dispatcher(),
+            primitive_services: super::PrimitiveServices::default(),
             authoritative_rerun_audit: false,
         }
     }
 
     pub fn set_fixture_rerun_overlay(&mut self, rerun_with: Option<String>) {
-        self.fixture_store = FixtureStore::default().with_rerun_overlay(rerun_with);
+        self.fixture_store = self.fixture_store.clone().with_rerun_overlay(rerun_with);
+    }
+
+    pub fn set_primitive_services(&mut self, services: super::PrimitiveServices) {
+        if let Some(fixture_store) = services.fixture_store() {
+            self.fixture_store = fixture_store;
+        }
+        self.primitive_services = services;
     }
 
     pub fn set_authoritative_rerun_audit(&mut self, enabled: bool) {
@@ -436,6 +446,7 @@ impl<S: EventSink> Runtime<S> {
                 wire_demands: Vec::new(),
                 fixture_store: FixtureStore::default(),
                 primitive_dispatcher: default_primitive_dispatcher(),
+                primitive_services: super::PrimitiveServices::default(),
                 authoritative_rerun_audit: false,
             },
             PersistentRuntimeJournalLoadReport {
@@ -2360,9 +2371,10 @@ impl<S: EventSink> Runtime<S> {
                     let artifact = fields.next()?;
                     let url = fields.next()?;
                     let hash = fields.next()?;
-                    (artifact == name).then(|| (url.to_owned(), hash.to_owned()))
+                    let upstream = fields.next().map(str::to_owned);
+                    (artifact == name).then(|| (url.to_owned(), hash.to_owned(), upstream))
                 });
-                let (url, hash) = row
+                let (url, hash, upstream) = row
                     .ok_or_else(|| effect_machine_error("fixture registry artifact was absent"))?;
                 let blob_schema = Type::Extern(ExternKind::Blob).schema_ref();
                 let blob_id = PrimitiveValue {
@@ -2405,10 +2417,19 @@ impl<S: EventSink> Runtime<S> {
                             }),
                             primitive_child_field(PrimitiveValue {
                                 schema: Type::option(Type::String).schema_ref(),
-                                body: PrimitiveValueBody::Variant {
-                                    tag: OPTION_NONE_VARIANT,
-                                    fields: Vec::new(),
-                                },
+                                body: upstream.map_or_else(
+                                    || PrimitiveValueBody::Variant {
+                                        tag: OPTION_NONE_VARIANT,
+                                        fields: Vec::new(),
+                                    },
+                                    |upstream| PrimitiveValueBody::Variant {
+                                        tag: OPTION_SOME_VARIANT,
+                                        fields: vec![primitive_child_field(PrimitiveValue::bytes(
+                                            Type::String.schema_ref(),
+                                            upstream.into_bytes(),
+                                        ))],
+                                    },
+                                ),
                             }),
                         ]),
                     },
@@ -2633,11 +2654,16 @@ impl<S: EventSink> Runtime<S> {
                 PrimitiveValue::bytes(entry.identity.schema.clone(), bytes.to_vec()),
             ))
         }));
-        let authority = Arc::new(
-            StagedEffectAuthority::new(authority_inputs)
-                .with_schema_types(catalog)
-                .with_origin_adapter(Arc::new(self.fixture_store.clone())),
+        let mut authority = StagedEffectAuthority::new(authority_inputs).with_schema_types(catalog);
+        if let Some(persistence) = self.primitive_services.value_persistence() {
+            authority = authority.with_value_persistence(persistence);
+        }
+        authority = authority.with_origin_adapter(
+            self.primitive_services
+                .origin()
+                .unwrap_or_else(|| Arc::new(self.fixture_store.clone())),
         );
+        let authority = Arc::new(authority);
         let ticket = self
             .primitive_dispatcher
             .begin_or_join(

@@ -178,21 +178,27 @@ fn execute(request: &ValueId, ctx: &EffectCtx) -> Result<ValueId, PrimitiveMachi
         return Ok(stored.identity);
     }
 
+    let mut last_error = None;
     if let Some(candidate) = ctx.persisted_candidate(&pin.value.0)? {
-        if candidate.claimed != pin.value.0 {
-            return Err(PrimitiveMachineError::CorruptCandidate {
+        let verified = if candidate.claimed != pin.value.0 {
+            Err(PrimitiveMachineError::CorruptCandidate {
                 source: candidate.claimed,
-            });
+            })
+        } else {
+            let observed = blob_identity(&candidate.bytes);
+            if observed != pin.value.0 {
+                Err(PrimitiveMachineError::CorruptCandidate { source: observed })
+            } else {
+                verify_upstream(&candidate.bytes, pin.upstream.as_ref())
+                    .and_then(|()| admit(&candidate.bytes, &pin.value.0, ctx))
+            }
+        };
+        match verified {
+            Ok(admitted) => return Ok(admitted),
+            Err(error) => last_error = Some(error),
         }
-        let observed = blob_identity(&candidate.bytes);
-        if observed != pin.value.0 {
-            return Err(PrimitiveMachineError::CorruptCandidate { source: observed });
-        }
-        verify_upstream(&candidate.bytes, pin.upstream.as_ref())?;
-        return admit(&candidate.bytes, &pin.value.0, ctx);
     }
 
-    let mut last_error = None;
     for origin in &pin.origins {
         match ctx.origin_candidate(&origin.capability, &origin.coordinate, &pin.value.0) {
             Ok(bytes) => {

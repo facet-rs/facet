@@ -12,8 +12,8 @@ use crate::runtime::{
     ChaosPolicy, Counters, DemandState, Evaluation, Event, EventKind, EventLog, FailureContext,
     FailureValue, FramedNode, GeneratorOutcome, IslandInputs, Location, MachineError, MemoVerdict,
     PersistentRuntimeJournal, PersistentRuntimeJournalError, PersistentRuntimeJournalLoadReport,
-    PersistentRuntimeState, RealizedWireDemand, Runtime, SnapshotCapture, SnapshotOutcome,
-    TaskState, ValueId, WireDemand,
+    PersistentRuntimeState, PrimitiveServices, RealizedWireDemand, Runtime, SnapshotCapture,
+    SnapshotOutcome, TaskState, ValueId, WireDemand,
 };
 use crate::vir::{
     DescribedWire, FunctionId, Island, IslandId, Module, Op, PartitionedRecipe, PartitionedValue,
@@ -826,6 +826,7 @@ pub fn run_source_revision_audit_with_lane(
         None,
         None,
         Some(&first_revision),
+        None,
     )?;
     let journal = state.to_journal();
     let journal_json = journal.to_json()?;
@@ -854,6 +855,7 @@ pub fn run_source_revision_audit_with_lane(
         Some(&loaded_journal),
         Some(&mut load),
         Some(&second_revision),
+        None,
     )?;
     let first_value_checks = first
         .checks
@@ -972,7 +974,11 @@ impl PreparedRun {
     /// r[impl machine.scheduler.chaos-kill-oracle]
     /// r[impl machine.scheduler.replay-is-semantics]
     pub fn execute(self) -> Result<RatchetReport, RunError> {
-        self.execute_inner(&SnapshotExpectations::new(), |_| {})
+        self.execute_inner(
+            &SnapshotExpectations::new(),
+            |_| {},
+            PrimitiveServices::default(),
+        )
     }
 
     /// Execute with a snapshot oracle: snapshot checks compare their rendering to
@@ -981,7 +987,7 @@ impl PreparedRun {
         self,
         expectations: &SnapshotExpectations,
     ) -> Result<RatchetReport, RunError> {
-        self.execute_inner(expectations, |_| {})
+        self.execute_inner(expectations, |_| {}, PrimitiveServices::default())
     }
 
     /// Execute with lifecycle observations made while each lane's runtime is
@@ -991,7 +997,22 @@ impl PreparedRun {
         self,
         observe: impl FnMut(ExecutionPhase),
     ) -> Result<RatchetReport, RunError> {
-        self.execute_inner(&SnapshotExpectations::new(), observe)
+        self.execute_inner(
+            &SnapshotExpectations::new(),
+            observe,
+            PrimitiveServices::default(),
+        )
+    }
+
+    /// Execute through the production runner with explicit primitive service
+    /// authorities. The Vix request still carries semantic capabilities and
+    /// coordinates; these services only provide the machine boundary that may
+    /// serve or persist a verified value.
+    pub fn execute_with_primitive_services(
+        self,
+        services: PrimitiveServices,
+    ) -> Result<RatchetReport, RunError> {
+        self.execute_inner(&SnapshotExpectations::new(), |_| {}, services)
     }
 
     pub fn execute_rerun_audit(mut self) -> Result<RerunAuditReport, RunError> {
@@ -1011,6 +1032,7 @@ impl PreparedRun {
             None,
             None,
             None,
+            None,
         )?;
         let mut second_state = PersistentRuntimeState::default();
         let second = run_lane(
@@ -1025,6 +1047,7 @@ impl PreparedRun {
             true,
             Some(state),
             Some(&mut second_state),
+            None,
             None,
             None,
             None,
@@ -1074,6 +1097,7 @@ impl PreparedRun {
             None,
             None,
             None,
+            None,
         )?;
         let journal = state.to_journal();
         let journal_json = journal.to_json()?;
@@ -1098,6 +1122,7 @@ impl PreparedRun {
             Some(&mut second_state),
             Some(&loaded_journal),
             Some(&mut load),
+            None,
             None,
         )?;
         let first_value_checks = first
@@ -1126,6 +1151,7 @@ impl PreparedRun {
         mut self,
         expectations: &SnapshotExpectations,
         mut observe: impl FnMut(ExecutionPhase),
+        primitive_services: PrimitiveServices,
     ) -> Result<RatchetReport, RunError> {
         let plain = run_lane(
             &self.compilation.module,
@@ -1142,6 +1168,7 @@ impl PreparedRun {
             None,
             None,
             None,
+            Some(&primitive_services),
         )?;
         let chaos = run_lane(
             &self.compilation.module,
@@ -1160,6 +1187,7 @@ impl PreparedRun {
             None,
             None,
             None,
+            Some(&primitive_services),
         )?;
         Ok(RatchetReport {
             warnings: self.compilation.warnings,
@@ -1397,6 +1425,7 @@ fn run_lane(
     persistent_journal_in: Option<&PersistentRuntimeJournal>,
     persistent_journal_report: Option<&mut PersistentRuntimeJournalLoadReport>,
     source_revision: Option<&str>,
+    primitive_services: Option<&PrimitiveServices>,
 ) -> Result<SuiteRun, RunError> {
     let mut journal_load_report = None;
     let mut runtime = if let Some(journal) = persistent_journal_in {
@@ -1409,6 +1438,9 @@ fn run_lane(
     } else {
         Runtime::new(EventLog::default())
     };
+    if let Some(services) = primitive_services {
+        runtime.set_primitive_services(services.clone());
+    }
     runtime.set_authoritative_rerun_audit(use_rerun_overlays);
     observe(ready_phase);
     let mut checks = Vec::new();

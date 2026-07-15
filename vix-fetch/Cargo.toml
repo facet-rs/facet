@@ -10,3 +10,6 @@ vix = { path = "../vix" }
 flate2 = "1.1"
 tar = "0.4"
 ureq = "3.3"
+
+[dev-dependencies]
+tempfile.workspace = true

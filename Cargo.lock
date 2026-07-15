@@ -9683,6 +9683,7 @@ version = "0.0.0"
 dependencies = [
  "flate2",
  "tar",
+ "tempfile",
  "ureq",
  "vix",
 ]
