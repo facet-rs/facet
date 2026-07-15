@@ -147,10 +147,8 @@ fn selected_version(state: WorkspaceIndexState, result: SolveResult, name: Strin
 }
 
 fn selected_row(rows: [SparseIndexRow], state: WorkspaceIndexState, result: SolveResult, name: String) -> SparseIndexRow {
-    let package = state.package_ids.get(name).unwrap();
-    let package_name = state.names.get(package).unwrap();
-    let fallback = selected_row_by_name(rows, package_name);
-    match selected_sparse_row(rows, package_name, selected_version(state, result, package_name)) {
+    let fallback = selected_row_by_name(rows, name);
+    match selected_sparse_row(rows, name, selected_version(state, result, name)) {
         Some(row) => row,
         None => fallback,
     }
@@ -338,6 +336,41 @@ fn selected_package_ids_tuple(state: WorkspaceIndexState, result: SolveResult, p
     selected_package_ids_from(state, result, popped.1, next)
 }
 
+fn package_id_for_name_in_packages(state: WorkspaceIndexState, name: String, packages: [Int]) -> Int {
+    match packages.len() == 0 {
+        true => 0,
+        false => package_id_for_name_in_packages_step(state, name, packages.pop()),
+    }
+}
+
+fn package_id_for_name_in_packages_step(state: WorkspaceIndexState, name: String, popped: (Int, [Int])) -> Int {
+    let package_name = state.names.get(popped.0).unwrap();
+    match crate_name(package_name) == crate_name(name) {
+        true => popped.0,
+        false => package_id_for_name_in_packages(state, name, popped.1),
+    }
+}
+
+fn package_id_for_name(state: WorkspaceIndexState, name: String) -> Int {
+    package_id_for_name_in_packages(state, name, state.packages)
+}
+
+fn selected_package_names_text_from(state: WorkspaceIndexState, package_ids: [Int], out: String) -> String {
+    match package_ids.len() == 0 {
+        true => out,
+        false => selected_package_names_text_next(state, package_ids.pop(), out),
+    }
+}
+
+fn selected_package_names_text_next(state: WorkspaceIndexState, popped: (Int, [Int]), out: String) -> String {
+    let package_name = state.names.get(popped.0).unwrap();
+    let next = match out == "" {
+        true => package_name,
+        false => out + "\n" + package_name,
+    };
+    selected_package_names_text_from(state, popped.1, next)
+}
+
 fn int_list_contains(values: [Int], needle: Int) -> Bool {
     match values.len() == 0 {
         true => false,
@@ -435,7 +468,7 @@ fn member_path_for_package(member_names: [String], member_paths: [String], packa
 }
 
 fn member_path_for_package_step(names: (String, [String]), paths: (String, [String]), package_name: String) -> String {
-    match names.0 == package_name {
+    match crate_name(names.0) == crate_name(package_name) {
         true => paths.0,
         false => member_path_for_package(names.1, paths.1, package_name),
     }
@@ -824,8 +857,8 @@ fn source_package_names_text(graph: CargoResolvedGraph, units: [Int], out: Strin
 }
 
 fn source_package_names_text_tuple(graph: CargoResolvedGraph, popped: (Int, [Int]), out: String) -> String {
-    let unit = resolved_unit(graph, lib_unit_id(popped.0));
-    let line = unit.package_name + "\t" + package_name(unit.manifest);
+    let package_name = graph.state.names.get(popped.0).unwrap();
+    let line = package_name + "\t" + package_name;
     let next = match out == "" {
         true => line,
         false => out + "\n" + line,
@@ -853,6 +886,18 @@ pub fn taxon_root_pkg_id(workspace: Tree, sparse_jsonl: String, target_name: Str
 pub fn taxon_root_candidate_count(workspace: Tree, sparse_jsonl: String, target_name: String) -> Int {
     let state = taxon_state(workspace, sparse_jsonl);
     root_candidate_count(taxon_index(state), taxon_problem(workspace, state))
+}
+
+pub fn taxon_selected_package_names_text(workspace: Tree, sparse_jsonl: String, target_name: String) -> String {
+    let state = taxon_state(workspace, sparse_jsonl);
+    let result = taxon_result(workspace, state, target_name);
+    selected_package_names_text_from(state, selected_package_ids(state, result), "")
+}
+
+pub fn taxon_selected_package_ids(workspace: Tree, sparse_jsonl: String, target_name: String) -> [Int] {
+    let state = taxon_state(workspace, sparse_jsonl);
+    let result = taxon_result(workspace, state, target_name);
+    selected_package_ids(state, result)
 }
 
 pub fn taxon_root_version_count(workspace: Tree, sparse_jsonl: String, target_name: String) -> Int {
@@ -912,6 +957,43 @@ pub fn facet_core_root_deps_text(workspace: Tree, sparse_jsonl: String, target_n
     let index = facet_core_index(state);
     let result = facet_core_result(workspace, state, target_name);
     solution_dep_names_text(state, index, result, facet_core_root_pkg(state), target_name)
+}
+
+pub fn facet_core_source_package_names_text(workspace: Tree, sparse_jsonl: String, target_name: String) -> String {
+    let state = facet_core_state(workspace, sparse_jsonl);
+    let result = facet_core_result(workspace, state, target_name);
+    source_package_names_text(
+        facet_core_resolved_graph(workspace, sparse_jsonl, target_name),
+        selected_package_ids(state, result),
+        "",
+    )
+}
+
+pub fn facet_core_sparse_rows_text(sparse_jsonl: String) -> String {
+    facet_core_sparse_rows_text_tuple(parse_sparse_jsonl(sparse_jsonl), [])
+}
+
+fn facet_core_sparse_rows_text_tuple(rows: [SparseIndexRow], out: [String]) -> String {
+    match rows.len() == 0 {
+        true => out.join("\n"),
+        false => facet_core_sparse_rows_text_entry(rows.pop(), out),
+    }
+}
+
+fn facet_core_sparse_rows_text_entry(popped: (SparseIndexRow, [SparseIndexRow]), out: [String]) -> String {
+    let next = out.push(sparse_row_name_line(popped.0));
+    facet_core_sparse_rows_text_tuple(popped.1, next)
+}
+
+fn sparse_row_name_line(row: SparseIndexRow) -> String {
+    row.name + " " + row.vers
+}
+
+pub fn facet_core_sparse_row_exists(sparse_jsonl: String, name: String, version: String) -> Int {
+    match selected_sparse_row(parse_sparse_jsonl(sparse_jsonl), name, version) {
+        Some(_) => 1,
+        None => 0,
+    }
 }
 
 pub fn facet_core_build_script_binary(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {

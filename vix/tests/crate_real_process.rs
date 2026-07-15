@@ -2543,6 +2543,18 @@ fn taxon_ladder_builds_taxon_with_real_process_and_hashes_artifacts() -> Result<
         "taxon-root-selected.txt",
         &rendered_result_string(&machine, "taxon_selected_versions", selected)?,
     )?;
+    let selected_ids = machine.demand_i64("taxon_selected_package_ids", args.clone())?;
+    write_tier_a_artifact(
+        "taxon-selected-package-ids.txt",
+        &format!("{:?}", machine.render_result("taxon_selected_package_ids", selected_ids)?),
+    )?;
+    let source_names = machine
+        .demand_i64("taxon_selected_package_names_text", args.clone())
+        .map_err(|err| format!("taxon_selected_package_names_text failed: {err}"))?;
+    write_tier_a_artifact(
+        "taxon-selected-package-names.txt",
+        &rendered_result_string(&machine, "taxon_selected_package_names_text", source_names)?,
+    )?;
     let source_names = machine
         .demand_i64("taxon_source_package_names_text", args.clone())
         .map_err(|err| format!("taxon_source_package_names_text failed: {err}"))?;
@@ -2740,23 +2752,102 @@ fn facet_core_ladder_builds_facet_core_with_real_process_and_hashes_artifacts() 
         "facet-core-build-source-head.txt",
     )?;
     let args = facet_core_native_args(&mut machine, source_tree)?;
-
+    let sparse_rows = machine.demand_i64("facet_core_sparse_rows_text", vec![args[1]])?;
+    write_tier_a_artifact(
+        "facet-core-sparse-rows.txt",
+        &rendered_result_string(&machine, "facet_core_sparse_rows_text", sparse_rows)?,
+    )?;
+    let selected_root_deps = machine.demand_i64("facet_core_root_deps_text", args.clone())?;
+    write_tier_a_artifact(
+        "facet-core-root-deps.txt",
+        &rendered_result_string(&machine, "facet_core_root_deps_text", selected_root_deps)?,
+    )?;
     let selected = machine.demand_i64("facet_core_root_selected_names", args.clone())?;
+    let selected_rendered = rendered_result_string(&machine, "facet_core_root_selected_names", selected)?;
+    let mut missing = Vec::new();
+    for entry in selected_rendered.lines() {
+        if let Some((name, version)) = entry.split_once(' ') {
+            let name_arg = intern_string(&mut machine, name)?;
+            let version_arg = intern_string(&mut machine, version)?;
+            let exists = machine.demand_i64(
+                "facet_core_sparse_row_exists",
+                vec![args[1], name_arg, version_arg],
+            )?;
+            if exists == 0 && name != "facet-core" {
+                missing.push(format!("{name} {version}"));
+            }
+        }
+    }
+    write_tier_a_artifact("facet-core-selected-row-exists.txt", &missing.join("\n"))?;
+    if !missing.is_empty() {
+        return Err(format!("facet-core selected rows missing from sparse index: {missing:?}"));
+    }
+    let root_pkg_id = machine.demand_i64("facet_core_root_pkg_id", args.clone())?;
+    write_tier_a_artifact(
+        "facet-core-root-pkg-id.txt",
+        &format!("facet-core-root-pkg-id={root_pkg_id}"),
+    )?;
     write_tier_a_artifact(
         "facet-core-root-selected.txt",
-        &rendered_result_string(&machine, "facet_core_root_selected_names", selected)?,
+        &selected_rendered,
     )?;
-    let build_script_run = demand_with_rustc_trace(&mut machine, "facet_core_build_script_run", args.clone())?;
-    let build_script_stdout = tree_file_bytes(&mut machine, build_script_run, "build.stdout")?;
-    write_tier_a_artifact(
-        "facet-core-build-stdout-final.txt",
-        &String::from_utf8_lossy(&build_script_stdout),
-    )?;
-    let cfgs = machine.demand_i64("facet_core_build_script_cfgs", args.clone())?;
-    write_tier_a_artifact(
-        "facet-core-build-cfgs.txt",
-        &rendered_result_string(&machine, "facet_core_build_script_cfgs", cfgs)?,
-    )?;
+    let build_script_binary = match machine.demand_i64("facet_core_build_script_binary", args.clone()) {
+        Ok(binary) => Some(binary),
+        Err(err) => {
+            return Err(format!(
+                "facet_core_build_script_binary failed: {err}\nrustc argv trace:\n{}",
+                rustc_argv_trace(&machine)
+            ));
+        }
+    };
+    match build_script_binary {
+        Some(build_script_binary) => {
+            write_tier_a_artifact(
+                "facet-core-build-script-binary.txt",
+                &format!("build-script-binary-handle={build_script_binary}"),
+            )?;
+        }
+        None => {
+            write_tier_a_artifact(
+                "facet-core-build-script-binary-error.txt",
+                "missing or unavailable facet-core build-script binary\n",
+            )?;
+        }
+    }
+    let build_script_run = match demand_with_rustc_trace(&mut machine, "facet_core_build_script_run", args.clone()) {
+        Ok(run) => run,
+        Err(err) => {
+            write_tier_a_artifact(
+                "facet-core-build-script-run-error.txt",
+                &format!("{err}\nrustc argv trace:\n{}", rustc_argv_trace(&machine)),
+            )?;
+            0
+        }
+    };
+    if build_script_binary.is_some() && build_script_run != 0 {
+        let build_script_stdout = tree_file_bytes(&mut machine, build_script_run, "build.stdout")?;
+        write_tier_a_artifact(
+            "facet-core-build-stdout-final.txt",
+            &String::from_utf8_lossy(&build_script_stdout),
+        )?;
+        let cfgs = machine.demand_i64("facet_core_build_script_cfgs", args.clone())?;
+        write_tier_a_artifact(
+            "facet-core-build-cfgs.txt",
+            &rendered_result_string(&machine, "facet_core_build_script_cfgs", cfgs)?,
+        )?;
+    } else if build_script_binary.is_none() {
+        write_tier_a_artifact(
+            "facet-core-build-stdout-final.txt",
+            "facet-core build script unavailable\n",
+        )?;
+        write_tier_a_artifact("facet-core-build-cfgs.txt", "facet-core build script unavailable\n")?;
+    } else {
+        write_tier_a_artifact(
+            "facet-core-build-stdout-final.txt",
+            "facet-core build-script execution failed\n",
+        )?;
+        write_tier_a_artifact("facet-core-build-cfgs.txt", "facet-core build-script execution failed\n")?;
+    }
     let root_deps = machine.demand_i64("facet_core_root_deps_text", args.clone())?;
     write_tier_a_artifact(
         "facet-core-root-deps.txt",
