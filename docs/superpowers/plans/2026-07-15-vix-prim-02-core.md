@@ -1,6 +1,6 @@
 # Vix Typed Primitives — Phase 02: Core Module Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Build `vix::runtime::primitive` — descriptor/identity, the object-safe `Primitive` trait with `EffectCtx`/tickets/completions, the taxon→vir type bridge, facet↔store value conversion, and the `PrimitiveSet::register_function::<Resp, Req>` typed adapter — fully unit-tested, with zero compiler/scheduler wiring (that is phases 03–05).
 
@@ -49,7 +49,7 @@
   - `pub enum RegistrationError { InvalidName { name: String }, ReservedName { name: String }, DuplicateName { name: String }, UnsupportedShape { path: String, kind: String }, Derive { message: String } }` (implement `Display` + `std::error::Error`)
   - `impl PrimitiveId { pub fn derive(name: &PrimitiveName, version: u32, protocol: u32, request: TaxonSchemaId, response: TaxonSchemaId) -> Self }` — `hash_framed(b"vix.primitive.v1", &[name.as_str().as_bytes(), &version.to_le_bytes(), &protocol.to_le_bytes(), &request.as_u64().to_le_bytes(), &response.as_u64().to_le_bytes()])`
 
-- [ ] **Step 1: Write failing tests** in `descriptor.rs` `#[cfg(test)]`:
+- [x] **Step 1: Write failing tests** in `descriptor.rs` `#[cfg(test)]`:
 
 ```rust
 #[test]
@@ -89,8 +89,8 @@ fn semantic_schema_id_matches_scheduler_format() {
 }
 ```
 
-- [ ] **Step 2: Run to verify failure** — `cargo nextest run -p vix primitive` → compile error (module missing). Expected.
-- [ ] **Step 3: Implement.** Move `fn semantic_schema_id` bodies: cut the private fn from `scheduler.rs` (~2761) and `lowering.rs` (~655), add to `identity.rs`:
+- [x] **Step 2: Run to verify failure** — `cargo nextest run -p vix primitive` → compile error (module missing). Expected.
+- [x] **Step 3: Implement.** Move `fn semantic_schema_id` bodies: cut the private fn from `scheduler.rs` (~2761) and `lowering.rs` (~655), add to `identity.rs`:
 
 ```rust
 /// The runtime store schema for a vir type: blake3 of the type's canonical
@@ -110,8 +110,8 @@ pub use descriptor::*;
 ```
 
 Add `pub mod primitive;` to `runtime/mod.rs`.
-- [ ] **Step 4: Run** `cargo nextest run -p vix` (full crate — the hoist touches scheduler/lowering; everything must stay green). Expected: PASS.
-- [ ] **Step 5: Commit** — `git add -A && git commit --no-verify -m "vix: primitive descriptor identity + shared semantic_schema_id"`
+- [x] **Step 4: Run** `cargo nextest run -p vix` (full crate — the hoist touches scheduler/lowering; everything must stay green). Expected: PASS.
+- [x] **Step 5: Commit** — `git add -A && git commit --no-verify -m "vix: primitive descriptor identity + shared semantic_schema_id"`
 
 ---
 
@@ -133,7 +133,7 @@ Add `pub mod primitive;` to `runtime/mod.rs`.
   - Explicitly rejected kinds: `Kind::Array` (fixed-size, kind `"fixed-size array"`), `Kind::Tensor`, `Kind::Channel`, `Kind::Dynamic`, `Kind::External`.
 - Recursion through `SchemaRef::Concrete { id, args }` resolves `id` in `schemas`; non-empty `args` and `SchemaRef::Var` are rejected (kind `"generic"`), recursive cycles rejected (kind `"recursive"`; track a visiting `BTreeSet<taxon::SchemaId>`).
 
-- [ ] **Step 1: Write failing tests** (build small `taxon::Schema` batches by hand in the tests — see `phon/rust/taxon/src/lib.rs:64-176` for constructors; ids can be `SchemaId::from_raw(n)` since the bridge only resolves references, it never re-derives ids):
+- [x] **Step 1: Write failing tests** (build small `taxon::Schema` batches by hand in the tests — see `phon/rust/taxon/src/lib.rs:64-176` for constructors; ids can be `SchemaId::from_raw(n)` since the bridge only resolves references, it never re-derives ids):
 
 ```rust
 #[test]
@@ -175,10 +175,10 @@ fn rejects_every_unsupported_primitive() {
 }
 ```
 
-- [ ] **Step 2: Run to verify failure** — `cargo nextest run -p vix bridge` → fails (fn missing).
-- [ ] **Step 3: Implement** `vir_type_for`: index `schemas` by id into a `BTreeMap`, recursive `fn convert(id, ctx: &mut Ctx { by_id, visiting: BTreeSet<TaxonSchemaId>, path: Vec<String> })`. Push field/variant/element names onto `path` as you descend; render `path.join(".")` on error. Names per the naming rule.
-- [ ] **Step 4: Run** `cargo nextest run -p vix bridge` → PASS.
-- [ ] **Step 5: Commit** — `git commit --no-verify -am "vix: taxon-to-vir bridge with lossless-subset validation"`
+- [x] **Step 2: Run to verify failure** — `cargo nextest run -p vix bridge` → fails (fn missing).
+- [x] **Step 3: Implement** `vir_type_for`: index `schemas` by id into a `BTreeMap`, recursive `fn convert(id, ctx: &mut Ctx { by_id, visiting: BTreeSet<TaxonSchemaId>, path: Vec<String> })`. Push field/variant/element names onto `path` as you descend; render `path.join(".")` on error. Names per the naming rule.
+- [x] **Step 4: Run** `cargo nextest run -p vix bridge` → PASS.
+- [x] **Step 5: Commit** — `git commit --no-verify -am "vix: taxon-to-vir bridge with lossless-subset validation"`
 
 ---
 
@@ -203,7 +203,7 @@ fn rejects_every_unsupported_primitive() {
   - `Type::Map`/`Type::Set`: encode entries, sort rows by the KEY's `ValueId` ordering to canonical order (mirror `realize_ordered` — read scheduler.rs `fn realize_ordered` first and copy its ordering rule exactly; if it orders by structural comparison rather than ValueId, do that), `node = FramedNode::OrderedMap { schema, rows } / OrderedSet { schema, elements }`; `frozen = FrozenValue::OrderedMap(pairs) / OrderedSet(items)`.
   - Facet-side walking: `let peek = facet::Peek::new(value);` then match on `ty` (the vir type drives the walk; facet shape was already validated by the bridge, so mismatches are `ShapeMismatch` bugs, not user errors).
 
-- [ ] **Step 1: Write failing tests**:
+- [x] **Step 1: Write failing tests**:
 
 ```rust
 #[derive(facet::Facet)]
@@ -262,7 +262,7 @@ fn interning_twice_dedupes() {
 }
 ```
 
-- [ ] **Step 2: Run to verify failure**, **Step 3: Implement** per the framing rules (read `realize_ordered` before writing the map/set arm and mirror its ordering), **Step 4: Run** `cargo nextest run -p vix convert` → PASS, **Step 5: Commit** `--no-verify -am "vix: encode facet values into framed store values"`.
+- [x] **Step 2: Run to verify failure**, **Step 3: Implement** per the framing rules (read `realize_ordered` before writing the map/set arm and mirror its ordering), **Step 4: Run** `cargo nextest run -p vix convert` → PASS, **Step 5: Commit** `--no-verify -am "vix: encode facet values into framed store values"`.
 
 ---
 
@@ -277,7 +277,7 @@ fn interning_twice_dedupes() {
 - Produces: `pub(crate) fn decode_value<'f, T: facet::Facet<'f>>(frozen: &FrozenValue, ty: &crate::vir::Type) -> Result<T, ConvertError>`.
 - Rules are the encode rules inverted. `FrozenValue::Reference(_)` is a `ShapeMismatch` in v1 (decode input for a primitive request is always a fully-frozen tree; references appear only for store-resident strings — resolve those in phase 05 where a `&Store` is in hand; v1 decode takes the frozen tree only and the phase-05 wiring passes trees with references pre-resolved. Record this as a doc comment on `decode_value`).
 
-- [ ] **Step 1: Write failing round-trip tests**:
+- [x] **Step 1: Write failing round-trip tests**:
 
 ```rust
 #[test]
@@ -373,8 +373,8 @@ fn option_uses_the_vir_variant_tags() {
 }
 ```
 
-- [ ] **Steps 2–4: red → implement → green** (`cargo nextest run -p vix convert`).
-- [ ] **Step 5: Commit** `--no-verify -am "vix: decode frozen store values into facet values"`.
+- [x] **Steps 2–4: red → implement → green** (`cargo nextest run -p vix convert`).
+- [x] **Step 5: Commit** `--no-verify -am "vix: decode frozen store values into facet values"`.
 
 ---
 
@@ -447,9 +447,9 @@ pub trait Primitive {
 
 - Note the deliberate deviation-from-nothing: `EffectCtx::finish` consumes the ctx and produces `(Completion, Receipt, events)` — the scheduler (phase 05) is the only caller. Double-complete / no-complete is a protocol violation surfaced as a typed error, not a panic (`machine.error.structural-impossibility` still applies to impossible states, but a misbehaving registered primitive is EXPECTED fallibility).
 
-- [ ] **Step 1: failing tests** — ctx happy path (witness + complete + finish yields receipt with the witnessed reads and the demand key), no-complete → error, double-complete → error. Write them concretely against the API above.
-- [ ] **Steps 2–4: red → implement → green.**
-- [ ] **Step 5: Commit** `--no-verify -am "vix: primitive trait, EffectCtx, tickets, completions"`.
+- [x] **Step 1: failing tests** — ctx happy path (witness + complete + finish yields receipt with the witnessed reads and the demand key), no-complete → error, double-complete → error. Write them concretely against the API above.
+- [x] **Steps 2–4: red → implement → green.**
+- [x] **Step 5: Commit** `--no-verify -am "vix: primitive trait, EffectCtx, tickets, completions"`.
 
 ---
 
@@ -483,7 +483,7 @@ impl PrimitiveSet {
 
 - `register_function` internals: `of_shape(Req::SHAPE)` + `of_shape(Resp::SHAPE)` (map `DeriveError` → `RegistrationError::Derive`), `vir_type_for` both, build `RegisteredSchema`s (`store_schema = semantic_schema_id(&vix_type)`), `PrimitiveId::derive(...)` with `version: u32 = 1` for the sugar path (full-control `register` path takes author-supplied versions via their own descriptor), wrap `f` in `struct FunctionPrimitive<Req, Resp, F> { descriptor, f, _marker }` whose `begin` does: `decode_value::<Req>(request.frozen, &descriptor.request.vix_type)` → run `f` → on Ok `intern_rust_value(&resp, &descriptor.response, ctx.store_mut())` → `ctx.complete(Completion::Ok(interned))`; on Err `ctx.complete(Completion::Failed(failure))`; decode `ConvertError` → `Box<MachineError>` (protocol violation — the compiler type-checked the call, so a mismatched request tree is machine-plane, not language-plane); return `EffectTicket(0)` (ticket ids become real in phase 05; the adapter's inline completion makes the id inert here — document this).
 
-- [ ] **Step 1: failing end-to-end unit test**:
+- [x] **Step 1: failing end-to-end unit test**:
 
 ```rust
 #[derive(facet::Facet)]
@@ -548,20 +548,48 @@ pub(crate) fn frozen_for(&self, handle: Handle) -> Option<&FrozenValue> {
 
 Also define the test helper `fn test_demand_key() -> crate::runtime::identity::DemandKey` by constructing the type the way existing runtime unit tests do — grep `DemandKey` in `vix/src/runtime/` tests and copy that construction.
 
-- [ ] **Steps 2–4: red → implement → green** (`cargo nextest run -p vix primitive`).
-- [ ] **Step 5: Commit** `--no-verify -am "vix: PrimitiveSet and register_function typed adapter"`.
+- [x] **Steps 2–4: red → implement → green** (`cargo nextest run -p vix primitive`).
+- [x] **Step 5: Commit** `--no-verify -am "vix: PrimitiveSet and register_function typed adapter"`.
 
 ---
 
 ### Task 7: Phase gate
 
-- [ ] Full suite: `cargo nextest run -p vix` → all green (nothing outside the module may regress; the only shared-code diff is the Task 1 hoist).
-- [ ] `cargo clippy -p vix -- -D warnings` clean on the new module.
-- [ ] Re-read the six new files against the Global Constraints (no strings-as-errors, no per-primitive arms, no private caches, spec rule comments `r[machine.primitive.*]` present on the trait/ctx/descriptor items).
-- [ ] Commit any fixups, then stop — phase 03 planning happens against this landed state.
+- [x] Full suite: `cargo nextest run -p vix` → all green (nothing outside the module may regress; the only shared-code diff is the Task 1 hoist).
+- [x] `cargo clippy -p vix -- -D warnings` clean on the new module.
+- [x] Re-read the six new files against the Global Constraints (no strings-as-errors, no per-primitive arms, no private caches, spec rule comments `r[machine.primitive.*]` present on the trait/ctx/descriptor items).
+- [x] Commit any fixups, then stop — phase 03 planning happens against this landed state.
 
 ## Self-review notes (already applied)
 
 - Spec coverage: descriptor/trait/EffectCtx/adapter/bridge/conversion = spec §Components 1–4. Compiler/VIR/lowering/scheduler sections intentionally out of scope (phases 03–05); memo policy is carried as data only in this phase.
 - Type consistency: `RegisteredSchema.store_schema` = `semantic_schema_id(vix_type)` everywhere; `Completion::Ok(Interned)` matches register.rs adapter and Task 5 finish() signature.
 - Known unknowns called out to the executor: exact `facet::Partial` builder API (Task 4 step 1 requires reading facet-reflect/partial first), `realize_ordered` ordering rule (Task 3), vir `VariantPayload` record support (Task 2).
+## Implementation notes (phase 02 as landed)
+
+Deviations from the plan, all forced by the actual codebase — record for phase 03+:
+
+- **facet `reflect` feature**: `facet::Peek`/`Partial` are behind the non-default
+  `reflect` feature. Enabled it on vix's `facet` dep (`vix/Cargo.toml`). The plan
+  assumed they were always available.
+- **Arrays of scalar elements frame as `SeqInline`, not `SeqChildren`**. The
+  scheduler's `realize_array` splits on `type_contains_handle`: scalar (`Bool`/
+  `Int`) elements pack into `FramedNode::SeqInline` (8-byte words); handle-bearing
+  elements use `SeqChildren`. `convert.rs` mirrors this for the primitive subset.
+  Arrays of pure-scalar *composites* (tuple/record of ints) would frame inline in
+  the scheduler too but are out of the phase-02 subset — noted in `encode_array`.
+- **Trait layer returns a local `EffectProtocolError`, not `Box<MachineError>`**.
+  The constraints forbid editing `error.rs`, and there's no existing `RuntimeFault`
+  variant for effect-protocol violations. Per the plan's own Task 5 note ("a
+  placeholder EffectProtocol error kind defined locally"), `begin`/`finish`/the
+  adapter all return `EffectProtocolError`. Phase 05 lifts this into a real
+  `RuntimeFault` variant on the machine-error plane.
+- **Trait-layer types are `pub(crate)`** (`Primitive`, `RequestRef`, `EffectCtx`,
+  `Completion`): they reference the `pub(crate)` `FrozenValue`/`Store`/`Interned`,
+  so making them `pub` would be a private-interface leak. `PrimitiveSet`,
+  `register_function`, descriptors, and the error/id/policy types stay `pub`.
+- **`#![allow(dead_code)]`** on `convert.rs`/`traits.rs`/`register.rs` (+ item-level
+  on `store::frozen_for`): the module is landed ahead of its phase-03 (compiler
+  manifest) and phase-05 (scheduler) consumers; items are exercised by unit tests.
+- **Commits**: Tasks 3 and 4 (encode/decode) landed as one commit (single file,
+  `convert.rs`); every other task is its own commit.
