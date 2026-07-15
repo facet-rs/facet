@@ -736,6 +736,11 @@ pub enum ExternKind {
     Blob,
     Registry,
     PinnedUrl,
+    /// A compiler-published semantic schema reference. Its resident bytes are
+    /// [`SchemaRef::canonical_bytes`]; its identity is an ordinary Store value,
+    /// so registered primitive requests can name schemas without a task-local
+    /// type handle or an ontology string.
+    Schema,
 }
 
 impl ExternKind {
@@ -747,6 +752,7 @@ impl ExternKind {
             Self::Blob => "Blob",
             Self::Registry => "Registry",
             Self::PinnedUrl => "PinnedUrl",
+            Self::Schema => "Schema",
         }
     }
 }
@@ -1039,6 +1045,68 @@ pub enum DecodeFormat {
     Toml,
 }
 
+#[must_use]
+pub fn decode_primitive_id() -> crate::runtime::PrimitiveId {
+    crate::runtime::PrimitiveId {
+        namespace: "vix".to_owned(),
+        name: "decode".to_owned(),
+        version: 1,
+    }
+}
+
+/// The authored request schema of the registered document decoder. `target`
+/// is a Store-backed Taxon [`SchemaRef`], not a compiler-local type index;
+/// `fallible` selects `Result<T, DecodeError>` versus the infallible surface.
+#[must_use]
+pub fn decode_request_type() -> Type {
+    Type::Record(RecordType::new(
+        "DecodeRequest",
+        vec![
+            RecordField {
+                name: "format".to_owned(),
+                ty: Type::Int,
+            },
+            RecordField {
+                name: "target".to_owned(),
+                ty: Type::Extern(ExternKind::Schema),
+            },
+            RecordField {
+                name: "fallible".to_owned(),
+                ty: Type::Bool,
+            },
+            RecordField {
+                name: "document".to_owned(),
+                ty: Type::String,
+            },
+        ],
+    ))
+}
+
+#[must_use]
+pub fn decode_error_type() -> Type {
+    Type::Record(RecordType::new(
+        "DecodeError",
+        vec![
+            RecordField {
+                name: "kind".to_owned(),
+                ty: Type::String,
+            },
+            RecordField {
+                name: "path".to_owned(),
+                ty: Type::String,
+            },
+            RecordField {
+                name: "document_offset".to_owned(),
+                ty: Type::Int,
+            },
+            RecordField {
+                name: "document_len".to_owned(),
+                ty: Type::Int,
+            },
+        ],
+    ))
+}
+
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum MiniSolveRequirements {
@@ -1090,6 +1158,8 @@ pub enum Op {
     Yield,
     String(String),
     Path(String),
+    /// One closed Taxon schema reference as an ordinary Store-backed value.
+    Schema(SchemaRef),
     Parameter(ParameterId),
     Call(FunctionId),
     Closure(FunctionId),
@@ -1102,13 +1172,12 @@ pub enum Op {
     AwaitWire {
         input: u32,
     },
-    /// Parse one runtime String directly into `target` through the scheduler's
-    /// document host primitive. The node result is always
-    /// `Result<target, DecodeError>`; both success and structured parse failure
-    /// are ordinary typed frame values.
-    Decode {
-        format: DecodeFormat,
-        target: Type,
+    /// Invoke one registered primitive with one ordinary typed request value.
+    /// The node's declared type supplies the expected response schema; the
+    /// machine dispatches solely by `PrimitiveId` and never matches the
+    /// primitive's name or request ontology.
+    InvokePrimitive {
+        primitive: crate::runtime::PrimitiveId,
     },
     Tuple,
     Record,
@@ -3378,7 +3447,7 @@ impl Island {
     #[must_use]
     pub fn effect_output(&self) -> Option<&Node> {
         let output = self.nodes.iter().find(|node| node.id == self.output)?;
-        matches!(output.op, Op::Exec { .. }).then_some(output)
+        is_effect_root(output).then_some(output)
     }
 
     pub(crate) fn local_function_ids(&self) -> BTreeMap<FunctionId, u32> {
@@ -3593,13 +3662,15 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
             op.push(84);
             op.extend_from_slice(&input.to_le_bytes());
         }
-        Op::Decode { format, target } => {
-            op.push(85);
-            op.push(match format {
-                DecodeFormat::Json => 0,
-                DecodeFormat::Toml => 1,
-            });
-            frame(&mut op, &canonical_type(target));
+        Op::Schema(reference) => {
+            op.push(100);
+            frame(&mut op, &reference.canonical_bytes());
+        }
+        Op::InvokePrimitive { primitive } => {
+            op.push(101);
+            frame(&mut op, primitive.namespace.as_bytes());
+            frame(&mut op, primitive.name.as_bytes());
+            op.extend_from_slice(&primitive.version.to_le_bytes());
         }
         Op::Div => op.push(23),
         Op::IsVariant { variant } => {

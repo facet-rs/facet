@@ -2,8 +2,12 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use crate::schema::{SchemaPattern, SchemaRef};
+use crate::vir::Type;
 
-use super::{DemandKey, ReadObservation, ReadProjection, ReadWitness, Receipt, ValueId};
+use super::{
+    DemandKey, FramedField, FramedNode, FramedValue, ReadObservation, ReadProjection, ReadWitness,
+    Receipt, ValueId,
+};
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PrimitiveId {
@@ -86,7 +90,92 @@ pub struct PrimitivePublication {
 pub struct WitnessedValue {
     pub identity: ValueId,
     pub bytes: Vec<u8>,
+    pub value: PrimitiveValue,
     pub observation: ReadObservation,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct PrimitiveValue {
+    pub schema: SchemaRef,
+    pub body: PrimitiveValueBody,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum PrimitiveValueBody {
+    Bytes(Vec<u8>),
+    Product(Vec<PrimitiveField>),
+    Variant {
+        tag: u32,
+        fields: Vec<PrimitiveField>,
+    },
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct PrimitiveField {
+    pub schema: SchemaRef,
+    pub value: PrimitiveFieldValue,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum PrimitiveFieldValue {
+    Inline(Vec<u8>),
+    Child(Box<PrimitiveValue>),
+}
+
+impl PrimitiveValue {
+    #[must_use]
+    pub fn bytes(schema: SchemaRef, bytes: Vec<u8>) -> Self {
+        Self {
+            schema,
+            body: PrimitiveValueBody::Bytes(bytes),
+        }
+    }
+
+    #[must_use]
+    pub fn identity(&self) -> ValueId {
+        self.framed_node().identity()
+    }
+
+    #[must_use]
+    pub fn resident_bytes(&self) -> &[u8] {
+        match &self.body {
+            PrimitiveValueBody::Bytes(bytes) => bytes,
+            PrimitiveValueBody::Product(_) | PrimitiveValueBody::Variant { .. } => &[],
+        }
+    }
+
+    #[must_use]
+    pub fn framed_node(&self) -> FramedNode {
+        match &self.body {
+            PrimitiveValueBody::Bytes(bytes) => {
+                FramedNode::leaf(self.schema.clone(), bytes.clone())
+            }
+            PrimitiveValueBody::Product(fields) => FramedNode::Variant {
+                schema: self.schema.clone(),
+                tag: 0,
+                fields: fields.iter().map(PrimitiveField::framed).collect(),
+            },
+            PrimitiveValueBody::Variant { tag, fields } => FramedNode::Variant {
+                schema: self.schema.clone(),
+                tag: u64::from(*tag),
+                fields: fields.iter().map(PrimitiveField::framed).collect(),
+            },
+        }
+    }
+}
+
+impl PrimitiveField {
+    fn framed(&self) -> FramedField {
+        FramedField {
+            schema: self.schema.clone(),
+            value: match &self.value {
+                PrimitiveFieldValue::Inline(bytes) => FramedValue::Bytes(bytes.clone()),
+                PrimitiveFieldValue::Child(child) => FramedValue::Optional(Some(child.identity())),
+            },
+        }
+    }
 }
 
 pub trait EffectAuthority: Send + Sync {
@@ -98,21 +187,39 @@ pub trait EffectAuthority: Send + Sync {
 
     fn intern(&self, schema: &SchemaRef, bytes: &[u8]) -> Result<ValueId, PrimitiveMachineError>;
 
+    fn intern_value(&self, value: PrimitiveValue) -> Result<ValueId, PrimitiveMachineError> {
+        match &value.body {
+            PrimitiveValueBody::Bytes(bytes) => self.intern(&value.schema, bytes),
+            PrimitiveValueBody::Product(_) | PrimitiveValueBody::Variant { .. } => {
+                Err(PrimitiveMachineError::AuthorityViolation {
+                    detail: "effect authority does not admit structural values".to_owned(),
+                })
+            }
+        }
+    }
+
     fn emit(&self, event: PrimitiveEvent) -> Result<(), PrimitiveMachineError>;
 
     fn mint_mount_grant(&self, request: &ValueId) -> Result<ValueId, PrimitiveMachineError>;
+
+    fn type_for_schema(&self, schema: &SchemaRef) -> Result<Type, PrimitiveMachineError> {
+        Err(PrimitiveMachineError::AuthorityViolation {
+            detail: format!("semantic schema {schema} is not present in this effect snapshot"),
+        })
+    }
 }
 
 #[derive(Default)]
 pub struct StagedEffectAuthority {
-    inputs: BTreeMap<ValueId, Vec<u8>>,
-    staged: Mutex<BTreeMap<ValueId, Vec<u8>>>,
+    inputs: BTreeMap<ValueId, PrimitiveValue>,
+    staged: Mutex<BTreeMap<ValueId, PrimitiveValue>>,
     events: Mutex<Vec<PrimitiveEvent>>,
+    schema_types: BTreeMap<SchemaRef, Type>,
 }
 
 impl StagedEffectAuthority {
     #[must_use]
-    pub fn new(inputs: impl IntoIterator<Item = (ValueId, Vec<u8>)>) -> Self {
+    pub fn new(inputs: impl IntoIterator<Item = (ValueId, PrimitiveValue)>) -> Self {
         Self {
             inputs: inputs.into_iter().collect(),
             ..Self::default()
@@ -120,7 +227,13 @@ impl StagedEffectAuthority {
     }
 
     #[must_use]
-    pub fn staged_body(&self, identity: &ValueId) -> Option<Vec<u8>> {
+    pub fn with_schema_types(mut self, types: impl IntoIterator<Item = (SchemaRef, Type)>) -> Self {
+        self.schema_types = types.into_iter().collect();
+        self
+    }
+
+    #[must_use]
+    pub fn staged_value(&self, identity: &ValueId) -> Option<PrimitiveValue> {
         self.staged
             .lock()
             .expect("staged authority mutex poisoned")
@@ -148,8 +261,8 @@ impl EffectAuthority for StagedEffectAuthority {
                 detail: "staged authority only admits whole-value reads".to_owned(),
             });
         }
-        let bytes = if let Some(bytes) = self.inputs.get(source) {
-            bytes.clone()
+        let value = if let Some(value) = self.inputs.get(source) {
+            value.clone()
         } else {
             self.staged
                 .lock()
@@ -162,7 +275,8 @@ impl EffectAuthority for StagedEffectAuthority {
         };
         Ok(WitnessedValue {
             identity: source.clone(),
-            bytes,
+            bytes: value.resident_bytes().to_vec(),
+            value,
             observation: ReadObservation::Value(source.clone()),
         })
     }
@@ -172,7 +286,19 @@ impl EffectAuthority for StagedEffectAuthority {
         self.staged
             .lock()
             .expect("staged authority mutex poisoned")
-            .insert(identity.clone(), bytes.to_vec());
+            .insert(
+                identity.clone(),
+                PrimitiveValue::bytes(schema.clone(), bytes.to_vec()),
+            );
+        Ok(identity)
+    }
+
+    fn intern_value(&self, value: PrimitiveValue) -> Result<ValueId, PrimitiveMachineError> {
+        let identity = value.identity();
+        self.staged
+            .lock()
+            .expect("staged authority mutex poisoned")
+            .insert(identity.clone(), value);
         Ok(identity)
     }
 
@@ -186,6 +312,14 @@ impl EffectAuthority for StagedEffectAuthority {
 
     fn mint_mount_grant(&self, request: &ValueId) -> Result<ValueId, PrimitiveMachineError> {
         Ok(request.clone())
+    }
+
+    fn type_for_schema(&self, schema: &SchemaRef) -> Result<Type, PrimitiveMachineError> {
+        self.schema_types.get(schema).cloned().ok_or_else(|| {
+            PrimitiveMachineError::AuthorityViolation {
+                detail: format!("semantic schema {schema} is absent from the effect snapshot"),
+            }
+        })
     }
 }
 
@@ -245,12 +379,20 @@ impl EffectCtx {
         self.authority.intern(schema, bytes)
     }
 
+    pub fn intern_value(&self, value: PrimitiveValue) -> Result<ValueId, PrimitiveMachineError> {
+        self.authority.intern_value(value)
+    }
+
     pub fn emit(&self, event: PrimitiveEvent) -> Result<(), PrimitiveMachineError> {
         self.authority.emit(event)
     }
 
     pub fn mint_mount_grant(&self, request: &ValueId) -> Result<ValueId, PrimitiveMachineError> {
         self.authority.mint_mount_grant(request)
+    }
+
+    pub fn type_for_schema(&self, schema: &SchemaRef) -> Result<Type, PrimitiveMachineError> {
+        self.authority.type_for_schema(schema)
     }
 
     pub fn observe(&self, observation: JournalObservation) {

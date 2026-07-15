@@ -57,14 +57,14 @@ pub enum RuntimeFault {
     },
     MissingTaskRecord,
     PureIslandYielded,
+    /// A verified `HostCallYield` reached the registered primitive boundary,
+    /// but its typed call plan, request value, completion, or active-frame
+    /// materialization violated the machine ABI.
+    PrimitiveHost {
+        detail: String,
+    },
     PureIslandParked {
         input: u32,
-    },
-    /// The typed document host crossed its verified ABI incorrectly. Document
-    /// syntax/type errors are not machine faults: they materialize as the
-    /// `Err(DecodeError)` value instead.
-    DocumentParseHost {
-        detail: String,
     },
     /// A wire forced a demand that is already being evaluated on the demand
     /// stack: a cyclic/re-entrant demand. The demand state machine detects it as
@@ -107,6 +107,9 @@ pub enum RuntimeFault {
     /// [`super::FailureValue`]s.
     EffectPlane {
         detail: &'static str,
+    },
+    UnsupportedEffectOperation {
+        operation: String,
     },
 }
 

@@ -17,6 +17,9 @@ pub struct Counters {
     /// separate from `pure_host_calls`: document parsing crosses the host
     /// boundary once per dynamic document and is not a lowered pure op.
     pub document_parse_host_calls: u64,
+    /// Generic registered-primitive dispatches that actually began. Joined or
+    /// memoized demands do not increment this counter.
+    pub primitive_invocations: u64,
     pub store_interns: u64,
     pub store_dedups: u64,
     pub bytes_hashed: u64,

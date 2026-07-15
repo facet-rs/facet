@@ -18,9 +18,9 @@ use vix::runtime::{
 };
 use vix::surface::{SurfaceParser, ast};
 use vix::vir::{
-    ArrayMapExecutionShape, ArrayMapGrainKey, DecodeFormat, EffectKind, FunctionId,
-    GeneratorControl, GeneratorStep, NodeRef, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT,
-    Op as VirOp, Type as VirType, VariantPayload, canonical_recipe,
+    ArrayMapExecutionShape, ArrayMapGrainKey, EffectKind, FunctionId, GeneratorControl,
+    GeneratorStep, NodeRef, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT, Op as VirOp, Type as VirType,
+    VariantPayload, canonical_recipe,
 };
 use weavy::task::Op as WeavyOp;
 use weavy::{LaneRequest, PayloadKind, RegionShape, ValueShapeKind, WordKind};
@@ -5963,8 +5963,8 @@ fn t() -> Stream<Check> {
 }
 
 /// A decode whose document is not a compile-time-constant literal cannot be
-/// folded; it lowers to the explicit scheduler-owned document host seam with
-/// the format and target type carried in VIR.
+/// folded; it builds an ordinary typed request value and lowers through the one
+/// generic registered-primitive invocation.
 #[test]
 fn nonliteral_decode_names_the_runtime_seam() {
     const SOURCE: &str = "\
@@ -5985,23 +5985,20 @@ fn t() -> Stream<Check> {
             .iter()
             .any(|node| matches!(
                 &node.op,
-                VirOp::Decode {
-                    format: DecodeFormat::Json,
-                    target
-                } if target.name() == "PkgRow"
+                VirOp::InvokePrimitive { primitive }
+                    if primitive == &vix::vir::decode_primitive_id()
             )),
-        "dynamic JSON decode is a runtime-host VIR node: {compilation:#?}"
+        "dynamic JSON decode is a generic registered invocation: {compilation:#?}"
     );
 }
 
-/// A nonliteral fallible decode crosses the real scheduler-owned document host
-/// primitive. This is deliberately not a fold: the verified program contains a
-/// `HostCallYield`, the runtime records exactly one document host call and one
-/// source-read receipt per dynamic document, and both the success and the
-/// structured `Err(DecodeError)` branch execute through the ordinary Result
-/// match machinery.
+/// A nonliteral fallible decode crosses the registered primitive authority.
+/// This is deliberately not a fold: the authored graph contains one generic
+/// invocation, the runtime records exactly one dispatch and one source-read
+/// receipt per dynamic document, and both the success and structured
+/// `Err(DecodeError)` branch execute through ordinary Result matching.
 #[test]
-fn dynamic_json_and_toml_decode_use_the_scheduler_host_once_per_document() {
+fn dynamic_json_and_toml_decode_use_one_registered_invocation_per_document() {
     const JSON_OK: &str = "\
 struct PkgRow { name: String }
 fn check(src: String) -> Bool {
@@ -6047,30 +6044,25 @@ fn t() -> Stream<Check> {
 }
 ";
 
-    for (source, expected_documents) in [(JSON_OK, 1), (JSON_ERR, 1), (TOML_OK, 1)] {
+    for (source, expected_documents) in [(JSON_OK, 1u64), (JSON_ERR, 1), (TOML_OK, 1)] {
         let module = Compiler::new()
             .compile(source)
             .expect("dynamic decode compiles");
-        let partitioned = module.partition_test(&module.tests[0]);
-        let mut lowering = LoweringCache::default();
-        let lowered = lowering
-            .get_or_lower(&partitioned.islands[0])
-            .expect("dynamic decode lowers");
         assert_eq!(
-            lowered
-                .program()
-                .fns
+            module
+                .functions
                 .iter()
-                .flat_map(|function| &function.code)
-                .filter(|op| matches!(op, WeavyOp::HostCallYield { .. }))
-                .count(),
-            1,
-            "one verified host edge for one dynamic document",
+                .flat_map(|function| &function.nodes)
+                .filter(|node| matches!(node.op, VirOp::InvokePrimitive { .. }))
+                .count() as u64,
+            expected_documents,
+            "one generic primitive invocation for one dynamic document",
         );
         let report = run_source(source).expect("dynamic decode runs");
         assert!(report.passed() && report.agrees());
         for lane in [&report.plain, &report.chaos] {
-            assert_eq!(lane.counters.document_parse_host_calls, expected_documents);
+            assert_eq!(lane.counters.primitive_invocations, expected_documents);
+            assert_eq!(lane.counters.document_parse_host_calls, 0);
             assert_eq!(lane.counters.pure_host_calls, 0);
             assert_eq!(lane.receipt_count, expected_documents);
         }

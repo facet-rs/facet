@@ -1,6 +1,7 @@
 //! Runtime ownership boundaries for the new Vix compiler path.
 
 mod abi;
+mod decode_primitive;
 mod error;
 mod fixture;
 mod identity;
@@ -11,6 +12,7 @@ mod scheduler;
 mod store;
 
 pub use abi::*;
+pub use decode_primitive::*;
 pub use error::*;
 pub use fixture::*;
 pub use identity::*;

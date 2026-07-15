@@ -45,6 +45,7 @@ impl EffectAuthority for MemoryAuthority {
             })?;
         Ok(WitnessedValue {
             identity: source.clone(),
+            value: vix::runtime::PrimitiveValue::bytes(source.schema.clone(), bytes.clone()),
             bytes,
             observation: ReadObservation::Value(source.clone()),
         })

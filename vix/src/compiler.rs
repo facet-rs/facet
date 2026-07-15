@@ -21,7 +21,8 @@ use crate::vir::{
     OPTION_NONE_VARIANT, OPTION_SOME_VARIANT, ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op,
     OrderedMatchArm, Parameter, ParameterId, ParameterKind, RESULT_ERR_VARIANT, RESULT_OK_VARIANT,
     RecordField, RecordType, Test, TestMetadata, TraceCheck, Type, VariantPayload, WireArg,
-    WireSelector, YieldSite, YieldSiteId,
+    WireSelector, YieldSite, YieldSiteId, decode_error_type, decode_primitive_id,
+    decode_request_type,
 };
 
 pub struct Compiler {
@@ -4849,30 +4850,6 @@ fn try_decode_format(name: &str) -> Option<DecodeFormat> {
 const DECODE_ERROR_KIND_FIELD: u32 = 0;
 const DECODE_ERROR_PATH_FIELD: u32 = 1;
 
-fn decode_error_type() -> Type {
-    Type::Record(RecordType::new(
-        "DecodeError",
-        vec![
-            RecordField {
-                name: "kind".to_owned(),
-                ty: Type::String,
-            },
-            RecordField {
-                name: "path".to_owned(),
-                ty: Type::String,
-            },
-            RecordField {
-                name: "document_offset".to_owned(),
-                ty: Type::Int,
-            },
-            RecordField {
-                name: "document_len".to_owned(),
-                ty: Type::Int,
-            },
-        ],
-    ))
-}
-
 /// Is `ty` the built-in `DecodeError` value shape?
 fn is_decode_error(ty: &Type) -> bool {
     matches!(ty, Type::Record(record) if record.name == "DecodeError")
@@ -5043,13 +5020,14 @@ fn lower_try_decode(
         )?;
         require_type(&document, &Type::String, expr_span(&call.args.args[0]))?;
         return Ok(LoweredValue {
-            node: push_node(
+            node: lower_registered_decode_request(
                 nodes,
                 call.span,
+                format,
+                &target,
+                true,
+                document.node,
                 result_ty.clone(),
-                EffectFacts::PURE,
-                vec![document.node],
-                Op::Decode { format, target },
             ),
             ty: result_ty,
         });
@@ -5111,16 +5089,14 @@ fn lower_decode(
         )?;
         require_type(&document, &Type::String, expr_span(&call.args.args[0]))?;
         return Ok(LoweredValue {
-            node: push_node(
+            node: lower_registered_decode_request(
                 nodes,
                 call.span,
+                format,
+                target,
+                false,
+                document.node,
                 target.clone(),
-                EffectFacts::PURE,
-                vec![document.node],
-                Op::Decode {
-                    format,
-                    target: target.clone(),
-                },
             ),
             ty: target.clone(),
         });
@@ -5128,6 +5104,62 @@ fn lower_decode(
     let decoded = decode::decode(format, &document.value, target)
         .map_err(|error| decode_failed_diagnostic(call.span, format, target, &error))?;
     lower_decoded_value(nodes, &decoded, target, call.span)
+}
+
+fn lower_registered_decode_request(
+    nodes: &mut Vec<Node>,
+    span: Span,
+    format: DecodeFormat,
+    target: &Type,
+    fallible: bool,
+    document: NodeId,
+    response: Type,
+) -> NodeId {
+    let format = push_node(
+        nodes,
+        span,
+        Type::Int,
+        EffectFacts::PURE,
+        Vec::new(),
+        Op::Int(match format {
+            DecodeFormat::Json => 0,
+            DecodeFormat::Toml => 1,
+        }),
+    );
+    let target_schema = push_node(
+        nodes,
+        span,
+        Type::Extern(ExternKind::Schema),
+        EffectFacts::PURE,
+        Vec::new(),
+        Op::Schema(target.schema_ref()),
+    );
+    let fallible = push_node(
+        nodes,
+        span,
+        Type::Bool,
+        EffectFacts::PURE,
+        Vec::new(),
+        Op::Bool(fallible),
+    );
+    let request = push_node(
+        nodes,
+        span,
+        decode_request_type(),
+        EffectFacts::PURE,
+        vec![format, target_schema, fallible, document],
+        Op::Record,
+    );
+    push_node(
+        nodes,
+        span,
+        response,
+        EffectFacts::PURE,
+        vec![request],
+        Op::InvokePrimitive {
+            primitive: decode_primitive_id(),
+        },
+    )
 }
 
 /// Render a typed [`decode::DecodeError`] into a structured compiler

@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::ops::Deref;
+use std::sync::Arc;
 
 use weavy::exec::{
     FallbackReason, FaultSite, LaneKind, ResolvedTaskValue, StoreHandle, TaskFault,
@@ -8,10 +9,7 @@ use weavy::exec::{
 };
 use weavy::task::{FnId, HostFn, TaskEvent as WeavyTaskEvent, TaskStep};
 
-use crate::decode::{self, DecodedValue};
-use crate::lowering::{
-    DocumentParseCall, LoweringArtifact, LoweringAttribution, ValueInputBinding,
-};
+use crate::lowering::{LoweringArtifact, LoweringAttribution, ValueInputBinding};
 use crate::schema::SchemaRef;
 use crate::vir::{
     ExternKind, Function, FunctionId, Island, IslandId, MiniSolveRequirements, NodeId,
@@ -34,6 +32,11 @@ use super::observe::{
 use super::store::{
     FrozenValue, Handle, Interned, Store, StoreEntry, StoreJournal, StoreJournalError,
     StoreJournalLoadReport,
+};
+use super::{
+    DecodePrimitive, EffectCtx, PrimitiveCompletion, PrimitiveDispatcher, PrimitiveField,
+    PrimitiveFieldValue, PrimitiveRegistry, PrimitiveValue, PrimitiveValueBody,
+    StagedEffectAuthority,
 };
 use super::{MachineAttribution, MachineError, MachineOperation, RuntimeFault};
 
@@ -89,30 +92,31 @@ impl Deref for DemandExecution<'_> {
     }
 }
 
-/// The single generic document host table entry records its request and yields.
-/// It does not parse, own a store, or choose a schema: those are scheduler-owned
-/// responsibilities performed after Weavy has returned the suspended frame.
-#[derive(Clone, Copy, Debug)]
-struct DocumentHostRequest {
+#[derive(Clone, Debug)]
+struct PrimitiveHostRequest {
     plan: usize,
-    input: i64,
+    frame: Vec<u8>,
 }
 
 #[derive(Default)]
-struct DocumentHostQueue {
-    requests: Vec<DocumentHostRequest>,
+struct PrimitiveHostQueue {
+    requests: Vec<PrimitiveHostRequest>,
     fault: Option<String>,
 }
 
-impl DocumentHostQueue {
+impl PrimitiveHostQueue {
     fn call(&mut self, frame: &mut [u8]) {
-        let plan = super::FrameSlot::for_word(0)
-            .and_then(|slot| slot.read(frame))
+        let plan = frame
+            .get(..8)
+            .and_then(|bytes| bytes.try_into().ok())
+            .map(i64::from_le_bytes)
             .and_then(|value| usize::try_from(value).ok());
-        let input = super::FrameSlot::for_word(1).and_then(|slot| slot.read(frame));
-        match (plan, input) {
-            (Some(plan), Some(input)) => self.requests.push(DocumentHostRequest { plan, input }),
-            _ => self.fault = Some("invalid document host ABI header".to_owned()),
+        match plan {
+            Some(plan) => self.requests.push(PrimitiveHostRequest {
+                plan,
+                frame: frame.to_vec(),
+            }),
+            None => self.fault = Some("invalid primitive host ABI header".to_owned()),
         }
     }
 }
@@ -224,11 +228,8 @@ pub struct Runtime<S> {
     /// backs the described-wire trace checks and retains only the
     /// callee/argument/preimage selectors a descriptor can name.
     wire_demands: Vec<RealizedWireDemand>,
-    /// Generator control can itself cross the typed document host boundary.
-    /// Generators do not publish a memoized value, so their source reads live in
-    /// this scheduler-owned receipt log rather than in a [`MemoEntry`].
-    generator_document_receipts: Vec<Receipt>,
     fixture_store: FixtureStore,
+    primitive_dispatcher: PrimitiveDispatcher,
     authoritative_rerun_audit: bool,
 }
 
@@ -349,6 +350,14 @@ fn build_memo_suffix_index(
     index
 }
 
+fn default_primitive_dispatcher() -> PrimitiveDispatcher {
+    let mut registry = PrimitiveRegistry::default();
+    registry
+        .register(Arc::new(DecodePrimitive::default()))
+        .expect("the built-in decode primitive is registered once");
+    PrimitiveDispatcher::new(Arc::new(registry))
+}
+
 impl<S: EventSink> Runtime<S> {
     #[must_use]
     pub fn new(sink: S) -> Self {
@@ -363,8 +372,8 @@ impl<S: EventSink> Runtime<S> {
             counters: Counters::default(),
             next_task: 0,
             wire_demands: Vec::new(),
-            generator_document_receipts: Vec::new(),
             fixture_store: FixtureStore::default(),
+            primitive_dispatcher: default_primitive_dispatcher(),
             authoritative_rerun_audit: false,
         }
     }
@@ -391,8 +400,8 @@ impl<S: EventSink> Runtime<S> {
             counters: Counters::default(),
             next_task: 0,
             wire_demands: Vec::new(),
-            generator_document_receipts: Vec::new(),
             fixture_store: FixtureStore::default(),
+            primitive_dispatcher: default_primitive_dispatcher(),
             authoritative_rerun_audit: false,
         }
     }
@@ -422,8 +431,8 @@ impl<S: EventSink> Runtime<S> {
                 counters: Counters::default(),
                 next_task: 0,
                 wire_demands: Vec::new(),
-                generator_document_receipts: Vec::new(),
                 fixture_store: FixtureStore::default(),
+                primitive_dispatcher: default_primitive_dispatcher(),
                 authoritative_rerun_audit: false,
             },
             PersistentRuntimeJournalLoadReport {
@@ -1248,20 +1257,15 @@ impl<S: EventSink> Runtime<S> {
             // branch's argument — is never evaluated, entered, or failed.
             let mut ready = vec![false; wires.len()];
             let mut awaited = vec![0i64; wires.len()];
-            let mut document_reads = Vec::new();
+            let mut primitive_reads = Vec::new();
             loop {
-                let mut document_host_queue = DocumentHostQueue::default();
+                let mut primitive_host = PrimitiveHostQueue::default();
                 let step = {
-                    let mut document_host = |frame: &mut [u8]| document_host_queue.call(frame);
+                    let mut call_primitive = |frame: &mut [u8]| primitive_host.call(frame);
+                    let mut hosts: [HostFn<'_>; 1] = [&mut call_primitive];
                     match self.store.with_value_memory_overrides(
                         &value_memory_overrides,
                         |value_memories| {
-                            // Every scheduler task receives the one generic document
-                            // primitive. Verified programs that do not contain a
-                            // `HostCallYield` never invoke it; a program that does
-                            // is admitted only with a sufficient host table and is
-                            // routed back through the typed plan below.
-                            let mut hosts: Vec<HostFn<'_>> = vec![&mut document_host];
                             task.drive_hosted_with_value_memories(
                                 &mut ready,
                                 &awaited,
@@ -1291,17 +1295,25 @@ impl<S: EventSink> Runtime<S> {
                 match step {
                     TaskStep::Done => break,
                     TaskStep::Yielded => {
-                        let request = match document_host_queue.requests.as_slice() {
-                            [request] if document_host_queue.fault.is_none() => *request,
-                            _ => {
+                        let result =
+                            match (primitive_host.fault, primitive_host.requests.as_slice()) {
+                                (Some(detail), _) => Err(detail),
+                                (None, [request]) => self.complete_primitive_host_call(
+                                    &mut task,
+                                    lowered,
+                                    request.clone(),
+                                ),
+                                (None, requests) => Err(format!(
+                                    "primitive yield recorded {} host requests",
+                                    requests.len()
+                                )),
+                            };
+                        match result {
+                            Ok(reads) => primitive_reads.extend(reads),
+                            Err(detail) => {
                                 let error = MachineError::runtime(
                                     MachineOperation::Drive,
-                                    RuntimeFault::DocumentParseHost {
-                                        detail: document_host_queue.fault.unwrap_or_else(|| {
-                                            "document host yielded without exactly one request"
-                                                .to_owned()
-                                        }),
-                                    },
+                                    RuntimeFault::PrimitiveHost { detail },
                                     None,
                                     Some(lowered.demand_key),
                                 );
@@ -1311,41 +1323,6 @@ impl<S: EventSink> Runtime<S> {
                                     error,
                                 )));
                             }
-                        };
-                        let Some(plan) = lowered.document_parse_calls.get(request.plan) else {
-                            let error = MachineError::runtime(
-                                MachineOperation::Drive,
-                                RuntimeFault::DocumentParseHost {
-                                    detail:
-                                        "document host plan is absent from the lowered artifact"
-                                            .to_owned(),
-                                },
-                                None,
-                                Some(lowered.demand_key),
-                            );
-                            return Err(Box::new(self.terminate_machine_fault(
-                                task_id,
-                                lowered.demand_key,
-                                error,
-                            )));
-                        };
-                        if let Err(detail) = self.complete_document_parse(
-                            &mut task,
-                            plan,
-                            request,
-                            &mut document_reads,
-                        ) {
-                            let error = MachineError::runtime(
-                                MachineOperation::Drive,
-                                RuntimeFault::DocumentParseHost { detail },
-                                None,
-                                Some(lowered.demand_key),
-                            );
-                            return Err(Box::new(self.terminate_machine_fault(
-                                task_id,
-                                lowered.demand_key,
-                                error,
-                            )));
                         }
                     }
                     TaskStep::Parked { input } => {
@@ -1447,6 +1424,10 @@ impl<S: EventSink> Runtime<S> {
                     )));
                 }
             }
+            let primitive_receipt = (!primitive_reads.is_empty()).then(|| Receipt {
+                demand: lowered.demand_key,
+                reads: primitive_reads.clone(),
+            });
             let passed = match decode_result(&task, lowered) {
                 Ok(DecodedResult::OkScalar(passed)) => passed,
                 Ok(DecodedResult::OkScalarValue(word)) => {
@@ -1473,8 +1454,8 @@ impl<S: EventSink> Runtime<S> {
                             key: lowered.demand_key,
                             preimage: lowered.demand_preimage.clone(),
                             result: interned.handle,
-                            receipt: document_receipt(lowered.demand_key, &document_reads),
-                            current_receipt: !document_reads.is_empty(),
+                            receipt: primitive_receipt.clone(),
+                            current_receipt: primitive_receipt.is_some(),
                         },
                     );
                     if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
@@ -1540,8 +1521,8 @@ impl<S: EventSink> Runtime<S> {
                             key: lowered.demand_key,
                             preimage: lowered.demand_preimage.clone(),
                             result: interned.handle,
-                            receipt: document_receipt(lowered.demand_key, &document_reads),
-                            current_receipt: !document_reads.is_empty(),
+                            receipt: primitive_receipt.clone(),
+                            current_receipt: primitive_receipt.is_some(),
                         },
                     );
                     if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
@@ -1611,8 +1592,8 @@ impl<S: EventSink> Runtime<S> {
                             key: lowered.demand_key,
                             preimage: lowered.demand_preimage.clone(),
                             result: interned.handle,
-                            receipt: None,
-                            current_receipt: false,
+                            receipt: primitive_receipt.clone(),
+                            current_receipt: primitive_receipt.is_some(),
                         },
                     );
                     if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
@@ -1739,8 +1720,8 @@ impl<S: EventSink> Runtime<S> {
                     key: lowered.demand_key,
                     preimage: lowered.demand_preimage.clone(),
                     result: interned.handle,
-                    receipt: document_receipt(lowered.demand_key, &document_reads),
-                    current_receipt: !document_reads.is_empty(),
+                    receipt: primitive_receipt.clone(),
+                    current_receipt: primitive_receipt.is_some(),
                 },
             );
             if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
@@ -1925,6 +1906,7 @@ impl<S: EventSink> Runtime<S> {
                 effect.output,
                 &arguments,
                 &mut reads,
+                key,
             )?;
             let EffectTerm::Value(value) = value else {
                 return Err(Box::new(self.terminate_machine_fault(
@@ -2063,6 +2045,7 @@ impl<S: EventSink> Runtime<S> {
         node: NodeId,
         arguments: &[EffectValue],
         reads: &mut Vec<super::model::ReadWitness>,
+        demand: DemandKey,
     ) -> Result<EffectTerm, Box<MachineError>> {
         let (_, nodes, _) = Self::effect_function(island, function).ok_or_else(|| {
             Box::new(MachineError::runtime(
@@ -2098,7 +2081,7 @@ impl<S: EventSink> Runtime<S> {
                     None,
                 ))
             })?;
-            this.evaluate_effect_node(island, function, id, arguments, reads)
+            this.evaluate_effect_node(island, function, id, arguments, reads, demand)
         };
         match &node.op {
             Op::Parameter(id) => {
@@ -2118,9 +2101,17 @@ impl<S: EventSink> Runtime<S> {
                 &node.ty,
                 value.to_le_bytes().to_vec(),
             ))),
+            Op::Bool(value) => Ok(EffectTerm::Value(effect_leaf(
+                &node.ty,
+                i64::from(*value).to_le_bytes().to_vec(),
+            ))),
             Op::String(value) | Op::Path(value) => Ok(EffectTerm::Value(effect_leaf(
                 &node.ty,
                 value.as_bytes().to_vec(),
+            ))),
+            Op::Schema(reference) => Ok(EffectTerm::Value(effect_leaf(
+                &node.ty,
+                reference.canonical_bytes(),
             ))),
             Op::Call(callee) => {
                 let (_, _, output) = Self::effect_function(island, *callee).ok_or_else(|| {
@@ -2142,7 +2133,7 @@ impl<S: EventSink> Runtime<S> {
                     };
                     callee_arguments.push(value);
                 }
-                self.evaluate_effect_node(island, *callee, output, &callee_arguments, reads)
+                self.evaluate_effect_node(island, *callee, output, &callee_arguments, reads, demand)
             }
             Op::PathJoin => {
                 let EffectTerm::Value(left) = input(0, self)? else {
@@ -2210,20 +2201,27 @@ impl<S: EventSink> Runtime<S> {
                 value.frozen = Some(FrozenValue::Inline(bytes));
                 Ok(EffectTerm::Value(value))
             }
-            Op::Decode { format, target } => {
-                let EffectTerm::Value(document) = input(0, self)? else {
-                    return effect_fault("decode input was codata");
+            Op::Record => {
+                let Type::Record(record) = &node.ty else {
+                    return effect_fault("effect Record node had a non-record type");
                 };
-                let text = core::str::from_utf8(&document.resident)
-                    .map_err(|_| effect_machine_error("decode input was not UTF-8"))?;
-                reads.push(ReadWitness {
-                    source: document.identity.clone(),
-                    projection: ReadProjection::Document,
-                    observation: ReadObservation::Value(document.identity.clone()),
-                });
-                let decoded = decode::decode(*format, text, target)
-                    .map_err(|_| effect_machine_error("effect decode failed"))?;
-                Ok(EffectTerm::Value(decoded_effect_value(target, &decoded)?))
+                if record.fields.len() != node.inputs.len() {
+                    return effect_fault("effect Record field count disagreed with its type");
+                }
+                let mut fields = Vec::with_capacity(record.fields.len());
+                for (index, field) in record.fields.iter().enumerate() {
+                    let EffectTerm::Value(value) = input(index, self)? else {
+                        return effect_fault("effect Record field was codata");
+                    };
+                    fields.push(primitive_field_from_effect(&field.ty, value)?);
+                }
+                Ok(EffectTerm::Value(effect_value_from_primitive(
+                    &node.ty,
+                    PrimitiveValue {
+                        schema: node.ty.schema_ref(),
+                        body: PrimitiveValueBody::Product(fields),
+                    },
+                )?))
             }
             Op::Project { index } => {
                 let EffectTerm::Value(value) = input(0, self)? else {
@@ -2435,13 +2433,19 @@ impl<S: EventSink> Runtime<S> {
             }
             Op::Eq => effect_fault("effect island contained an Eq operation"),
             Op::Ne => effect_fault("effect island contained a Ne operation"),
-            Op::Record => effect_fault("effect island contained a Record operation"),
             Op::Array => effect_fault("effect island contained an Array operation"),
             Op::ArrayConcat => effect_fault("effect island contained an ArrayConcat operation"),
             Op::Map => effect_fault("effect island contained a Map operation"),
             Op::MapWith => effect_fault("effect island contained a Map.with operation"),
             Op::Variant { .. } => effect_fault("effect island contained a Variant operation"),
-            _ => effect_fault("effect island contained a non-effect operation"),
+            _ => Err(Box::new(MachineError::runtime(
+                MachineOperation::Effect,
+                RuntimeFault::UnsupportedEffectOperation {
+                    operation: format!("{:?}", node.op),
+                },
+                None,
+                None,
+            ))),
         }
     }
 
@@ -2544,6 +2548,87 @@ impl<S: EventSink> Runtime<S> {
             .collect::<Vec<_>>();
         paths.sort();
         Ok(paths)
+    }
+
+    fn complete_primitive_host_call(
+        &mut self,
+        task: &mut weavy::exec::ExecTask<'_>,
+        lowered: &DemandExecution<'_>,
+        request: PrimitiveHostRequest,
+    ) -> Result<Vec<ReadWitness>, String> {
+        let plan = lowered
+            .primitive_calls
+            .get(request.plan)
+            .cloned()
+            .ok_or_else(|| format!("primitive host plan {} is absent", request.plan))?;
+        let request_value =
+            primitive_value_from_frame(&request.frame, plan.input, &plan.request, &self.store)?;
+        let request_id = request_value.identity();
+        let primitive_demand = primitive_demand_key(&plan.primitive, &request_id);
+        let mut catalog = BTreeMap::new();
+        insert_schema_type(&plan.request, &mut catalog);
+        insert_schema_type(&plan.response, &mut catalog);
+        let authority = Arc::new(
+            StagedEffectAuthority::new([(request_id.clone(), request_value.clone())])
+                .with_schema_types(catalog),
+        );
+        let ticket = self
+            .primitive_dispatcher
+            .begin_or_join(
+                &plan.primitive,
+                request_id.clone(),
+                EffectCtx::new(primitive_demand, authority.clone()),
+            )
+            .map_err(|error| format!("registered primitive dispatch failed: {error:?}"))?;
+        let publication = ticket.outcome().ok_or_else(|| {
+            "registered primitive suspended without a completion event".to_owned()
+        })?;
+        self.primitive_dispatcher.retire(primitive_demand);
+        self.counters.primitive_invocations += 1;
+        let identity = match publication.completion {
+            PrimitiveCompletion::Ok(identity) => identity,
+            PrimitiveCompletion::Failed(identity) => {
+                return Err(format!(
+                    "registered primitive returned semantic failure {identity:?}"
+                ));
+            }
+            PrimitiveCompletion::MachineError(error) => {
+                return Err(format!("registered primitive machine error: {error:?}"));
+            }
+        };
+        let value = authority
+            .staged_value(&identity)
+            .or_else(|| (identity == request_id).then_some(request_value))
+            .ok_or_else(|| format!("primitive result {identity:?} was not staged"))?;
+        if value.schema != plan.response.schema_ref() {
+            return Err(format!(
+                "primitive result schema {} disagrees with response schema {}",
+                value.schema,
+                plan.response.schema_ref()
+            ));
+        }
+        for index in 0..plan.output.words().as_usize() {
+            let slot = plan
+                .output
+                .word(index)
+                .ok_or_else(|| "primitive output region overflowed".to_owned())?;
+            task.write_host_word(slot.byte_offset(), 0)
+                .map_err(|fault| format!("primitive output clear failed: {fault:?}"))?;
+        }
+        let mut interned = Vec::new();
+        write_primitive_value(
+            task,
+            plan.output,
+            0,
+            &plan.response,
+            &value,
+            &mut self.store,
+            &mut interned,
+        )?;
+        for value in &interned {
+            self.observe_interned(value);
+        }
+        Ok(publication.receipt.reads)
     }
 
     /// Drive one generator task to `Done` and return its outcome: either the
@@ -2780,15 +2865,15 @@ impl<S: EventSink> Runtime<S> {
                 schema_bytes.copy_from_slice(&i64::from(element_schema.0).to_le_bytes());
                 value_memory_overrides.push((argument.handle, abi_view));
             }
-            let mut document_reads = Vec::new();
+            let mut primitive_reads = Vec::new();
             loop {
-                let mut document_host_queue = DocumentHostQueue::default();
+                let mut primitive_host = PrimitiveHostQueue::default();
                 let step = {
-                    let mut document_host = |frame: &mut [u8]| document_host_queue.call(frame);
+                    let mut call_primitive = |frame: &mut [u8]| primitive_host.call(frame);
+                    let mut hosts: [HostFn<'_>; 1] = [&mut call_primitive];
                     match self.store.with_value_memory_overrides(
                         &value_memory_overrides,
                         |value_memories| {
-                            let mut hosts: Vec<HostFn<'_>> = vec![&mut document_host];
                             task.drive_hosted_with_value_memories(
                                 &mut [],
                                 &[],
@@ -2818,17 +2903,25 @@ impl<S: EventSink> Runtime<S> {
                 match step {
                     TaskStep::Done => break,
                     TaskStep::Yielded => {
-                        let request = match document_host_queue.requests.as_slice() {
-                            [request] if document_host_queue.fault.is_none() => *request,
-                            _ => {
+                        let result =
+                            match (primitive_host.fault, primitive_host.requests.as_slice()) {
+                                (Some(detail), _) => Err(detail),
+                                (None, [request]) => self.complete_primitive_host_call(
+                                    &mut task,
+                                    lowered,
+                                    request.clone(),
+                                ),
+                                (None, requests) => Err(format!(
+                                    "primitive yield recorded {} host requests",
+                                    requests.len()
+                                )),
+                            };
+                        match result {
+                            Ok(reads) => primitive_reads.extend(reads),
+                            Err(detail) => {
                                 let error = MachineError::runtime(
                                     MachineOperation::Drive,
-                                    RuntimeFault::DocumentParseHost {
-                                        detail: document_host_queue.fault.unwrap_or_else(|| {
-                                            "document host yielded without exactly one request"
-                                                .to_owned()
-                                        }),
-                                    },
+                                    RuntimeFault::PrimitiveHost { detail },
                                     None,
                                     Some(lowered.demand_key),
                                 );
@@ -2838,41 +2931,6 @@ impl<S: EventSink> Runtime<S> {
                                     error,
                                 )));
                             }
-                        };
-                        let Some(plan) = lowered.document_parse_calls.get(request.plan) else {
-                            let error = MachineError::runtime(
-                                MachineOperation::Drive,
-                                RuntimeFault::DocumentParseHost {
-                                    detail:
-                                        "document host plan is absent from the lowered artifact"
-                                            .to_owned(),
-                                },
-                                None,
-                                Some(lowered.demand_key),
-                            );
-                            return Err(Box::new(self.terminate_machine_fault(
-                                task_id,
-                                lowered.demand_key,
-                                error,
-                            )));
-                        };
-                        if let Err(detail) = self.complete_document_parse(
-                            &mut task,
-                            plan,
-                            request,
-                            &mut document_reads,
-                        ) {
-                            let error = MachineError::runtime(
-                                MachineOperation::Drive,
-                                RuntimeFault::DocumentParseHost { detail },
-                                None,
-                                Some(lowered.demand_key),
-                            );
-                            return Err(Box::new(self.terminate_machine_fault(
-                                task_id,
-                                lowered.demand_key,
-                                error,
-                            )));
                         }
                     }
                     TaskStep::Parked { input } => {
@@ -2945,9 +3003,6 @@ impl<S: EventSink> Runtime<S> {
                                 )));
                             }
                         }
-                    }
-                    if let Some(receipt) = document_receipt(lowered.demand_key, &document_reads) {
-                        self.generator_document_receipts.push(receipt);
                     }
                     self.transition_task(task_id, TaskState::Completed)?;
                     self.transition_demand(lowered.demand_key, DemandState::Ready)?;
@@ -3130,94 +3185,6 @@ impl<S: EventSink> Runtime<S> {
                 interned.handle
             })
             .collect()
-    }
-
-    fn complete_document_parse(
-        &mut self,
-        task: &mut weavy::exec::ExecTask<'_>,
-        plan: &DocumentParseCall,
-        request: DocumentHostRequest,
-        reads: &mut Vec<ReadWitness>,
-    ) -> Result<(), String> {
-        if plan.target_schema != semantic_schema_ref(&plan.target) {
-            return Err(
-                "document host target schema does not match its declared target type".to_owned(),
-            );
-        }
-        let handle = StoreHandle::new(
-            usize::try_from(request.input)
-                .map_err(|_| "document host input is not a store handle".to_owned())?,
-        )
-        .ok_or_else(|| "document host input store handle is invalid".to_owned())?;
-        let entry = self
-            .store
-            .entry_by_weavy_handle(handle)
-            .ok_or_else(|| "document host input store entry is absent".to_owned())?;
-        let input = std::str::from_utf8(
-            entry
-                .resident_bytes()
-                .ok_or_else(|| "document host input is not resident".to_owned())?,
-        )
-        .map_err(|_| "document host input is not UTF-8 String data".to_owned())?
-        .to_owned();
-        reads.push(ReadWitness {
-            source: entry.identity.clone(),
-            projection: ReadProjection::Document,
-            observation: ReadObservation::Value(entry.identity.clone()),
-        });
-
-        let result = decode::decode(plan.format, &input, &plan.target);
-        let mut interned = Vec::new();
-        zero_host_region(task, plan.output)?;
-        match result {
-            Ok(value) => {
-                let mut cursor = if plan.infallible {
-                    0
-                } else {
-                    write_host_word(task, plan.output, 0, 0)?;
-                    1
-                };
-                materialize_decoded_value(
-                    task,
-                    plan.output,
-                    &plan.target,
-                    &value,
-                    &mut cursor,
-                    &mut self.store,
-                    &mut interned,
-                )?;
-            }
-            Err(error) => {
-                if plan.infallible {
-                    let format = match plan.format {
-                        crate::vir::DecodeFormat::Json => "JSON",
-                        crate::vir::DecodeFormat::Toml => "TOML",
-                    };
-                    return Err(format!(
-                        "infallible {} decode failed at {}",
-                        format,
-                        error.path_names().join("."),
-                    ));
-                }
-                write_host_word(task, plan.output, 0, 1)?;
-                let error_ty = runtime_decode_error_type();
-                let mut cursor = 1;
-                materialize_decode_error(
-                    task,
-                    plan.output,
-                    &error_ty,
-                    &error,
-                    &mut cursor,
-                    &mut self.store,
-                    &mut interned,
-                )?;
-            }
-        }
-        for interned in interned {
-            self.observe_interned(&interned);
-        }
-        self.counters.document_parse_host_calls += 1;
-        Ok(())
     }
 
     fn observe_interned(&mut self, interned: &Interned) {
@@ -3490,7 +3457,6 @@ impl<S: EventSink> Runtime<S> {
             .values()
             .filter(|entry| entry.current_receipt)
             .filter_map(|entry| entry.receipt.as_ref())
-            .chain(self.generator_document_receipts.iter())
     }
 
     #[must_use]
@@ -5083,62 +5049,555 @@ fn effect_leaf(ty: &Type, resident: Vec<u8>) -> EffectValue {
     }
 }
 
-fn decoded_effect_value(ty: &Type, value: &DecodedValue) -> Result<EffectValue, Box<MachineError>> {
-    match (ty, value) {
-        (Type::Int, DecodedValue::Int(value)) => {
-            let bytes = value.to_le_bytes().to_vec();
-            let mut effect = effect_leaf(ty, bytes.clone());
-            effect.frozen = Some(FrozenValue::Inline(bytes));
-            Ok(effect)
-        }
-        (Type::Bool, DecodedValue::Bool(value)) => {
-            let bytes = i64::from(*value).to_le_bytes().to_vec();
-            let mut effect = effect_leaf(ty, bytes.clone());
-            effect.frozen = Some(FrozenValue::Inline(bytes));
-            Ok(effect)
-        }
-        (Type::String, DecodedValue::Str(value)) => {
-            let bytes = value.as_bytes().to_vec();
-            let mut effect = effect_leaf(ty, bytes.clone());
-            effect.frozen = Some(FrozenValue::Opaque(bytes));
-            Ok(effect)
-        }
-        (Type::Record(record), DecodedValue::Record(values)) => {
-            if record.fields.len() != values.len() {
-                return effect_fault("decoded record field count disagreed with schema");
+fn primitive_demand_key(primitive: &super::PrimitiveId, request: &ValueId) -> DemandKey {
+    let version = primitive.version.to_le_bytes();
+    let recipe = RecipeId(hash_framed(
+        b"vix.primitive.recipe.v1",
+        &[
+            primitive.namespace.as_bytes(),
+            primitive.name.as_bytes(),
+            &version,
+        ],
+    ));
+    DemandKey::from_preimage(&DemandPreimage {
+        closure: recipe,
+        arguments: vec![request.clone()],
+    })
+}
+
+fn primitive_value_from_frame(
+    frame: &[u8],
+    region: super::FrameRegion,
+    ty: &Type,
+    store: &Store,
+) -> Result<PrimitiveValue, String> {
+    let expected = ty
+        .word_width()
+        .ok_or_else(|| format!("{} has no primitive frame representation", ty.name()))?;
+    if expected != region.words().as_usize() {
+        return Err(format!(
+            "primitive request region has {} words for {}-word type {}",
+            region.words().as_usize(),
+            expected,
+            ty.name()
+        ));
+    }
+    primitive_value_from_frame_at(frame, region, 0, ty, store)
+}
+
+fn primitive_value_from_frame_at(
+    frame: &[u8],
+    region: super::FrameRegion,
+    offset: usize,
+    ty: &Type,
+    store: &Store,
+) -> Result<PrimitiveValue, String> {
+    let schema = ty.schema_ref();
+    match ty {
+        Type::Bool | Type::Int | Type::Check => Ok(PrimitiveValue::bytes(
+            schema,
+            frame_word(frame, region, offset)?.to_le_bytes().to_vec(),
+        )),
+        Type::String | Type::Path | Type::Extern(_) => {
+            let word = frame_word(frame, region, offset)?;
+            let index = usize::try_from(word)
+                .map_err(|_| format!("negative primitive Store handle {word}"))?;
+            let handle = StoreHandle::new(index)
+                .ok_or_else(|| format!("primitive Store handle {index} is out of range"))?;
+            let entry = store
+                .entry_by_weavy_handle(handle)
+                .ok_or_else(|| format!("primitive Store handle {index} is absent"))?;
+            if entry.identity.schema != schema {
+                return Err(format!(
+                    "primitive Store handle schema {} disagrees with {}",
+                    entry.identity.schema, schema
+                ));
             }
-            let mut fields = Vec::with_capacity(values.len());
-            let mut frozen = Vec::with_capacity(values.len());
-            for (field, value) in record.fields.iter().zip(values) {
-                let effect = decoded_effect_value(&field.ty, value)?;
-                let framed_value = if matches!(field.ty, Type::Bool | Type::Int | Type::Check) {
-                    FramedValue::Bytes(effect.resident.clone())
-                } else {
-                    FramedValue::Optional(Some(effect.identity.clone()))
-                };
-                fields.push(FramedField {
-                    schema: effect_schema(&field.ty),
-                    value: framed_value,
-                });
-                frozen.push(
-                    effect
-                        .frozen
-                        .unwrap_or(FrozenValue::Reference(effect.identity.clone())),
-                );
+            let bytes = entry
+                .resident_bytes()
+                .ok_or_else(|| format!("primitive Store handle {index} is not resident"))?;
+            Ok(PrimitiveValue::bytes(schema, bytes.to_vec()))
+        }
+        Type::Tuple(elements) => {
+            let mut cursor = offset;
+            let mut fields = Vec::with_capacity(elements.len());
+            for element in elements {
+                let value = primitive_value_from_frame_at(frame, region, cursor, element, store)?;
+                fields.push(primitive_field(element, value)?);
+                cursor += primitive_type_words(element)?;
             }
-            let node = FramedNode::Variant {
-                schema: effect_schema(ty),
-                tag: 0,
-                fields,
-            };
-            Ok(EffectValue {
-                identity: node.identity(),
-                resident: Vec::new(),
-                frozen: Some(FrozenValue::Product(frozen)),
-                node: Some(node),
+            Ok(PrimitiveValue {
+                schema,
+                body: PrimitiveValueBody::Product(fields),
             })
         }
-        _ => effect_fault("decoded value did not match target schema"),
+        Type::Record(record) => {
+            let mut cursor = offset;
+            let mut fields = Vec::with_capacity(record.fields.len());
+            for field in &record.fields {
+                let value = primitive_value_from_frame_at(frame, region, cursor, &field.ty, store)?;
+                fields.push(primitive_field(&field.ty, value)?);
+                cursor += primitive_type_words(&field.ty)?;
+            }
+            Ok(PrimitiveValue {
+                schema,
+                body: PrimitiveValueBody::Product(fields),
+            })
+        }
+        Type::Enum(enumeration) => {
+            let tag_word = frame_word(frame, region, offset)?;
+            let tag = u32::try_from(tag_word)
+                .map_err(|_| format!("primitive enum tag {tag_word} is invalid"))?;
+            let variant = enumeration
+                .variants
+                .get(tag as usize)
+                .ok_or_else(|| format!("primitive enum tag {tag} is out of range"))?;
+            let field_types = variant_field_types(&variant.payload);
+            let mut cursor = offset + 1;
+            let mut fields = Vec::with_capacity(field_types.len());
+            for field_ty in field_types {
+                let value = primitive_value_from_frame_at(frame, region, cursor, field_ty, store)?;
+                fields.push(primitive_field(field_ty, value)?);
+                cursor += primitive_type_words(field_ty)?;
+            }
+            Ok(PrimitiveValue {
+                schema,
+                body: PrimitiveValueBody::Variant { tag, fields },
+            })
+        }
+        Type::Function { .. }
+        | Type::Array(_)
+        | Type::Map { .. }
+        | Type::Set(_)
+        | Type::Stream { .. }
+        | Type::Order(_)
+        | Type::StreamCheck => Err(format!(
+            "primitive frame codec does not admit {}",
+            ty.name()
+        )),
+    }
+}
+
+fn primitive_field(ty: &Type, value: PrimitiveValue) -> Result<PrimitiveField, String> {
+    if matches!(ty, Type::Bool | Type::Int | Type::Check) {
+        let PrimitiveValue { schema, body } = value;
+        let PrimitiveValueBody::Bytes(bytes) = body else {
+            return Err(format!(
+                "inline primitive field {} was structural",
+                ty.name()
+            ));
+        };
+        Ok(PrimitiveField {
+            schema,
+            value: PrimitiveFieldValue::Inline(bytes),
+        })
+    } else {
+        Ok(PrimitiveField {
+            schema: value.schema.clone(),
+            value: PrimitiveFieldValue::Child(Box::new(value)),
+        })
+    }
+}
+
+fn write_primitive_value(
+    task: &mut weavy::exec::ExecTask<'_>,
+    region: super::FrameRegion,
+    offset: usize,
+    ty: &Type,
+    value: &PrimitiveValue,
+    store: &mut Store,
+    interned: &mut Vec<Interned>,
+) -> Result<(), String> {
+    if value.schema != ty.schema_ref() {
+        return Err(format!(
+            "primitive value schema {} disagrees with {}",
+            value.schema,
+            ty.schema_ref()
+        ));
+    }
+    match (ty, &value.body) {
+        (Type::Bool | Type::Int | Type::Check, PrimitiveValueBody::Bytes(bytes)) => {
+            let word = i64::from_le_bytes(
+                bytes
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| format!("primitive scalar {} is not one word", ty.name()))?,
+            );
+            write_primitive_word(task, region, offset, word)
+        }
+        (Type::String | Type::Path | Type::Extern(_), PrimitiveValueBody::Bytes(bytes)) => {
+            let stored = store.intern_realized(ty.schema_ref(), bytes);
+            let handle = store
+                .weavy_handle(stored.handle)
+                .ok_or_else(|| "new primitive result has no Store handle".to_owned())?;
+            write_primitive_word(task, region, offset, handle.as_i64())?;
+            interned.push(stored);
+            Ok(())
+        }
+        (Type::Tuple(elements), PrimitiveValueBody::Product(fields))
+            if elements.len() == fields.len() =>
+        {
+            let mut cursor = offset;
+            for (element, field) in elements.iter().zip(fields) {
+                write_primitive_field(task, region, cursor, element, field, store, interned)?;
+                cursor += primitive_type_words(element)?;
+            }
+            Ok(())
+        }
+        (Type::Record(record), PrimitiveValueBody::Product(fields))
+            if record.fields.len() == fields.len() =>
+        {
+            let mut cursor = offset;
+            for (declared, field) in record.fields.iter().zip(fields) {
+                write_primitive_field(task, region, cursor, &declared.ty, field, store, interned)?;
+                cursor += primitive_type_words(&declared.ty)?;
+            }
+            Ok(())
+        }
+        (Type::Enum(enumeration), PrimitiveValueBody::Variant { tag, fields }) => {
+            let variant = enumeration
+                .variants
+                .get(*tag as usize)
+                .ok_or_else(|| format!("primitive result enum tag {tag} is out of range"))?;
+            let field_types = variant_field_types(&variant.payload);
+            if field_types.len() != fields.len() {
+                return Err(
+                    "primitive result variant field count disagrees with its type".to_owned(),
+                );
+            }
+            write_primitive_word(task, region, offset, i64::from(*tag))?;
+            let mut cursor = offset + 1;
+            for (field_ty, field) in field_types.into_iter().zip(fields) {
+                write_primitive_field(task, region, cursor, field_ty, field, store, interned)?;
+                cursor += primitive_type_words(field_ty)?;
+            }
+            Ok(())
+        }
+        _ => Err(format!(
+            "primitive value body disagrees with frame type {}",
+            ty.name()
+        )),
+    }
+}
+
+fn write_primitive_field(
+    task: &mut weavy::exec::ExecTask<'_>,
+    region: super::FrameRegion,
+    offset: usize,
+    ty: &Type,
+    field: &PrimitiveField,
+    store: &mut Store,
+    interned: &mut Vec<Interned>,
+) -> Result<(), String> {
+    if field.schema != ty.schema_ref() {
+        return Err(format!(
+            "primitive field schema {} disagrees with {}",
+            field.schema,
+            ty.schema_ref()
+        ));
+    }
+    let value = match &field.value {
+        PrimitiveFieldValue::Inline(bytes) => {
+            PrimitiveValue::bytes(field.schema.clone(), bytes.clone())
+        }
+        PrimitiveFieldValue::Child(value) => (**value).clone(),
+    };
+    write_primitive_value(task, region, offset, ty, &value, store, interned)
+}
+
+fn write_primitive_word(
+    task: &mut weavy::exec::ExecTask<'_>,
+    region: super::FrameRegion,
+    offset: usize,
+    word: i64,
+) -> Result<(), String> {
+    let slot = region
+        .word(offset)
+        .ok_or_else(|| format!("primitive frame word {offset} is outside its region"))?;
+    task.write_host_word(slot.byte_offset(), word)
+        .map_err(|fault| format!("primitive frame write failed: {fault:?}"))
+}
+
+fn frame_word(frame: &[u8], region: super::FrameRegion, offset: usize) -> Result<i64, String> {
+    let slot = region
+        .word(offset)
+        .ok_or_else(|| format!("primitive frame word {offset} is outside its region"))?;
+    let start = slot.byte_offset() as usize;
+    let end = start
+        .checked_add(8)
+        .ok_or_else(|| "primitive frame word offset overflowed".to_owned())?;
+    let bytes = frame
+        .get(start..end)
+        .ok_or_else(|| format!("primitive frame word {offset} is absent"))?;
+    Ok(i64::from_le_bytes(
+        bytes
+            .try_into()
+            .expect("primitive frame word is eight bytes"),
+    ))
+}
+
+fn primitive_type_words(ty: &Type) -> Result<usize, String> {
+    ty.word_width()
+        .ok_or_else(|| format!("{} has no primitive frame representation", ty.name()))
+}
+
+fn variant_field_types(payload: &VariantPayload) -> Vec<&Type> {
+    match payload {
+        VariantPayload::Unit => Vec::new(),
+        VariantPayload::Tuple(elements) => elements.iter().collect(),
+        VariantPayload::Record(fields) => fields.iter().map(|field| &field.ty).collect(),
+    }
+}
+
+fn insert_schema_type(ty: &Type, catalog: &mut BTreeMap<SchemaRef, Type>) {
+    catalog.entry(ty.schema_ref()).or_insert_with(|| ty.clone());
+    match ty {
+        Type::Function { parameter, result } => {
+            insert_schema_type(parameter, catalog);
+            insert_schema_type(result, catalog);
+        }
+        Type::Tuple(elements) => {
+            for element in elements {
+                insert_schema_type(element, catalog);
+            }
+        }
+        Type::Record(record) => {
+            for field in &record.fields {
+                insert_schema_type(&field.ty, catalog);
+            }
+        }
+        Type::Enum(enumeration) => {
+            for variant in &enumeration.variants {
+                match &variant.payload {
+                    VariantPayload::Unit => {}
+                    VariantPayload::Tuple(elements) => {
+                        for element in elements {
+                            insert_schema_type(element, catalog);
+                        }
+                    }
+                    VariantPayload::Record(fields) => {
+                        for field in fields {
+                            insert_schema_type(&field.ty, catalog);
+                        }
+                    }
+                }
+            }
+        }
+        Type::Array(element) | Type::Set(element) | Type::Order(element) => {
+            insert_schema_type(element, catalog);
+        }
+        Type::Map { key, value } | Type::Stream { key, value } => {
+            insert_schema_type(key, catalog);
+            insert_schema_type(value, catalog);
+        }
+        Type::Bool
+        | Type::Int
+        | Type::Check
+        | Type::StreamCheck
+        | Type::String
+        | Type::Path
+        | Type::Extern(_) => {}
+    }
+}
+
+fn primitive_field_from_effect(
+    ty: &Type,
+    value: EffectValue,
+) -> Result<PrimitiveField, Box<MachineError>> {
+    let value = primitive_value_from_effect(ty, &value)?;
+    if matches!(ty, Type::Bool | Type::Int | Type::Check) {
+        let PrimitiveValue {
+            schema,
+            body: PrimitiveValueBody::Bytes(bytes),
+        } = value
+        else {
+            return effect_fault("inline primitive field was not bytes");
+        };
+        Ok(PrimitiveField {
+            schema,
+            value: PrimitiveFieldValue::Inline(bytes),
+        })
+    } else {
+        Ok(PrimitiveField {
+            schema: value.schema.clone(),
+            value: PrimitiveFieldValue::Child(Box::new(value)),
+        })
+    }
+}
+
+fn primitive_value_from_effect(
+    ty: &Type,
+    value: &EffectValue,
+) -> Result<PrimitiveValue, Box<MachineError>> {
+    if value.identity.schema != ty.schema_ref() {
+        return effect_fault("effect value schema disagreed with its declared type");
+    }
+    match ty {
+        Type::Bool | Type::Int | Type::Check | Type::String | Type::Path | Type::Extern(_) => Ok(
+            PrimitiveValue::bytes(ty.schema_ref(), value.resident.clone()),
+        ),
+        _ => value
+            .frozen
+            .as_ref()
+            .ok_or_else(|| effect_machine_error("structural effect value was not frozen"))
+            .and_then(|frozen| primitive_value_from_frozen(ty, frozen)),
+    }
+}
+
+fn primitive_value_from_frozen(
+    ty: &Type,
+    frozen: &FrozenValue,
+) -> Result<PrimitiveValue, Box<MachineError>> {
+    match (ty, frozen) {
+        (Type::Bool | Type::Int | Type::Check, FrozenValue::Inline(bytes))
+        | (Type::String | Type::Path | Type::Extern(_), FrozenValue::Opaque(bytes)) => {
+            Ok(PrimitiveValue::bytes(ty.schema_ref(), bytes.clone()))
+        }
+        (Type::Record(record), FrozenValue::Product(values))
+            if record.fields.len() == values.len() =>
+        {
+            let fields = record
+                .fields
+                .iter()
+                .zip(values)
+                .map(|(field, value)| {
+                    primitive_value_from_frozen(&field.ty, value).and_then(|value| {
+                        if matches!(field.ty, Type::Bool | Type::Int | Type::Check) {
+                            let PrimitiveValueBody::Bytes(bytes) = value.body else {
+                                return effect_fault("inline frozen field was not bytes");
+                            };
+                            Ok(PrimitiveField {
+                                schema: value.schema,
+                                value: PrimitiveFieldValue::Inline(bytes),
+                            })
+                        } else {
+                            Ok(PrimitiveField {
+                                schema: value.schema.clone(),
+                                value: PrimitiveFieldValue::Child(Box::new(value)),
+                            })
+                        }
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(PrimitiveValue {
+                schema: ty.schema_ref(),
+                body: PrimitiveValueBody::Product(fields),
+            })
+        }
+        (Type::Enum(enumeration), FrozenValue::Variant { tag, fields }) => {
+            let variant = enumeration
+                .variants
+                .get(*tag as usize)
+                .ok_or_else(|| effect_machine_error("frozen primitive variant tag was invalid"))?;
+            let field_types = match &variant.payload {
+                VariantPayload::Unit => Vec::new(),
+                VariantPayload::Tuple(elements) => elements.iter().collect(),
+                VariantPayload::Record(fields) => fields.iter().map(|field| &field.ty).collect(),
+            };
+            if field_types.len() != fields.len() {
+                return effect_fault("frozen primitive variant field count was invalid");
+            }
+            let fields = field_types
+                .into_iter()
+                .zip(fields)
+                .map(|(ty, value)| {
+                    primitive_value_from_frozen(ty, value).and_then(|value| {
+                        if matches!(ty, Type::Bool | Type::Int | Type::Check) {
+                            let PrimitiveValueBody::Bytes(bytes) = value.body else {
+                                return effect_fault("inline frozen variant field was not bytes");
+                            };
+                            Ok(PrimitiveField {
+                                schema: value.schema,
+                                value: PrimitiveFieldValue::Inline(bytes),
+                            })
+                        } else {
+                            Ok(PrimitiveField {
+                                schema: value.schema.clone(),
+                                value: PrimitiveFieldValue::Child(Box::new(value)),
+                            })
+                        }
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(PrimitiveValue {
+                schema: ty.schema_ref(),
+                body: PrimitiveValueBody::Variant { tag: *tag, fields },
+            })
+        }
+        _ => effect_fault("frozen value cannot become a primitive value"),
+    }
+}
+
+fn effect_value_from_primitive(
+    ty: &Type,
+    value: PrimitiveValue,
+) -> Result<EffectValue, Box<MachineError>> {
+    if value.schema != ty.schema_ref() {
+        return effect_fault("primitive result schema disagreed with the invocation type");
+    }
+    let node = value.framed_node();
+    let identity = node.identity();
+    let resident = value.resident_bytes().to_vec();
+    let frozen = primitive_value_to_frozen(ty, &value)?;
+    Ok(EffectValue {
+        identity,
+        resident,
+        frozen: Some(frozen),
+        node: Some(node),
+    })
+}
+
+fn primitive_value_to_frozen(
+    ty: &Type,
+    value: &PrimitiveValue,
+) -> Result<FrozenValue, Box<MachineError>> {
+    match (ty, &value.body) {
+        (Type::Bool | Type::Int | Type::Check, PrimitiveValueBody::Bytes(bytes)) => {
+            Ok(FrozenValue::Inline(bytes.clone()))
+        }
+        (Type::String | Type::Path | Type::Extern(_), PrimitiveValueBody::Bytes(bytes)) => {
+            Ok(FrozenValue::Opaque(bytes.clone()))
+        }
+        (Type::Record(record), PrimitiveValueBody::Product(fields))
+            if record.fields.len() == fields.len() =>
+        {
+            let fields = record
+                .fields
+                .iter()
+                .zip(fields)
+                .map(|(declared, field)| match &field.value {
+                    PrimitiveFieldValue::Inline(bytes) => Ok(FrozenValue::Inline(bytes.clone())),
+                    PrimitiveFieldValue::Child(value) => {
+                        primitive_value_to_frozen(&declared.ty, value)
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(FrozenValue::Product(fields))
+        }
+        (Type::Enum(enumeration), PrimitiveValueBody::Variant { tag, fields }) => {
+            let variant = enumeration
+                .variants
+                .get(*tag as usize)
+                .ok_or_else(|| effect_machine_error("primitive result variant tag was invalid"))?;
+            let field_types = match &variant.payload {
+                VariantPayload::Unit => Vec::new(),
+                VariantPayload::Tuple(elements) => elements.iter().collect(),
+                VariantPayload::Record(fields) => fields.iter().map(|field| &field.ty).collect(),
+            };
+            if field_types.len() != fields.len() {
+                return effect_fault("primitive result variant field count was invalid");
+            }
+            let fields = field_types
+                .into_iter()
+                .zip(fields)
+                .map(|(ty, field)| match &field.value {
+                    PrimitiveFieldValue::Inline(bytes) => Ok(FrozenValue::Inline(bytes.clone())),
+                    PrimitiveFieldValue::Child(value) => primitive_value_to_frozen(ty, value),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(FrozenValue::Variant { tag: *tag, fields })
+        }
+        _ => effect_fault("primitive value cannot be frozen as its invocation type"),
     }
 }
 
@@ -5366,159 +5825,6 @@ fn canonical_archive_tree(bytes: &[u8]) -> Vec<u8> {
 fn frame_effect_tree_field(out: &mut Vec<u8>, bytes: &[u8]) {
     out.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
     out.extend_from_slice(bytes);
-}
-
-fn runtime_decode_error_type() -> Type {
-    Type::Record(crate::vir::RecordType::new(
-        "DecodeError",
-        vec![
-            crate::vir::RecordField {
-                name: "kind".to_owned(),
-                ty: Type::String,
-            },
-            crate::vir::RecordField {
-                name: "path".to_owned(),
-                ty: Type::String,
-            },
-            crate::vir::RecordField {
-                name: "document_offset".to_owned(),
-                ty: Type::Int,
-            },
-            crate::vir::RecordField {
-                name: "document_len".to_owned(),
-                ty: Type::Int,
-            },
-        ],
-    ))
-}
-
-fn document_receipt(demand: DemandKey, reads: &[ReadWitness]) -> Option<Receipt> {
-    (!reads.is_empty()).then(|| Receipt {
-        demand,
-        reads: reads.to_vec(),
-    })
-}
-
-fn zero_host_region(
-    task: &mut weavy::exec::ExecTask<'_>,
-    region: super::FrameRegion,
-) -> Result<(), String> {
-    for index in 0..region.words().as_usize() {
-        write_host_word(task, region, index, 0)?;
-    }
-    Ok(())
-}
-
-fn write_host_word(
-    task: &mut weavy::exec::ExecTask<'_>,
-    region: super::FrameRegion,
-    index: usize,
-    value: i64,
-) -> Result<(), String> {
-    let slot = region
-        .word(index)
-        .ok_or_else(|| "document host wrote outside its typed result region".to_owned())?;
-    task.write_host_word(slot.byte_offset(), value)
-        .map_err(|fault| format!("document host frame materialization failed: {fault:?}"))
-}
-
-fn materialize_decoded_value(
-    task: &mut weavy::exec::ExecTask<'_>,
-    region: super::FrameRegion,
-    ty: &Type,
-    value: &DecodedValue,
-    cursor: &mut usize,
-    store: &mut Store,
-    interned: &mut Vec<Interned>,
-) -> Result<(), String> {
-    match (ty, value) {
-        (Type::Int, DecodedValue::Int(value)) => {
-            write_host_word(task, region, *cursor, *value)?;
-            *cursor += 1;
-        }
-        (Type::Bool, DecodedValue::Bool(value)) => {
-            write_host_word(task, region, *cursor, i64::from(*value))?;
-            *cursor += 1;
-        }
-        (Type::String, DecodedValue::Str(value)) => {
-            let allocated = store.intern_realized(semantic_schema_ref(ty), value.as_bytes());
-            let handle = store
-                .weavy_handle(allocated.handle)
-                .ok_or_else(|| "document host allocated a missing String handle".to_owned())?;
-            write_host_word(task, region, *cursor, handle.as_i64())?;
-            interned.push(allocated);
-            *cursor += 1;
-        }
-        (Type::Record(record), DecodedValue::Record(values)) => {
-            if record.fields.len() != values.len() {
-                return Err("decoded record field count disagrees with its schema".to_owned());
-            }
-            for (field, value) in record.fields.iter().zip(values) {
-                materialize_decoded_value(task, region, &field.ty, value, cursor, store, interned)?;
-            }
-        }
-        (Type::Enum(enumeration), DecodedValue::OptionSome(value))
-            if ty.option_inner().is_some() =>
-        {
-            write_host_word(task, region, *cursor, 0)?;
-            *cursor += 1;
-            let inner = ty.option_inner().expect("guarded option inner");
-            materialize_decoded_value(task, region, inner, value, cursor, store, interned)?;
-            let _ = enumeration;
-        }
-        (Type::Enum(_), DecodedValue::OptionNone) if ty.option_inner().is_some() => {
-            write_host_word(task, region, *cursor, 1)?;
-            *cursor += 1;
-        }
-        (Type::Enum(enumeration), DecodedValue::Variant { index, fields }) => {
-            let variant = enumeration
-                .variants
-                .get(*index as usize)
-                .ok_or_else(|| "decoded enum variant is outside its schema".to_owned())?;
-            write_host_word(task, region, *cursor, i64::from(*index))?;
-            *cursor += 1;
-            let types: Vec<&Type> = match &variant.payload {
-                VariantPayload::Unit => Vec::new(),
-                VariantPayload::Tuple(fields) => fields.iter().collect(),
-                VariantPayload::Record(fields) => fields.iter().map(|field| &field.ty).collect(),
-            };
-            if types.len() != fields.len() {
-                return Err("decoded enum payload count disagrees with its schema".to_owned());
-            }
-            for (ty, value) in types.into_iter().zip(fields) {
-                materialize_decoded_value(task, region, ty, value, cursor, store, interned)?;
-            }
-        }
-        _ => {
-            return Err(format!(
-                "decoded value does not match target schema {}",
-                ty.name()
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn materialize_decode_error(
-    task: &mut weavy::exec::ExecTask<'_>,
-    region: super::FrameRegion,
-    ty: &Type,
-    error: &decode::DecodeError,
-    cursor: &mut usize,
-    store: &mut Store,
-    interned: &mut Vec<Interned>,
-) -> Result<(), String> {
-    let Type::Record(record) = ty else {
-        return Err("decode error schema is not a record".to_owned());
-    };
-    let kind = DecodedValue::Str(error.kind.label().to_owned());
-    let path = DecodedValue::Str(error.path_names().join("."));
-    let offset = DecodedValue::Int(error.span.map_or(-1, |span| i64::from(span.offset)));
-    let len = DecodedValue::Int(error.span.map_or(-1, |span| i64::from(span.len)));
-    for (field, value) in record.fields.iter().zip([kind, path, offset, len]) {
-        materialize_decoded_value(task, region, &field.ty, &value, cursor, store, interned)?;
-    }
-    Ok(())
 }
 
 fn invalid_realized_result(lowered: &LoweringArtifact, size: usize) -> TaskFault {

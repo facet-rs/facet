@@ -88,6 +88,41 @@ impl SchemaRef {
         out
     }
 
+    pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, SchemaRefDecodeError> {
+        fn word(bytes: &[u8], cursor: &mut usize) -> Option<u64> {
+            let end = cursor.checked_add(8)?;
+            let value = u64::from_le_bytes(bytes.get(*cursor..end)?.try_into().ok()?);
+            *cursor = end;
+            Some(value)
+        }
+
+        fn reference(bytes: &[u8], cursor: &mut usize) -> Option<SchemaRef> {
+            let id = SchemaId(word(bytes, cursor)?);
+            let count = usize::try_from(word(bytes, cursor)?).ok()?;
+            let mut args = Vec::with_capacity(count);
+            for _ in 0..count {
+                let len = usize::try_from(word(bytes, cursor)?).ok()?;
+                let end = cursor.checked_add(len)?;
+                let argument_bytes = bytes.get(*cursor..end)?;
+                let mut argument_cursor = 0;
+                let argument = reference(argument_bytes, &mut argument_cursor)?;
+                if argument_cursor != argument_bytes.len() {
+                    return None;
+                }
+                *cursor = end;
+                args.push(argument);
+            }
+            Some(SchemaRef { id, args })
+        }
+
+        let mut cursor = 0;
+        let reference = reference(bytes, &mut cursor).ok_or(SchemaRefDecodeError::Malformed)?;
+        if cursor != bytes.len() {
+            return Err(SchemaRefDecodeError::TrailingBytes);
+        }
+        Ok(reference)
+    }
+
     pub(crate) fn canonical_len(&self) -> u64 {
         16 + self
             .args
@@ -188,6 +223,13 @@ pub struct UnresolvedSchemaVariable {
     pub name: String,
 }
 
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum SchemaRefDecodeError {
+    Malformed,
+    TrailingBytes,
+}
+
 /// Resolved declarations produced by one Taxon batch.
 #[derive(Clone)]
 pub(crate) struct SchemaSet {
@@ -234,6 +276,7 @@ impl SchemaBatch {
             "TreeEntry",
             "Registry",
             "PinnedUrl",
+            "Schema",
             "StreamCheck",
             "Ordering",
             "DecodeError",
@@ -261,6 +304,7 @@ impl SchemaBatch {
             "TreeEntry",
             "Registry",
             "PinnedUrl",
+            "Schema",
             "StreamCheck",
         ] {
             batch.add_named(
