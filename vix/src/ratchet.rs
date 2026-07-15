@@ -11,11 +11,13 @@ use crate::lowering::{
 use crate::runtime::{
     ChaosPolicy, Counters, DemandState, Evaluation, Event, EventKind, EventLog, FailureContext,
     FailureValue, FramedNode, GeneratorOutcome, IslandInputs, Location, MachineError, MemoVerdict,
-    Runtime, SchemaId, SnapshotCapture, SnapshotOutcome, TaskState, ValueId, WireDemand,
+    PersistentRuntimeJournal, PersistentRuntimeJournalError, PersistentRuntimeJournalLoadReport,
+    PersistentRuntimeState, RealizedWireDemand, Runtime, SchemaId, SnapshotCapture,
+    SnapshotOutcome, TaskState, ValueId, WireDemand,
 };
 use crate::vir::{
-    DescribedWire, FunctionId, Island, IslandId, NodeId, Op, PartitionedRecipe, PartitionedValue,
-    TraceCheck, ValueIslandId, WireArg,
+    DescribedWire, FunctionId, Island, IslandId, Module, Op, PartitionedRecipe, PartitionedValue,
+    TraceCheck, ValueIslandId, WireArg, WireSelector,
 };
 
 /// The user functions named by a test's described-wire trace checks. A bundled
@@ -36,19 +38,46 @@ fn selected_wire_functions(partitioned: &crate::vir::PartitionedTest) -> BTreeSe
         .collect()
 }
 
+/// The resolved canonical preimage of a deferred trace check's binding-level
+/// described wire: the structural fingerprint of the let-bound invocation node
+/// in the authored test graph. `None` for every other trace shape. Resolution
+/// reads the authored graph only — nothing is demanded, lowered, or interned.
+fn binding_preimage(
+    module: &Module,
+    test_function: FunctionId,
+    trace: &TraceCheck,
+) -> Option<String> {
+    let (TraceCheck::Demanded { wire }
+    | TraceCheck::NeverDemanded { wire }
+    | TraceCheck::DemandedOnce { wire }) = trace
+    else {
+        return None;
+    };
+    let WireSelector::Binding(node) = wire.selector else {
+        return None;
+    };
+    Some(module.invocation_preimage(test_function, node))
+}
+
 /// Record one realized demand per distinct executed invocation preimage that a
 /// described-wire observer selects, without adding a scheduler edge. The cost
 /// model may fuse a mapped element or bundle a single-consumer pure call into a
 /// direct `WeavyOp::Call`; this reads the executed island's demand-independent
-/// structure and retains the exact canonical preimage (callee + framed argument
-/// identities) so `demanded_once` distinguishes `costly(1)` from `costly(2)`.
-/// Only unconditional calls (never a control-region member) are observed, so an
-/// untaken arm's invocation is never fabricated; equal preimages share one entry.
+/// structure and retains the exact canonical preimage — the invocation's
+/// structural fingerprint in the authored graph, plus framed argument
+/// identities when every argument is a closed literal — so `demanded_once`
+/// distinguishes `costly(1)` from `costly(2)` and a binding selector matches a
+/// composite-argument invocation. Only unconditional calls (never a
+/// control-region member) are observed, so an untaken arm's invocation is never
+/// fabricated; equal preimages share one entry, including with a realization
+/// the memo path already recorded.
 fn observe_bundled_invocations(
     runtime: &mut Runtime<EventLog>,
+    module: &Module,
+    test_function: FunctionId,
     island: &Island,
     selected: &BTreeSet<FunctionId>,
-    seen: &mut BTreeSet<(FunctionId, Vec<ValueId>)>,
+    seen: &mut BTreeSet<String>,
 ) {
     let mut controlled = BTreeSet::new();
     for node in &island.nodes {
@@ -75,8 +104,7 @@ fn observe_bundled_invocations(
             _ => {}
         }
     }
-    let by_id: BTreeMap<NodeId, &crate::vir::Node> =
-        island.nodes.iter().map(|node| (node.id, node)).collect();
+    let authored = &module.functions[test_function.0 as usize];
     for node in &island.nodes {
         let Op::Call(function) = node.op else {
             continue;
@@ -84,25 +112,32 @@ fn observe_bundled_invocations(
         if controlled.contains(&node.id) || !selected.contains(&function) {
             continue;
         }
-        let mut arguments = Vec::with_capacity(node.inputs.len());
+        // The preimage is read from the authored graph, never the island cut,
+        // so shared-value and wire substitutions cannot distort it.
+        let preimage = module.invocation_preimage(test_function, node.id);
+        if seen.contains(&preimage)
+            || runtime
+                .realized_wire_demands()
+                .iter()
+                .any(|demand| demand.preimage == preimage)
+        {
+            continue;
+        }
+        let mut literals = Vec::with_capacity(node.inputs.len());
         let mut literal = true;
         for input in &node.inputs {
-            match by_id.get(input).map(|node| &node.op) {
-                Some(Op::Int(value)) => arguments.push(WireArg::Int(*value)),
-                Some(Op::Bool(value)) => arguments.push(WireArg::Bool(*value)),
+            match authored.nodes[input.0 as usize].op {
+                Op::Int(value) => literals.push(WireArg::Int(value)),
+                Op::Bool(value) => literals.push(WireArg::Bool(value)),
                 _ => {
                     literal = false;
                     break;
                 }
             }
         }
-        if !literal {
-            continue;
-        }
-        let identities: Vec<ValueId> = arguments.iter().map(wire_arg_identity).collect();
-        if seen.insert((function, identities.clone())) {
-            runtime.record_wire_demand(function, identities);
-        }
+        let arguments = literal.then(|| literals.iter().map(wire_arg_identity).collect::<Vec<_>>());
+        seen.insert(preimage.clone());
+        runtime.record_wire_demand(function, arguments, preimage);
     }
 }
 
@@ -116,7 +151,8 @@ struct FlatWires<'a> {
     locations: Vec<Location>,
     attributions: Vec<LoweringAttribution>,
     functions: Vec<FunctionId>,
-    demand_args: Vec<Vec<ValueId>>,
+    demand_args: Vec<Option<Vec<ValueId>>>,
+    preimages: Vec<String>,
     artifacts: Vec<&'a LoweringArtifact>,
 }
 
@@ -133,7 +169,8 @@ impl<'a> FlatWires<'a> {
                 arguments: &[],
                 wires: &[],
                 function: self.functions[index],
-                demand_arguments: &self.demand_args[index],
+                demand_arguments: self.demand_args[index].as_deref(),
+                preimage: &self.preimages[index],
             })
             .collect()
     }
@@ -145,9 +182,11 @@ impl<'a> FlatWires<'a> {
 /// structurally equal awaits share one memo cell and realize once.
 fn flat_wires<'a>(
     cache: &'a LoweringCache,
+    module: &Module,
     wire_lookup: &BTreeMap<ValueIslandId, &PartitionedValue>,
     wire_inputs: &[ValueIslandId],
     test_name: &str,
+    source_revision: Option<&str>,
 ) -> FlatWires<'a> {
     let mut backing = FlatWires {
         islands: Vec::with_capacity(wire_inputs.len()),
@@ -155,6 +194,7 @@ fn flat_wires<'a>(
         attributions: Vec::with_capacity(wire_inputs.len()),
         functions: Vec::with_capacity(wire_inputs.len()),
         demand_args: Vec::with_capacity(wire_inputs.len()),
+        preimages: Vec::with_capacity(wire_inputs.len()),
         artifacts: Vec::with_capacity(wire_inputs.len()),
     };
     for value in wire_inputs {
@@ -169,9 +209,9 @@ fn flat_wires<'a>(
             .lowered(&wire.island)
             .expect("argument island was lowered before execution");
         backing.islands.push(wire.island.id);
-        backing.locations.push(Location::for_test_value(
-            test_name,
-            &format!("wire-{}", value.stable_segment()),
+        backing.locations.push(scoped_location(
+            Location::for_test_value(test_name, &format!("wire-{}", value.stable_segment())),
+            source_revision,
         ));
         backing.attributions.push(attribution_for(&wire.island));
         let provenance = wire.wire.as_ref();
@@ -180,11 +220,15 @@ fn flat_wires<'a>(
                 .map(|provenance| provenance.function)
                 .unwrap_or(wire.island.function),
         );
-        backing.demand_args.push(
+        backing.demand_args.push(provenance.and_then(|provenance| {
             provenance
-                .map(|provenance| provenance.arguments.iter().map(wire_arg_identity).collect())
-                .unwrap_or_default(),
-        );
+                .arguments
+                .as_ref()
+                .map(|arguments| arguments.iter().map(wire_arg_identity).collect())
+        }));
+        backing
+            .preimages
+            .push(module.invocation_preimage(wire.id.function, wire.id.node));
         backing.artifacts.push(artifact);
     }
     backing
@@ -223,6 +267,7 @@ pub enum RunError {
         failure: Box<FailureValue>,
         context: Option<FailureContext>,
     },
+    PersistentRuntime(Box<PersistentRuntimeJournalError>),
 }
 
 /// The stable provenance key of a published check: the yield site's selector
@@ -274,6 +319,12 @@ impl From<Box<MachineError>> for RunError {
     }
 }
 
+impl From<PersistentRuntimeJournalError> for RunError {
+    fn from(error: PersistentRuntimeJournalError) -> Self {
+        Self::PersistentRuntime(Box::new(error))
+    }
+}
+
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct CheckRun {
     /// The stable yield-provenance key of this check. Plain/chaos agreement and
@@ -315,7 +366,9 @@ pub struct TraceFailure {
 struct TraceSnapshot {
     scheduler_requests: u64,
     memo_entries: u64,
+    memo_hits: u64,
     store_interns: u64,
+    effect_spawns: u64,
     value_island_spawns: u64,
     successful_aggregate_freezes: u64,
     active_molten_selections: u64,
@@ -323,24 +376,21 @@ struct TraceSnapshot {
     framed_bytes: u64,
     peak_molten_bytes: u64,
     peak_molten_nodes: u64,
+    /// Fetch effects actually performed during the run.
+    fetches_performed: u64,
+    /// The union of external read projections across every demand receipt.
+    /// Reads go through the recording fixture-store accessors, so this set is
+    /// complete by construction; `never_read` is absence in this set.
+    reads: BTreeSet<String>,
     function_calls: BTreeMap<FunctionId, u64>,
     /// One entry per realized wire demand (a computation the memo path actually
     /// ran). Repeated identical `recipe + argument` demands memoize to a single
     /// realization, so a call-site selector observes at most one entry; distinct
     /// arguments contribute distinct entries. This is the frozen log the
-    /// described-wire trace checks read; it retains only the callee identity and
-    /// argument identities a trace descriptor can select on.
+    /// described-wire trace checks read; it retains only the callee identity,
+    /// argument identities, and canonical preimage a trace descriptor can
+    /// select on.
     wire_demands: Vec<RealizedWireDemand>,
-}
-
-/// One realized invocation recorded for described-wire observation: which user
-/// function was demanded and with which canonical argument identities. Recorded
-/// only when a wire demand actually computes (a memo miss that ran), so the log
-/// counts realizations, never re-demands of an already-memoized key.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RealizedWireDemand {
-    pub function: FunctionId,
-    pub arguments: Vec<ValueId>,
 }
 
 /// The canonical identity of one described-wire scalar argument. Computed the
@@ -350,6 +400,11 @@ fn wire_arg_identity(arg: &WireArg) -> ValueId {
     let (ty_name, bytes) = match arg {
         WireArg::Int(value) => ("Int", value.to_le_bytes().to_vec()),
         WireArg::Bool(value) => ("Bool", i64::from(*value).to_le_bytes().to_vec()),
+        WireArg::FixtureTree(name) => {
+            let mut bytes = b"fixture-tree\0".to_vec();
+            bytes.extend(name.as_bytes());
+            ("Tree", bytes)
+        }
     };
     FramedNode::leaf(
         SchemaId::named(&format!("vix.semantic.v1:{ty_name}")),
@@ -368,26 +423,45 @@ fn at_most(observed: u64, bound: i64) -> (u64, bool) {
 impl TraceSnapshot {
     /// Count the realized demands that match a described wire. A name-level
     /// selector matches every realization of the callee; a call-site selector
-    /// matches only the exact described argument identities. The described
-    /// literals are resolved to identities here — never demanded or counted.
-    fn wire_matches(&self, wire: &DescribedWire) -> u64 {
-        let described: Vec<ValueId> = wire.arguments.iter().map(wire_arg_identity).collect();
+    /// matches only the exact described argument identities; a binding selector
+    /// matches the invocation's canonical preimage, resolved from the authored
+    /// graph when the check was deferred. The described literals are resolved
+    /// to identities here — never demanded or counted.
+    fn wire_matches(&self, wire: &DescribedWire, binding: Option<&str>) -> u64 {
         self.wire_demands
             .iter()
-            .filter(|demand| {
-                demand.function == wire.function
-                    && (wire.name_level || demand.arguments == described)
+            .filter(|demand| match &wire.selector {
+                WireSelector::Name => demand.function == wire.function,
+                WireSelector::CallSite(arguments) => {
+                    let described: Vec<ValueId> = arguments.iter().map(wire_arg_identity).collect();
+                    demand.function == wire.function
+                        && demand.arguments.as_deref() == Some(&described[..])
+                }
+                WireSelector::Binding(_) => {
+                    binding.is_some_and(|preimage| demand.preimage == preimage)
+                }
             })
             .count() as u64
     }
 
-    /// Evaluate one trace check against the frozen snapshot.
-    fn evaluate(&self, provenance: ProvenanceKey, check: TraceCheck) -> CheckRun {
+    /// Evaluate one trace check against the frozen snapshot. `binding` is the
+    /// resolved canonical preimage of a binding-level described wire, absent
+    /// for every other check shape.
+    fn evaluate(
+        &self,
+        provenance: ProvenanceKey,
+        check: TraceCheck,
+        binding: Option<&str>,
+    ) -> CheckRun {
         let (observed, passed) = match &check {
             TraceCheck::SchedulerRequestsAtMost { bound } => {
                 at_most(self.scheduler_requests, *bound)
             }
             TraceCheck::MemoEntriesAtMost { bound } => at_most(self.memo_entries, *bound),
+            TraceCheck::MemoHitsAtLeast { bound } => {
+                let observed = self.memo_hits;
+                (observed, i128::from(observed) >= i128::from(*bound))
+            }
             TraceCheck::StoreInternsAtMost { bound } => at_most(self.store_interns, *bound),
             TraceCheck::ValueIslandSpawnsAtMost { bound } => {
                 at_most(self.value_island_spawns, *bound)
@@ -409,16 +483,32 @@ impl TraceSnapshot {
                 (observed, i128::from(observed) == i128::from(*times))
             }
             TraceCheck::Demanded { wire } => {
-                let observed = self.wire_matches(wire);
+                let observed = self.wire_matches(wire, binding);
                 (observed, observed >= 1)
             }
             TraceCheck::NeverDemanded { wire } => {
-                let observed = self.wire_matches(wire);
+                let observed = self.wire_matches(wire, binding);
                 (observed, observed == 0)
             }
             TraceCheck::DemandedOnce { wire } => {
-                let observed = self.wire_matches(wire);
+                let observed = self.wire_matches(wire, binding);
                 (observed, observed == 1)
+            }
+            TraceCheck::RanProcesses { count } => {
+                let observed = self.effect_spawns;
+                (observed, i128::from(observed) == i128::from(*count))
+            }
+            TraceCheck::Read { path } => {
+                let observed = u64::from(self.reads.contains(path));
+                (observed, observed == 1)
+            }
+            TraceCheck::NeverRead { path } => {
+                let observed = u64::from(self.reads.contains(path));
+                (observed, observed == 0)
+            }
+            TraceCheck::Fetched { times } => {
+                let observed = self.fetches_performed;
+                (observed, i128::from(observed) == i128::from(*times))
             }
         };
         CheckRun {
@@ -457,6 +547,38 @@ pub struct RatchetReport {
     pub warnings: Diagnostics,
     pub plain: SuiteRun,
     pub chaos: SuiteRun,
+    pub lowering_cache: LoweringCacheCounters,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct RerunAuditReport {
+    pub warnings: Diagnostics,
+    pub first: SuiteRun,
+    pub second: SuiteRun,
+    pub nondeterministic: bool,
+    pub lowering_cache: LoweringCacheCounters,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct PersistenceAuditReport {
+    pub warnings: Diagnostics,
+    pub first: SuiteRun,
+    pub second: SuiteRun,
+    pub load: PersistentRuntimeJournalLoadReport,
+    pub journal_bytes: u64,
+    pub nondeterministic: bool,
+    pub lowering_cache: LoweringCacheCounters,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct SourceRevisionAuditReport {
+    pub first_warnings: Diagnostics,
+    pub second_warnings: Diagnostics,
+    pub first: SuiteRun,
+    pub second: SuiteRun,
+    pub load: PersistentRuntimeJournalLoadReport,
+    pub journal_bytes: u64,
+    pub nondeterministic: bool,
     pub lowering_cache: LoweringCacheCounters,
 }
 
@@ -570,6 +692,29 @@ pub fn run_source(source: &str) -> Result<RatchetReport, RunError> {
     run_source_with_config(source, CompilerConfig::default())
 }
 
+/// Run a root source alongside named library modules (the `//! uses:` harness
+/// directive of rungs 106–110): identical to [`run_source`] in every lane
+/// aspect, with imports resolved against the presented module set.
+pub fn run_source_with_modules(
+    source: &str,
+    modules: &[crate::modules::ModuleSource<'_>],
+) -> Result<RatchetReport, RunError> {
+    prepare_source_with_modules(source, modules)?.execute()
+}
+
+/// The readiness-boundary form of [`run_source_with_modules`].
+pub fn prepare_source_with_modules(
+    source: &str,
+    modules: &[crate::modules::ModuleSource<'_>],
+) -> Result<PreparedRun, RunError> {
+    prepare_modules_with_cache(
+        source,
+        modules,
+        CompilerConfig::default(),
+        LoweringCache::default(),
+    )
+}
+
 /// Run every declared test twice against a snapshot oracle. Snapshot checks
 /// compare their rendering to `expectations`; every other check is unaffected.
 pub fn run_source_with_snapshots(
@@ -631,6 +776,110 @@ pub fn run_source_with_lane(
     prepare_source_with_lane(source, lane)?.execute()
 }
 
+pub fn run_source_rerun_audit(source: &str) -> Result<RerunAuditReport, RunError> {
+    prepare_source_with_config(source, CompilerConfig::default())?.execute_rerun_audit()
+}
+
+pub fn run_source_rerun_audit_with_lane(
+    source: &str,
+    lane: weavy::exec::LaneRequest,
+) -> Result<RerunAuditReport, RunError> {
+    prepare_source_with_lane(source, lane)?.execute_rerun_audit()
+}
+
+pub fn run_source_revision_audit(
+    first_source: &str,
+    second_source: &str,
+) -> Result<SourceRevisionAuditReport, RunError> {
+    run_source_revision_audit_with_lane(first_source, second_source, weavy::exec::LaneRequest::Auto)
+}
+
+pub fn run_source_revision_audit_with_lane(
+    first_source: &str,
+    second_source: &str,
+    lane: weavy::exec::LaneRequest,
+) -> Result<SourceRevisionAuditReport, RunError> {
+    let config = CompilerConfig {
+        force_scalar_call_boundaries: true,
+        ..CompilerConfig::default()
+    };
+    let mut first_prepared =
+        prepare_source_with_cache(first_source, config, LoweringCache::for_lane(lane))?;
+    let first_revision = source_revision_id(first_source);
+    let second_revision = source_revision_id(second_source);
+    let first_warnings = first_prepared.compilation.warnings.clone();
+    let mut state = PersistentRuntimeState::default();
+    let first = run_lane(
+        &first_prepared.compilation.module,
+        &mut first_prepared.cache,
+        ChaosPolicy::default(),
+        ExecutionPhase::PlainRuntimeReady,
+        ExecutionPhase::PlainCompleted,
+        &SnapshotExpectations::new(),
+        &mut |_| {},
+        false,
+        false,
+        None,
+        Some(&mut state),
+        None,
+        None,
+        Some(&first_revision),
+    )?;
+    let journal = state.to_journal();
+    let journal_json = journal.to_json()?;
+    let loaded_journal = PersistentRuntimeJournal::from_json(&journal_json)?;
+    let journal_json = loaded_journal.to_json()?;
+    let loaded_journal = PersistentRuntimeJournal::from_json(&journal_json)?;
+    let journal_bytes = journal_json.len() as u64;
+
+    let mut second_prepared =
+        prepare_source_with_cache(second_source, config, first_prepared.cache)?;
+    let second_warnings = second_prepared.compilation.warnings.clone();
+    let mut second_state = PersistentRuntimeState::default();
+    let mut load = PersistentRuntimeJournalLoadReport::default();
+    let second = run_lane(
+        &second_prepared.compilation.module,
+        &mut second_prepared.cache,
+        ChaosPolicy::default(),
+        ExecutionPhase::PlainRuntimeReady,
+        ExecutionPhase::PlainCompleted,
+        &SnapshotExpectations::new(),
+        &mut |_| {},
+        true,
+        true,
+        None,
+        Some(&mut second_state),
+        Some(&loaded_journal),
+        Some(&mut load),
+        Some(&second_revision),
+    )?;
+    let first_value_checks = first
+        .checks
+        .iter()
+        .filter(|check| check.identity.is_some())
+        .collect::<Vec<_>>();
+    let second_value_checks = second
+        .checks
+        .iter()
+        .filter(|check| check.identity.is_some())
+        .collect::<Vec<_>>();
+    let nondeterministic = first_value_checks != second_value_checks;
+    Ok(SourceRevisionAuditReport {
+        first_warnings,
+        second_warnings,
+        first,
+        second,
+        load,
+        journal_bytes,
+        nondeterministic,
+        lowering_cache: second_prepared.cache.counters(),
+    })
+}
+
+fn source_revision_id(source: &str) -> String {
+    blake3::hash(source.as_bytes()).to_hex().to_string()
+}
+
 /// The readiness-boundary form of [`run_source_with_lane`]: compile, lower, and
 /// verify every demanded island through the requested lane without running a
 /// test.
@@ -666,9 +915,18 @@ pub fn prepare_source_with_config(
 fn prepare_source_with_cache(
     source: &str,
     config: CompilerConfig,
+    cache: LoweringCache,
+) -> Result<PreparedRun, RunError> {
+    prepare_modules_with_cache(source, &[], config, cache)
+}
+
+fn prepare_modules_with_cache(
+    source: &str,
+    modules: &[crate::modules::ModuleSource<'_>],
+    config: CompilerConfig,
     mut cache: LoweringCache,
 ) -> Result<PreparedRun, RunError> {
-    let compilation = Compiler::with_config(config).compile(source)?;
+    let compilation = Compiler::with_config(config).compile_with_modules(source, modules)?;
 
     // Lower every island the lanes will demand so its native code is compiled
     // and cached now, before execution. `get_or_lower` keys on canonical recipe
@@ -678,7 +936,9 @@ fn prepare_source_with_cache(
         // snapshot and lowers nothing, so it is skipped here.
         let partitioned = compilation.module.try_partition_test(test)?;
         for value in &partitioned.values {
-            cache.get_or_lower(&value.island)?;
+            if value.island.purpose != crate::vir::IslandPurpose::Effect {
+                cache.get_or_lower(&value.island)?;
+            }
         }
         // Argument islands demanded lazily through force-on-park are compiled now
         // so a park resolves through a warm cache hit, never a compilation.
@@ -732,6 +992,134 @@ impl PreparedRun {
         self.execute_inner(&SnapshotExpectations::new(), observe)
     }
 
+    pub fn execute_rerun_audit(mut self) -> Result<RerunAuditReport, RunError> {
+        let mut state = PersistentRuntimeState::default();
+        let first = run_lane(
+            &self.compilation.module,
+            &mut self.cache,
+            ChaosPolicy::default(),
+            ExecutionPhase::PlainRuntimeReady,
+            ExecutionPhase::PlainCompleted,
+            &SnapshotExpectations::new(),
+            &mut |_| {},
+            false,
+            false,
+            None,
+            Some(&mut state),
+            None,
+            None,
+            None,
+        )?;
+        let mut second_state = PersistentRuntimeState::default();
+        let second = run_lane(
+            &self.compilation.module,
+            &mut self.cache,
+            ChaosPolicy::default(),
+            ExecutionPhase::PlainRuntimeReady,
+            ExecutionPhase::PlainCompleted,
+            &SnapshotExpectations::new(),
+            &mut |_| {},
+            true,
+            true,
+            Some(state),
+            Some(&mut second_state),
+            None,
+            None,
+            None,
+        )?;
+        let first_value_checks = first
+            .checks
+            .iter()
+            .filter(|check| check.identity.is_some())
+            .collect::<Vec<_>>();
+        let second_value_checks = second
+            .checks
+            .iter()
+            .filter(|check| check.identity.is_some())
+            .collect::<Vec<_>>();
+        let nondeterministic = first.value_family() != second.value_family()
+            || first_value_checks != second_value_checks;
+        Ok(RerunAuditReport {
+            warnings: self.compilation.warnings,
+            first,
+            second,
+            nondeterministic,
+            lowering_cache: self.cache.counters(),
+        })
+    }
+
+    pub fn execute_persistence_audit(self) -> Result<PersistenceAuditReport, RunError> {
+        self.execute_persistence_audit_with_journal_mutator(|journal| journal)
+    }
+
+    pub fn execute_persistence_audit_with_journal_mutator(
+        mut self,
+        mutate: impl FnOnce(PersistentRuntimeJournal) -> PersistentRuntimeJournal,
+    ) -> Result<PersistenceAuditReport, RunError> {
+        let mut state = PersistentRuntimeState::default();
+        let first = run_lane(
+            &self.compilation.module,
+            &mut self.cache,
+            ChaosPolicy::default(),
+            ExecutionPhase::PlainRuntimeReady,
+            ExecutionPhase::PlainCompleted,
+            &SnapshotExpectations::new(),
+            &mut |_| {},
+            false,
+            false,
+            None,
+            Some(&mut state),
+            None,
+            None,
+            None,
+        )?;
+        let journal = state.to_journal();
+        let journal_json = journal.to_json()?;
+        let loaded_journal = PersistentRuntimeJournal::from_json(&journal_json)?;
+        let loaded_journal = mutate(loaded_journal);
+        let journal_json = loaded_journal.to_json()?;
+        let loaded_journal = PersistentRuntimeJournal::from_json(&journal_json)?;
+        let journal_bytes = journal_json.len() as u64;
+        let mut second_state = PersistentRuntimeState::default();
+        let mut load = PersistentRuntimeJournalLoadReport::default();
+        let second = run_lane(
+            &self.compilation.module,
+            &mut self.cache,
+            ChaosPolicy::default(),
+            ExecutionPhase::PlainRuntimeReady,
+            ExecutionPhase::PlainCompleted,
+            &SnapshotExpectations::new(),
+            &mut |_| {},
+            true,
+            true,
+            None,
+            Some(&mut second_state),
+            Some(&loaded_journal),
+            Some(&mut load),
+            None,
+        )?;
+        let first_value_checks = first
+            .checks
+            .iter()
+            .filter(|check| check.identity.is_some())
+            .collect::<Vec<_>>();
+        let second_value_checks = second
+            .checks
+            .iter()
+            .filter(|check| check.identity.is_some())
+            .collect::<Vec<_>>();
+        let nondeterministic = first_value_checks != second_value_checks;
+        Ok(PersistenceAuditReport {
+            warnings: self.compilation.warnings,
+            first,
+            second,
+            load,
+            journal_bytes,
+            nondeterministic,
+            lowering_cache: self.cache.counters(),
+        })
+    }
+
     fn execute_inner(
         mut self,
         expectations: &SnapshotExpectations,
@@ -745,6 +1133,13 @@ impl PreparedRun {
             ExecutionPhase::PlainCompleted,
             expectations,
             &mut observe,
+            true,
+            false,
+            None,
+            None,
+            None,
+            None,
+            None,
         )?;
         let chaos = run_lane(
             &self.compilation.module,
@@ -756,6 +1151,13 @@ impl PreparedRun {
             ExecutionPhase::ChaosCompleted,
             expectations,
             &mut observe,
+            true,
+            false,
+            None,
+            None,
+            None,
+            None,
+            None,
         )?;
         Ok(RatchetReport {
             warnings: self.compilation.warnings,
@@ -771,8 +1173,16 @@ impl PreparedRun {
 /// shared publications available as value inputs.
 struct SiteContext<'a> {
     test_name: &'a str,
+    source_revision: Option<&'a str>,
+    module: &'a Module,
     wire_lookup: &'a BTreeMap<ValueIslandId, &'a PartitionedValue>,
     published_values: &'a BTreeMap<ValueIslandId, Evaluation>,
+}
+
+fn scoped_location(location: Location, source_revision: Option<&str>) -> Location {
+    source_revision.map_or(location.clone(), |revision| {
+        location.with_source_revision(revision)
+    })
 }
 
 /// Evaluate one value-check island as an ordinary pure demand and record its
@@ -795,7 +1205,10 @@ fn evaluate_value_site(
         .expect("value-check island is lowered");
     let attribution = attribution_for(island);
     let provenance = ProvenanceKey::site(site);
-    let location = Location::for_test_provenance(context.test_name, site, &provenance.dynamic_keys);
+    let location = scoped_location(
+        Location::for_test_provenance(context.test_name, site, &provenance.dynamic_keys),
+        context.source_revision,
+    );
     let arguments = island
         .value_inputs
         .iter()
@@ -811,9 +1224,11 @@ fn evaluate_value_site(
     // the memo path; an untaken control region never parks, so it never demands.
     let wires_backing = flat_wires(
         cache,
+        context.module,
         context.wire_lookup,
         &island.wire_inputs,
         context.test_name,
+        context.source_revision,
     );
     let wires = wires_backing.demands();
     let evaluation: Evaluation = runtime.evaluate(
@@ -868,7 +1283,10 @@ fn evaluate_snapshot_site(
     let output_type = lowered.output_type.clone();
     let attribution = attribution_for(island);
     let provenance = ProvenanceKey::site(site);
-    let location = Location::for_test_provenance(context.test_name, site, &provenance.dynamic_keys);
+    let location = scoped_location(
+        Location::for_test_provenance(context.test_name, site, &provenance.dynamic_keys),
+        context.source_revision,
+    );
     let arguments = island
         .value_inputs
         .iter()
@@ -882,9 +1300,11 @@ fn evaluate_snapshot_site(
         .collect::<Vec<_>>();
     let wires_backing = flat_wires(
         cache,
+        context.module,
         context.wire_lookup,
         &island.wire_inputs,
         context.test_name,
+        context.source_revision,
     );
     let wires = wires_backing.demands();
     let evaluation: Evaluation = runtime.evaluate(
@@ -962,20 +1382,55 @@ fn run_lane(
     completed_phase: ExecutionPhase,
     expectations: &SnapshotExpectations,
     observe: &mut impl FnMut(ExecutionPhase),
+    evaluate_trace_checks: bool,
+    use_rerun_overlays: bool,
+    persistent_in: Option<PersistentRuntimeState>,
+    persistent_out: Option<&mut PersistentRuntimeState>,
+    persistent_journal_in: Option<&PersistentRuntimeJournal>,
+    persistent_journal_report: Option<&mut PersistentRuntimeJournalLoadReport>,
+    source_revision: Option<&str>,
 ) -> Result<SuiteRun, RunError> {
-    let mut runtime = Runtime::new(EventLog::default());
+    let mut journal_load_report = None;
+    let mut runtime = if let Some(journal) = persistent_journal_in {
+        let (runtime, report) =
+            Runtime::with_persistent_journal_values(EventLog::default(), journal)?;
+        journal_load_report = Some(report);
+        runtime
+    } else if let Some(state) = persistent_in {
+        Runtime::with_persistent_state(EventLog::default(), state)
+    } else {
+        Runtime::new(EventLog::default())
+    };
+    runtime.set_authoritative_rerun_audit(use_rerun_overlays);
     observe(ready_phase);
     let mut checks = Vec::new();
     let mut values = Vec::new();
     // Trace checks are deferred until every selected value check completes; they
     // are evaluated once, together, against the frozen completed-run snapshot.
-    let mut deferred_traces: Vec<(ProvenanceKey, TraceCheck)> = Vec::new();
+    // Each deferred trace carries the resolved canonical preimage of its
+    // binding-level described wire (when it has one), read from the authored
+    // graph at deferral time — nothing is demanded to resolve it.
+    let mut deferred_traces: Vec<(ProvenanceKey, TraceCheck, Option<String>)> = Vec::new();
     // Distinct executed invocation preimages already observed for a described-wire
     // observer, so equal preimages share one realized-demand entry.
-    let mut observed_invocations: BTreeSet<(FunctionId, Vec<ValueId>)> = BTreeSet::new();
+    let mut observed_invocations: BTreeSet<String> = BTreeSet::new();
     let mut kill_available = chaos.kill_first_running_task;
+    let mut journal_claims_loaded = false;
 
     for test in &module.tests {
+        runtime.set_fixture_rerun_overlay(
+            use_rerun_overlays
+                .then(|| test.metadata.rerun_with.clone())
+                .flatten(),
+        );
+        if let Some(journal) = persistent_journal_in
+            && !journal_claims_loaded
+        {
+            if let Some(report) = journal_load_report.as_mut() {
+                runtime.load_persistent_journal_claims(journal, report);
+            }
+            journal_claims_loaded = true;
+        }
         let partitioned = module.try_partition_test(test)?;
         let selected = selected_wire_functions(&partitioned);
         let mut evaluated_islands: Vec<usize> = Vec::new();
@@ -987,10 +1442,11 @@ fn run_lane(
             .map(|wire| (wire.id, wire))
             .collect();
         let mut published_values = BTreeMap::new();
+        for capability in &partitioned.capabilities {
+            let evaluation = runtime.publish_capability(&capability.ty, &capability.name);
+            published_values.insert(capability.id, evaluation);
+        }
         for value in &partitioned.values {
-            let lowered = cache.get_or_lower(&value.island)?;
-            let attribution = attribution_for(&value.island);
-            let location = Location::for_test_value(&partitioned.name, &value.id.stable_segment());
             let arguments = value
                 .island
                 .value_inputs
@@ -1002,29 +1458,80 @@ fn run_lane(
                         .expect("value islands are ordered after their dependencies")
                 })
                 .collect::<Vec<_>>();
-            let evaluation = runtime.evaluate(
-                value.island.id,
-                &location,
-                lowered,
-                &attribution,
-                IslandInputs {
-                    arguments: &arguments,
-                    wires: &[],
-                },
-                ChaosPolicy {
-                    kill_first_running_task: kill_available,
-                },
-            )?;
+            let chaos = ChaosPolicy {
+                kill_first_running_task: kill_available,
+            };
+            let evaluation = if value.island.purpose == crate::vir::IslandPurpose::Effect {
+                if matches!(
+                    value.island.effect_output().map(|node| &node.op),
+                    Some(crate::vir::Op::Exec { .. })
+                ) {
+                    let capability = arguments
+                        .first()
+                        .cloned()
+                        .expect("exec effect island has its declared capability input");
+                    runtime.evaluate_exec(
+                        &value.island,
+                        &scoped_location(
+                            Location::for_test_value(&partitioned.name, &value.id.stable_segment()),
+                            source_revision,
+                        ),
+                        &capability,
+                        chaos,
+                    )?
+                } else {
+                    let fingerprint = value
+                        .effect_fingerprint
+                        .as_deref()
+                        .expect("effect island carries a structural fingerprint");
+                    runtime.evaluate_effect(
+                        value.island.id,
+                        &scoped_location(
+                            Location::for_test_effect(&partitioned.name, fingerprint),
+                            source_revision,
+                        ),
+                        fingerprint,
+                        &value.island,
+                        &arguments,
+                        chaos,
+                    )?
+                }
+            } else {
+                let lowered = cache.get_or_lower(&value.island)?;
+                let attribution = attribution_for(&value.island);
+                runtime.evaluate(
+                    value.island.id,
+                    &scoped_location(
+                        Location::for_test_value(&partitioned.name, &value.id.stable_segment()),
+                        source_revision,
+                    ),
+                    lowered,
+                    &attribution,
+                    IslandInputs {
+                        arguments: &arguments,
+                        wires: &[],
+                    },
+                    chaos,
+                )?
+            };
             kill_available = false;
-            // A hoisted wire island that actually computed (a memo miss) records
-            // one realized demand for its described invocation. A memoized
-            // re-demand of the same recipe+argument is a hit and adds nothing, so
-            // repeated identical wires memoize to a single realization.
+            // A hoisted invocation island that actually computed (a memo miss)
+            // records one realized demand for its described invocation. A
+            // memoized re-demand of the same recipe+argument is a hit and adds
+            // nothing, so repeated identical wires memoize to a single
+            // realization.
             if let Some(wire) = &value.wire
                 && evaluation.memo == MemoVerdict::Miss
             {
-                let arguments = wire.arguments.iter().map(wire_arg_identity).collect();
-                runtime.record_wire_demand(wire.function, arguments);
+                let arguments = wire
+                    .arguments
+                    .as_ref()
+                    .map(|arguments| arguments.iter().map(wire_arg_identity).collect::<Vec<_>>());
+                runtime.record_wire_demand(
+                    wire.function,
+                    arguments,
+                    module.invocation_preimage(value.id.function, value.id.node),
+                );
             }
             values.push(ValuePublicationRun {
                 provenance: value.id,
@@ -1032,6 +1539,19 @@ fn run_lane(
                 failure: evaluation.failure.clone(),
             });
             published_values.insert(value.id, evaluation);
+        }
+        for catch in &partitioned.catches {
+            let operand = published_values
+                .get(&catch.operand)
+                .cloned()
+                .expect("catch operand was published before its result");
+            let evaluation = runtime.publish_catch(&catch.result_type, &operand)?;
+            values.push(ValuePublicationRun {
+                provenance: catch.id,
+                identity: evaluation.identity,
+                failure: None,
+            });
+            published_values.insert(catch.id, evaluation);
         }
         // A branch-dependent generator runs its real Match/If control through one
         // verified generator task that publishes only the taken sites; each taken
@@ -1111,27 +1631,35 @@ fn run_lane(
                         })?;
                     match &partitioned_site.recipe {
                         PartitionedRecipe::Value { island } => {
-                            evaluated_islands.push(*island);
-                            checks.push(evaluate_value_site(
+                            let misses_before = runtime.counters().memo_misses;
+                            let check = evaluate_value_site(
                                 &mut runtime,
                                 cache,
                                 &SiteContext {
                                     test_name: &partitioned.name,
+                                    source_revision,
+                                    module,
                                     wire_lookup: &wire_lookup,
                                     published_values: &published_values,
                                 },
                                 &partitioned.islands[*island],
                                 site,
                                 ChaosPolicy::default(),
-                            )?);
+                            )?;
+                            if runtime.counters().memo_misses > misses_before {
+                                evaluated_islands.push(*island);
+                            }
+                            checks.push(check);
                         }
                         PartitionedRecipe::Snapshot { island, name } => {
-                            evaluated_islands.push(*island);
-                            checks.push(evaluate_snapshot_site(
+                            let misses_before = runtime.counters().memo_misses;
+                            let check = evaluate_snapshot_site(
                                 &mut runtime,
                                 cache,
                                 &SiteContext {
                                     test_name: &partitioned.name,
+                                    source_revision,
+                                    module,
                                     wire_lookup: &wire_lookup,
                                     published_values: &published_values,
                                 },
@@ -1141,10 +1669,20 @@ fn run_lane(
                                 expectations,
                                 &mut seen_snapshot_names,
                                 ChaosPolicy::default(),
-                            )?);
+                            )?;
+                            if runtime.counters().memo_misses > misses_before {
+                                evaluated_islands.push(*island);
+                            }
+                            checks.push(check);
                         }
                         PartitionedRecipe::Trace(trace) => {
-                            deferred_traces.push((ProvenanceKey::site(site), trace.clone()));
+                            if evaluate_trace_checks {
+                                deferred_traces.push((
+                                    ProvenanceKey::site(site),
+                                    trace.clone(),
+                                    binding_preimage(module, test.function, trace),
+                                ));
+                            }
                         }
                     }
                 }
@@ -1157,12 +1695,14 @@ fn run_lane(
                     let site = partitioned_site.id.0;
                     match &partitioned_site.recipe {
                         PartitionedRecipe::Value { island } => {
-                            evaluated_islands.push(*island);
-                            checks.push(evaluate_value_site(
+                            let misses_before = runtime.counters().memo_misses;
+                            let check = evaluate_value_site(
                                 &mut runtime,
                                 cache,
                                 &SiteContext {
                                     test_name: &partitioned.name,
+                                    source_revision,
+                                    module,
                                     wire_lookup: &wire_lookup,
                                     published_values: &published_values,
                                 },
@@ -1171,16 +1711,22 @@ fn run_lane(
                                 ChaosPolicy {
                                     kill_first_running_task: kill_available,
                                 },
-                            )?);
+                            )?;
+                            if runtime.counters().memo_misses > misses_before {
+                                evaluated_islands.push(*island);
+                            }
+                            checks.push(check);
                             kill_available = false;
                         }
                         PartitionedRecipe::Snapshot { island, name } => {
-                            evaluated_islands.push(*island);
-                            checks.push(evaluate_snapshot_site(
+                            let misses_before = runtime.counters().memo_misses;
+                            let check = evaluate_snapshot_site(
                                 &mut runtime,
                                 cache,
                                 &SiteContext {
                                     test_name: &partitioned.name,
+                                    source_revision,
+                                    module,
                                     wire_lookup: &wire_lookup,
                                     published_values: &published_values,
                                 },
@@ -1192,11 +1738,21 @@ fn run_lane(
                                 ChaosPolicy {
                                     kill_first_running_task: kill_available,
                                 },
-                            )?);
+                            )?;
+                            if runtime.counters().memo_misses > misses_before {
+                                evaluated_islands.push(*island);
+                            }
+                            checks.push(check);
                             kill_available = false;
                         }
                         PartitionedRecipe::Trace(trace) => {
-                            deferred_traces.push((ProvenanceKey::site(site), trace.clone()));
+                            if evaluate_trace_checks {
+                                deferred_traces.push((
+                                    ProvenanceKey::site(site),
+                                    trace.clone(),
+                                    binding_preimage(module, test.function, trace),
+                                ));
+                            }
                         }
                     }
                 }
@@ -1211,6 +1767,8 @@ fn run_lane(
             for island in evaluated_islands {
                 observe_bundled_invocations(
                     &mut runtime,
+                    module,
+                    test.function,
                     &partitioned.islands[island],
                     &selected,
                     &mut observed_invocations,
@@ -1233,7 +1791,11 @@ fn run_lane(
     let snapshot = TraceSnapshot {
         scheduler_requests: counters.scheduler_requests,
         memo_entries: runtime.memo_entries(),
+        memo_hits: counters.memo_hits_exact
+            + counters.memo_hits_projection
+            + counters.memo_hits_semantic,
         store_interns: counters.store_interns,
+        effect_spawns: counters.effect_spawns,
         value_island_spawns: counters.value_island_spawns,
         successful_aggregate_freezes: counters.successful_aggregate_freezes,
         active_molten_selections: counters.active_molten_selections,
@@ -1241,29 +1803,35 @@ fn run_lane(
         framed_bytes: counters.framed_bytes,
         peak_molten_bytes: counters.peak_molten_bytes,
         peak_molten_nodes: counters.peak_molten_nodes,
-        function_calls,
-        wire_demands: runtime
-            .realized_wire_demands()
-            .iter()
-            .map(|(function, arguments)| RealizedWireDemand {
-                function: *function,
-                arguments: arguments.clone(),
-            })
+        fetches_performed: counters.fetches_performed,
+        reads: runtime
+            .receipts()
+            .flat_map(|receipt| receipt.reads.iter())
+            .map(|read| read.projection.clone())
             .collect(),
+        function_calls,
+        wire_demands: runtime.realized_wire_demands().to_vec(),
     };
-    for (provenance, trace) in deferred_traces {
-        checks.push(snapshot.evaluate(provenance, trace));
+    for (provenance, trace, binding) in deferred_traces {
+        checks.push(snapshot.evaluate(provenance, trace, binding.as_deref()));
     }
 
     let receipt_count = runtime.receipts().count() as u64;
     let all_demands_ready = runtime
         .demands()
-        .all(|demand| demand.state == DemandState::Ready);
+        .all(|demand| matches!(demand.state, DemandState::Ready | DemandState::Failed));
     let all_tasks_terminal = runtime
         .tasks()
         .all(|task| matches!(task.state, TaskState::Completed | TaskState::Discarded));
     observe(completed_phase);
-    let events = runtime.into_sink().into_events();
+    let (sink, state) = runtime.into_sink_and_persistent_state();
+    if let Some(out) = persistent_out {
+        *out = state;
+    }
+    if let (Some(report_out), Some(report)) = (persistent_journal_report, journal_load_report) {
+        *report_out = report;
+    }
+    let events = sink.into_events();
     Ok(SuiteRun {
         checks,
         values,

@@ -201,7 +201,7 @@ pub struct Problem {
 // Result
 // ---------------------------------------------------------------------------
 
-struct SolveResult {
+pub struct SolveResult {
     selected: Map<Int, Version>,
     enabled_features: Map<Int, Map<String, Bool>>,
     enabled_feature_ids: [Int],
@@ -781,7 +781,7 @@ fn apply_clause_id(index: Index, state: State, target: String, clause_id: Int, r
     }
 }
 
-fn gate_active_id(index: Index, clause_id: Int, target: String) -> Bool {
+pub fn gate_active_id(index: Index, clause_id: Int, target: String) -> Bool {
     let kind = index.gate_kinds.get(clause_id).unwrap();
     gate_kind_active(kind) && match index.gate_targets.get(clause_id) {
         Some(expr) => target_matches(expr, target),

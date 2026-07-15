@@ -210,6 +210,7 @@ fn selection() -> Stream<Check> {
         SOURCE,
         CompilerConfig {
             force_molten_copy: true,
+            ..CompilerConfig::default()
         },
     )
     .expect("forced-copy publication runs");

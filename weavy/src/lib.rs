@@ -21,8 +21,8 @@ pub use exec::{
 };
 pub use task::StructuralFieldSource;
 pub use verified::{
-    AccessDefect, AccessRole, AllowedKinds, CallContract, CallContractId, CallSiteFacts,
-    DriveRequirements, FrameContract, FrameRegion, FunctionContract, FunctionFacts,
+    AccessDefect, AccessRole, AllowedKinds, CallAbiProjection, CallContract, CallContractId,
+    CallSiteFacts, DriveRequirements, FrameContract, FrameRegion, FunctionContract, FunctionFacts,
     IndirectCallObligation, KindRequirement, OrderedCollectionContract, OrderedCollectionKind,
     PayloadKind, PcFacts, ProgramContract, ProgramDefect, ProgramError, ProgramFacts, ProgramTable,
     ReferenceSite, RegionId, RegionReference, RegionShape, SchemaContract, SchemaRef, ShapeOwner,

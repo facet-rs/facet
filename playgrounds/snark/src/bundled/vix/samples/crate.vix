@@ -1,5 +1,6 @@
-use vix::{Tree, Target, Path, Os, Map, Version, Arg};
+use vix::{Tree, Target, Path, Os, Map, Version, VersionSet, Arg};
 use caps::Rustc;
+use rodin::{Index, Problem, SolveResult, gate_active_id, solve};
 
 fn doc_string(doc: Doc, key: String) -> String {
     doc.get(key).unwrap()
@@ -33,7 +34,7 @@ fn workspace_package_doc(source: Tree) -> Doc {
     toml(source / p"Cargo.toml").get("workspace").unwrap().get("package").unwrap()
 }
 
-fn package_edition_from_source(source: Tree, manifest: Tree) -> String {
+pub fn package_edition_from_source(source: Tree, manifest: Tree) -> String {
     match package_doc(manifest).get("edition") {
         Some(edition) => match edition.is_map() {
             true => doc_string(workspace_package_doc(source), "edition"),
@@ -354,7 +355,7 @@ struct CargoProfileData {
     release_package: CargoProfileSpec,
 }
 
-struct CargoResolvedProfile {
+pub struct CargoResolvedProfile {
     name: String,
     opt_level: String,
     debuginfo: String,
@@ -364,6 +365,45 @@ struct CargoResolvedProfile {
     lto: String,
     codegen_units: String,
     strip: String,
+}
+
+pub enum CargoUnitKind {
+    Lib,
+    Bin,
+    ProcMacro,
+    BuildScript,
+    BuildDependency,
+}
+
+pub struct RustExtern {
+    name: String,
+    tree: Tree,
+    subpath: Path,
+}
+
+pub struct RustToolchainSpec {
+    name: String,
+}
+
+pub struct RustUnit {
+    crate_name: String,
+    crate_type: CargoUnitKind,
+    toolchain: RustToolchainSpec,
+    edition: String,
+    manifest: Tree,
+    source: Path,
+    target: Target,
+    emit_metadata: Option<Path>,
+    emit_link: Option<Path>,
+    deps_trees: [Tree],
+    externs: [RustExtern],
+    cfgs: [String],
+    env: [Arg],
+    profile: Option<CargoResolvedProfile>,
+}
+
+pub fn default_rust_toolchain() -> RustToolchainSpec {
+    RustToolchainSpec { name: "rustc" }
 }
 
 fn bool_string(value: Bool) -> String {
@@ -641,6 +681,127 @@ fn rustc_profile_args(profile: CargoResolvedProfile) -> [String] {
     let args = args.push("-C").push("panic=" + profile.panic);
     let args = args.push("-C").push("lto=" + profile.lto);
     push_codegen_units(args, profile.codegen_units)
+}
+
+fn rustc_profile_args_opt(profile: Option<CargoResolvedProfile>) -> [String] {
+    match profile {
+        Some(p) => rustc_profile_args(p),
+        None => [],
+    }
+}
+
+fn rustc_extern_args(externs: [RustExtern], out: [Arg]) -> [Arg] {
+    match externs.len() == 0 {
+        true => out,
+        false => rustc_extern_args_tuple(externs.pop(), out),
+    }
+}
+
+fn rustc_extern_args_tuple(popped: (RustExtern, [RustExtern]), out: [Arg]) -> [Arg] {
+    let next = rustc_extern_args(popped.1, out);
+    next.push(Arg::Str("--extern")).push(Arg::Str(popped.0.name + "=")).push(Arg::Interpolation { tree: popped.0.tree, subpath: popped.0.subpath })
+}
+
+fn rustc_dependency_args(trees: [Tree], out: [Arg]) -> [Arg] {
+    match trees.len() == 0 {
+        true => out,
+        false => rustc_dependency_args_tuple(trees.pop(), out),
+    }
+}
+
+fn rustc_dependency_args_tuple(popped: (Tree, [Tree]), out: [Arg]) -> [Arg] {
+    let next = rustc_dependency_args(popped.1, out);
+    next.push(Arg::Str("-L")).push(Arg::Str("dependency=")).push(Arg::Interpolation { tree: popped.0, subpath: p"" })
+}
+
+fn rustc_crate_type(kind: CargoUnitKind) -> String {
+    match kind {
+        CargoUnitKind::ProcMacro => "proc-macro",
+        CargoUnitKind::BuildScript => "bin",
+        CargoUnitKind::BuildDependency => "lib",
+        CargoUnitKind::Bin => "bin",
+        CargoUnitKind::Lib => "lib",
+    }
+}
+
+pub fn tree_union(trees: [Tree]) -> Tree {
+    trees.pop().0
+}
+
+fn tree_union_from(trees: [Tree], out: Tree) -> Tree {
+    match trees.len() == 0 {
+        true => out,
+        false => tree_union_tuple(trees.pop(), out),
+    }
+}
+
+fn tree_union_tuple(popped: (Tree, [Tree]), out: Tree) -> Tree {
+    tree_union_from(popped.1, out)
+}
+
+pub fn compile_rust_unit(unit: RustUnit) -> Tree {
+    let rustc = Rustc::acquire(unit.target);
+    let edition = unit.edition;
+    let profile_args = rustc_profile_args_opt(unit.profile);
+    let cfg_args = rustc_cfg_args(unit.cfgs, []);
+    let dep_args = rustc_dependency_args(unit.deps_trees, []);
+    let extern_args = rustc_extern_args(unit.externs, []);
+    let source_arg = Arg::Interpolation { tree: unit.manifest, subpath: unit.source };
+    let crate_type = rustc_crate_type(unit.crate_type);
+
+    match unit.emit_metadata {
+        Some(metadata) => match unit.emit_link {
+            Some(link) => rustc! {
+                --crate-name {unit.crate_name}
+                --edition {edition}
+                --crate-type {crate_type}
+                {profile_args}
+                {cfg_args}
+                {unit.env}
+                --emit=metadata={metadata},link={link}
+                {dep_args}
+                {extern_args}
+                {source_arg}
+            },
+            None => rustc! {
+                --crate-name {unit.crate_name}
+                --edition {edition}
+                --crate-type {crate_type}
+                {profile_args}
+                {cfg_args}
+                {unit.env}
+                --emit=metadata={metadata}
+                {dep_args}
+                {extern_args}
+                {source_arg}
+            },
+        },
+        None => match unit.emit_link {
+            Some(link) => rustc! {
+                --crate-name {unit.crate_name}
+                --edition {edition}
+                --crate-type {crate_type}
+                {profile_args}
+                {cfg_args}
+                {unit.env}
+                --emit=link={link}
+                {dep_args}
+                {extern_args}
+                {source_arg}
+            },
+            None => rustc! {
+                --crate-name {unit.crate_name}
+                --edition {edition}
+                --crate-type {crate_type}
+                {profile_args}
+                {cfg_args}
+                {unit.env}
+                {dep_args}
+                {extern_args}
+                {source_arg}
+            },
+        },
+    }
 }
 
 struct BuildScriptMetadata {
@@ -1790,28 +1951,8 @@ fn build_script_directives(run: Tree) -> BuildScriptDirectives {
     build_script_directives_from_stdout(run.text(p"build.stdout"))
 }
 
-fn rustc_cfg_directive_line(line: String, out: [String]) -> [String] {
-    let double_colon = line.strip_prefix("cargo::rustc-cfg=");
-    match double_colon == line {
-        true => match line.strip_prefix("cargo:rustc-cfg=") {
-            single_colon => match single_colon == line {
-                true => out,
-                false => out.push(single_colon),
-            },
-        },
-        false => out.push(double_colon),
-    }
-}
-
-fn rustc_cfg_directive_lines(stdout: String, out: [String]) -> [String] {
-    match stdout.contains("\n") {
-        true => rustc_cfg_directive_lines(stdout.after("\n"), rustc_cfg_directive_line(stdout.before("\n"), out)),
-        false => rustc_cfg_directive_line(stdout, out),
-    }
-}
-
-fn build_script_rustc_cfgs(run: Tree) -> [String] {
-    rustc_cfg_directive_lines(run.text(p"build.stdout"), [])
+pub fn build_script_rustc_cfgs(run: Tree) -> [String] {
+    build_script_directives(run).rustc_cfg
 }
 
 fn build_script_out_dir(run: Tree) -> Tree {

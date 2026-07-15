@@ -35,6 +35,14 @@ impl FrameSlot {
     pub(crate) const fn word_index(self) -> usize {
         self.0 as usize / Self::WORD_BYTES
     }
+
+    /// Read one ABI word through the single frame accessor. Host primitives use
+    /// this instead of open-coding byte offsets at their call sites.
+    pub(crate) fn read(self, frame: &[u8]) -> Option<i64> {
+        let bytes = frame.get(self.word_index() * Self::WORD_BYTES..)?;
+        let bytes: [u8; Self::WORD_BYTES] = bytes.get(..Self::WORD_BYTES)?.try_into().ok()?;
+        Some(i64::from_le_bytes(bytes))
+    }
 }
 
 /// Typed width of an inline value in the Weavy frame ABI.

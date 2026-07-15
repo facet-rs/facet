@@ -5,18 +5,22 @@ use vix::budget::{BudgetOutcome, ChildReport, run_source_under_declared_budget};
 use vix::compiler::Compiler;
 use vix::diagnostic::{DiagnosticCode, DiagnosticPayload, DiagnosticSeverity};
 use vix::lowering::{LoweringCache, attribution_for, source_map_for};
+use vix::modules::ModuleSource;
 use vix::ratchet::{
-    RunError, SnapshotExpectations, run_source, run_source_innards, run_source_with_snapshots,
+    RunError, SnapshotExpectations, run_source, run_source_innards, run_source_rerun_audit,
+    run_source_rerun_audit_with_lane, run_source_revision_audit,
+    run_source_revision_audit_with_lane, run_source_with_modules, run_source_with_snapshots,
     run_source_with_snapshots_and_lane,
 };
 use vix::runtime::{
-    DemandState, EventKind, FailureValue, MemoVerdict, SchemaId, SnapshotOutcome, TaskState,
+    DemandState, EventKind, FailureValue, MemoVerdict, ProcessTermination, SchemaId,
+    SnapshotOutcome, TaskState,
 };
 use vix::surface::{SurfaceParser, ast};
 use vix::vir::{
-    ArrayMapExecutionShape, ArrayMapGrainKey, EffectKind, FunctionId, GeneratorControl,
-    GeneratorStep, NodeRef, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT, Op as VirOp, Type as VirType,
-    VariantPayload, canonical_recipe,
+    ArrayMapExecutionShape, ArrayMapGrainKey, DecodeFormat, EffectKind, FunctionId,
+    GeneratorControl, GeneratorStep, NodeRef, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT,
+    Op as VirOp, Type as VirType, VariantPayload, canonical_recipe,
 };
 use weavy::task::Op as WeavyOp;
 use weavy::{LaneRequest, PayloadKind, RegionShape, ValueShapeKind, WordKind};
@@ -79,6 +83,35 @@ const RUNG_063: &str = include_str!("ratchet/063-toml-decode.vix");
 const RUNG_064: &str = include_str!("ratchet/064-decode-optional.vix");
 const RUNG_065: &str = include_str!("ratchet/065-decode-enum-forms.vix");
 const RUNG_066: &str = include_str!("ratchet/066-decode-failure.vix");
+const RUNG_067: &str = include_str!("ratchet/067-exec-echo.vix");
+const RUNG_068: &str = include_str!("ratchet/068-exec-failure-is-result.vix");
+const RUNG_069: &str = include_str!("ratchet/069-exec-memoized.vix");
+const RUNG_070: &str = include_str!("ratchet/070-undeclared-capability.reject.vix");
+const RUNG_071: &str = include_str!("ratchet/071-tree-projection.vix");
+const RUNG_072: &str = include_str!("ratchet/072-glob.vix");
+const RUNG_075: &str = include_str!("ratchet/075-fetch-pinned.vix");
+const RUNG_076: &str = include_str!("ratchet/076-fetch-memoized.vix");
+const RUNG_077: &str = include_str!("ratchet/077-archive-extract.vix");
+const RUNG_078: &str = include_str!("ratchet/078-receipts-record-reads.vix");
+const RUNG_079: &str = include_str!("ratchet/079-cross-run-reuse.vix");
+const RUNG_080: &str = include_str!("ratchet/080-early-cutoff.vix");
+const RUNG_081: &str = include_str!("ratchet/081-projection-reuse.vix");
+const RUNG_082: &str = include_str!("ratchet/082-flaky-detected.vix");
+const RUNG_101: &str = include_str!("ratchet/101-body-edit-early-cutoff.vix");
+const RUNG_101_V2: &str = include_str!("ratchet/101-body-edit-early-cutoff.v2.vix");
+const RUNG_102: &str = include_str!("ratchet/102-body-edit-negative-control.vix");
+const RUNG_102_V2: &str = include_str!("ratchet/102-body-edit-negative-control.v2.vix");
+const RUNG_103: &str = include_str!("ratchet/103-rename-is-cold.vix");
+const RUNG_103_V2: &str = include_str!("ratchet/103-rename-is-cold.v2.vix");
+const RUNG_104: &str = include_str!("ratchet/104-wrapper-refactor-warm.vix");
+const RUNG_104_V2: &str = include_str!("ratchet/104-wrapper-refactor-warm.v2.vix");
+const RUNG_105: &str = include_str!("ratchet/105-reuse-not-recompute.vix");
+const RUNG_106: &str = include_str!("ratchet/106-imports.vix");
+const RUNG_107: &str = include_str!("ratchet/107-visibility.reject.vix");
+const RUNG_108: &str = include_str!("ratchet/108-import-std.vix");
+const RUNG_109: &str = include_str!("ratchet/109-name-collision.reject.vix");
+const RUNG_110: &str = include_str!("ratchet/110-module-memo-boundary.vix");
+const LIB_GEOMETRY: &str = include_str!("ratchet/lib/geometry.vix");
 const RUNG_138: &str = include_str!("ratchet/138-map-accumulator.vix");
 const RUNG_144: &str = include_str!("ratchet/144-unused-collection-result.warn.vix");
 const RUNG_145: &str = include_str!("ratchet/145-push.reject.vix");
@@ -180,9 +213,9 @@ fn rung_001_certifies_the_new_compiler_and_runtime_spine() {
     let rendered_weavy = lowered.render();
     let recipe = lowered.recipe;
     assert!(rendered_weavy.contains("Trace { id: 0 }"));
-    assert!(rendered_weavy.contains("ConstI64 { dst: 0, value: 1 }"));
-    assert!(rendered_weavy.contains("CopyI64 { dst: 8, src: 0 }"));
-    assert!(rendered_weavy.contains("Ret { src: 8, size: 8 }"));
+    assert!(rendered_weavy.contains("ConstI64 { dst: 16, value: 1 }"));
+    assert!(rendered_weavy.contains("CopyI64 { dst: 24, src: 16 }"));
+    assert!(rendered_weavy.contains("Ret { src: 24, size: 8 }"));
 
     let shifted_source = format!("\n{RUNG_001}");
     let shifted_module = Compiler::new()
@@ -516,6 +549,11 @@ fn direct_string_call() -> Stream<Check> {
         assert_eq!(lowered.program().fns.len(), 2);
         let root = &lowered.contract().functions[0];
         let callee = &lowered.contract().functions[1];
+        let scheduler_header_bytes: u32 = callee.frame.regions[..2]
+            .iter()
+            .map(|region| u32::try_from(region_byte_len(region)).expect("header region fits u32"))
+            .sum();
+        assert_eq!(scheduler_header_bytes, 16);
         assert_eq!(lowered.constants.len(), 2, "one publication per NodeRef");
         let root_function = lowered.constants[0].root.function;
         let string_schema = lowered.constants[0].root.schema;
@@ -539,15 +577,21 @@ fn direct_string_call() -> Stream<Check> {
                 assert_eq!(constant.owner.function, constant.node.function);
                 assert_eq!(constant.root.entry, root_entry);
                 assert_eq!(constant.owner.entry, root_entry);
-                assert_eq!(constant.root.slot.byte_offset(), 0);
-                assert_eq!(constant.owner.slot.byte_offset(), 0);
+                assert_eq!(constant.root.slot.byte_offset(), scheduler_header_bytes);
+                assert_eq!(constant.owner.slot.byte_offset(), scheduler_header_bytes);
             } else {
                 assert_eq!(constant.owner.function, constant.node.function);
                 assert_ne!(constant.owner.function, root_function);
                 assert_eq!(constant.root.entry, root_entry);
                 assert_eq!(constant.owner.entry, 1);
-                assert_eq!(constant.root.slot.byte_offset(), 24);
-                assert_eq!(constant.owner.slot.byte_offset(), 8);
+                assert_eq!(
+                    constant.root.slot.byte_offset(),
+                    scheduler_header_bytes + 24
+                );
+                assert_eq!(
+                    constant.owner.slot.byte_offset(),
+                    scheduler_header_bytes + 8
+                );
             }
         }
         assert_eq!(
@@ -569,7 +613,7 @@ fn direct_string_call() -> Stream<Check> {
             })
             .expect("root calls check_string directly");
         assert_eq!(root_call.len(), callee.entries.len());
-        assert_eq!(root_call[1].dst, 8);
+        assert_eq!(root_call[1].dst, scheduler_header_bytes + 8);
         assert_eq!(root_call[1].size, 8);
         for (arg, entry) in root_call.iter().zip(&callee.entries) {
             let region = &callee.frame.regions[entry.0 as usize];
@@ -3239,7 +3283,7 @@ fn rung_021_closure_parameters_destructure_callable_values() {
             .iter()
             .position(|candidate| candidate.id == node)
             .expect("closure node has a canonical contract region");
-        let shape = lowered.contract().functions[0].frame.regions[region]
+        let shape = lowered.contract().functions[0].frame.regions[region + 2]
             .value_shape
             .expect("closure node has a structural value shape");
         let ValueShapeKind::Product { fields } =
@@ -3862,7 +3906,12 @@ fn rung_048_captured_closures_run_directly_and_through_array_map() {
         .call_contract
         .expect("captured closure has a verified callable ABI");
     let contract = &lowered.contract().calls[callable.0 as usize];
-    assert_eq!(contract.entries.len(), 2, "argument plus captured Int");
+    assert_eq!(contract.entries.len(), 1, "public argument only");
+    assert_eq!(
+        lowered.contract().functions[target_frame].environment.len(),
+        1,
+        "captured Int stays in the closure environment rather than the semantic ABI",
+    );
     let capture = *closure
         .inputs
         .first()
@@ -3894,8 +3943,12 @@ fn rung_048_captured_closures_run_directly_and_through_array_map() {
         })
         .next()
         .expect("direct closure call lowers to CallIndirect");
-    assert_eq!(direct_call[1].src, capture_region);
-    assert_ne!(direct_call[1].src, direct_call[0].src + 8);
+    assert_eq!(
+        direct_call.len(),
+        1,
+        "only the public argument crosses CallIndirect"
+    );
+    assert_ne!(capture_region, direct_call[0].src);
     assert!(lowered.program().fns.iter().all(|function| {
         function
             .code
@@ -5398,6 +5451,276 @@ fn mutation_shaped_collection_methods_are_unknown() {
     }
 }
 
+/// The `//! uses:` harness directive (testing.md, "The two kinds of `Check`" /
+/// directives section): each header line names a library module file presented
+/// to the compiler as the module its file stem names. The directive lines are
+/// consumed — removed, not blanked — so `//! at:` line numbers in reject
+/// headers refer to the source as compiled.
+fn modules_fixture(source: &str) -> (String, Vec<ModuleSource<'static>>) {
+    let mut modules = Vec::new();
+    let mut body = String::new();
+    for line in source.lines() {
+        if let Some(path) = line.strip_prefix("//! uses: ") {
+            let stem = path
+                .rsplit('/')
+                .next()
+                .and_then(|file| file.strip_suffix(".vix"))
+                .expect("uses: directive names a .vix file");
+            let module = match stem {
+                "geometry" => ModuleSource {
+                    name: "geometry",
+                    source: LIB_GEOMETRY,
+                },
+                other => panic!("uses: directive names an unbundled module `{other}`"),
+            };
+            modules.push(module);
+            continue;
+        }
+        body.push_str(line);
+        body.push('\n');
+    }
+    (body, modules)
+}
+
+/// Rung 106 — modules exist: a type and a function import from another file
+/// and compose through the production path, plain and chaos agreeing.
+#[test]
+fn rung_106_imports_run_through_production_path() {
+    let (source, modules) = modules_fixture(RUNG_106);
+    let report = run_source_with_modules(&source, &modules).expect("rung 106 compiles and runs");
+    assert!(report.passed(), "rung 106 checks pass: {report:?}");
+    assert!(report.agrees(), "plain and chaos agree");
+    assert_eq!(report.plain.checks.len(), 1);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+}
+
+/// Rung 107 (reject) — a non-`pub` item is not importable: exactly the
+/// declared diagnostic (`private`) at the declared line, anchored on the
+/// import that names the private item.
+#[test]
+fn rung_107_private_import_is_rejected() {
+    let (source, modules) = modules_fixture(RUNG_107);
+    let (expected_message, expected_line) = reject_header(RUNG_107);
+    let diagnostics = Compiler::new()
+        .compile_with_modules(&source, &modules)
+        .expect_err("private items do not import");
+    assert_eq!(diagnostics.entries.len(), 1);
+    let diagnostic = &diagnostics.entries[0];
+    assert_eq!(diagnostic.code, DiagnosticCode::PrivateImport);
+    assert_eq!(diagnostic.message(), expected_message);
+    assert_eq!(
+        source_line(&source, diagnostic.primary.start),
+        expected_line
+    );
+    assert_eq!(
+        diagnostic.payload,
+        DiagnosticPayload::Name {
+            name: "geometry::private_helper".to_owned(),
+        },
+        "the typed payload names the private item",
+    );
+}
+
+/// Rung 108 — imported modules compose with std across the boundary: an
+/// imported function flows through `map`, and `sorted` orders the results
+/// (the seam the old corpus couldn't cross: appended fixture code calling
+/// imported std helpers).
+#[test]
+fn rung_108_std_composes_across_module_boundaries() {
+    let (source, modules) = modules_fixture(RUNG_108);
+    let report = run_source_with_modules(&source, &modules).expect("rung 108 compiles and runs");
+    assert!(report.passed(), "rung 108 checks pass: {report:?}");
+    assert!(report.agrees(), "plain and chaos agree");
+    assert_eq!(report.plain.checks.len(), 1);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+}
+
+/// Rung 109 (reject) — importing a name that's also declared locally is an
+/// unqualified collision: exactly the declared diagnostic (`duplicate name`)
+/// at the declared line, anchored on the *second* binding site (the local
+/// declaration following the import).
+#[test]
+fn rung_109_import_local_collision_is_rejected() {
+    let (source, modules) = modules_fixture(RUNG_109);
+    let (expected_message, expected_line) = reject_header(RUNG_109);
+    let diagnostics = Compiler::new()
+        .compile_with_modules(&source, &modules)
+        .expect_err("an imported name may not be redeclared locally");
+    assert_eq!(diagnostics.entries.len(), 1);
+    let diagnostic = &diagnostics.entries[0];
+    assert_eq!(diagnostic.code, DiagnosticCode::DuplicateDefinition);
+    assert_eq!(diagnostic.message(), expected_message);
+    assert_eq!(
+        source_line(&source, diagnostic.primary.start),
+        expected_line
+    );
+    assert_eq!(
+        diagnostic.payload,
+        DiagnosticPayload::Name {
+            name: "Point".to_owned(),
+        },
+        "the typed payload names the colliding name",
+    );
+}
+
+/// Rung 110's foundation contract, certified the way the decode identity
+/// oracle is: memo/lowering identity is stable across module boundaries — an
+/// island's canonical recipe must not depend on which module spelled it.
+///
+/// Two compilations demand the same `geometry::magnitude_sq(geometry::Point
+/// { x: 6, y: 8 })` invocation from *differently shaped* importers (spelling
+/// B adds an unrelated imported module and an unrelated root declaration, so
+/// every `FunctionId` and item ordinal shifts). The invocation's wire island
+/// must produce byte-identical canonical VIR, one lowered recipe, one demand
+/// key — and lowering the second spelling through the first's cache must be
+/// a lookup, not a recompute. A different argument value is the
+/// discriminating negative control.
+#[test]
+fn rung_110_recipe_identity_is_importer_independent() {
+    const SPELLING_A: &str = "\
+import geometry::{Point, magnitude_sq};
+
+#[test]
+fn t() -> Stream<Check> {
+    let a = magnitude_sq(Point { x: 6, y: 8 });
+    let b = magnitude_sq(Point { x: 6, y: 8 });
+    yield expect_eq(a, b);
+    yield expect_eq(a + b, 200);
+}
+";
+    const SPELLING_B: &str = "\
+import noise::{triple, Widget};
+import geometry::{Point, magnitude_sq};
+
+fn pad(w: Widget) -> Int { triple(w.id) + 1 }
+
+#[test]
+fn t() -> Stream<Check> {
+    let a = magnitude_sq(Point { x: 6, y: 8 });
+    let b = magnitude_sq(Point { x: 6, y: 8 });
+    yield expect_eq(a, b);
+    yield expect_eq(a + b, 200);
+}
+";
+    const CONTROL: &str = "\
+import geometry::{Point, magnitude_sq};
+
+#[test]
+fn t() -> Stream<Check> {
+    let a = magnitude_sq(Point { x: 8, y: 6 });
+    let b = magnitude_sq(Point { x: 8, y: 6 });
+    yield expect_eq(a, b);
+    yield expect_eq(a + b, 200);
+}
+";
+    const NOISE: &str = "\
+pub fn triple(n: Int) -> Int { n * 3 }
+pub struct Widget { id: Int }
+";
+    let geometry = ModuleSource {
+        name: "geometry",
+        source: LIB_GEOMETRY,
+    };
+    let noise = ModuleSource {
+        name: "noise",
+        source: NOISE,
+    };
+
+    // The two structurally equal spelled invocations collapse to ONE wire
+    // island before the runtime exists: one recipe is a compile-time fact.
+    let partition = |source: &str, modules: &[ModuleSource]| {
+        let module = Compiler::new()
+            .compile_with_modules(source, modules)
+            .expect("spelling compiles");
+        let partitioned = module.partition_test(&module.tests[0]);
+        assert_eq!(
+            partitioned.wire_islands.len(),
+            1,
+            "both spelled invocations share one wire island",
+        );
+        (module, partitioned)
+    };
+    let (_module_a, partitioned_a) = partition(SPELLING_A, &[geometry]);
+    let (_module_b, partitioned_b) = partition(SPELLING_B, &[noise, geometry]);
+    let (_module_c, partitioned_c) = partition(CONTROL, &[geometry]);
+    let wire_a = &partitioned_a.wire_islands[0].island;
+    let wire_b = &partitioned_b.wire_islands[0].island;
+    let wire_c = &partitioned_c.wire_islands[0].island;
+    assert_ne!(
+        wire_a.function, wire_b.function,
+        "the reshaped importer shifts raw FunctionIds — identity must not ride on them",
+    );
+    assert_eq!(
+        wire_a.canonical_recipe_bytes(),
+        wire_b.canonical_recipe_bytes(),
+        "one canonical recipe regardless of which module set spelled the demand",
+    );
+    assert_ne!(
+        wire_a.canonical_recipe_bytes(),
+        wire_c.canonical_recipe_bytes(),
+        "a different argument is a different recipe (discriminating control)",
+    );
+
+    // One lowered recipe, one demand key; the second spelling's lowering is a
+    // cache lookup, never a recompute.
+    let mut cache = LoweringCache::default();
+    let lowered_a = cache.get_or_lower(wire_a).expect("wire island lowers");
+    let (recipe_a, key_a) = (lowered_a.recipe, lowered_a.demand_key);
+    let lowered_b = cache.get_or_lower(wire_b).expect("wire island re-lowers");
+    assert_eq!(recipe_a, lowered_b.recipe, "one lowered recipe");
+    assert_eq!(key_a, lowered_b.demand_key, "one demand key");
+    assert_eq!(cache.counters().misses, 1);
+    assert_eq!(cache.counters().hits, 1);
+    let lowered_c = cache.get_or_lower(wire_c).expect("control lowers");
+    assert_ne!(key_a, lowered_c.demand_key, "control demand key diverges");
+
+    // Production path: both spellings run green, agree across lanes, and the
+    // second await of the shared cross-module demand is a memo lookup.
+    let report_a = run_source_with_modules(SPELLING_A, &[geometry]).expect("spelling A runs");
+    let report_b =
+        run_source_with_modules(SPELLING_B, &[noise, geometry]).expect("spelling B runs");
+    for report in [&report_a, &report_b] {
+        assert!(report.passed(), "cross-module memo run passes: {report:?}");
+        assert!(report.agrees(), "plain and chaos agree");
+        assert!(
+            report.plain.counters.memo_hits_exact >= 1,
+            "the second await of the shared invocation is a lookup: {:?}",
+            report.plain.counters,
+        );
+    }
+    assert_eq!(
+        report_a.plain.checks, report_b.plain.checks,
+        "identical check identities (ValueId) regardless of importer shape",
+    );
+}
+
+/// Rung 110's fixture itself stays red at a *typed* boundary, pinned exactly:
+/// its `never_demanded(magnitude_sq(Point { x: 6, y: 8 }))` names a
+/// described-wire selector with a record-literal argument, and described
+/// selectors admit only closed scalar literals today (`WireArg::Int/Bool`).
+/// The cross-run `//! rerun` scope is the second open seam (PORT-NOTES.md:
+/// rerun-phase scoping is an explicit design PROPOSAL, not implementable
+/// surface). This pin goes green-red loudly when either seam moves.
+#[test]
+fn rung_110_stops_at_the_described_wire_record_literal_boundary() {
+    let (source, modules) = modules_fixture(RUNG_110);
+    let diagnostics = Compiler::new()
+        .compile_with_modules(&source, &modules)
+        .expect_err("a record-literal described-wire argument is a typed boundary");
+    assert_eq!(diagnostics.entries.len(), 1);
+    let diagnostic = &diagnostics.entries[0];
+    assert_eq!(diagnostic.code, DiagnosticCode::UnsupportedExpression);
+    assert_eq!(
+        diagnostic.message(),
+        "a described-wire argument must be a closed scalar literal",
+    );
+    assert_eq!(
+        &source[diagnostic.primary.start as usize..diagnostic.primary.end as usize],
+        "Point { x: 6, y: 8 }",
+        "the boundary anchors on the record literal inside never_demanded",
+    );
+}
+
 fn reject_header(source: &str) -> (&str, usize) {
     let mut message = None;
     let mut line = None;
@@ -5640,9 +5963,8 @@ fn t() -> Stream<Check> {
 }
 
 /// A decode whose document is not a compile-time-constant literal cannot be
-/// folded; rather than silently accept or host-evaluate the dynamic string, the
-/// compiler names the unavailable runtime doc-parse seam with the format and
-/// target type. (A no-target decode is the same seam with `target: None`.)
+/// folded; it lowers to the explicit scheduler-owned document host seam with
+/// the format and target type carried in VIR.
 #[test]
 fn nonliteral_decode_names_the_runtime_seam() {
     const SOURCE: &str = "\
@@ -5654,21 +5976,105 @@ fn t() -> Stream<Check> {
     yield expect_eq(row.name, \"x\");
 }
 ";
-    let diagnostics = Compiler::new()
+    let compilation = Compiler::new()
         .compile(SOURCE)
-        .expect_err("a nonliteral decode document is the runtime seam, not a fold");
-    assert_eq!(diagnostics.entries.len(), 1);
-    assert_eq!(
-        diagnostics.entries[0].code,
-        DiagnosticCode::RuntimeDecodeUnavailable
+        .expect("a nonliteral decode document lowers to the runtime seam");
+    assert!(
+        compilation.module.functions[0]
+            .nodes
+            .iter()
+            .any(|node| matches!(
+                &node.op,
+                VirOp::Decode {
+                    format: DecodeFormat::Json,
+                    target
+                } if target.name() == "PkgRow"
+            )),
+        "dynamic JSON decode is a runtime-host VIR node: {compilation:#?}"
     );
-    assert_eq!(
-        diagnostics.entries[0].payload,
-        DiagnosticPayload::RuntimeDecode {
-            format: "JSON".to_owned(),
-            target: Some("PkgRow".to_owned()),
+}
+
+/// A nonliteral fallible decode crosses the real scheduler-owned document host
+/// primitive. This is deliberately not a fold: the verified program contains a
+/// `HostCallYield`, the runtime records exactly one document host call and one
+/// source-read receipt per dynamic document, and both the success and the
+/// structured `Err(DecodeError)` branch execute through the ordinary Result
+/// match machinery.
+#[test]
+fn dynamic_json_and_toml_decode_use_the_scheduler_host_once_per_document() {
+    const JSON_OK: &str = "\
+struct PkgRow { name: String }
+fn check(src: String) -> Bool {
+    match try_json_decode<PkgRow>(src) {
+        Ok(row) => row.name == \"mio\",
+        Err(_) => false,
+    }
+}
+#[test]
+fn t() -> Stream<Check> {
+    let src = \"{\\\"name\\\":\\\"mio\\\"}\";
+    yield expect(check(src));
+}
+";
+    const JSON_ERR: &str = "\
+struct PkgRow { name: String }
+fn check(src: String) -> Bool {
+    match try_json_decode<PkgRow>(src) {
+        Ok(_) => false,
+        Err(error) => error.path == \"name\"
+            && error.document_offset == 8
+            && error.document_len == 2,
+    }
+}
+#[test]
+fn t() -> Stream<Check> {
+    let src = \"{\\\"name\\\":42}\";
+    yield expect(check(src));
+}
+";
+    const TOML_OK: &str = "\
+struct PkgRow { name: String }
+fn check(src: String) -> Bool {
+    match try_toml_decode<PkgRow>(src) {
+        Ok(row) => row.name == \"mio\",
+        Err(_) => false,
+    }
+}
+#[test]
+fn t() -> Stream<Check> {
+    let src = \"name = \\\"mio\\\"\\n\";
+    yield expect(check(src));
+}
+";
+
+    for (source, expected_documents) in [(JSON_OK, 1), (JSON_ERR, 1), (TOML_OK, 1)] {
+        let module = Compiler::new()
+            .compile(source)
+            .expect("dynamic decode compiles");
+        let partitioned = module.partition_test(&module.tests[0]);
+        let mut lowering = LoweringCache::default();
+        let lowered = lowering
+            .get_or_lower(&partitioned.islands[0])
+            .expect("dynamic decode lowers");
+        assert_eq!(
+            lowered
+                .program()
+                .fns
+                .iter()
+                .flat_map(|function| &function.code)
+                .filter(|op| matches!(op, WeavyOp::HostCallYield { .. }))
+                .count(),
+            1,
+            "one verified host edge for one dynamic document",
+        );
+        let report = run_source(source).expect("dynamic decode runs");
+        assert!(report.passed() && report.agrees());
+        for lane in [&report.plain, &report.chaos] {
+            assert_eq!(lane.counters.document_parse_host_calls, expected_documents);
+            assert_eq!(lane.counters.pure_host_calls, 0);
+            assert_eq!(lane.receipt_count, expected_documents);
         }
-    );
+    }
 }
 
 /// A malformed constant document fails as a *structured typed* diagnostic — a
@@ -5713,16 +6119,272 @@ fn t() -> Stream<Check> {
     assert_eq!(&document[offset..offset + len], "42");
 }
 
-/// Rung 066's exact code-grounded red boundary on the merged production tree: it
-/// stops in the surface grammar, before any decode — the `call` production does
-/// not admit the `try_json_decode<T>` turbofish that names the target type.
+/// Rung 066 — a decode that can fail returns a `Result<T, DecodeError>` value,
+/// not a crash. `try_json_decode<PkgRow>(...)` names the target schema at the
+/// call site; the failing document (an integer where `name: String` is expected)
+/// produces `Err(e)`, and `e.message` — a rendered projection over the typed
+/// error's structural fields — contains the offending field name.
+///
+/// On this compile-time-constant document the decode is the **constant fold** of
+/// the runtime doc-parse primitive: it runs once at compile time and its typed
+/// `Err` value is emitted as ordinary typed construction (`Op::Variant` +
+/// `Op::Record`), so the run performs no host call and records no receipt. The
+/// chaos lane agrees with plain, as the foundation requires from rung 001.
 #[test]
-fn typed_decode_066_red_boundary() {
-    let failure = Compiler::new()
-        .compile(RUNG_066)
-        .expect_err("the try_json_decode<T> turbofish does not parse yet");
-    assert_eq!(failure.entries.len(), 1);
-    assert_eq!(failure.entries[0].code, DiagnosticCode::ParseRejected);
+fn rung_066_decode_failure_is_a_typed_result() {
+    let report = run_source(RUNG_066).expect("rung 066 runs through Executable");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 1);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert!(lane.checks.iter().all(|check| check.passed));
+        // The literal decode is folded, so nothing reaches the machine as a host
+        // call or a recorded read: the fold is the constant-folded subset of the
+        // runtime primitive.
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+/// The fold-is-an-optimization proof for the fallible surface. A successfully
+/// decoded `Ok(row)` payload must be *the same value* as the equivalent authored
+/// typed construction — the F2 corrective seam: the literal fold is provably the
+/// constant-folded form of the same typed-construction primitive.
+///
+/// The decoded program binds the `Ok` payload through an ordinary match and
+/// yields the same projections an authored `PkgRow` construction does; the two
+/// produce identical check identities (`ValueId`) through the production Store
+/// path. A negative control (a different authored value) must diverge, so the
+/// oracle is discriminating rather than trivially true. (Fold determinism —
+/// identical canonical VIR across independent compiles — is certified
+/// separately by `try_decode_fold_is_deterministic_canonical_vir`, keeping each
+/// certificate's wall time bounded on a contended machine.)
+#[test]
+fn decoded_result_ok_payload_is_identity_equivalent_to_authored_construction() {
+    const AUTHORED: &str = "\
+struct PkgRow { name: String, vers: String }
+#[test]
+fn t() -> Stream<Check> {
+    let row = PkgRow { name: \"mio\", vers: \"0.8.11\" };
+    yield expect_eq(row.name, \"mio\");
+    yield expect_eq(row.vers, \"0.8.11\");
+}
+";
+    const DECODED: &str = "\
+struct PkgRow { name: String, vers: String }
+#[test]
+fn t() -> Stream<Check> {
+    yield match try_json_decode<PkgRow>(\"{\\\"name\\\":\\\"mio\\\",\\\"vers\\\":\\\"0.8.11\\\"}\") {
+        Ok(row) => expect_eq(row.name, \"mio\"),
+        Err(_) => expect(false),
+    };
+    yield match try_json_decode<PkgRow>(\"{\\\"name\\\":\\\"mio\\\",\\\"vers\\\":\\\"0.8.11\\\"}\") {
+        Ok(row) => expect_eq(row.vers, \"0.8.11\"),
+        Err(_) => expect(false),
+    };
+}
+";
+    // A different authored value: same shape, different `vers`. The decoded Ok
+    // payload must NOT collide with this control's identity.
+    const OTHER: &str = "\
+struct PkgRow { name: String, vers: String }
+#[test]
+fn t() -> Stream<Check> {
+    let row = PkgRow { name: \"mio\", vers: \"9.9.9\" };
+    yield expect_eq(row.name, \"mio\");
+    yield expect_eq(row.vers, \"0.8.11\");
+}
+";
+
+    // Production Store path: the decoded Ok payload yields identical check
+    // identities to the authored construction; the negative control diverges.
+    let authored_run = run_source(AUTHORED).expect("authored runs");
+    let decoded_run = run_source(DECODED).expect("decoded runs");
+    let other_run = run_source(OTHER).expect("control runs");
+    assert!(authored_run.passed() && decoded_run.passed());
+    // Compare the checked *value* identities (schema + content), independent of
+    // yield-site provenance — the decoded program binds its payload through a
+    // match, so its yield sites are numbered differently, but the value each
+    // check observes must be the same content-addressed value.
+    let check_value_ids = |run: &vix::ratchet::SuiteRun| {
+        run.checks
+            .iter()
+            .map(|check| check.identity)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        check_value_ids(&authored_run.plain),
+        check_value_ids(&decoded_run.plain),
+        "the decoded Ok payload is the same value as the authored construction"
+    );
+    assert_ne!(
+        check_value_ids(&authored_run.plain),
+        check_value_ids(&other_run.plain),
+        "a different authored value produces a different checked value identity"
+    );
+}
+
+/// Two independent compiles of the same `try_json_decode<T>` program fold to
+/// byte-identical canonical VIR — one recipe, one demand key — proving the fold
+/// is deterministic and content-addressed.
+#[test]
+fn try_decode_fold_is_deterministic_canonical_vir() {
+    const DECODED: &str = "\
+struct PkgRow { name: String, vers: String }
+#[test]
+fn t() -> Stream<Check> {
+    yield match try_json_decode<PkgRow>(\"{\\\"name\\\":\\\"mio\\\",\\\"vers\\\":\\\"0.8.11\\\"}\") {
+        Ok(row) => expect_eq(row.name, \"mio\"),
+        Err(_) => expect(false),
+    };
+}
+";
+    let lower = |source: &str| {
+        let module = Compiler::new().compile(source).expect("compiles");
+        let partitioned = module.partition_test(&module.tests[0]);
+        partitioned.islands[0].canonical_recipe_bytes()
+    };
+    assert_eq!(
+        lower(DECODED),
+        lower(DECODED),
+        "the fold is deterministic canonical VIR"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Rungs 067–070 — the exec band: run+capture, failure-as-value, memoized exec,
+// undeclared capability (reject).
+// ---------------------------------------------------------------------------
+
+/// The exec band's surface parses through the canonical grammar: capability-
+/// tagged backtick command templates, `exec`, postfix `?`, and Ok/Err patterns
+/// all land in the generated typed AST.
+#[test]
+fn exec_band_surface_parses() {
+    let parser = SurfaceParser::new();
+    for (rung, source) in [
+        (67, RUNG_067),
+        (68, RUNG_068),
+        (69, RUNG_069),
+        (70, RUNG_070),
+    ] {
+        parser
+            .parse(source)
+            .unwrap_or_else(|error| panic!("rung {rung:03} parses: {error:?}"));
+    }
+}
+
+/// Rung 070 — using a tool the test did not declare is not a special error: a
+/// command's tag is a capability VALUE and a test's capabilities are parameters
+/// the harness supplies, so `cc` is an ordinary unbound identifier. The primary
+/// span names the declaration that cannot name it (attributes included); the
+/// use site is a label.
+///
+/// r[verify lang.diagnostics.typed]
+/// r[verify machine.primitive.capabilities-by-identity]
+#[test]
+fn rung_070_undeclared_capability_is_an_unbound_identifier() {
+    let (expected_message, expected_line) = reject_header(RUNG_070);
+    let diagnostics = Compiler::new()
+        .compile(RUNG_070)
+        .expect_err("rung 070 must be rejected");
+    assert_eq!(diagnostics.entries.len(), 1);
+    let diagnostic = &diagnostics.entries[0];
+    assert_eq!(diagnostic.code, DiagnosticCode::UnboundIdentifier);
+    assert_eq!(diagnostic.message(), expected_message);
+    assert_eq!(
+        source_line(RUNG_070, diagnostic.primary.start),
+        expected_line
+    );
+    // The use site stays visible as a related label on the `cc` tag.
+    assert_eq!(diagnostic.labels.len(), 1);
+    assert_eq!(
+        &RUNG_070[diagnostic.labels[0].span.start as usize..diagnostic.labels[0].span.end as usize],
+        "cc"
+    );
+}
+
+/// Rungs 067–069 execute through the scheduler-owned effect primitive. The
+/// successful echo result crosses the ordinary frozen value-input boundary into
+/// its verified check island; the effect task itself records a real
+/// spawn/park/resume lifecycle and a capability read receipt.
+///
+/// r[verify machine.primitive.exec-outcome]
+/// r[verify machine.primitive.capabilities-by-identity]
+#[test]
+fn rung_067_exec_echo_runs_through_the_capability_effect_demand() {
+    let report = run_source(RUNG_067).expect("rung 067 runs");
+    assert!(report.passed(), "rung 067 passes: {report:?}");
+    assert!(report.agrees());
+
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.effect_spawns, 1);
+        assert_eq!(lane.receipt_count, 1);
+        assert!(lane.events.iter().any(|event| matches!(
+            event.kind,
+            EventKind::TaskTransition {
+                to: TaskState::Parked,
+                ..
+            }
+        )));
+        assert!(lane.events.iter().any(|event| matches!(
+            event.kind,
+            EventKind::TaskTransition {
+                from: TaskState::Parked,
+                to: TaskState::Running,
+                ..
+            }
+        )));
+    }
+}
+
+/// A nonzero exit is retained as `ProcessFailure` in the effect demand and
+/// becomes `Result::Err` only at the scheduler-owned postfix-catch boundary.
+///
+/// r[verify machine.primitive.exit-status-is-not-a-value]
+#[test]
+fn rung_068_process_failure_is_caught_as_a_typed_result() {
+    let report = run_source(RUNG_068).expect("rung 068 runs");
+    assert!(report.passed(), "rung 068 passes: {report:?}");
+    assert!(report.agrees());
+
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.effect_spawns, 1);
+        assert_eq!(lane.receipt_count, 1);
+        assert!(lane.values.iter().any(|value| matches!(
+            value.failure,
+            Some(FailureValue::ProcessFailure {
+                termination: ProcessTermination::Exited { code: 1 },
+                ..
+            })
+        )));
+    }
+}
+
+/// The plan × capability demand preimage is shared across source sites: the
+/// second syntactically separate `exec echo` observes the same completed demand
+/// and cannot spawn another process.
+///
+/// r[verify machine.primitive.exec-identity]
+/// r[verify machine.memo.no-recompute-at-lookup]
+#[test]
+fn rung_069_exec_memoizes_by_plan_and_capability_identity() {
+    let report = run_source(RUNG_069).expect("rung 069 runs");
+    assert!(report.passed(), "rung 069 passes: {report:?}");
+    assert!(report.agrees());
+
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.effect_spawns, 1);
+        assert!(lane.counters.memo_hits_exact >= 1);
+        assert_eq!(
+            lane.events
+                .iter()
+                .filter(|event| matches!(event.kind, EventKind::EffectSpawned { .. }))
+                .count(),
+            1
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -6065,9 +6727,9 @@ fn tail_loop_interpreter_and_jit_agree() {
     let program = standalone_tail_loop("count_up");
 
     let mut interpreter = Task::spawn_with_mode(&program, FnId(0), TraceMode::Production);
-    interpreter.write_i64(0, 0);
-    interpreter.write_i64(8, 10_000_000);
     interpreter.write_i64(16, 0);
+    interpreter.write_i64(24, 10_000_000);
+    interpreter.write_i64(32, 0);
     interpreter.run(&program, &mut [], &[]);
     let interpreted = interpreter.result_i64();
     assert_eq!(interpreted, 49_999_995_000_000);
@@ -6084,9 +6746,9 @@ fn tail_loop_interpreter_and_jit_agree() {
     match JitProgram::compile_with_mode(&program, TraceMode::Production) {
         Some(jit) => {
             let mut native = JitTask::spawn(&jit, FnId(0));
-            native.write_i64(0, 0);
-            native.write_i64(8, 10_000_000);
             native.write_i64(16, 0);
+            native.write_i64(24, 10_000_000);
+            native.write_i64(32, 0);
             native.run(&jit, &mut [], &[]);
             assert_eq!(
                 native.result_i64(),
@@ -6120,9 +6782,9 @@ fn tail_loop_backedge_adds_no_per_iteration_machinery() {
     let program = standalone_tail_loop("count_up");
     let run = |iterations: i64| {
         let mut task = Task::spawn_with_mode(&program, FnId(0), TraceMode::Production);
-        task.write_i64(0, 0);
-        task.write_i64(8, iterations);
         task.write_i64(16, 0);
+        task.write_i64(24, iterations);
+        task.write_i64(32, 0);
         task.run(&program, &mut [], &[]);
         let marks = task
             .trace
@@ -6382,4 +7044,322 @@ fn bad() -> Stream<Check> {
         matches!(run_source(BAD), Err(RunError::Diagnostics(_))),
         "a non-literal snapshot name is rejected at compile time"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Rungs 071–077 (skipping the parallel exec band's 073/074): trees, glob,
+// pinned fetch, fetch memoization, archive extraction. These certificates sit
+// above the current consecutive red boundary (066/067+) — progress, not score.
+// ---------------------------------------------------------------------------
+
+/// Every rung of the tree/fetch band compiles through the production surface
+/// grammar and checker into typed VIR: the machine-plane primitives
+/// (`fixture_tree`, `/` projection, `.text()`, `.glob().collect()`,
+/// `fixture_registry().url()`, `fetch`, `untar`, `.len()`) and the
+/// `never_read` / `fetched` trace descriptors all resolve.
+#[test]
+fn tree_fetch_band_compiles_to_typed_vir() {
+    for (rung, source) in [
+        ("071", RUNG_071),
+        ("072", RUNG_072),
+        ("075", RUNG_075),
+        ("076", RUNG_076),
+        ("077", RUNG_077),
+    ] {
+        let module = Compiler::new()
+            .compile(source)
+            .unwrap_or_else(|error| panic!("rung {rung} compiles to VIR: {error:?}"));
+        assert_eq!(module.tests.len(), 1, "rung {rung} declares one test");
+    }
+}
+
+/// The rungs execute through the production runner: effect islands use the
+/// store/memo/receipt plane while their consumers remain ordinary verified
+/// Weavy islands. Each source is run in both plain and chaos lanes by
+/// `run_source`; the in-language `never_read` and `fetched` checks are the
+/// externally visible certificate.
+#[test]
+fn rung_071_runs_through_effect_plane() {
+    assert_effect_rung("071", RUNG_071);
+}
+
+#[test]
+fn rung_072_runs_through_effect_plane() {
+    assert_effect_rung("072", RUNG_072);
+}
+
+#[test]
+fn rung_075_runs_through_effect_plane() {
+    assert_effect_rung("075", RUNG_075);
+}
+
+#[test]
+fn rung_076_runs_through_effect_plane() {
+    assert_effect_rung("076", RUNG_076);
+}
+
+#[test]
+fn rung_077_runs_through_effect_plane() {
+    assert_effect_rung("077", RUNG_077);
+}
+
+fn assert_effect_rung(rung: &str, source: &str) {
+    let report = run_source(source)
+        .unwrap_or_else(|error| panic!("rung {rung} runs through the effect plane: {error:?}"));
+    assert!(
+        report.passed(),
+        "rung {rung} agrees across plain and chaos: {report:#?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Rungs 078-082: receipts, cross-run reuse, projection reuse, and rerun audit.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn rung_078_receipts_record_tree_and_decode_reads() {
+    let report = run_source(RUNG_078).expect("rung 078 runs through production receipts");
+    assert!(report.passed(), "rung 078 report: {report:#?}");
+    for lane in [&report.plain, &report.chaos] {
+        assert!(
+            lane.receipt_count >= 2,
+            "tree projection and typed TOML decode both record receipts: {lane:#?}",
+        );
+        assert!(lane.checks.iter().all(|check| check.passed));
+    }
+}
+
+#[test]
+fn rung_079_cross_run_reuses_without_recompute() {
+    let audit = run_source_rerun_audit(RUNG_079).expect("rung 079 rerun audit executes");
+    assert!(
+        audit.second.checks.iter().all(|check| check.passed),
+        "second run trace checks pass: {audit:#?}",
+    );
+    assert_eq!(
+        audit.second.counters.memo_misses, 0,
+        "second run recomputes nothing"
+    );
+    assert!(
+        audit.second.counters.memo_hits_exact > 0,
+        "second run is served by memo hits"
+    );
+    assert!(!audit.nondeterministic, "pure rerun stays deterministic");
+}
+
+#[test]
+fn rung_080_early_cutoff_reuses_downstream_render() {
+    let audit = run_source_rerun_audit(RUNG_080).expect("rung 080 rerun audit executes");
+    assert!(
+        audit.second.checks.iter().all(|check| check.passed),
+        "second run trace checks pass: {audit:#?}",
+    );
+    assert!(
+        audit.second.counters.memo_hits_exact + audit.second.counters.memo_hits_projection > 0,
+        "rerun uses memo/projection hits: {:?}",
+        audit.second.counters,
+    );
+}
+
+#[test]
+fn rung_081_projection_reuses_build_step_when_unread_path_changes() {
+    let audit = run_source_rerun_audit(RUNG_081).expect("rung 081 rerun audit executes");
+    assert!(
+        audit.second.checks.iter().all(|check| check.passed),
+        "second run trace checks pass: {audit:#?}",
+    );
+    assert!(
+        audit.second.counters.memo_hits_projection > 0,
+        "changed tree outside witnessed read projection is a projection hit: {:?}",
+        audit.second.counters,
+    );
+}
+
+#[test]
+fn rung_082_rerun_audit_flags_nondeterministic_exec() {
+    let audit = run_source_rerun_audit(RUNG_082).expect("rung 082 rerun audit executes");
+    assert!(
+        audit.nondeterministic,
+        "authoritative rerun output/value families diverge: {audit:#?}",
+    );
+}
+
+#[test]
+fn incrementality_band_agrees_across_native_and_interpreter_lanes() {
+    if !weavy::jit::task_lane::available() {
+        return;
+    }
+    for (name, source) in [
+        ("078", RUNG_078),
+        ("079", RUNG_079),
+        ("080", RUNG_080),
+        ("081", RUNG_081),
+    ] {
+        let native = run_source_rerun_audit_with_lane(source, LaneRequest::Native)
+            .unwrap_or_else(|error| panic!("rung {name} native rerun audit: {error:?}"));
+        let interp = run_source_rerun_audit_with_lane(source, LaneRequest::Interpreter)
+            .unwrap_or_else(|error| panic!("rung {name} interpreter rerun audit: {error:?}"));
+        assert_eq!(
+            native.second.check_family(),
+            interp.second.check_family(),
+            "rung {name} second-run check family diverges across lanes",
+        );
+        assert_eq!(
+            native.second.value_family(),
+            interp.second.value_family(),
+            "rung {name} second-run value family diverges across lanes",
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Rungs 101-105: code-edit early cutoff and lookup-not-recompute discipline.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn rung_101_body_edit_early_cutoff_reuses_downstream_value() {
+    let audit = run_source_revision_audit(RUNG_101, RUNG_101_V2)
+        .expect("rung 101 source-revision audit executes");
+    assert!(
+        audit.second.checks.iter().all(|check| check.passed),
+        "rung 101 second revision passes: {audit:#?}",
+    );
+    assert!(
+        audit.load.claims_loaded > 0,
+        "durable journal loads reusable claims: {audit:#?}",
+    );
+    assert!(
+        audit.second.counters.memo_hits_exact
+            + audit.second.counters.memo_hits_projection
+            + audit.second.counters.memo_hits_semantic
+            > 0,
+        "second revision uses memo lookup/revalidation: {:?}",
+        audit.second.counters,
+    );
+    assert!(
+        audit.second.counters.memo_hits_semantic > 0,
+        "source-revision location churn is bridged by suffix-nominated semantic hits: {:?}",
+        audit.second.counters,
+    );
+    assert_eq!(
+        audit.second.counters.memo_misses, 1,
+        "101 recomputes exactly one changed source-revision demand, but not downstream render: {:?}",
+        audit.second.counters,
+    );
+    assert_eq!(
+        audit.second.counters.memo_hits_semantic, 1,
+        "101 has exactly one suffix-nominated downstream hit: {:?}",
+        audit.second.counters,
+    );
+    assert!(!audit.nondeterministic, "{audit:#?}");
+}
+
+#[test]
+fn rung_102_body_edit_negative_control_recomputes_downstream_value() {
+    let positive = run_source_revision_audit(RUNG_101, RUNG_101_V2)
+        .expect("rung 101 source-revision audit executes");
+    let control = run_source_revision_audit(RUNG_102, RUNG_102_V2)
+        .expect("rung 102 source-revision audit executes");
+    assert!(
+        control.second.checks.iter().all(|check| check.passed),
+        "rung 102 second revision passes: {control:#?}",
+    );
+    assert!(
+        control.second.counters.memo_misses > positive.second.counters.memo_misses,
+        "changed helper value forces more recomputation than 101: positive={:?} control={:?}",
+        positive.second.counters,
+        control.second.counters,
+    );
+    assert_eq!(
+        control.second.counters.memo_misses, 2,
+        "102 recomputes the changed source-revision demand and downstream render: {:?}",
+        control.second.counters,
+    );
+    assert_eq!(
+        control.second.counters.memo_hits_semantic, 0,
+        "102's changed value leaves no accepted downstream suffix candidate: {:?}",
+        control.second.counters,
+    );
+}
+
+#[test]
+fn rung_103_rename_location_churn_is_cold_but_correct() {
+    let audit = run_source_revision_audit(RUNG_103, RUNG_103_V2)
+        .expect("rung 103 source-revision audit executes");
+    assert!(
+        audit.second.checks.iter().all(|check| check.passed),
+        "rung 103 second revision passes despite cold churn: {audit:#?}",
+    );
+    assert!(
+        audit.second.counters.memo_misses > 0,
+        "rename churn is deliberately cold: {:?}",
+        audit.second.counters,
+    );
+}
+
+#[test]
+fn rung_104_wrapper_refactor_uses_suffix_nomination_without_leaf_demand() {
+    let audit = run_source_revision_audit(RUNG_104, RUNG_104_V2)
+        .expect("rung 104 source-revision audit executes");
+    assert!(
+        audit.second.checks.iter().all(|check| check.passed),
+        "rung 104 second revision passes: {audit:#?}",
+    );
+    assert!(
+        audit.second.counters.memo_hits_semantic > 0,
+        "wrapper refactor uses suffix-nominated semantic memo hits: {:?}",
+        audit.second.counters,
+    );
+}
+
+#[test]
+fn rung_105_warm_reuse_is_lookup_not_recompute_and_compare() {
+    let audit =
+        run_source_revision_audit(RUNG_105, RUNG_105).expect("rung 105 warm source audit executes");
+    assert!(
+        audit.second.checks.iter().all(|check| check.passed),
+        "rung 105 trace checks pass on the warm run: {audit:#?}",
+    );
+    assert_eq!(
+        audit.second.counters.memo_misses, 0,
+        "warm source reuse performs no recomputation: {:?}",
+        audit.second.counters,
+    );
+    assert!(
+        audit.second.counters.memo_hits_exact
+            + audit.second.counters.memo_hits_projection
+            + audit.second.counters.memo_hits_semantic
+            >= 1,
+        "warm source reuse is proven by memo hit counters: {:?}",
+        audit.second.counters,
+    );
+}
+
+#[test]
+fn source_revision_band_agrees_across_native_and_interpreter_lanes() {
+    if !weavy::jit::task_lane::available() {
+        return;
+    }
+    for (name, first, second) in [
+        ("101", RUNG_101, RUNG_101_V2),
+        ("102", RUNG_102, RUNG_102_V2),
+        ("103", RUNG_103, RUNG_103_V2),
+        ("104", RUNG_104, RUNG_104_V2),
+        ("105", RUNG_105, RUNG_105),
+    ] {
+        let native = run_source_revision_audit_with_lane(first, second, LaneRequest::Native)
+            .unwrap_or_else(|error| panic!("rung {name} native source audit: {error:?}"));
+        let interp = run_source_revision_audit_with_lane(first, second, LaneRequest::Interpreter)
+            .unwrap_or_else(|error| panic!("rung {name} interpreter source audit: {error:?}"));
+        assert_eq!(
+            native.second.check_family(),
+            interp.second.check_family(),
+            "rung {name} second-run check family diverges across lanes",
+        );
+        assert_eq!(
+            native.second.value_family(),
+            interp.second.value_family(),
+            "rung {name} second-run value family diverges across lanes",
+        );
+    }
 }

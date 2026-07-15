@@ -37,6 +37,9 @@ pub enum MachineOperation {
     DemandTransition,
     TaskTransition,
     TraceAttribution,
+    /// A machine-plane primitive demand (tree projection, glob, fetch,
+    /// extract) evaluated by the runtime effect plane.
+    Effect,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -56,6 +59,12 @@ pub enum RuntimeFault {
     PureIslandYielded,
     PureIslandParked {
         input: u32,
+    },
+    /// The typed document host crossed its verified ABI incorrectly. Document
+    /// syntax/type errors are not machine faults: they materialize as the
+    /// `Err(DecodeError)` value instead.
+    DocumentParseHost {
+        detail: String,
     },
     /// A wire forced a demand that is already being evaluated on the demand
     /// stack: a cyclic/re-entrant demand. The demand state machine detects it as
@@ -81,6 +90,23 @@ pub enum RuntimeFault {
         site: u32,
         index: i64,
         length: i64,
+    },
+    /// The exec effect's host seam failed before the termination grammar could
+    /// interpret anything: the capability's program could not be spawned or
+    /// waited on. A machine/host fault, never a language failure — a process
+    /// that RAN and exited nonzero is [`super::FailureValue::ProcessFailure`].
+    EffectHostFailure {
+        detail: String,
+    },
+    /// An effect island was evaluated whose output is not an effect demand, or
+    /// whose inputs did not carry the capability the effect requires.
+    MalformedEffectIsland,
+    /// A machine invariant on the effect plane: a malformed effect island (an
+    /// op the plane does not interpret, a missing operand, a store handle that
+    /// vanished). Never a language failure — those are typed
+    /// [`super::FailureValue`]s.
+    EffectPlane {
+        detail: &'static str,
     },
 }
 

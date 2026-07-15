@@ -6,7 +6,8 @@
 //! canonical source intentionally names a fixture provider.
 
 use vix::diagnostic::{DiagnosticCode, DiagnosticPayload};
-use vix::ratchet::{RunError, run_source};
+use vix::ratchet::{RunError, prepare_source, run_source};
+use vix::runtime::{EventKind, MemoVerdict, PersistentClaimRejectionReason};
 
 const STD_VERSION: &str = include_str!("../std/version.vix");
 const RUNG_085: &str = include_str!("ratchet/085-index-rows.vix");
@@ -18,6 +19,8 @@ const RUNG_090: &str = include_str!("ratchet/090-backtracking.vix");
 const RUNG_091: &str = include_str!("ratchet/091-exhaustion-is-none.vix");
 const RUNG_092: &str = include_str!("ratchet/092-learning-prunes.vix");
 const RUNG_093: &str = include_str!("ratchet/093-solve-is-deterministic.vix");
+const RUNG_094: &str = include_str!("ratchet/094-index-fetched-lazily.vix");
+const RUNG_099: &str = include_str!("ratchet/099-warm-restart.vix");
 
 // The rung's `IndexRow.vers: String` is an adapter-only historical surface.
 // `fixture_index` parses it only at the rung's `by_key` demand; solver state
@@ -336,6 +339,281 @@ fn mini_solve(universe: PackageUniverse) where { requirements: Map<String, Versi
 }
 "#;
 
+const LAZY_SOLVER_FIXTURE: &str = r#"
+struct PackageSource { canonical: String }
+struct PackageId { source: PackageSource, name: String }
+struct Dependency { package: PackageId, requirement: VersionSet, optional: Bool, cfg: Option<String> }
+struct PackageRow { package: PackageId, version: Version, dependencies: [Dependency], features: Map<String, [String]>, yanked: Bool }
+struct PackageUniverse { marker: Int }
+struct FixtureWorkspace { marker: Int }
+
+fn registry(name: String) -> PackageId {
+    PackageId { source: PackageSource { canonical: "registry:https://index.crates.io" }, name }
+}
+
+fn fixture_index() -> PackageUniverse {
+    PackageUniverse { marker: 0 }
+}
+
+fn fixture_workspace(name: String) -> FixtureWorkspace {
+    FixtureWorkspace { marker: 0 }
+}
+
+fn requirements(workspace: FixtureWorkspace) -> Map<String, VersionSet> {
+    let text = (fixture_tree("kitchen-sink") / "requirements.txt").text();
+    if text.contains("libd") {
+        %{"liba" => parse_req(">=1.0"), "libd" => parse_req("^3.0")}
+    } else {
+        %{"liba" => parse_req(">=1.0"), "libc" => parse_req("^1.0")}
+    }
+}
+"#;
+
+const LAZY_MINI_SOLVE_KERNEL: &str = r#"
+struct SolverState {
+    domains: Map<PackageId, VersionSet>,
+    selected: Map<PackageId, Version>,
+    learned: [DeadRegion],
+}
+
+struct DeadRegion { selections: Map<PackageId, Version> }
+struct Choice { package: PackageId, candidates: Int }
+struct SearchResult { solution: Option<Map<String, Version>>, learned: [DeadRegion] }
+enum SolveStep { Pass(SolverState), Conflict(DeadRegion) }
+
+fn empty_state() -> SolverState {
+    SolverState { domains: %{}, selected: %{}, learned: [] }
+}
+
+fn package_known(name: String) -> Bool {
+    name == "liba" || name == "libb" || name == "libc" || name == "libd"
+}
+
+fn find_package(universe: PackageUniverse) where { name: String } -> Option<PackageId> {
+    if package_known(name) { Some(registry(name)) } else { None }
+}
+
+fn package_rows(universe: PackageUniverse) where { package: PackageId } -> [PackageRow] {
+    if package.name == "liba" {
+        let text = (fixture_tree("index") / "liba").text();
+        let libb = registry("libb");
+        let row12 = if text.contains("liba 1.2.0") {
+            [PackageRow { package, version: parse_version("1.2.0"), dependencies: [Dependency { package: libb, requirement: parse_req("^1.0"), optional: false, cfg: None }], features: %{}, yanked: false }]
+        } else { [] };
+        let row13 = if text.contains("liba 1.3.0") {
+            [PackageRow { package, version: parse_version("1.3.0"), dependencies: [Dependency { package: libb, requirement: parse_req("^2.0"), optional: false, cfg: None }], features: %{}, yanked: false }]
+        } else { [] };
+        row12 ++ row13
+    } else if package.name == "libb" {
+        let text = (fixture_tree("index") / "libb").text();
+        let row10 = if text.contains("libb 1.0.0") {
+            [PackageRow { package, version: parse_version("1.0.0"), dependencies: [], features: %{}, yanked: false }]
+        } else { [] };
+        let row20 = if text.contains("libb 2.0.0") {
+            [PackageRow { package, version: parse_version("2.0.0"), dependencies: [], features: %{}, yanked: false }]
+        } else { [] };
+        row10 ++ row20
+    } else if package.name == "libc" {
+        let text = (fixture_tree("index") / "libc").text();
+        let libb = registry("libb");
+        if text.contains("libc 1.0.0") {
+            [PackageRow { package, version: parse_version("1.0.0"), dependencies: [Dependency { package: libb, requirement: parse_req("^1.0"), optional: false, cfg: None }], features: %{}, yanked: false }]
+        } else { [] }
+    } else if package.name == "libd" {
+        let text = (fixture_tree("index") / "libd").text();
+        let libb = registry("libb");
+        if text.contains("libd 3.0.0") {
+            [PackageRow { package, version: parse_version("3.0.0"), dependencies: [Dependency { package: libb, requirement: parse_req("^1.0"), optional: false, cfg: None }], features: %{}, yanked: false }]
+        } else { [] }
+    } else {
+        []
+    }
+}
+
+fn narrow(index: PackageUniverse) where { state: SolverState, package: PackageId, requirement: VersionSet } -> Option<SolverState> {
+    let prior = if state.domains.has(package) { state.domains.get(package) } else { universe() };
+    let allowed = prior.intersect(requirement);
+    if allowed.is_empty() {
+        None
+    } else if state.selected.has(package) && !allowed.contains(state.selected.get(package)) {
+        None
+    } else {
+        Some(SolverState { domains: state.domains.with (package, allowed), ..state })
+    }
+}
+
+fn seed_requirements(universe: PackageUniverse) where { names: [String], requirements: Map<String, VersionSet>, state: SolverState } -> Option<SolverState> {
+    match names.split_last() {
+        None => Some(state),
+        Some((name, rest)) => match find_package(universe) where { name } {
+            None => None,
+            Some(package) => match narrow(universe) where { state, package, requirement: requirements.get(name) } {
+                None => None,
+                Some(next) => seed_requirements(universe) where { names: rest, requirements, state: next },
+            },
+        },
+    }
+}
+
+fn eligible_rows(universe: PackageUniverse) where { state: SolverState, package: PackageId } -> [PackageRow] {
+    eligible_from(package_rows(universe) where { package }) where { allowed: state.domains.get(package), out: [] }
+}
+
+fn eligible_from(rows: [PackageRow]) where { allowed: VersionSet, out: [PackageRow] } -> [PackageRow] {
+    match rows.split_last() {
+        None => out,
+        Some((row, rest)) => {
+            let next = if !row.yanked && allowed.contains(row.version) { out + row } else { out };
+            eligible_from(rest) where { allowed, out: next }
+        },
+    }
+}
+
+fn higher_version(left: Version) where { right: Version } -> Bool {
+    match version_precedence(left) where { right } {
+        Ordering::Greater => true,
+        Ordering::Less => false,
+        Ordering::Equal => (left <=> right) == Ordering::Greater,
+    }
+}
+
+fn highest_row(rows: [PackageRow]) -> Option<PackageRow> {
+    highest_from(rows) where { best: None }
+}
+
+fn highest_from(rows: [PackageRow]) where { best: Option<PackageRow> } -> Option<PackageRow> {
+    match rows.split_last() {
+        None => best,
+        Some((row, rest)) => match best {
+            None => highest_from(rest) where { best: Some(row) },
+            Some(current) => {
+                let next = if higher_version(row.version) where { right: current.version } { row } else { current };
+                highest_from(rest) where { best: Some(next) }
+            },
+        },
+    }
+}
+
+fn without_version(rows: [PackageRow]) where { version: Version, out: [PackageRow] } -> [PackageRow] {
+    match rows.split_last() {
+        None => out,
+        Some((row, rest)) => {
+            let next = if row.version == version { out } else { out + row };
+            without_version(rest) where { version, out: next }
+        },
+    }
+}
+
+fn better_choice(candidate: Choice) where { best: Choice } -> Bool {
+    candidate.candidates < best.candidates
+        || (candidate.candidates == best.candidates && (candidate.package <=> best.package) == Ordering::Less)
+}
+
+fn choose_undecided(universe: PackageUniverse) where { state: SolverState } -> Option<Choice> {
+    choose_from(universe) where { state, packages: state.domains.keys(), best: None }
+}
+
+fn choose_from(universe: PackageUniverse) where { state: SolverState, packages: [PackageId], best: Option<Choice> } -> Option<Choice> {
+    match packages.split_last() {
+        None => best,
+        Some((package, rest)) => {
+            if state.selected.has(package) {
+                choose_from(universe) where { state, packages: rest, best }
+            } else {
+                let candidate = Choice { package, candidates: eligible_rows(universe) where { state, package }.len() };
+                let next = match best {
+                    None => Some(candidate),
+                    Some(current) => if better_choice(candidate) where { best: current } { Some(candidate) } else { Some(current) },
+                };
+                choose_from(universe) where { state, packages: rest, best: next }
+            }
+        },
+    }
+}
+
+fn finalize_selection(selected: Map<PackageId, Version>) -> Option<Map<String, Version>> {
+    finalize_selected(selected.keys()) where { selected, out: %{} }
+}
+
+fn finalize_selected(packages: [PackageId]) where { selected: Map<PackageId, Version>, out: Map<String, Version> } -> Option<Map<String, Version>> {
+    match packages.split_last() {
+        None => Some(out),
+        Some((package, rest)) => {
+            if out.has(package.name) {
+                None
+            } else {
+                finalize_selected(rest) where { selected, out: out.with(package.name, selected.get(package)) }
+            }
+        },
+    }
+}
+
+fn region_matches(region: DeadRegion) where { selected: Map<PackageId, Version> } -> Bool {
+    region.selections.keys().all(|package| selected.has(package) && selected.get(package) == region.selections.get(package))
+}
+
+fn blocked(state: SolverState) -> Bool {
+    state.learned.any(|region| region_matches(region) where { selected: state.selected })
+}
+
+fn conflict_region(selected: Map<PackageId, Version>) -> DeadRegion {
+    DeadRegion { selections: selected }
+}
+
+fn apply_dependencies(universe: PackageUniverse) where { state: SolverState, dependencies: [Dependency] } -> SolveStep {
+    match dependencies.split_last() {
+        None => if blocked(state) { SolveStep::Conflict(conflict_region(state.selected)) } else { SolveStep::Pass(state) },
+        Some((dependency, rest)) => match narrow(universe) where { state, package: dependency.package, requirement: dependency.requirement } {
+            None => SolveStep::Conflict(conflict_region(state.selected)),
+            Some(next) => apply_dependencies(universe) where { state: next, dependencies: rest },
+        },
+    }
+}
+
+fn select_row(universe: PackageUniverse) where { state: SolverState, package: PackageId, row: PackageRow } -> SolveStep {
+    if state.selected.has(package) && state.selected.get(package) != row.version {
+        SolveStep::Conflict(conflict_region(state.selected))
+    } else {
+        let selected = state.selected.with(package, row.version);
+        apply_dependencies(universe) where { state: SolverState { selected, ..state }, dependencies: row.dependencies }
+    }
+}
+
+fn search(universe: PackageUniverse) where { state: SolverState } -> SearchResult {
+    match choose_undecided(universe) where { state } {
+        None => SearchResult { solution: finalize_selection(state.selected), learned: state.learned },
+        Some(choice) => try_rows(universe) where { state, package: choice.package, rows: eligible_rows(universe) where { state, package: choice.package } },
+    }
+}
+
+fn try_rows(universe: PackageUniverse) where { state: SolverState, package: PackageId, rows: [PackageRow] } -> SearchResult {
+    match highest_row(rows) {
+        None => SearchResult { solution: None, learned: state.learned + conflict_region(state.selected) },
+        Some(row) => {
+            let rest = without_version(rows) where { version: row.version, out: [] };
+            match select_row(universe) where { state, package, row } {
+                SolveStep::Conflict(region) =>
+                    try_rows(universe) where { state: SolverState { learned: state.learned + region, ..state }, package, rows: rest },
+                SolveStep::Pass(next) => {
+                    let nested = search(universe) where { state: next };
+                    match nested.solution {
+                        Some(solution) => SearchResult { solution: Some(solution), learned: nested.learned },
+                        None => try_rows(universe) where { state: SolverState { learned: nested.learned, ..state }, package, rows: rest },
+                    }
+                },
+            }
+        },
+    }
+}
+
+fn mini_solve(universe: PackageUniverse) where { requirements: Map<String, VersionSet> } -> Option<Map<String, Version>> {
+    match seed_requirements(universe) where { names: requirements.keys(), requirements, state: empty_state() } {
+        None => None,
+        Some(state) => (search(universe) where { state }).solution,
+    }
+}
+"#;
+
 fn version_lane(rung: &str) -> String {
     format!("{STD_VERSION}\n{rung}")
 }
@@ -346,6 +624,10 @@ fn index_lane() -> String {
 
 fn solver_lane(rung: &str) -> String {
     format!("{STD_VERSION}\n{SOLVER_FIXTURE}\n{MINI_SOLVE_KERNEL}\n{rung}")
+}
+
+fn lazy_solver_lane(rung: &str) -> String {
+    format!("{STD_VERSION}\n{LAZY_SOLVER_FIXTURE}\n{LAZY_MINI_SOLVE_KERNEL}\n{rung}")
 }
 
 fn unknown_name(source: &str) -> String {
@@ -424,24 +706,171 @@ fn rung_092_shares_solution_between_generator_control_and_selected_check() {
 }
 
 #[test]
-fn rung_093_preserves_the_demanded_once_red_boundary() {
-    // `demanded_once` is now a described-wire intrinsic, but rung 093 selects a
-    // let-bound wire (`demanded_once(solve)`) rather than a direct invocation.
-    // Resolving a bound wire to its underlying demand is a separate solver-lane
-    // capability, so 093 stays red at the described-wire operand boundary.
-    let Err(RunError::Diagnostics(diagnostics)) = run_source(&solver_lane(RUNG_093)) else {
-        panic!("rung 093 remains red at the described-wire operand boundary");
-    };
-    assert_eq!(diagnostics.entries.len(), 1, "one red boundary");
-    let entry = &diagnostics.entries[0];
-    assert_eq!(entry.code, DiagnosticCode::UnsupportedExpression);
-    let DiagnosticPayload::Unsupported { construct } = &entry.payload else {
-        panic!("described-wire operand boundary carries an unsupported payload: {entry:?}");
-    };
-    assert_eq!(
-        construct,
-        "a described-wire trace check takes a direct function invocation"
+fn rung_093_solve_is_deterministic() {
+    // `demanded_once(solve)` selects the let-bound `mini_solve` invocation — a
+    // composite-argument preimage with a where-clause requirement Map — by its
+    // canonical preimage in the authored graph. Both demands of `solve` are one
+    // computation, one answer; the observer changes nothing about execution.
+    let report = run_source(&solver_lane(RUNG_093))
+        .expect("rung 093 compiles and executes through VerifiedProgram");
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.checks.len(), 2);
+        assert!(
+            lane.checks[0].passed,
+            "the two solve demands are one answer"
+        );
+        assert!(
+            lane.checks[1].trace_failure.is_none(),
+            "demanded_once(solve) observes exactly one realization: {:?}",
+            lane.checks[1].trace_failure
+        );
+        assert!(lane.checks[1].passed, "demanded_once(solve)");
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+    assert!(report.passed());
+    assert!(report.agrees());
+}
+
+#[test]
+fn rung_094_mini_solve_reads_only_visited_package_rows() {
+    let report = run_source(&lazy_solver_lane(RUNG_094))
+        .expect("rung 094 compiles and executes through effect-backed package rows");
+    assert!(report.passed(), "rung 094 report: {report:#?}");
+    assert!(report.agrees(), "plain and chaos agree");
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.checks.len(), 2);
+        assert!(lane.checks.iter().all(|check| check.passed));
+        assert!(
+            lane.receipt_count > 0,
+            "row access is proven by receipt-bearing effect demands: {lane:#?}",
+        );
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert!(
+            lane.counters.effect_spawns > 0,
+            "package rows are read through the production effect plane"
+        );
+    }
+}
+
+#[test]
+fn rung_099_one_req_bumped_recomputes_changed_root_and_reuses_untouched_rows() {
+    let report = prepare_source(&lazy_solver_lane(RUNG_099))
+        .expect("rung 099 prepares")
+        .execute_persistence_audit()
+        .expect("rung 099 persistence audit executes");
+    assert!(
+        report.second.checks.iter().all(|check| check.passed),
+        "second run checks pass: {report:#?}",
     );
+    assert!(
+        report.load.claims_loaded > 0,
+        "unchanged receipt-backed claims load only after verification: {report:#?}",
+    );
+    assert!(
+        report
+            .load
+            .rejected_claims
+            .iter()
+            .any(|claim| claim.reason == PersistentClaimRejectionReason::UnverifiableReceipt),
+        "the bumped workspace requirement rejects the stale root claim: {report:#?}",
+    );
+    assert!(
+        report.second.counters.memo_misses > 0,
+        "changed root recomputes as a demanded miss: {report:#?}",
+    );
+    assert!(
+        report.second.counters.memo_hits_exact + report.second.counters.memo_hits_projection > 0,
+        "untouched package work is served by memo after receipt verification: {report:#?}",
+    );
+    assert!(
+        report.second.receipt_count < report.first.receipt_count,
+        "the rerun performs fewer current row reads instead of recompute-and-compare: {report:#?}",
+    );
+    assert!(!report.nondeterministic, "{report:#?}");
+}
+
+#[test]
+fn lazy_package_row_claim_rejects_when_relevant_row_changes() {
+    let source = lazy_solver_lane(
+        r#"
+#[test { rerun_with: "liba-row-bumped" }]
+fn changed_row() -> Stream<Check> {
+    let reqs = %{"liba" => parse_req("^1.0"), "libc" => parse_req("^1.0")};
+    let solution = mini_solve(fixture_index()) where { requirements: reqs };
+    yield expect_some(solution);
+    yield read(p"index/liba");
+}
+"#,
+    );
+    let report = prepare_source(&source)
+        .expect("changed-row source prepares")
+        .execute_persistence_audit()
+        .expect("changed-row persistence audit executes");
+    assert!(report.second.checks.iter().all(|check| check.passed));
+    assert!(
+        report
+            .load
+            .rejected_claims
+            .iter()
+            .any(|claim| claim.reason == PersistentClaimRejectionReason::UnverifiableReceipt),
+        "changed relevant row invalidates persisted claims: {report:#?}",
+    );
+    assert!(
+        report.second.counters.memo_misses > 0,
+        "changed relevant row recomputes through the row demand: {report:#?}",
+    );
+}
+
+#[test]
+fn lazy_package_row_claim_loads_as_verified_hit_when_subtree_is_unchanged() {
+    let source = lazy_solver_lane(
+        r#"
+#[test]
+fn unchanged_row() -> Stream<Check> {
+    let reqs = %{"liba" => parse_req("^1.0"), "libc" => parse_req("^1.0")};
+    let solution = mini_solve(fixture_index()) where { requirements: reqs };
+    yield expect_some(solution);
+}
+"#,
+    );
+    let report = prepare_source(&source)
+        .expect("unchanged-row source prepares")
+        .execute_persistence_audit()
+        .expect("unchanged-row persistence audit executes");
+    assert!(report.second.checks.iter().all(|check| check.passed));
+    assert!(
+        report.load.claims_loaded > 0,
+        "unchanged row claims load only after receipt verification: {report:#?}",
+    );
+    assert!(
+        !report
+            .load
+            .rejected_claims
+            .iter()
+            .any(|claim| claim.reason == PersistentClaimRejectionReason::UnverifiableReceipt),
+        "unchanged row world rejects no receipt-backed claims: {report:#?}",
+    );
+    assert_eq!(
+        report.second.receipt_count, 0,
+        "unchanged subtree is a hit with no current row reads: {report:#?}",
+    );
+    let memo_hits = report
+        .second
+        .events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event.kind,
+                EventKind::Memo {
+                    verdict: MemoVerdict::Exact | MemoVerdict::Projection,
+                    ..
+                }
+            )
+        })
+        .count();
+    assert!(memo_hits > 0, "second run has real memo hits: {report:#?}");
+    assert!(!report.nondeterministic, "{report:#?}");
 }
 
 #[test]

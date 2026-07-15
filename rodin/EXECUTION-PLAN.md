@@ -168,8 +168,15 @@ At the time of the latest authoritative integration checkpoint
   receive ordinary `value_inputs`, and generator/check demands consume the same
   published `Option<Map<String, Version>>` identity. Exact-root run
   `696488bf-ced4-4e2e-979d-f21f0fd7866b` proves `conflict_analysis` executes
-  once total. Rung 093 remains red pending the value-level described-wire trace
-  contract. This readiness progress does not renumber the canonical prefix;
+  once total. Rung 093 is now green: a described-wire trace check accepts a
+  let-bound invocation operand selected by its canonical structural preimage in
+  the authored graph (covering composite and where-clause arguments), realized
+  demands are recorded with that preimage on every path (eager shared value
+  islands, force-on-park wires, bounded bundled observation), and `expect_eq`
+  decomposes non-structural equality (enum tags plus guarded payload, Map/Set
+  key/value projections, field-wise records) into ordinary pure recipe at
+  compile time. Observers still change nothing about partitioning or execution.
+  This readiness progress does not renumber the canonical prefix;
 - the live Cargo oracle is folded into the production kernel lane. One shared
   materialized workspace is queried through `cargo metadata --offline`, preserving exact
   source/name/version package identities, target-projected normal/build graph
@@ -592,10 +599,16 @@ R3 is complete in the production chain through `5e4a9de60`:
    resulting Vix execution returns `RodinOutcome::Unsupported` through the same
    production path.
 10. Dodeca connects the spec, Vix kernel, and Rust Cargo adapter from their
-    actual repository roots. All 13 solver rules are referenced; 12 are
-    implemented and verified with zero invalid or stale references. The sole
-    dependency-only rule is cross-solve learned-region reuse, reserved for R4's
-    substrate memo work rather than claimed by this first kernel.
+    actual repository roots. All 13 solver rules are implemented and verified
+    with zero invalid or stale references. `solver.learning.reuse` is claimed
+    only in-session: two separately authored, content-identical kernel solves
+    have one canonical structural preimage and both `demanded_once` observers
+    see the same one realization. Their learned region rides in that typed
+    content-keyed outcome; a distinct failing input derives its own region, as
+    pinned by `demanded_times(point_dead_region, 2)`. There is no Rodin-private
+    warm cache, cross-solve fact transfer, or cross-session fact persistence;
+    the last remains gated behind the adjudicated premise-keyed fact shape
+    (R4).
 
 Kernel completion evidence:
 

@@ -13,10 +13,18 @@ pub struct Counters {
     pub memo_misses: u64,
     pub memo_hit_allocations: u64,
     pub pure_host_calls: u64,
+    /// Scheduler-owned typed document parses. This deliberately remains
+    /// separate from `pure_host_calls`: document parsing crosses the host
+    /// boundary once per dynamic document and is not a lowered pure op.
+    pub document_parse_host_calls: u64,
     pub store_interns: u64,
     pub store_dedups: u64,
     pub bytes_hashed: u64,
     pub effect_spawns: u64,
+    /// Fetch effects actually performed (a memo miss that ran). A memoized
+    /// re-demand of an identical pinned fetch adds nothing; this is what the
+    /// `fetched(n)` trace check reads.
+    pub fetches_performed: u64,
     pub scheduler_requests: u64,
     pub task_spawns: u64,
     pub task_discards: u64,
@@ -119,6 +127,13 @@ pub enum EventKind {
     WeavyFrameExited {
         task: TaskId,
         function: FunctionId,
+    },
+    /// An effect primitive began external work for this demand: a process was
+    /// spawned. A memoized effect demand emits no spawn — that absence is what
+    /// rung 069 certifies.
+    EffectSpawned {
+        task: TaskId,
+        key: DemandKey,
     },
     WeavyParked {
         task: TaskId,

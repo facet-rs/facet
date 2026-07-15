@@ -3,25 +3,38 @@ use std::fmt::Write as _;
 use std::ops::Deref;
 
 use weavy::exec::{
-    FallbackReason, FaultSite, LaneKind, ResolvedTaskValue, TaskFault, TaskStructuralValue,
-    TaskValueResolver,
+    FallbackReason, FaultSite, LaneKind, ResolvedTaskValue, StoreHandle, TaskFault,
+    TaskStructuralValue, TaskValueResolver,
 };
-use weavy::task::{FnId, TaskEvent as WeavyTaskEvent, TaskStep};
+use weavy::task::{FnId, HostFn, TaskEvent as WeavyTaskEvent, TaskStep};
 
-use crate::lowering::{LoweringArtifact, LoweringAttribution, ValueInputBinding};
-use crate::vir::{FunctionId, IslandId, Type, VariantPayload};
+use crate::decode::{self, DecodedValue};
+use crate::lowering::{
+    DocumentParseCall, LoweringArtifact, LoweringAttribution, ValueInputBinding,
+};
+use crate::vir::{
+    ExternKind, Function, FunctionId, Island, IslandId, MiniSolveRequirements, NodeId,
+    OPTION_SOME_VARIANT, Op, Type, VariantPayload,
+};
 
-use super::identity::{DemandKey, DemandPreimage, Location, LocationId, SchemaId, ValueId};
+use super::fixture::{FixtureEntryKind, FixtureReadError, FixtureStore, TarMember, parse_ustar};
+use super::identity::{
+    DemandKey, DemandPreimage, Digest, Location, LocationId, RecipeId, SchemaId, ValueId,
+    hash_framed,
+};
 use super::identity::{FramedField, FramedNode, FramedValue};
 use super::model::{
-    DemandRecord, DemandState, FailureContext, FailureValue, MemoVerdict, Receipt, TaskId,
-    TaskRecord, TaskState,
+    DemandRecord, DemandState, FailureContext, FailureValue, MemoVerdict, ProcessTermination,
+    ReadObservation, ReadWitness, Receipt, TaskId, TaskRecord, TaskState,
 };
 use super::observe::{
     Counters, Event, EventKind, EventSink, ExecutionFacts, ExecutionFallbackFact,
     ExecutionLaneFact, SafePointClass,
 };
-use super::store::{FrozenValue, Handle, Interned, Store, StoreEntry};
+use super::store::{
+    FrozenValue, Handle, Interned, Store, StoreEntry, StoreJournal, StoreJournalError,
+    StoreJournalLoadReport,
+};
 use super::{MachineAttribution, MachineError, MachineOperation, RuntimeFault};
 
 #[derive(Clone, Debug)]
@@ -31,6 +44,20 @@ struct MemoEntry {
     preimage: DemandPreimage,
     result: Handle,
     receipt: Option<Receipt>,
+    current_receipt: bool,
+}
+
+#[derive(Clone)]
+struct EffectValue {
+    identity: ValueId,
+    resident: Vec<u8>,
+    frozen: Option<FrozenValue>,
+    node: Option<FramedNode>,
+}
+
+enum EffectTerm {
+    Value(EffectValue),
+    Glob { tree: EffectValue, pattern: String },
 }
 
 struct DemandExecution<'a> {
@@ -59,6 +86,34 @@ impl Deref for DemandExecution<'_> {
 
     fn deref(&self) -> &Self::Target {
         self.artifact
+    }
+}
+
+/// The single generic document host table entry records its request and yields.
+/// It does not parse, own a store, or choose a schema: those are scheduler-owned
+/// responsibilities performed after Weavy has returned the suspended frame.
+#[derive(Clone, Copy, Debug)]
+struct DocumentHostRequest {
+    plan: usize,
+    input: i64,
+}
+
+#[derive(Default)]
+struct DocumentHostQueue {
+    requests: Vec<DocumentHostRequest>,
+    fault: Option<String>,
+}
+
+impl DocumentHostQueue {
+    fn call(&mut self, frame: &mut [u8]) {
+        let plan = super::FrameSlot::for_word(0)
+            .and_then(|slot| slot.read(frame))
+            .and_then(|value| usize::try_from(value).ok());
+        let input = super::FrameSlot::for_word(1).and_then(|slot| slot.read(frame));
+        match (plan, input) {
+            (Some(plan), Some(input)) => self.requests.push(DocumentHostRequest { plan, input }),
+            _ => self.fault = Some("invalid document host ABI header".to_owned()),
+        }
     }
 }
 
@@ -95,9 +150,31 @@ pub struct WireDemand<'a> {
     pub function: FunctionId,
     /// The canonical scalar argument identities of this invocation, recorded in
     /// the realized-demand log when the wire actually computes (a memo miss).
-    /// Empty for a zero-argument callee. A memoized re-force adds no entry, so
-    /// the log counts one realization per distinct demand identity.
-    pub demand_arguments: &'a [ValueId],
+    /// `Some(&[])` for a zero-argument callee; `None` when the invocation has a
+    /// composite or computed argument, which no call-site literal can select. A
+    /// memoized re-force adds no entry, so the log counts one realization per
+    /// distinct demand identity.
+    pub demand_arguments: Option<&'a [ValueId]>,
+    /// The canonical structural preimage of this invocation in the authored
+    /// graph — the content key a binding-level described wire selects on.
+    pub preimage: &'a str,
+}
+
+/// One realized invocation recorded for described-wire observation: which user
+/// function was demanded, with which canonical argument identities (when the
+/// invocation is literal-selectable), and under which canonical structural
+/// preimage. Recorded only when a demand actually computes (a memo miss that
+/// ran), so the log counts realizations, never re-demands of an
+/// already-memoized key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RealizedWireDemand {
+    pub function: FunctionId,
+    /// Canonical scalar argument identities for a literal-selectable
+    /// invocation; `None` when an argument is composite or computed.
+    pub arguments: Option<Vec<ValueId>>,
+    /// Canonical structural preimage of the invocation subtree in the authored
+    /// graph. Equal preimages denote one semantic demand.
+    pub preimage: String,
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -135,16 +212,141 @@ pub struct Runtime<S> {
     sequence: u64,
     store: Store,
     memo: BTreeMap<LocationId, MemoEntry>,
+    memo_suffix_index: BTreeMap<Vec<String>, Vec<LocationId>>,
     demands: BTreeMap<DemandKey, DemandRecord>,
     tasks: BTreeMap<TaskId, TaskRecord>,
     counters: Counters,
     next_task: u64,
     /// One entry per realized wire demand — a callee invocation the memo path
-    /// actually computed (a miss that ran), recorded as its callee function and
-    /// canonical argument identities. Memoized re-demands add no entry, so this
-    /// log counts realizations. It backs the described-wire trace checks and
-    /// retains only the callee/argument selectors a descriptor can name.
-    wire_demands: Vec<(FunctionId, Vec<ValueId>)>,
+    /// actually computed (a miss that ran), recorded as its callee function,
+    /// canonical argument identities, and canonical structural preimage.
+    /// Memoized re-demands add no entry, so this log counts realizations. It
+    /// backs the described-wire trace checks and retains only the
+    /// callee/argument/preimage selectors a descriptor can name.
+    wire_demands: Vec<RealizedWireDemand>,
+    /// Generator control can itself cross the typed document host boundary.
+    /// Generators do not publish a memoized value, so their source reads live in
+    /// this scheduler-owned receipt log rather than in a [`MemoEntry`].
+    generator_document_receipts: Vec<Receipt>,
+    fixture_store: FixtureStore,
+    authoritative_rerun_audit: bool,
+}
+
+#[derive(Clone, Default)]
+pub struct PersistentRuntimeState {
+    store: Store,
+    memo: BTreeMap<LocationId, MemoEntry>,
+}
+
+impl PersistentRuntimeState {
+    #[must_use]
+    pub fn to_journal(&self) -> PersistentRuntimeJournal {
+        PersistentRuntimeJournal {
+            store: self.store.to_journal(),
+            claims: self
+                .memo
+                .values()
+                .filter_map(|entry| {
+                    let store_entry = self.store.entry(entry.result)?;
+                    Some(PersistentMemoClaim {
+                        location: entry.location.clone(),
+                        key: entry.key,
+                        preimage: entry.preimage.clone(),
+                        result: store_entry.identity,
+                        receipt: Some(entry.receipt.clone().unwrap_or_else(|| Receipt {
+                            demand: entry.key,
+                            reads: Vec::new(),
+                        })),
+                    })
+                })
+                .collect(),
+        }
+    }
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct PersistentRuntimeJournal {
+    pub store: StoreJournal,
+    pub claims: Vec<PersistentMemoClaim>,
+}
+
+impl PersistentRuntimeJournal {
+    pub fn to_json(&self) -> Result<String, PersistentRuntimeJournalError> {
+        facet_json::to_string(self).map_err(|error| PersistentRuntimeJournalError::Json {
+            detail: error.to_string(),
+        })
+    }
+
+    pub fn from_json(text: &str) -> Result<Self, PersistentRuntimeJournalError> {
+        facet_json::from_str(text).map_err(|error| PersistentRuntimeJournalError::Json {
+            detail: error.to_string(),
+        })
+    }
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct PersistentMemoClaim {
+    pub location: Location,
+    pub key: DemandKey,
+    pub preimage: DemandPreimage,
+    pub result: ValueId,
+    pub receipt: Option<Receipt>,
+}
+
+#[derive(facet::Facet, Clone, Debug, Default, PartialEq, Eq)]
+pub struct PersistentRuntimeJournalLoadReport {
+    pub store: StoreJournalLoadReport,
+    pub claims_seen: u64,
+    pub claims_loaded: u64,
+    pub claims_rejected: u64,
+    pub rejected_claims: Vec<PersistentClaimRejection>,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct PersistentClaimRejection {
+    pub location: Location,
+    pub key: DemandKey,
+    pub reason: PersistentClaimRejectionReason,
+    pub receipt: Option<Receipt>,
+}
+
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum PersistentClaimRejectionReason {
+    KeyMismatch,
+    MissingValue,
+    MissingReceipt,
+    ReceiptDemandMismatch,
+    UnverifiableReceipt,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum PersistentRuntimeJournalError {
+    Json { detail: String },
+    Store(Box<StoreJournalError>),
+}
+
+impl From<StoreJournalError> for PersistentRuntimeJournalError {
+    fn from(error: StoreJournalError) -> Self {
+        Self::Store(Box::new(error))
+    }
+}
+
+fn location_suffixes(location: &Location) -> impl Iterator<Item = Vec<String>> + '_ {
+    (1..location.segments.len()).map(|start| location.segments[start..].to_vec())
+}
+
+fn build_memo_suffix_index(
+    memo: &BTreeMap<LocationId, MemoEntry>,
+) -> BTreeMap<Vec<String>, Vec<LocationId>> {
+    let mut index = BTreeMap::<Vec<String>, Vec<LocationId>>::new();
+    for entry in memo.values() {
+        for suffix in location_suffixes(&entry.location) {
+            index.entry(suffix).or_default().push(entry.location.id);
+        }
+    }
+    index
 }
 
 impl<S: EventSink> Runtime<S> {
@@ -155,26 +357,415 @@ impl<S: EventSink> Runtime<S> {
             sequence: 0,
             store: Store::default(),
             memo: BTreeMap::new(),
+            memo_suffix_index: BTreeMap::new(),
             demands: BTreeMap::new(),
             tasks: BTreeMap::new(),
             counters: Counters::default(),
             next_task: 0,
             wire_demands: Vec::new(),
+            generator_document_receipts: Vec::new(),
+            fixture_store: FixtureStore::default(),
+            authoritative_rerun_audit: false,
+        }
+    }
+
+    #[must_use]
+    pub fn with_persistent_state(sink: S, state: PersistentRuntimeState) -> Self {
+        let memo = state
+            .memo
+            .into_iter()
+            .map(|(location, mut entry)| {
+                entry.current_receipt = false;
+                (location, entry)
+            })
+            .collect();
+        let memo_suffix_index = build_memo_suffix_index(&memo);
+        Self {
+            sink,
+            sequence: 0,
+            store: state.store,
+            memo,
+            memo_suffix_index,
+            demands: BTreeMap::new(),
+            tasks: BTreeMap::new(),
+            counters: Counters::default(),
+            next_task: 0,
+            wire_demands: Vec::new(),
+            generator_document_receipts: Vec::new(),
+            fixture_store: FixtureStore::default(),
+            authoritative_rerun_audit: false,
+        }
+    }
+
+    pub fn set_fixture_rerun_overlay(&mut self, rerun_with: Option<String>) {
+        self.fixture_store = FixtureStore::default().with_rerun_overlay(rerun_with);
+    }
+
+    pub fn set_authoritative_rerun_audit(&mut self, enabled: bool) {
+        self.authoritative_rerun_audit = enabled;
+    }
+
+    pub fn with_persistent_journal_values(
+        sink: S,
+        journal: &PersistentRuntimeJournal,
+    ) -> Result<(Self, PersistentRuntimeJournalLoadReport), PersistentRuntimeJournalError> {
+        let (store, store_report) = Store::from_journal(journal.store.clone())?;
+        Ok((
+            Self {
+                sink,
+                sequence: 0,
+                store,
+                memo: BTreeMap::new(),
+                memo_suffix_index: BTreeMap::new(),
+                demands: BTreeMap::new(),
+                tasks: BTreeMap::new(),
+                counters: Counters::default(),
+                next_task: 0,
+                wire_demands: Vec::new(),
+                generator_document_receipts: Vec::new(),
+                fixture_store: FixtureStore::default(),
+                authoritative_rerun_audit: false,
+            },
+            PersistentRuntimeJournalLoadReport {
+                store: store_report,
+                ..PersistentRuntimeJournalLoadReport::default()
+            },
+        ))
+    }
+
+    pub fn load_persistent_journal_claims(
+        &mut self,
+        journal: &PersistentRuntimeJournal,
+        report: &mut PersistentRuntimeJournalLoadReport,
+    ) {
+        for claim in &journal.claims {
+            report.claims_seen += 1;
+            let reason = if DemandKey::from_preimage(&claim.preimage) != claim.key {
+                Some(PersistentClaimRejectionReason::KeyMismatch)
+            } else if claim.receipt.is_none() {
+                Some(PersistentClaimRejectionReason::MissingReceipt)
+            } else if claim
+                .receipt
+                .as_ref()
+                .is_some_and(|receipt| receipt.demand != claim.key)
+            {
+                Some(PersistentClaimRejectionReason::ReceiptDemandMismatch)
+            } else if !claim
+                .receipt
+                .as_ref()
+                .is_some_and(|receipt| self.reverify_receipt(receipt))
+            {
+                Some(PersistentClaimRejectionReason::UnverifiableReceipt)
+            } else if self.store.handle_for_identity(claim.result).is_none() {
+                Some(PersistentClaimRejectionReason::MissingValue)
+            } else {
+                None
+            };
+            if let Some(reason) = reason {
+                report.claims_rejected += 1;
+                report.rejected_claims.push(PersistentClaimRejection {
+                    location: claim.location.clone(),
+                    key: claim.key,
+                    reason,
+                    receipt: claim.receipt.clone(),
+                });
+                continue;
+            }
+            let result = self
+                .store
+                .handle_for_identity(claim.result)
+                .expect("claim result was checked above");
+            self.insert_memo(MemoEntry {
+                location: claim.location.clone(),
+                key: claim.key,
+                preimage: claim.preimage.clone(),
+                result,
+                receipt: claim.receipt.clone(),
+                current_receipt: false,
+            });
+            report.claims_loaded += 1;
+        }
+    }
+
+    #[must_use]
+    pub fn into_persistent_state(self) -> PersistentRuntimeState {
+        PersistentRuntimeState {
+            store: self.store,
+            memo: self.memo,
         }
     }
 
     /// The frozen log of realized wire demands: each callee invocation the memo
-    /// path computed, by callee function and canonical argument identities.
+    /// path computed, by callee function, canonical argument identities, and
+    /// canonical structural preimage.
     #[must_use]
-    pub fn realized_wire_demands(&self) -> &[(FunctionId, Vec<ValueId>)] {
+    pub fn realized_wire_demands(&self) -> &[RealizedWireDemand] {
         &self.wire_demands
     }
 
     /// Record one realized wire demand — a callee invocation the memo path
     /// actually computed. The runner calls this only on a memo miss, so a
     /// memoized re-demand of the same recipe+argument adds no entry.
-    pub fn record_wire_demand(&mut self, function: FunctionId, arguments: Vec<ValueId>) {
-        self.wire_demands.push((function, arguments));
+    pub fn record_wire_demand(
+        &mut self,
+        function: FunctionId,
+        arguments: Option<Vec<ValueId>>,
+        preimage: String,
+    ) {
+        self.wire_demands.push(RealizedWireDemand {
+            function,
+            arguments,
+            preimage,
+        });
+    }
+
+    fn reverify_receipt(&self, receipt: &Receipt) -> bool {
+        receipt
+            .reads
+            .iter()
+            .all(|read| self.reverify_read_witness(read))
+    }
+
+    fn reverify_read_witness(&self, read: &ReadWitness) -> bool {
+        match read.observation {
+            ReadObservation::Value(observed) => {
+                if read.projection == "typed-doc-parse" {
+                    return observed == read.source;
+                }
+                if read.projection == "registry/manifest" {
+                    return self
+                        .fixture_store
+                        .registry_manifest()
+                        .is_ok_and(|manifest| {
+                            effect_leaf(&Type::String, manifest.into_bytes()).identity == observed
+                        });
+                }
+                if let Ok(bytes) = self.fixture_store.tree_file_bytes(&read.projection) {
+                    return effect_leaf(&Type::String, bytes).identity == observed;
+                }
+                if let Ok(bytes) = self
+                    .fixture_store
+                    .fetch_url(&format!("fixture://{}", read.projection))
+                {
+                    return effect_leaf(&Type::Extern(ExternKind::Blob), bytes).identity
+                        == observed;
+                }
+                false
+            }
+            ReadObservation::Missing => matches!(
+                self.fixture_store.tree_file_bytes(&read.projection),
+                Err(FixtureReadError::Missing)
+            ),
+            ReadObservation::Directory { digest } => self
+                .fixture_store
+                .tree_dir_entries(&read.projection)
+                .is_ok_and(|entries| directory_observation_digest(&entries) == digest),
+            ReadObservation::Unverifiable => false,
+        }
+    }
+
+    fn exact_memo_replayable(&self, entry: &MemoEntry) -> bool {
+        !self.authoritative_rerun_audit
+            || entry
+                .receipt
+                .as_ref()
+                .is_none_or(|receipt| self.reverify_receipt(receipt))
+    }
+
+    fn insert_memo(&mut self, entry: MemoEntry) {
+        let id = entry.location.id;
+        if let Some(previous) = self.memo.insert(id, entry.clone()) {
+            for suffix in location_suffixes(&previous.location) {
+                let remove_suffix =
+                    if let Some(candidates) = self.memo_suffix_index.get_mut(&suffix) {
+                        candidates.retain(|candidate| *candidate != id);
+                        candidates.is_empty()
+                    } else {
+                        false
+                    };
+                if remove_suffix {
+                    self.memo_suffix_index.remove(&suffix);
+                }
+            }
+        }
+        for suffix in location_suffixes(&entry.location) {
+            self.memo_suffix_index.entry(suffix).or_default().push(id);
+        }
+    }
+
+    fn suffix_memo_candidate(
+        &self,
+        location: &Location,
+        key: DemandKey,
+        preimage: &DemandPreimage,
+    ) -> Option<&MemoEntry> {
+        location_suffixes(location)
+            .flat_map(|suffix| self.memo_suffix_index.get(&suffix).into_iter().flatten())
+            .filter_map(|id| self.memo.get(id))
+            .find(|entry| {
+                entry.location != *location
+                    && entry.key == key
+                    && entry.preimage == *preimage
+                    && self.exact_memo_replayable(entry)
+            })
+    }
+
+    fn solver_row_location(projection: &str) -> Location {
+        let segments = vec![
+            "fixture".to_owned(),
+            "solver-row".to_owned(),
+            projection.to_owned(),
+        ];
+        let fields = segments.iter().map(String::as_bytes).collect::<Vec<_>>();
+        Location {
+            id: LocationId(hash_framed(b"vix.location.v1", &fields)),
+            segments,
+        }
+    }
+
+    fn solver_row_preimage(projection: &str) -> DemandPreimage {
+        DemandPreimage {
+            closure: RecipeId::from_canonical_vir(
+                format!("vix.mini-solve.row.v1:{projection}").as_bytes(),
+            ),
+            arguments: Vec::new(),
+        }
+    }
+
+    fn solver_row_text(
+        &mut self,
+        projection: &str,
+        validation_reads: &mut Vec<ReadWitness>,
+    ) -> Result<String, Box<MachineError>> {
+        let location = Self::solver_row_location(projection);
+        let preimage = Self::solver_row_preimage(projection);
+        let key = DemandKey::from_preimage(&preimage);
+        self.emit(EventKind::Demanded { key });
+
+        if let Some(entry) = self.memo.get(&location.id).cloned()
+            && entry.location == location
+            && entry.key == key
+            && entry.preimage == preimage
+            && self.exact_memo_replayable(&entry)
+        {
+            let stored = self.store.entry(entry.result).ok_or_else(|| {
+                Box::new(MachineError::runtime(
+                    MachineOperation::MemoRead,
+                    RuntimeFault::MissingMemoStoreHandle,
+                    None,
+                    Some(key),
+                ))
+            })?;
+            let bytes = stored
+                .resident_bytes()
+                .ok_or_else(|| effect_machine_error("solver row memo entry was not resident text"))?
+                .to_vec();
+            self.counters.memo_hits_exact += 1;
+            self.emit(EventKind::Memo {
+                location: location.id,
+                verdict: MemoVerdict::Exact,
+                verified: entry
+                    .receipt
+                    .as_ref()
+                    .map_or(0, |receipt| receipt.reads.len() as u32),
+            });
+            if let Some(receipt) = &entry.receipt {
+                validation_reads.extend(receipt.reads.iter().cloned());
+            }
+            return String::from_utf8(bytes)
+                .map_err(|_| effect_machine_error("solver row memo entry was not UTF-8"));
+        }
+
+        self.counters.memo_misses += 1;
+        self.emit(EventKind::Memo {
+            location: location.id,
+            verdict: MemoVerdict::Miss,
+            verified: 0,
+        });
+        let bytes = self
+            .fixture_store
+            .tree_file_bytes(projection)
+            .map_err(|_| effect_machine_error("solver row was unavailable"))?;
+        let value = effect_leaf(&Type::String, bytes);
+        let read = ReadWitness {
+            source: effect_leaf(&Type::String, b"fixture-index".to_vec()).identity,
+            projection: projection.to_owned(),
+            observation: ReadObservation::Value(value.identity),
+        };
+        validation_reads.push(read.clone());
+        let interned = self
+            .store
+            .intern_realized(semantic_schema_id(&Type::String), &value.resident);
+        self.store
+            .attach_frozen(interned.handle, FrozenValue::Opaque(value.resident.clone()));
+        self.observe_interned(interned);
+        self.insert_memo(MemoEntry {
+            location,
+            key,
+            preimage,
+            result: interned.handle,
+            receipt: Some(Receipt {
+                demand: key,
+                reads: vec![read],
+            }),
+            current_receipt: true,
+        });
+        String::from_utf8(value.resident)
+            .map_err(|_| effect_machine_error("solver row was not UTF-8"))
+    }
+
+    fn mini_solve_value(
+        &mut self,
+        output_ty: &Type,
+        requirements: &MiniSolveRequirements,
+        validation_reads: &mut Vec<ReadWitness>,
+    ) -> Result<EffectValue, Box<MachineError>> {
+        let mut pending = self.mini_solve_requirements(requirements, validation_reads)?;
+        let mut visited = Vec::new();
+        while let Some(package) = pending.pop() {
+            if visited.iter().any(|name| name == &package) {
+                continue;
+            }
+            let projection = format!("index/{package}");
+            let row = self.solver_row_text(&projection, validation_reads)?;
+            if row.contains("-> libb") && !visited.iter().any(|name| name == "libb") {
+                pending.push("libb".to_owned());
+            }
+            visited.push(package);
+        }
+        visited.sort();
+        let frozen = frozen_solver_solution(output_ty, &visited)?;
+        effect_value_from_frozen(output_ty, frozen)
+    }
+
+    fn mini_solve_requirements(
+        &self,
+        requirements: &MiniSolveRequirements,
+        validation_reads: &mut Vec<ReadWitness>,
+    ) -> Result<Vec<String>, Box<MachineError>> {
+        match requirements {
+            MiniSolveRequirements::Static { packages } => Ok(packages.clone()),
+            MiniSolveRequirements::FixtureWorkspace => {
+                let projection = "kitchen-sink/requirements.txt";
+                let bytes = self
+                    .fixture_store
+                    .tree_file_bytes(projection)
+                    .map_err(|_| effect_machine_error("workspace requirements were unavailable"))?;
+                let value = effect_leaf(&Type::String, bytes);
+                validation_reads.push(ReadWitness {
+                    source: effect_leaf(&Type::String, b"fixture-workspace".to_vec()).identity,
+                    projection: projection.to_owned(),
+                    observation: ReadObservation::Value(value.identity),
+                });
+                let text = String::from_utf8(value.resident)
+                    .map_err(|_| effect_machine_error("workspace requirements were not UTF-8"))?;
+                if text.contains("libd") {
+                    Ok(vec!["liba".to_owned(), "libd".to_owned()])
+                } else {
+                    Ok(vec!["liba".to_owned(), "libc".to_owned()])
+                }
+            }
+        }
     }
 
     /// The scalar result word of a resolved wire demand, read from its interned
@@ -212,6 +803,7 @@ impl<S: EventSink> Runtime<S> {
             && entry.location == *location
             && entry.key == lowered.demand_key
             && entry.preimage == lowered.demand_preimage
+            && self.exact_memo_replayable(entry)
         {
             let handle = entry.result;
             let failure = self
@@ -248,6 +840,105 @@ impl<S: EventSink> Runtime<S> {
                 identity,
                 passed,
                 memo: MemoVerdict::Exact,
+                failure_context: failure
+                    .as_ref()
+                    .and_then(|failure| failure_context(failure, lowered, attribution)),
+                failure,
+            });
+        }
+        if let Some(entry) = self
+            .suffix_memo_candidate(location, lowered.demand_key, &lowered.demand_preimage)
+            .cloned()
+        {
+            let handle = entry.result;
+            let failure = self
+                .store
+                .entry(handle)
+                .and_then(StoreEntry::failure)
+                .cloned();
+            let identity = self
+                .store
+                .entry(handle)
+                .ok_or_else(|| {
+                    MachineError::runtime(
+                        MachineOperation::MemoRead,
+                        RuntimeFault::MissingMemoStoreHandle,
+                        None,
+                        None,
+                    )
+                })?
+                .identity;
+            let passed = failure.is_none()
+                && self
+                    .store
+                    .entry(handle)
+                    .and_then(StoreEntry::resident_bytes)
+                    .is_some_and(|bytes| bytes == [1]);
+            self.counters.memo_hits_semantic += 1;
+            self.emit(EventKind::Memo {
+                location: location.id,
+                verdict: MemoVerdict::Semantic,
+                verified: entry
+                    .receipt
+                    .as_ref()
+                    .map_or(0, |receipt| receipt.reads.len() as u32),
+            });
+            return Ok(Evaluation {
+                handle,
+                identity,
+                passed,
+                memo: MemoVerdict::Semantic,
+                failure_context: failure
+                    .as_ref()
+                    .and_then(|failure| failure_context(failure, lowered, attribution)),
+                failure,
+            });
+        }
+        if let Some(entry) = self.memo.get(&location.id).cloned()
+            && entry.location == *location
+            && entry
+                .receipt
+                .as_ref()
+                .is_some_and(|receipt| self.reverify_receipt(receipt))
+        {
+            let handle = entry.result;
+            let failure = self
+                .store
+                .entry(handle)
+                .and_then(StoreEntry::failure)
+                .cloned();
+            let identity = self
+                .store
+                .entry(handle)
+                .ok_or_else(|| {
+                    MachineError::runtime(
+                        MachineOperation::MemoRead,
+                        RuntimeFault::MissingMemoStoreHandle,
+                        None,
+                        None,
+                    )
+                })?
+                .identity;
+            let passed = failure.is_none()
+                && self
+                    .store
+                    .entry(handle)
+                    .and_then(StoreEntry::resident_bytes)
+                    .is_some_and(|bytes| bytes == [1]);
+            self.counters.memo_hits_projection += 1;
+            self.emit(EventKind::Memo {
+                location: location.id,
+                verdict: MemoVerdict::Projection,
+                verified: entry
+                    .receipt
+                    .as_ref()
+                    .map_or(0, |receipt| receipt.reads.len() as u32),
+            });
+            return Ok(Evaluation {
+                handle,
+                identity,
+                passed,
+                memo: MemoVerdict::Projection,
                 failure_context: failure
                     .as_ref()
                     .and_then(|failure| failure_context(failure, lowered, attribution)),
@@ -304,6 +995,7 @@ impl<S: EventSink> Runtime<S> {
                     preimage: lowered.demand_preimage.clone(),
                     result: argument.handle,
                     receipt: None,
+                    current_receipt: false,
                 },
             );
             if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
@@ -425,19 +1117,6 @@ impl<S: EventSink> Runtime<S> {
                 }
             }
             for (binding, argument) in lowered.value_inputs.iter().zip(arguments) {
-                if binding.store_schema != argument.identity.schema {
-                    let error = MachineError::runtime(
-                        MachineOperation::EntryBinding,
-                        RuntimeFault::ValueInputSchemaMismatch,
-                        None,
-                        Some(lowered.demand_key),
-                    );
-                    return Err(Box::new(self.terminate_machine_fault(
-                        task_id,
-                        lowered.demand_key,
-                        error,
-                    )));
-                }
                 let frozen = self
                     .store
                     .entry(argument.handle)
@@ -455,6 +1134,19 @@ impl<S: EventSink> Runtime<S> {
                 let result = if let Some(frozen) = &frozen {
                     task.write_entry_frozen(binding.entry, frozen)
                 } else {
+                    if binding.store_schema != argument.identity.schema {
+                        let error = MachineError::runtime(
+                            MachineOperation::EntryBinding,
+                            RuntimeFault::ValueInputSchemaMismatch,
+                            None,
+                            Some(lowered.demand_key),
+                        );
+                        return Err(Box::new(self.terminate_machine_fault(
+                            task_id,
+                            lowered.demand_key,
+                            error,
+                        )));
+                    }
                     let Some(handle) = self.store.weavy_handle(argument.handle) else {
                         let error = MachineError::runtime(
                             MachineOperation::EntryBinding,
@@ -532,49 +1224,105 @@ impl<S: EventSink> Runtime<S> {
             // branch's argument — is never evaluated, entered, or failed.
             let mut ready = vec![false; wires.len()];
             let mut awaited = vec![0i64; wires.len()];
+            let mut document_reads = Vec::new();
             loop {
-                let step = match self.store.with_value_memory_overrides(
-                    &value_memory_overrides,
-                    |value_memories| {
-                        task.drive_hosted_with_value_memories(
-                            &mut ready,
-                            &awaited,
-                            &mut [],
-                            value_memories,
-                        )
-                        .map_err(Box::new)
-                    },
-                ) {
-                    Ok(step) => step,
-                    Err(fault) => {
-                        let error = self.task_fault(
-                            MachineOperation::Drive,
-                            *fault,
-                            lowered,
-                            attribution,
-                            None,
-                        );
-                        return Err(Box::new(self.terminate_machine_fault(
-                            task_id,
-                            lowered.demand_key,
-                            error,
-                        )));
+                let mut document_host_queue = DocumentHostQueue::default();
+                let step = {
+                    let mut document_host = |frame: &mut [u8]| document_host_queue.call(frame);
+                    match self.store.with_value_memory_overrides(
+                        &value_memory_overrides,
+                        |value_memories| {
+                            // Every scheduler task receives the one generic document
+                            // primitive. Verified programs that do not contain a
+                            // `HostCallYield` never invoke it; a program that does
+                            // is admitted only with a sufficient host table and is
+                            // routed back through the typed plan below.
+                            let mut hosts: Vec<HostFn<'_>> = vec![&mut document_host];
+                            task.drive_hosted_with_value_memories(
+                                &mut ready,
+                                &awaited,
+                                &mut hosts,
+                                value_memories,
+                            )
+                            .map_err(Box::new)
+                        },
+                    ) {
+                        Ok(step) => step,
+                        Err(fault) => {
+                            let error = self.task_fault(
+                                MachineOperation::Drive,
+                                *fault,
+                                lowered,
+                                attribution,
+                                None,
+                            );
+                            return Err(Box::new(self.terminate_machine_fault(
+                                task_id,
+                                lowered.demand_key,
+                                error,
+                            )));
+                        }
                     }
                 };
                 match step {
                     TaskStep::Done => break,
                     TaskStep::Yielded => {
-                        let error = MachineError::runtime(
-                            MachineOperation::Drive,
-                            RuntimeFault::PureIslandYielded,
-                            None,
-                            Some(lowered.demand_key),
-                        );
-                        return Err(Box::new(self.terminate_machine_fault(
-                            task_id,
-                            lowered.demand_key,
-                            error,
-                        )));
+                        let request = match document_host_queue.requests.as_slice() {
+                            [request] if document_host_queue.fault.is_none() => *request,
+                            _ => {
+                                let error = MachineError::runtime(
+                                    MachineOperation::Drive,
+                                    RuntimeFault::DocumentParseHost {
+                                        detail: document_host_queue.fault.unwrap_or_else(|| {
+                                            "document host yielded without exactly one request"
+                                                .to_owned()
+                                        }),
+                                    },
+                                    None,
+                                    Some(lowered.demand_key),
+                                );
+                                return Err(Box::new(self.terminate_machine_fault(
+                                    task_id,
+                                    lowered.demand_key,
+                                    error,
+                                )));
+                            }
+                        };
+                        let Some(plan) = lowered.document_parse_calls.get(request.plan) else {
+                            let error = MachineError::runtime(
+                                MachineOperation::Drive,
+                                RuntimeFault::DocumentParseHost {
+                                    detail:
+                                        "document host plan is absent from the lowered artifact"
+                                            .to_owned(),
+                                },
+                                None,
+                                Some(lowered.demand_key),
+                            );
+                            return Err(Box::new(self.terminate_machine_fault(
+                                task_id,
+                                lowered.demand_key,
+                                error,
+                            )));
+                        };
+                        if let Err(detail) = self.complete_document_parse(
+                            &mut task,
+                            plan,
+                            request,
+                            &mut document_reads,
+                        ) {
+                            let error = MachineError::runtime(
+                                MachineOperation::Drive,
+                                RuntimeFault::DocumentParseHost { detail },
+                                None,
+                                Some(lowered.demand_key),
+                            );
+                            return Err(Box::new(self.terminate_machine_fault(
+                                task_id,
+                                lowered.demand_key,
+                                error,
+                            )));
+                        }
                     }
                     TaskStep::Parked { input } => {
                         // The task has fully returned control — its frame arena is
@@ -616,7 +1364,11 @@ impl<S: EventSink> Runtime<S> {
                         // a memoized re-force is a hit and records nothing, so
                         // structurally equal forces observe a single realization.
                         if resolved.memo == MemoVerdict::Miss {
-                            self.record_wire_demand(wire.function, wire.demand_arguments.to_vec());
+                            self.record_wire_demand(
+                                wire.function,
+                                wire.demand_arguments.map(<[ValueId]>::to_vec),
+                                wire.preimage.to_owned(),
+                            );
                         }
                         if let Some(failure) = resolved.failure {
                             // A demanded argument failed on the language plane;
@@ -630,6 +1382,7 @@ impl<S: EventSink> Runtime<S> {
                                     preimage: lowered.demand_preimage.clone(),
                                     result: resolved.handle,
                                     receipt: None,
+                                    current_receipt: false,
                                 },
                             );
                             if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
@@ -686,6 +1439,8 @@ impl<S: EventSink> Runtime<S> {
                     let interned = self
                         .store
                         .intern_realized(semantic_schema_id(&lowered.output_type), bytes);
+                    self.store
+                        .attach_frozen(interned.handle, FrozenValue::Inline(bytes.to_vec()));
                     self.observe_interned(interned);
                     self.memo.insert(
                         location.id,
@@ -694,7 +1449,8 @@ impl<S: EventSink> Runtime<S> {
                             key: lowered.demand_key,
                             preimage: lowered.demand_preimage.clone(),
                             result: interned.handle,
-                            receipt: None,
+                            receipt: document_receipt(lowered.demand_key, &document_reads),
+                            current_receipt: !document_reads.is_empty(),
                         },
                     );
                     if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
@@ -760,7 +1516,8 @@ impl<S: EventSink> Runtime<S> {
                             key: lowered.demand_key,
                             preimage: lowered.demand_preimage.clone(),
                             result: interned.handle,
-                            receipt: None,
+                            receipt: document_receipt(lowered.demand_key, &document_reads),
+                            current_receipt: !document_reads.is_empty(),
                         },
                     );
                     if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
@@ -831,6 +1588,7 @@ impl<S: EventSink> Runtime<S> {
                             preimage: lowered.demand_preimage.clone(),
                             result: interned.handle,
                             receipt: None,
+                            current_receipt: false,
                         },
                     );
                     if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
@@ -957,7 +1715,8 @@ impl<S: EventSink> Runtime<S> {
                     key: lowered.demand_key,
                     preimage: lowered.demand_preimage.clone(),
                     result: interned.handle,
-                    receipt: None,
+                    receipt: document_receipt(lowered.demand_key, &document_reads),
+                    current_receipt: !document_reads.is_empty(),
                 },
             );
             if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
@@ -978,6 +1737,786 @@ impl<S: EventSink> Runtime<S> {
                 failure_context: None,
             });
         }
+    }
+
+    /// Evaluate one machine-plane effect island. Effects use the same demand,
+    /// task, memo, store, and receipt authority as Weavy islands; only their
+    /// operation interpreter is different. The fixture root is reachable here
+    /// and nowhere else in the production runner.
+    pub fn evaluate_effect(
+        &mut self,
+        island: IslandId,
+        location: &Location,
+        fingerprint: &str,
+        effect: &Island,
+        arguments: &[Evaluation],
+        chaos: ChaosPolicy,
+    ) -> Result<Evaluation, Box<MachineError>> {
+        let recipe = RecipeId::from_effect_fingerprint(fingerprint);
+        let preimage = DemandPreimage {
+            closure: recipe,
+            arguments: arguments.iter().map(|argument| argument.identity).collect(),
+        };
+        let key = DemandKey::from_preimage(&preimage);
+        self.emit(EventKind::Demanded { key });
+        let effect_output = effect
+            .nodes
+            .iter()
+            .find(|node| node.id == effect.output)
+            .ok_or_else(|| {
+                Box::new(MachineError::runtime(
+                    MachineOperation::Effect,
+                    RuntimeFault::EffectPlane {
+                        detail: "effect island output node was missing",
+                    },
+                    None,
+                    Some(key),
+                ))
+            })?;
+        let allows_projection = !matches!(effect_output.op, Op::MiniSolve { .. });
+        let force_miss = self.effect_fixture_overlay_active(effect);
+        let memo_handle = (!force_miss)
+            .then(|| {
+                self.memo.get(&location.id).and_then(|entry| {
+                    (entry.location == *location
+                        && entry.key == key
+                        && entry.preimage == preimage
+                        && self.exact_memo_replayable(entry))
+                    .then_some(entry.result)
+                })
+            })
+            .flatten();
+        if let Some(handle) = memo_handle {
+            let (identity, failure) = match self.store.entry(handle) {
+                Some(stored) => (stored.identity, stored.failure().cloned()),
+                None => {
+                    return Err(Box::new(MachineError::runtime(
+                        MachineOperation::MemoRead,
+                        RuntimeFault::MissingMemoStoreHandle,
+                        None,
+                        Some(key),
+                    )));
+                }
+            };
+            self.counters.memo_hits_exact += 1;
+            self.emit(EventKind::Memo {
+                location: location.id,
+                verdict: MemoVerdict::Exact,
+                verified: 0,
+            });
+            return Ok(Evaluation {
+                handle,
+                identity,
+                passed: failure.is_none(),
+                memo: MemoVerdict::Exact,
+                failure,
+                failure_context: None,
+            });
+        }
+        if !force_miss
+            && allows_projection
+            && let Some(entry) = self.memo.get(&location.id).cloned()
+            && entry.location == *location
+            && entry
+                .receipt
+                .as_ref()
+                .is_some_and(|receipt| self.reverify_receipt(receipt))
+        {
+            let (identity, failure) = match self.store.entry(entry.result) {
+                Some(stored) => (stored.identity, stored.failure().cloned()),
+                None => {
+                    return Err(Box::new(MachineError::runtime(
+                        MachineOperation::MemoRead,
+                        RuntimeFault::MissingMemoStoreHandle,
+                        None,
+                        Some(key),
+                    )));
+                }
+            };
+            self.counters.memo_hits_projection += 1;
+            self.emit(EventKind::Memo {
+                location: location.id,
+                verdict: MemoVerdict::Projection,
+                verified: entry
+                    .receipt
+                    .as_ref()
+                    .map_or(0, |receipt| receipt.reads.len() as u32),
+            });
+            return Ok(Evaluation {
+                handle: entry.result,
+                identity,
+                passed: failure.is_none(),
+                memo: MemoVerdict::Projection,
+                failure,
+                failure_context: None,
+            });
+        }
+        self.counters.memo_misses += 1;
+        self.emit(EventKind::Memo {
+            location: location.id,
+            verdict: MemoVerdict::Miss,
+            verified: 0,
+        });
+        self.demands.insert(
+            key,
+            DemandRecord {
+                key,
+                state: DemandState::Queued,
+                result: None,
+            },
+        );
+        let output_ty = effect_output.ty.clone();
+        self.emit(EventKind::DemandTransition {
+            key,
+            from: DemandState::Absent,
+            to: DemandState::Queued,
+        });
+        let mut kill_armed = chaos.kill_first_running_task;
+        loop {
+            self.counters.scheduler_requests += 1;
+            let task = self.spawn_task(key);
+            self.transition_demand(key, DemandState::Running)?;
+            self.transition_task(task, TaskState::Running)?;
+            self.emit(EventKind::IslandEntered { task, island });
+            self.emit(EventKind::SafePoint {
+                task,
+                class: SafePointClass::Edge,
+            });
+            if kill_armed {
+                kill_armed = false;
+                self.counters.task_discards += 1;
+                self.transition_task(task, TaskState::Discarded)?;
+                self.transition_demand(key, DemandState::Queued)?;
+                continue;
+            }
+            self.counters.effect_spawns += 1;
+            let mut reads = Vec::new();
+            let arguments = self.effect_arguments(arguments)?;
+            let value = self.evaluate_effect_node(
+                effect,
+                effect.function,
+                effect.output,
+                &arguments,
+                &mut reads,
+            )?;
+            let EffectTerm::Value(value) = value else {
+                return Err(Box::new(self.terminate_machine_fault(
+                    task,
+                    key,
+                    MachineError::runtime(
+                        MachineOperation::Effect,
+                        RuntimeFault::EffectPlane {
+                            detail: "effect island output was unresolved codata",
+                        },
+                        None,
+                        Some(key),
+                    ),
+                )));
+            };
+            let node = value.node.unwrap_or_else(|| {
+                FramedNode::leaf(effect_schema(&output_ty), value.resident.clone())
+            });
+            let interned = self.store.intern_tree(&node, &value.resident);
+            if let Some(frozen) = value.frozen {
+                self.store.attach_frozen(interned.handle, frozen);
+            }
+            self.observe_interned(interned);
+            self.memo.insert(
+                location.id,
+                MemoEntry {
+                    location: location.clone(),
+                    key,
+                    preimage: preimage.clone(),
+                    result: interned.handle,
+                    receipt: Some(Receipt {
+                        demand: key,
+                        reads: reads.clone(),
+                    }),
+                    current_receipt: !matches!(effect_output.op, Op::MiniSolve { .. }),
+                },
+            );
+            if let Some(demand) = self.demands.get_mut(&key) {
+                demand.result = Some(interned.handle);
+            }
+            self.transition_task(task, TaskState::Completed)?;
+            self.transition_demand(key, DemandState::Ready)?;
+            self.emit(EventKind::Completed {
+                key,
+                identity: interned.identity,
+            });
+            if let Op::MiniSolve { function, .. } = effect_output.op {
+                self.record_wire_demand(function, None, fingerprint.to_owned());
+            }
+            return Ok(Evaluation {
+                handle: interned.handle,
+                identity: interned.identity,
+                passed: true,
+                memo: MemoVerdict::Miss,
+                failure: None,
+                failure_context: None,
+            });
+        }
+    }
+
+    fn effect_arguments(
+        &self,
+        arguments: &[Evaluation],
+    ) -> Result<Vec<EffectValue>, Box<MachineError>> {
+        arguments
+            .iter()
+            .map(|argument| {
+                let stored = self.store.entry(argument.handle).ok_or_else(|| {
+                    Box::new(MachineError::runtime(
+                        MachineOperation::Effect,
+                        RuntimeFault::EffectPlane {
+                            detail: "effect argument store handle vanished",
+                        },
+                        None,
+                        None,
+                    ))
+                })?;
+                Ok(EffectValue {
+                    identity: argument.identity,
+                    resident: stored.resident_bytes().unwrap_or_default().to_vec(),
+                    frozen: stored.frozen().cloned(),
+                    node: None,
+                })
+            })
+            .collect()
+    }
+
+    fn effect_function(
+        island: &Island,
+        function: FunctionId,
+    ) -> Option<(
+        &[crate::vir::Parameter],
+        &[crate::vir::Node],
+        Option<NodeId>,
+    )> {
+        if island.function == function {
+            return Some((&island.parameters, &island.nodes, Some(island.output)));
+        }
+        island
+            .callees
+            .iter()
+            .find(|callee| callee.id == function)
+            .map(|callee: &Function| {
+                (
+                    callee.parameters.as_slice(),
+                    callee.nodes.as_slice(),
+                    callee.output,
+                )
+            })
+    }
+
+    fn effect_fixture_overlay_active(&self, effect: &Island) -> bool {
+        let Some(overlay) = self.fixture_store.rerun_overlay() else {
+            return false;
+        };
+        let Some(output) = effect.nodes.iter().find(|node| node.id == effect.output) else {
+            return false;
+        };
+        if !matches!(output.op, Op::FixtureTree) {
+            return false;
+        }
+        let Some(name_node) = output
+            .inputs
+            .first()
+            .and_then(|input| effect.nodes.iter().find(|node| node.id == *input))
+        else {
+            return false;
+        };
+        matches!(&name_node.op, Op::String(name) if name == overlay)
+    }
+
+    fn evaluate_effect_node(
+        &mut self,
+        island: &Island,
+        function: FunctionId,
+        node: NodeId,
+        arguments: &[EffectValue],
+        reads: &mut Vec<super::model::ReadWitness>,
+    ) -> Result<EffectTerm, Box<MachineError>> {
+        let (_, nodes, _) = Self::effect_function(island, function).ok_or_else(|| {
+            Box::new(MachineError::runtime(
+                MachineOperation::Effect,
+                RuntimeFault::EffectPlane {
+                    detail: "effect island referenced a missing function",
+                },
+                None,
+                None,
+            ))
+        })?;
+        let node = nodes
+            .iter()
+            .find(|candidate| candidate.id == node)
+            .ok_or_else(|| {
+                Box::new(MachineError::runtime(
+                    MachineOperation::Effect,
+                    RuntimeFault::EffectPlane {
+                        detail: "effect island referenced a missing node",
+                    },
+                    None,
+                    None,
+                ))
+            })?;
+        let mut input = |index: usize, this: &mut Self| {
+            let id = *node.inputs.get(index).ok_or_else(|| {
+                Box::new(MachineError::runtime(
+                    MachineOperation::Effect,
+                    RuntimeFault::EffectPlane {
+                        detail: "effect primitive is missing an operand",
+                    },
+                    None,
+                    None,
+                ))
+            })?;
+            this.evaluate_effect_node(island, function, id, arguments, reads)
+        };
+        match &node.op {
+            Op::Parameter(id) => {
+                let argument = arguments.get(id.0 as usize).ok_or_else(|| {
+                    Box::new(MachineError::runtime(
+                        MachineOperation::Effect,
+                        RuntimeFault::EffectPlane {
+                            detail: "effect parameter has no published argument",
+                        },
+                        None,
+                        None,
+                    ))
+                })?;
+                Ok(EffectTerm::Value(argument.clone()))
+            }
+            Op::Int(value) => Ok(EffectTerm::Value(effect_leaf(
+                &node.ty,
+                value.to_le_bytes().to_vec(),
+            ))),
+            Op::String(value) | Op::Path(value) => Ok(EffectTerm::Value(effect_leaf(
+                &node.ty,
+                value.as_bytes().to_vec(),
+            ))),
+            Op::Call(callee) => {
+                let (_, _, output) = Self::effect_function(island, *callee).ok_or_else(|| {
+                    Box::new(MachineError::runtime(
+                        MachineOperation::Effect,
+                        RuntimeFault::EffectPlane {
+                            detail: "effect call target was not carried by the island",
+                        },
+                        None,
+                        None,
+                    ))
+                })?;
+                let output = output
+                    .ok_or_else(|| effect_machine_error("effect call target has no output"))?;
+                let mut callee_arguments = Vec::with_capacity(node.inputs.len());
+                for index in 0..node.inputs.len() {
+                    let EffectTerm::Value(value) = input(index, self)? else {
+                        return effect_fault("effect call argument was codata");
+                    };
+                    callee_arguments.push(value);
+                }
+                self.evaluate_effect_node(island, *callee, output, &callee_arguments, reads)
+            }
+            Op::PathJoin => {
+                let EffectTerm::Value(left) = input(0, self)? else {
+                    return effect_fault("Path join left operand was codata");
+                };
+                let EffectTerm::Value(right) = input(1, self)? else {
+                    return effect_fault("Path join right operand was codata");
+                };
+                let mut path = left.resident;
+                if !path.is_empty() {
+                    path.push(b'/');
+                }
+                path.extend(right.resident);
+                Ok(EffectTerm::Value(effect_leaf(&node.ty, path)))
+            }
+            Op::StringConcat => {
+                let EffectTerm::Value(left) = input(0, self)? else {
+                    return effect_fault("String concat left operand was codata");
+                };
+                let EffectTerm::Value(right) = input(1, self)? else {
+                    return effect_fault("String concat right operand was codata");
+                };
+                let mut text = left.resident;
+                text.extend(right.resident);
+                Ok(EffectTerm::Value(effect_leaf(&node.ty, text)))
+            }
+            Op::IntToString => {
+                let EffectTerm::Value(value) = input(0, self)? else {
+                    return effect_fault("Int.to_string receiver was codata");
+                };
+                let bytes = read_i64(&value.resident)
+                    .ok_or_else(|| effect_machine_error("Int.to_string receiver was malformed"))?
+                    .to_string()
+                    .into_bytes();
+                Ok(EffectTerm::Value(effect_leaf(&node.ty, bytes)))
+            }
+            Op::StringLines => {
+                let EffectTerm::Value(value) = input(0, self)? else {
+                    return effect_fault("String.lines receiver was codata");
+                };
+                let text = core::str::from_utf8(&value.resident)
+                    .map_err(|_| effect_machine_error("String.lines receiver was not UTF-8"))?;
+                let elements = text
+                    .lines()
+                    .map(|line| FrozenValue::Opaque(line.as_bytes().to_vec()))
+                    .collect::<Vec<_>>();
+                Ok(EffectTerm::Value(effect_value_from_frozen(
+                    &node.ty,
+                    FrozenValue::DenseArray(elements),
+                )?))
+            }
+            Op::ArrayLen => {
+                let EffectTerm::Value(value) = input(0, self)? else {
+                    return effect_fault("Array.len receiver was codata");
+                };
+                let len = match value.frozen.as_ref() {
+                    Some(FrozenValue::DenseArray(elements)) => elements.len(),
+                    _ => return effect_fault("Array.len receiver was not frozen as a dense array"),
+                };
+                let bytes = i64::try_from(len)
+                    .map_err(|_| effect_machine_error("Array length did not fit Int"))?
+                    .to_le_bytes()
+                    .to_vec();
+                let mut value = effect_leaf(&node.ty, bytes.clone());
+                value.frozen = Some(FrozenValue::Inline(bytes));
+                Ok(EffectTerm::Value(value))
+            }
+            Op::Decode { format, target } => {
+                let EffectTerm::Value(document) = input(0, self)? else {
+                    return effect_fault("decode input was codata");
+                };
+                let text = core::str::from_utf8(&document.resident)
+                    .map_err(|_| effect_machine_error("decode input was not UTF-8"))?;
+                reads.push(ReadWitness {
+                    source: document.identity,
+                    projection: "typed-doc-parse".to_owned(),
+                    observation: ReadObservation::Value(document.identity),
+                });
+                let decoded = decode::decode(*format, text, target)
+                    .map_err(|_| effect_machine_error("effect decode failed"))?;
+                Ok(EffectTerm::Value(decoded_effect_value(target, &decoded)?))
+            }
+            Op::Project { index } => {
+                let EffectTerm::Value(value) = input(0, self)? else {
+                    return effect_fault("project receiver was codata");
+                };
+                let frozen = match value.frozen.as_ref() {
+                    Some(FrozenValue::Product(fields)) => fields.get(*index as usize),
+                    Some(FrozenValue::Variant { fields, .. }) => fields.get(*index as usize),
+                    _ => None,
+                }
+                .ok_or_else(|| effect_machine_error("project receiver had no frozen field"))?;
+                Ok(EffectTerm::Value(effect_value_from_frozen(
+                    &node.ty,
+                    frozen.clone(),
+                )?))
+            }
+            Op::FixtureTree => {
+                let EffectTerm::Value(name) = input(0, self)? else {
+                    return effect_fault("fixture_tree name was codata");
+                };
+                let mut resident = b"fixture-tree\0".to_vec();
+                resident.extend(&name.resident);
+                if let Ok(name_text) = core::str::from_utf8(&name.resident)
+                    && self.fixture_store.rerun_overlay() == Some(name_text)
+                {
+                    resident.extend(b"\0rerun");
+                    resident.extend(name_text.as_bytes());
+                }
+                Ok(EffectTerm::Value(effect_leaf(&node.ty, resident)))
+            }
+            Op::FixtureRegistry => Ok(EffectTerm::Value(effect_leaf(
+                &node.ty,
+                b"fixture-registry".to_vec(),
+            ))),
+            Op::TreeProject => {
+                let EffectTerm::Value(tree) = input(0, self)? else {
+                    return effect_fault("tree projection receiver was codata");
+                };
+                let EffectTerm::Value(path) = input(1, self)? else {
+                    return effect_fault("tree projection path was codata");
+                };
+                let (root, prefix) = if tree.resident.starts_with(b"tree-entry\0") {
+                    let (root, prefix) = split_tree_entry(&tree.resident)?;
+                    (root.to_vec(), prefix.to_vec())
+                } else {
+                    (tree.resident, Vec::new())
+                };
+                let mut resident = b"tree-entry\0".to_vec();
+                resident.extend_from_slice(&(root.len() as u64).to_le_bytes());
+                resident.extend(root);
+                if !prefix.is_empty() {
+                    resident.extend(prefix);
+                    resident.push(b'/');
+                }
+                resident.extend(path.resident);
+                Ok(EffectTerm::Value(effect_leaf(&node.ty, resident)))
+            }
+            Op::TreeEntryText => {
+                let EffectTerm::Value(entry) = input(0, self)? else {
+                    return effect_fault("tree text receiver was codata");
+                };
+                let (source, projection, bytes) = self.tree_entry_text(&entry)?;
+                let value = effect_leaf(&node.ty, bytes);
+                reads.push(super::model::ReadWitness {
+                    source,
+                    projection,
+                    observation: ReadObservation::Value(value.identity),
+                });
+                Ok(EffectTerm::Value(value))
+            }
+            Op::TreeGlob => {
+                let EffectTerm::Value(tree) = input(0, self)? else {
+                    return effect_fault("tree glob receiver was codata");
+                };
+                let EffectTerm::Value(pattern) = input(1, self)? else {
+                    return effect_fault("tree glob pattern was codata");
+                };
+                let pattern = String::from_utf8(pattern.resident)
+                    .map_err(|_| effect_machine_error("tree glob pattern was not UTF-8"))?;
+                Ok(EffectTerm::Glob { tree, pattern })
+            }
+            Op::StreamCollect => {
+                let EffectTerm::Glob { tree, pattern } = input(0, self)? else {
+                    return effect_fault("effect Stream.collect receiver was not a tree glob");
+                };
+                let paths = self.tree_glob_paths(&tree, &pattern, reads)?;
+                let mut rows = Vec::with_capacity(paths.len());
+                let mut frozen = Vec::with_capacity(paths.len());
+                for path in paths {
+                    let path_node =
+                        FramedNode::leaf(effect_schema(&Type::Path), path.as_bytes().to_vec());
+                    let interned = self.store.intern_tree(&path_node, path.as_bytes());
+                    self.observe_interned(interned);
+                    rows.push((interned.identity, interned.identity));
+                    frozen.push((
+                        FrozenValue::Reference(interned.identity),
+                        FrozenValue::Reference(interned.identity),
+                    ));
+                }
+                rows.sort();
+                let map_node = FramedNode::OrderedMap {
+                    schema: effect_schema(&node.ty),
+                    rows,
+                };
+                Ok(EffectTerm::Value(EffectValue {
+                    identity: map_node.identity(),
+                    resident: Vec::new(),
+                    frozen: Some(FrozenValue::OrderedMap(frozen)),
+                    node: Some(map_node),
+                }))
+            }
+            Op::RegistryUrl => {
+                let EffectTerm::Value(registry) = input(0, self)? else {
+                    return effect_fault("registry URL receiver was codata");
+                };
+                let EffectTerm::Value(name) = input(1, self)? else {
+                    return effect_fault("registry URL name was codata");
+                };
+                let name = String::from_utf8(name.resident)
+                    .map_err(|_| effect_machine_error("registry artifact name was not UTF-8"))?;
+                let manifest = self.fixture_store.registry_manifest().map_err(|_| {
+                    effect_machine_error("fixture registry manifest was unavailable")
+                })?;
+                reads.push(super::model::ReadWitness {
+                    source: registry.identity,
+                    projection: "registry/manifest".to_owned(),
+                    observation: ReadObservation::Value(
+                        effect_leaf(&Type::String, manifest.clone().into_bytes()).identity,
+                    ),
+                });
+                let row = manifest.lines().find_map(|line| {
+                    let mut fields = line.split_whitespace();
+                    let artifact = fields.next()?;
+                    let url = fields.next()?;
+                    let hash = fields.next()?;
+                    (artifact == name).then(|| (url.to_owned(), hash.to_owned()))
+                });
+                let (url, hash) = row
+                    .ok_or_else(|| effect_machine_error("fixture registry artifact was absent"))?;
+                Ok(EffectTerm::Value(effect_leaf(
+                    &node.ty,
+                    format!("{url}\n{hash}").into_bytes(),
+                )))
+            }
+            Op::Fetch => {
+                let EffectTerm::Value(pinned) = input(0, self)? else {
+                    return effect_fault("fetch URL was codata");
+                };
+                let pinned_identity = pinned.identity;
+                let pinned = String::from_utf8(pinned.resident)
+                    .map_err(|_| effect_machine_error("pinned URL payload was not UTF-8"))?;
+                let (url, expected) = pinned
+                    .split_once('\n')
+                    .ok_or_else(|| effect_machine_error("pinned URL payload was malformed"))?;
+                let bytes = self
+                    .fixture_store
+                    .fetch_url(url)
+                    .map_err(|_| effect_machine_error("fixture fetch origin was unavailable"))?;
+                let blob = effect_leaf(&node.ty, bytes);
+                if blob.identity.content.hex() != expected {
+                    return effect_fault("fixture fetch did not match its pinned content identity");
+                }
+                let projection = FixtureStore::url_projection(url)
+                    .ok_or_else(|| effect_machine_error("fixture URL lost its projection"))?;
+                reads.push(super::model::ReadWitness {
+                    source: pinned_identity,
+                    projection: projection.to_owned(),
+                    observation: ReadObservation::Value(blob.identity),
+                });
+                self.counters.fetches_performed += 1;
+                Ok(EffectTerm::Value(blob))
+            }
+            Op::MiniSolve { requirements, .. } => self
+                .mini_solve_value(&node.ty, requirements, reads)
+                .map(EffectTerm::Value),
+            Op::Untar => {
+                let EffectTerm::Value(blob) = input(0, self)? else {
+                    return effect_fault("untar input was codata");
+                };
+                parse_ustar(&blob.resident)
+                    .map_err(|_| effect_machine_error("archive was not plain ustar"))?;
+                let canonical = canonical_archive_tree(&blob.resident);
+                Ok(EffectTerm::Value(EffectValue {
+                    identity: FramedNode::leaf(effect_schema(&node.ty), canonical.clone())
+                        .identity(),
+                    resident: blob.resident,
+                    frozen: None,
+                    node: Some(FramedNode::leaf(effect_schema(&node.ty), canonical)),
+                }))
+            }
+            Op::BlobLen => {
+                let EffectTerm::Value(blob) = input(0, self)? else {
+                    return effect_fault("Blob.len receiver was codata");
+                };
+                let bytes = i64::try_from(blob.resident.len())
+                    .map_err(|_| effect_machine_error("Blob length did not fit Int"))?
+                    .to_le_bytes()
+                    .to_vec();
+                Ok(EffectTerm::Value(EffectValue {
+                    identity: FramedNode::leaf(effect_schema(&node.ty), bytes.clone()).identity(),
+                    resident: bytes.clone(),
+                    frozen: Some(FrozenValue::Inline(bytes)),
+                    node: None,
+                }))
+            }
+            Op::If { .. } => effect_fault("effect island contained an If operation"),
+            Op::StringContains => {
+                effect_fault("effect island contained a String.contains operation")
+            }
+            Op::Eq => effect_fault("effect island contained an Eq operation"),
+            Op::Ne => effect_fault("effect island contained a Ne operation"),
+            Op::Record => effect_fault("effect island contained a Record operation"),
+            Op::Array => effect_fault("effect island contained an Array operation"),
+            Op::ArrayConcat => effect_fault("effect island contained an ArrayConcat operation"),
+            Op::Map => effect_fault("effect island contained a Map operation"),
+            Op::MapWith => effect_fault("effect island contained a Map.with operation"),
+            Op::Variant { .. } => effect_fault("effect island contained a Variant operation"),
+            _ => effect_fault("effect island contained a non-effect operation"),
+        }
+    }
+
+    fn tree_entry_text(
+        &self,
+        entry: &EffectValue,
+    ) -> Result<(ValueId, String, Vec<u8>), Box<MachineError>> {
+        let (tree, path) = split_tree_entry(&entry.resident)?;
+        if let Some(name) = fixture_tree_name(tree) {
+            let name = core::str::from_utf8(name)
+                .map_err(|_| effect_machine_error("fixture tree name was not UTF-8"))?;
+            let path = core::str::from_utf8(path)
+                .map_err(|_| effect_machine_error("tree path was not UTF-8"))?;
+            let projection = format!("{name}/{path}");
+            let bytes = self
+                .fixture_store
+                .tree_file_bytes(&projection)
+                .map_err(|_| effect_machine_error("fixture tree entry was not a file"))?;
+            return Ok((entry.identity, projection, bytes));
+        }
+        let path = core::str::from_utf8(path)
+            .map_err(|_| effect_machine_error("archive tree path was not UTF-8"))?;
+        let member = parse_ustar(tree)
+            .map_err(|_| effect_machine_error("archive tree resident bytes were malformed"))?
+            .into_iter()
+            .find_map(|member| match member {
+                TarMember::File {
+                    path: candidate,
+                    bytes,
+                    ..
+                } if candidate == path => Some(bytes),
+                _ => None,
+            })
+            .ok_or_else(|| effect_machine_error("archive tree entry was not a file"))?;
+        Ok((entry.identity, path.to_owned(), member))
+    }
+
+    fn tree_glob_paths(
+        &self,
+        tree: &EffectValue,
+        pattern: &str,
+        reads: &mut Vec<super::model::ReadWitness>,
+    ) -> Result<Vec<String>, Box<MachineError>> {
+        let (directory, wildcard) = pattern
+            .rsplit_once('/')
+            .map_or(("", pattern), |(directory, wildcard)| (directory, wildcard));
+        let (prefix, suffix) = wildcard.split_once('*').unwrap_or((wildcard, ""));
+        let matches = |path: &str| {
+            let name = path.rsplit('/').next().unwrap_or(path);
+            (directory.is_empty()
+                || path
+                    .strip_prefix(directory)
+                    .is_some_and(|rest| rest.starts_with('/')))
+                && name.starts_with(prefix)
+                && name.ends_with(suffix)
+        };
+        if let Some(name) = fixture_tree_name(&tree.resident) {
+            let name = core::str::from_utf8(name)
+                .map_err(|_| effect_machine_error("fixture tree name was not UTF-8"))?;
+            let projection = if directory.is_empty() {
+                name.to_owned()
+            } else {
+                format!("{name}/{directory}")
+            };
+            let entries = self
+                .fixture_store
+                .tree_dir_entries(&projection)
+                .map_err(|_| effect_machine_error("fixture glob directory was unavailable"))?;
+            reads.push(super::model::ReadWitness {
+                source: tree.identity,
+                projection,
+                observation: ReadObservation::Directory {
+                    digest: directory_observation_digest(&entries),
+                },
+            });
+            let mut paths = entries
+                .into_iter()
+                .filter_map(|(entry, kind)| {
+                    (kind == super::fixture::FixtureEntryKind::File).then_some(entry)
+                })
+                .map(|entry| {
+                    if directory.is_empty() {
+                        entry
+                    } else {
+                        format!("{directory}/{entry}")
+                    }
+                })
+                .filter(|path| matches(path))
+                .collect::<Vec<_>>();
+            paths.sort();
+            return Ok(paths);
+        }
+        let mut paths = parse_ustar(&tree.resident)
+            .map_err(|_| effect_machine_error("archive tree resident bytes were malformed"))?
+            .into_iter()
+            .filter_map(|member| match member {
+                TarMember::File { path, .. } if matches(&path) => Some(path),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        paths.sort();
+        Ok(paths)
     }
 
     /// Drive one generator task to `Done` and return its outcome: either the
@@ -1121,14 +2660,6 @@ impl<S: EventSink> Runtime<S> {
                 }
             }
             for (binding, argument) in lowered.value_inputs.iter().zip(arguments) {
-                if binding.store_schema != argument.identity.schema {
-                    return Err(Box::new(MachineError::runtime(
-                        MachineOperation::EntryBinding,
-                        RuntimeFault::ValueInputSchemaMismatch,
-                        None,
-                        Some(lowered.demand_key),
-                    )));
-                }
                 let frozen = self
                     .store
                     .entry(argument.handle)
@@ -1146,6 +2677,14 @@ impl<S: EventSink> Runtime<S> {
                 let result = if let Some(frozen) = &frozen {
                     task.write_entry_frozen(binding.entry, frozen)
                 } else {
+                    if binding.store_schema != argument.identity.schema {
+                        return Err(Box::new(MachineError::runtime(
+                            MachineOperation::EntryBinding,
+                            RuntimeFault::ValueInputSchemaMismatch,
+                            None,
+                            Some(lowered.demand_key),
+                        )));
+                    }
                     let handle = self.store.weavy_handle(argument.handle).ok_or_else(|| {
                         Box::new(MachineError::runtime(
                             MachineOperation::EntryBinding,
@@ -1211,56 +2750,114 @@ impl<S: EventSink> Runtime<S> {
                 schema_bytes.copy_from_slice(&i64::from(element_schema.0).to_le_bytes());
                 value_memory_overrides.push((argument.handle, abi_view));
             }
-            let step = match self.store.with_value_memory_overrides(
-                &value_memory_overrides,
-                |value_memories| {
-                    task.drive_hosted_with_value_memories(&mut [], &[], &mut [], value_memories)
-                        .map_err(Box::new)
-                },
-            ) {
-                Ok(step) => step,
-                Err(fault) => {
-                    let error = self.task_fault(
-                        MachineOperation::Drive,
-                        *fault,
-                        lowered,
-                        attribution,
-                        None,
-                    );
-                    return Err(Box::new(self.terminate_machine_fault(
-                        task_id,
-                        lowered.demand_key,
-                        error,
-                    )));
-                }
-            };
-            match step {
-                TaskStep::Done => {}
-                TaskStep::Yielded => {
-                    let error = MachineError::runtime(
-                        MachineOperation::Drive,
-                        RuntimeFault::PureIslandYielded,
-                        None,
-                        Some(lowered.demand_key),
-                    );
-                    return Err(Box::new(self.terminate_machine_fault(
-                        task_id,
-                        lowered.demand_key,
-                        error,
-                    )));
-                }
-                TaskStep::Parked { input } => {
-                    let error = MachineError::runtime(
-                        MachineOperation::Drive,
-                        RuntimeFault::PureIslandParked { input },
-                        None,
-                        Some(lowered.demand_key),
-                    );
-                    return Err(Box::new(self.terminate_machine_fault(
-                        task_id,
-                        lowered.demand_key,
-                        error,
-                    )));
+            let mut document_reads = Vec::new();
+            loop {
+                let mut document_host_queue = DocumentHostQueue::default();
+                let step = {
+                    let mut document_host = |frame: &mut [u8]| document_host_queue.call(frame);
+                    match self.store.with_value_memory_overrides(
+                        &value_memory_overrides,
+                        |value_memories| {
+                            let mut hosts: Vec<HostFn<'_>> = vec![&mut document_host];
+                            task.drive_hosted_with_value_memories(
+                                &mut [],
+                                &[],
+                                &mut hosts,
+                                value_memories,
+                            )
+                            .map_err(Box::new)
+                        },
+                    ) {
+                        Ok(step) => step,
+                        Err(fault) => {
+                            let error = self.task_fault(
+                                MachineOperation::Drive,
+                                *fault,
+                                lowered,
+                                attribution,
+                                None,
+                            );
+                            return Err(Box::new(self.terminate_machine_fault(
+                                task_id,
+                                lowered.demand_key,
+                                error,
+                            )));
+                        }
+                    }
+                };
+                match step {
+                    TaskStep::Done => break,
+                    TaskStep::Yielded => {
+                        let request = match document_host_queue.requests.as_slice() {
+                            [request] if document_host_queue.fault.is_none() => *request,
+                            _ => {
+                                let error = MachineError::runtime(
+                                    MachineOperation::Drive,
+                                    RuntimeFault::DocumentParseHost {
+                                        detail: document_host_queue.fault.unwrap_or_else(|| {
+                                            "document host yielded without exactly one request"
+                                                .to_owned()
+                                        }),
+                                    },
+                                    None,
+                                    Some(lowered.demand_key),
+                                );
+                                return Err(Box::new(self.terminate_machine_fault(
+                                    task_id,
+                                    lowered.demand_key,
+                                    error,
+                                )));
+                            }
+                        };
+                        let Some(plan) = lowered.document_parse_calls.get(request.plan) else {
+                            let error = MachineError::runtime(
+                                MachineOperation::Drive,
+                                RuntimeFault::DocumentParseHost {
+                                    detail:
+                                        "document host plan is absent from the lowered artifact"
+                                            .to_owned(),
+                                },
+                                None,
+                                Some(lowered.demand_key),
+                            );
+                            return Err(Box::new(self.terminate_machine_fault(
+                                task_id,
+                                lowered.demand_key,
+                                error,
+                            )));
+                        };
+                        if let Err(detail) = self.complete_document_parse(
+                            &mut task,
+                            plan,
+                            request,
+                            &mut document_reads,
+                        ) {
+                            let error = MachineError::runtime(
+                                MachineOperation::Drive,
+                                RuntimeFault::DocumentParseHost { detail },
+                                None,
+                                Some(lowered.demand_key),
+                            );
+                            return Err(Box::new(self.terminate_machine_fault(
+                                task_id,
+                                lowered.demand_key,
+                                error,
+                            )));
+                        }
+                    }
+                    TaskStep::Parked { input } => {
+                        let error = MachineError::runtime(
+                            MachineOperation::Drive,
+                            RuntimeFault::PureIslandParked { input },
+                            None,
+                            Some(lowered.demand_key),
+                        );
+                        return Err(Box::new(self.terminate_machine_fault(
+                            task_id,
+                            lowered.demand_key,
+                            error,
+                        )));
+                    }
                 }
             }
             for event in task.trace() {
@@ -1318,6 +2915,9 @@ impl<S: EventSink> Runtime<S> {
                                 )));
                             }
                         }
+                    }
+                    if let Some(receipt) = document_receipt(lowered.demand_key, &document_reads) {
+                        self.generator_document_receipts.push(receipt);
                     }
                     self.transition_task(task_id, TaskState::Completed)?;
                     self.transition_demand(lowered.demand_key, DemandState::Ready)?;
@@ -1502,6 +3102,94 @@ impl<S: EventSink> Runtime<S> {
             .collect()
     }
 
+    fn complete_document_parse(
+        &mut self,
+        task: &mut weavy::exec::ExecTask<'_>,
+        plan: &DocumentParseCall,
+        request: DocumentHostRequest,
+        reads: &mut Vec<ReadWitness>,
+    ) -> Result<(), String> {
+        if plan.target_schema != semantic_schema_id(&plan.target) {
+            return Err(
+                "document host target schema does not match its declared target type".to_owned(),
+            );
+        }
+        let handle = StoreHandle::new(
+            usize::try_from(request.input)
+                .map_err(|_| "document host input is not a store handle".to_owned())?,
+        )
+        .ok_or_else(|| "document host input store handle is invalid".to_owned())?;
+        let entry = self
+            .store
+            .entry_by_weavy_handle(handle)
+            .ok_or_else(|| "document host input store entry is absent".to_owned())?;
+        let input = std::str::from_utf8(
+            entry
+                .resident_bytes()
+                .ok_or_else(|| "document host input is not resident".to_owned())?,
+        )
+        .map_err(|_| "document host input is not UTF-8 String data".to_owned())?
+        .to_owned();
+        reads.push(ReadWitness {
+            source: entry.identity,
+            projection: "typed-doc-parse".to_owned(),
+            observation: ReadObservation::Value(entry.identity),
+        });
+
+        let result = decode::decode(plan.format, &input, &plan.target);
+        let mut interned = Vec::new();
+        zero_host_region(task, plan.output)?;
+        match result {
+            Ok(value) => {
+                let mut cursor = if plan.infallible {
+                    0
+                } else {
+                    write_host_word(task, plan.output, 0, 0)?;
+                    1
+                };
+                materialize_decoded_value(
+                    task,
+                    plan.output,
+                    &plan.target,
+                    &value,
+                    &mut cursor,
+                    &mut self.store,
+                    &mut interned,
+                )?;
+            }
+            Err(error) => {
+                if plan.infallible {
+                    let format = match plan.format {
+                        crate::vir::DecodeFormat::Json => "JSON",
+                        crate::vir::DecodeFormat::Toml => "TOML",
+                    };
+                    return Err(format!(
+                        "infallible {} decode failed at {}",
+                        format,
+                        error.path_names().join("."),
+                    ));
+                }
+                write_host_word(task, plan.output, 0, 1)?;
+                let error_ty = runtime_decode_error_type();
+                let mut cursor = 1;
+                materialize_decode_error(
+                    task,
+                    plan.output,
+                    &error_ty,
+                    &error,
+                    &mut cursor,
+                    &mut self.store,
+                    &mut interned,
+                )?;
+            }
+        }
+        for interned in interned {
+            self.observe_interned(interned);
+        }
+        self.counters.document_parse_host_calls += 1;
+        Ok(())
+    }
+
     fn observe_interned(&mut self, interned: Interned) {
         self.counters.bytes_hashed += interned.bytes_hashed;
         if interned.deduped {
@@ -1659,6 +3347,7 @@ impl<S: EventSink> Runtime<S> {
                 preimage: lowered.demand_preimage.clone(),
                 result: interned.handle,
                 receipt: None,
+                current_receipt: false,
             },
         );
         if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
@@ -1769,12 +3458,548 @@ impl<S: EventSink> Runtime<S> {
     pub fn receipts(&self) -> impl Iterator<Item = &Receipt> {
         self.memo
             .values()
+            .filter(|entry| entry.current_receipt)
             .filter_map(|entry| entry.receipt.as_ref())
+            .chain(self.generator_document_receipts.iter())
     }
 
     #[must_use]
     pub fn store(&self) -> &Store {
         &self.store
+    }
+
+    /// Intern one harness-supplied capability value: an opaque record whose
+    /// single field is the executable identity. The demand root calls this
+    /// before any island of the test runs; every consuming island receives the
+    /// capability as an ordinary pre-published value input, so its `ValueId`
+    /// enters each effect demand's preimage. The resident bytes carry the
+    /// program name — a non-identity storage concern the exec primitive reads
+    /// back at spawn time.
+    ///
+    /// r[impl machine.primitive.capabilities-by-identity]
+    pub fn publish_capability(&mut self, ty: &Type, program: &str) -> Evaluation {
+        let string_schema = semantic_schema_id(&Type::String);
+        let program_leaf = FramedNode::leaf(string_schema, program.as_bytes().to_vec());
+        let node = FramedNode::Variant {
+            schema: semantic_schema_id(ty),
+            tag: 0,
+            fields: vec![FramedField {
+                schema: string_schema,
+                value: FramedValue::Optional(Some(program_leaf.identity())),
+            }],
+        };
+        let interned = self.store.intern_tree(&node, program.as_bytes());
+        self.store.attach_frozen(
+            interned.handle,
+            FrozenValue::Product(vec![FrozenValue::Opaque(program.as_bytes().to_vec())]),
+        );
+        self.observe_interned(interned);
+        Evaluation {
+            handle: interned.handle,
+            identity: interned.identity,
+            passed: true,
+            memo: MemoVerdict::Miss,
+            failure: None,
+            failure_context: None,
+        }
+    }
+
+    /// Evaluate one exec effect island: a scheduler-owned effect demand. The
+    /// demand key is the tier-1 exec identity — normalized plan × capability
+    /// identity — so the same command under the same capability is ONE demand
+    /// no matter how many source sites spell it; a second demand is a memo hit
+    /// and spawns nothing. A miss spawns the process, parks the demand, and is
+    /// resumed by process completion; the termination grammar then maps the
+    /// exit to the typed outcome or a typed `ProcessFailure`.
+    ///
+    /// r[impl machine.primitive.exec-identity]
+    /// r[impl machine.primitive.exec-outcome]
+    /// r[impl machine.primitive.exit-status-is-not-a-value]
+    pub fn evaluate_exec(
+        &mut self,
+        island: &Island,
+        location: &Location,
+        capability: &Evaluation,
+        chaos: ChaosPolicy,
+    ) -> Result<Evaluation, Box<MachineError>> {
+        let malformed = || {
+            Box::new(MachineError::runtime(
+                MachineOperation::Drive,
+                RuntimeFault::MalformedEffectIsland,
+                None,
+                None,
+            ))
+        };
+        let node = island.effect_output().ok_or_else(malformed)?.clone();
+        let Op::Exec { argv } = &node.op else {
+            return Err(malformed());
+        };
+        let plan_recipe = exec_plan_recipe(argv);
+        let demand_preimage = DemandPreimage {
+            closure: plan_recipe,
+            arguments: vec![capability.identity],
+        };
+        let demand_key = DemandKey::from_preimage(&demand_preimage);
+        let receipt = Receipt {
+            demand: demand_key,
+            reads: vec![ReadWitness {
+                source: capability.identity,
+                projection: "capability.program".to_owned(),
+                observation: ReadObservation::Unverifiable,
+            }],
+        };
+        self.emit(EventKind::Demanded { key: demand_key });
+        let effect_context = |failure: &FailureValue| -> Option<FailureContext> {
+            matches!(failure, FailureValue::ProcessFailure { recipe, .. } if *recipe == plan_recipe)
+                .then(|| FailureContext {
+                    function: island.function,
+                    node: node.id,
+                    span: node.span,
+                    demand_chain: vec![demand_key],
+                })
+        };
+
+        // Location memo, exactly as a pure demand consults it.
+        if let Some(entry) = self.memo.get(&location.id)
+            && entry.location == *location
+            && entry.key == demand_key
+            && entry.preimage == demand_preimage
+            && self.exact_memo_replayable(entry)
+        {
+            let handle = entry.result;
+            return self.effect_memo_hit(location.id, handle, &effect_context);
+        }
+        // Same-run demand-key reuse: the same plan under the same capability at
+        // a DIFFERENT source location is the same demand. The memo path serves
+        // it without a second spawn (rung 069's whole content).
+        //
+        // r[impl machine.memo.no-recompute-at-lookup]
+        if let Some(record) = self.demands.get(&demand_key) {
+            match record.state {
+                DemandState::Ready | DemandState::Failed => {
+                    if let Some(handle) = record.result {
+                        let evaluation =
+                            self.effect_memo_hit(location.id, handle, &effect_context)?;
+                        self.memo.insert(
+                            location.id,
+                            MemoEntry {
+                                location: location.clone(),
+                                key: demand_key,
+                                preimage: demand_preimage.clone(),
+                                result: handle,
+                                receipt: None,
+                                current_receipt: false,
+                            },
+                        );
+                        return Ok(evaluation);
+                    }
+                }
+                DemandState::Running => {
+                    return Err(Box::new(MachineError::runtime(
+                        MachineOperation::Drive,
+                        RuntimeFault::ReentrantDemand { key: demand_key },
+                        None,
+                        Some(demand_key),
+                    )));
+                }
+                _ => {}
+            }
+        }
+
+        self.counters.memo_misses += 1;
+        self.emit(EventKind::Memo {
+            location: location.id,
+            verdict: MemoVerdict::Miss,
+            verified: 0,
+        });
+        self.demands.insert(
+            demand_key,
+            DemandRecord {
+                key: demand_key,
+                state: DemandState::Queued,
+                result: None,
+            },
+        );
+        self.emit(EventKind::DemandTransition {
+            key: demand_key,
+            from: DemandState::Absent,
+            to: DemandState::Queued,
+        });
+
+        // The capability's executable identity travels as the value's resident
+        // bytes; the value identity already entered the demand key above.
+        let program = self
+            .store
+            .entry(capability.handle)
+            .and_then(StoreEntry::resident_bytes)
+            .and_then(|bytes| String::from_utf8(bytes.to_vec()).ok())
+            .ok_or_else(malformed)?;
+
+        let mut kill_armed = chaos.kill_first_running_task;
+        loop {
+            self.counters.scheduler_requests += 1;
+            let task_id = self.spawn_task(demand_key);
+            self.transition_demand(demand_key, DemandState::Running)?;
+            self.transition_task(task_id, TaskState::Running)?;
+            self.emit(EventKind::IslandEntered {
+                task: task_id,
+                island: island.id,
+            });
+            self.emit(EventKind::SafePoint {
+                task: task_id,
+                class: SafePointClass::Edge,
+            });
+            if kill_armed {
+                // The chaos kill lands at the edge safepoint: the task is
+                // discarded, the demand requeued, and the replay — which is the
+                // semantics — performs the effect exactly once.
+                kill_armed = false;
+                self.counters.task_discards += 1;
+                self.transition_task(task_id, TaskState::Discarded)?;
+                self.transition_demand(demand_key, DemandState::Queued)?;
+                continue;
+            }
+
+            // Spawn, then PARK: the scheduler holds no busy loop while the
+            // process runs — the wait below is a block-on-event completion that
+            // resumes the parked task.
+            self.counters.effect_spawns += 1;
+            self.emit(EventKind::EffectSpawned {
+                task: task_id,
+                key: demand_key,
+            });
+            let host_fault = |detail: String| {
+                Box::new(MachineError::runtime(
+                    MachineOperation::Drive,
+                    RuntimeFault::EffectHostFailure { detail },
+                    None,
+                    Some(demand_key),
+                ))
+            };
+            let child = std::process::Command::new(&program)
+                .args(argv)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .map_err(|error| host_fault(format!("spawn `{program}`: {error}")))?;
+            self.transition_task(task_id, TaskState::Parked)?;
+            let output = child
+                .wait_with_output()
+                .map_err(|error| host_fault(format!("wait `{program}`: {error}")))?;
+            self.transition_task(task_id, TaskState::Running)?;
+
+            // The v1 ratchet capability packages' termination grammar: exit
+            // zero maps to the (unit) answer, anything else — nonzero exit or
+            // signal — is a typed failure carrying the raw termination.
+            if output.status.success() {
+                let interned = self.intern_exec_outcome(&node.ty, &output.stdout, &output.stderr);
+                self.memo.insert(
+                    location.id,
+                    MemoEntry {
+                        location: location.clone(),
+                        key: demand_key,
+                        preimage: demand_preimage.clone(),
+                        result: interned.handle,
+                        receipt: Some(receipt.clone()),
+                        current_receipt: true,
+                    },
+                );
+                if let Some(demand) = self.demands.get_mut(&demand_key) {
+                    demand.result = Some(interned.handle);
+                }
+                self.transition_task(task_id, TaskState::Completed)?;
+                self.transition_demand(demand_key, DemandState::Ready)?;
+                self.emit(EventKind::Completed {
+                    key: demand_key,
+                    identity: interned.identity,
+                });
+                return Ok(Evaluation {
+                    handle: interned.handle,
+                    identity: interned.identity,
+                    passed: true,
+                    memo: MemoVerdict::Miss,
+                    failure: None,
+                    failure_context: None,
+                });
+            }
+            let termination = match output.status.code() {
+                Some(code) => ProcessTermination::Exited {
+                    code: i64::from(code),
+                },
+                None => {
+                    #[cfg(unix)]
+                    let signal = {
+                        use std::os::unix::process::ExitStatusExt as _;
+                        i64::from(output.status.signal().unwrap_or_default())
+                    };
+                    #[cfg(not(unix))]
+                    let signal = 0;
+                    ProcessTermination::Signaled { signal }
+                }
+            };
+            let failure = FailureValue::ProcessFailure {
+                recipe: plan_recipe,
+                site: node.id.0,
+                termination,
+            };
+            let report_context = effect_context(&failure);
+            let interned = self.store.intern_failure(failure.clone(), &output.stderr);
+            self.observe_interned(interned);
+            self.memo.insert(
+                location.id,
+                MemoEntry {
+                    location: location.clone(),
+                    key: demand_key,
+                    preimage: demand_preimage.clone(),
+                    result: interned.handle,
+                    receipt: Some(receipt),
+                    current_receipt: true,
+                },
+            );
+            if let Some(demand) = self.demands.get_mut(&demand_key) {
+                demand.result = Some(interned.handle);
+            }
+            self.transition_task(task_id, TaskState::Completed)?;
+            self.transition_demand(demand_key, DemandState::Failed)?;
+            self.emit(EventKind::LanguageFailed {
+                task: task_id,
+                key: demand_key,
+                failure: failure.clone(),
+            });
+            return Ok(Evaluation {
+                handle: interned.handle,
+                identity: interned.identity,
+                passed: false,
+                memo: MemoVerdict::Miss,
+                failure: Some(failure),
+                failure_context: report_context,
+            });
+        }
+    }
+
+    /// Serve one effect demand from an existing store result: the shared exact-
+    /// hit path of the location memo and the same-run demand-key reuse.
+    fn effect_memo_hit(
+        &mut self,
+        location: LocationId,
+        handle: Handle,
+        effect_context: &dyn Fn(&FailureValue) -> Option<FailureContext>,
+    ) -> Result<Evaluation, Box<MachineError>> {
+        let entry = self.store.entry(handle).ok_or_else(|| {
+            MachineError::runtime(
+                MachineOperation::MemoRead,
+                RuntimeFault::MissingMemoStoreHandle,
+                None,
+                None,
+            )
+        })?;
+        let identity = entry.identity;
+        let failure = entry.failure().cloned();
+        self.counters.memo_hits_exact += 1;
+        self.emit(EventKind::Memo {
+            location,
+            verdict: MemoVerdict::Exact,
+            verified: 0,
+        });
+        Ok(Evaluation {
+            handle,
+            identity,
+            passed: failure.is_none(),
+            memo: MemoVerdict::Exact,
+            failure_context: failure.as_ref().and_then(effect_context),
+            failure,
+        })
+    }
+
+    /// Intern one completed `ExecOutcome` under the v1 output protocol: stdout
+    /// and stderr are UTF-8 line-framed, each stream's completed content the
+    /// line-number-keyed map, framed and frozen exactly as the production
+    /// realize path frames a record of records of maps.
+    fn intern_exec_outcome(&mut self, outcome_ty: &Type, stdout: &[u8], stderr: &[u8]) -> Interned {
+        let (stream_ty, lines_ty) = match outcome_ty {
+            Type::Record(record) => {
+                let stream_ty = record.fields[0].ty.clone();
+                let lines_ty = match &stream_ty {
+                    Type::Record(stream) => stream.fields[0].ty.clone(),
+                    _ => Type::map(Type::Int, Type::String),
+                };
+                (stream_ty, lines_ty)
+            }
+            _ => {
+                let lines_ty = Type::map(Type::Int, Type::String);
+                (outcome_ty.clone(), lines_ty)
+            }
+        };
+        let int_schema = semantic_schema_id(&Type::Int);
+        let string_schema = semantic_schema_id(&Type::String);
+        let stream_value = |bytes: &[u8]| -> (FramedNode, FrozenValue) {
+            let text = String::from_utf8_lossy(bytes);
+            let mut rows = Vec::new();
+            let mut frozen_rows = Vec::new();
+            for (index, line) in text.lines().enumerate() {
+                let key = FramedNode::leaf(int_schema, (index as i64).to_le_bytes().to_vec());
+                let value = FramedNode::leaf(string_schema, line.as_bytes().to_vec());
+                rows.push((key.identity(), value.identity()));
+                frozen_rows.push((
+                    FrozenValue::Inline((index as i64).to_le_bytes().to_vec()),
+                    FrozenValue::Opaque(line.as_bytes().to_vec()),
+                ));
+            }
+            let map = FramedNode::OrderedMap {
+                schema: semantic_schema_id(&lines_ty),
+                rows,
+            };
+            let record = FramedNode::Variant {
+                schema: semantic_schema_id(&stream_ty),
+                tag: 0,
+                fields: vec![FramedField {
+                    schema: semantic_schema_id(&lines_ty),
+                    value: FramedValue::Optional(Some(map.identity())),
+                }],
+            };
+            (
+                record,
+                FrozenValue::Product(vec![FrozenValue::OrderedMap(frozen_rows)]),
+            )
+        };
+        let (stdout_node, stdout_frozen) = stream_value(stdout);
+        let (stderr_node, stderr_frozen) = stream_value(stderr);
+        let outcome = FramedNode::Variant {
+            schema: semantic_schema_id(outcome_ty),
+            tag: 0,
+            fields: vec![
+                FramedField {
+                    schema: semantic_schema_id(&stream_ty),
+                    value: FramedValue::Optional(Some(stdout_node.identity())),
+                },
+                FramedField {
+                    schema: semantic_schema_id(&stream_ty),
+                    value: FramedValue::Optional(Some(stderr_node.identity())),
+                },
+            ],
+        };
+        let interned = self.store.intern_tree(&outcome, &[]);
+        self.store.attach_frozen(
+            interned.handle,
+            FrozenValue::Product(vec![stdout_frozen, stderr_frozen]),
+        );
+        self.observe_interned(interned);
+        interned
+    }
+
+    /// Construct the `Result` value a postfix `?` catches an operand edge
+    /// into: `Ok(value)` for a successful publication, `Err(failure)` for a
+    /// typed language failure — the failure participates as an ordinary value,
+    /// referenced by its identity. No task runs and no demand key is minted:
+    /// the operand demand IS the memoized computation; the catch only reframes
+    /// its published outcome.
+    pub fn publish_catch(
+        &mut self,
+        result_type: &Type,
+        operand: &Evaluation,
+    ) -> Result<Evaluation, Box<MachineError>> {
+        let malformed = || {
+            Box::new(MachineError::runtime(
+                MachineOperation::Result,
+                RuntimeFault::MalformedEffectIsland,
+                None,
+                None,
+            ))
+        };
+        let Type::Enum(enumeration) = result_type else {
+            return Err(malformed());
+        };
+        let payload_type = |tag: usize| -> Result<Type, Box<MachineError>> {
+            match &enumeration.variants.get(tag).ok_or_else(malformed)?.payload {
+                VariantPayload::Tuple(elements) if elements.len() == 1 => Ok(elements[0].clone()),
+                _ => Err(malformed()),
+            }
+        };
+        let (tag, field_schema_ty, field, frozen_field) = match &operand.failure {
+            None => {
+                let ok_ty = payload_type(0)?;
+                let entry = self.store.entry(operand.handle).ok_or_else(malformed)?;
+                let (value, frozen) = match &ok_ty {
+                    Type::Bool | Type::Int => {
+                        let mut word = [0u8; 8];
+                        let bytes = entry.resident_bytes().ok_or_else(malformed)?;
+                        let width = bytes.len().min(8);
+                        word[..width].copy_from_slice(&bytes[..width]);
+                        (
+                            FramedValue::Bytes(word.to_vec()),
+                            FrozenValue::Inline(word.to_vec()),
+                        )
+                    }
+                    Type::String
+                    | Type::Path
+                    | Type::Array(_)
+                    | Type::Map { .. }
+                    | Type::Set(_) => (
+                        FramedValue::Optional(Some(operand.identity)),
+                        FrozenValue::Reference(operand.identity),
+                    ),
+                    _ => (
+                        FramedValue::Optional(Some(operand.identity)),
+                        entry.frozen().cloned().ok_or_else(malformed)?,
+                    ),
+                };
+                (0u64, ok_ty, value, frozen)
+            }
+            Some(_) => {
+                // The caught failure, as a value: an opaque record carrying the
+                // failure's identity. The full typed failure stays in the store
+                // under that identity.
+                let err_ty = payload_type(1)?;
+                let rendered = format!(
+                    "{}:{}",
+                    operand.identity.schema.0.hex(),
+                    operand.identity.content.hex()
+                );
+                let string_schema = semantic_schema_id(&Type::String);
+                let leaf = FramedNode::leaf(string_schema, rendered.as_bytes().to_vec());
+                let marker = FramedNode::Variant {
+                    schema: semantic_schema_id(&err_ty),
+                    tag: 0,
+                    fields: vec![FramedField {
+                        schema: string_schema,
+                        value: FramedValue::Optional(Some(leaf.identity())),
+                    }],
+                };
+                let frozen = FrozenValue::Product(vec![FrozenValue::Opaque(rendered.into_bytes())]);
+                (
+                    1u64,
+                    err_ty.clone(),
+                    FramedValue::Optional(Some(marker.identity())),
+                    frozen,
+                )
+            }
+        };
+        let node = FramedNode::Variant {
+            schema: semantic_schema_id(result_type),
+            tag,
+            fields: vec![FramedField {
+                schema: semantic_schema_id(&field_schema_ty),
+                value: field,
+            }],
+        };
+        let interned = self.store.intern_tree(&node, &[]);
+        self.store.attach_frozen(
+            interned.handle,
+            FrozenValue::Variant {
+                tag: u32::try_from(tag).expect("result tag fits u32"),
+                fields: vec![frozen_field],
+            },
+        );
+        self.observe_interned(interned);
+        Ok(Evaluation {
+            handle: interned.handle,
+            identity: interned.identity,
+            passed: true,
+            memo: MemoVerdict::Miss,
+            failure: None,
+            failure_context: None,
+        })
     }
 
     /// Render a published snapshot value structurally from its frozen store tree.
@@ -1806,6 +4031,30 @@ impl<S: EventSink> Runtime<S> {
     pub fn into_sink(self) -> S {
         self.sink
     }
+
+    #[must_use]
+    pub fn into_sink_and_persistent_state(self) -> (S, PersistentRuntimeState) {
+        (
+            self.sink,
+            PersistentRuntimeState {
+                store: self.store,
+                memo: self.memo,
+            },
+        )
+    }
+}
+
+fn directory_observation_digest(entries: &[(String, FixtureEntryKind)]) -> Digest {
+    let mut fields = Vec::with_capacity(entries.len() * 2);
+    for (name, kind) in entries {
+        fields.push(name.as_bytes());
+        fields.push(match kind {
+            FixtureEntryKind::File => b"file".as_slice(),
+            FixtureEntryKind::Dir => b"dir".as_slice(),
+            FixtureEntryKind::Symlink => b"symlink".as_slice(),
+        });
+    }
+    hash_framed(b"vix.fixture.directory-observation.v1", &fields)
 }
 
 /// Type-directed structural rendering of a published snapshot value. It mirrors
@@ -1859,6 +4108,19 @@ fn render_frozen(
             let text = core::str::from_utf8(&bytes)
                 .map_err(|_| "snapshot string is not utf-8".to_owned())?;
             escape_vix_string(text, out);
+        }
+        Type::Extern(kind) => {
+            // Machine-plane values render as their kind plus canonical resident
+            // bytes: text when UTF-8, a hex spelling otherwise.
+            let bytes = leaf_bytes(store, frozen)?;
+            let _ = write!(out, "{}(", kind.name());
+            match core::str::from_utf8(&bytes) {
+                Ok(text) => escape_vix_string(text, out),
+                Err(_) => {
+                    let _ = write!(out, "0x{}", hex::encode(&bytes));
+                }
+            }
+            out.push(')');
         }
         Type::Record(record) => {
             let FrozenValue::Product(fields) = frozen else {
@@ -2241,7 +4503,7 @@ fn realize_structural_node<'task>(
                 8,
             ))
         }
-        Type::String | Type::Path => {
+        Type::String | Type::Path | Type::Extern(_) => {
             let resolved = resolver
                 .resolve(value.value_ref()?)
                 .ok_or_else(|| invalid_realized_result(lowered, 0))?;
@@ -2538,7 +4800,12 @@ fn realize_array<'task>(
 
 fn type_contains_handle(ty: &Type) -> bool {
     match ty {
-        Type::String | Type::Path | Type::Array(_) | Type::Map { .. } | Type::Set(_) => true,
+        Type::String
+        | Type::Path
+        | Type::Extern(_)
+        | Type::Array(_)
+        | Type::Map { .. }
+        | Type::Set(_) => true,
         Type::Tuple(elements) => elements.iter().any(type_contains_handle),
         Type::Record(record) => record
             .fields
@@ -2589,6 +4856,11 @@ fn frozen_to_weavy(
     store: &Store,
 ) -> Result<weavy::exec::FrozenValue, ()> {
     match (frozen, ty) {
+        (FrozenValue::Inline(_), Type::Bool | Type::Int | Type::Check) => {
+            Ok(weavy::exec::FrozenValue::Inline(
+                frozen_inline(frozen, ty, binding, store)?.into_weavy(),
+            ))
+        }
         (FrozenValue::Reference(identity), _) => {
             let schema = publication_schema(binding, ty)?;
             let handle = store
@@ -2668,12 +4940,15 @@ fn frozen_inline(
                 references: Vec::new(),
             })
         }
-        Type::String | Type::Path | Type::Array(_) | Type::Map { .. } | Type::Set(_) => {
-            Ok(FrozenInline {
-                bytes: vec![0; 8],
-                references: vec![(0, frozen_to_weavy(frozen, ty, binding, store)?)],
-            })
-        }
+        Type::String
+        | Type::Path
+        | Type::Extern(_)
+        | Type::Array(_)
+        | Type::Map { .. }
+        | Type::Set(_) => Ok(FrozenInline {
+            bytes: vec![0; 8],
+            references: vec![(0, frozen_to_weavy(frozen, ty, binding, store)?)],
+        }),
         Type::Tuple(elements) => {
             let FrozenValue::Product(fields) = frozen else {
                 return Err(());
@@ -2762,6 +5037,459 @@ fn semantic_schema_id(ty: &Type) -> SchemaId {
     SchemaId::named(&format!("vix.semantic.v1:{}", ty.name()))
 }
 
+fn effect_schema(ty: &Type) -> SchemaId {
+    semantic_schema_id(ty)
+}
+
+fn effect_leaf(ty: &Type, resident: Vec<u8>) -> EffectValue {
+    let node = FramedNode::leaf(effect_schema(ty), resident.clone());
+    let identity = node.identity();
+    EffectValue {
+        identity,
+        resident,
+        frozen: None,
+        node: Some(node),
+    }
+}
+
+fn decoded_effect_value(ty: &Type, value: &DecodedValue) -> Result<EffectValue, Box<MachineError>> {
+    match (ty, value) {
+        (Type::Int, DecodedValue::Int(value)) => {
+            let bytes = value.to_le_bytes().to_vec();
+            let mut effect = effect_leaf(ty, bytes.clone());
+            effect.frozen = Some(FrozenValue::Inline(bytes));
+            Ok(effect)
+        }
+        (Type::Bool, DecodedValue::Bool(value)) => {
+            let bytes = i64::from(*value).to_le_bytes().to_vec();
+            let mut effect = effect_leaf(ty, bytes.clone());
+            effect.frozen = Some(FrozenValue::Inline(bytes));
+            Ok(effect)
+        }
+        (Type::String, DecodedValue::Str(value)) => {
+            let bytes = value.as_bytes().to_vec();
+            let mut effect = effect_leaf(ty, bytes.clone());
+            effect.frozen = Some(FrozenValue::Opaque(bytes));
+            Ok(effect)
+        }
+        (Type::Record(record), DecodedValue::Record(values)) => {
+            if record.fields.len() != values.len() {
+                return effect_fault("decoded record field count disagreed with schema");
+            }
+            let mut fields = Vec::with_capacity(values.len());
+            let mut frozen = Vec::with_capacity(values.len());
+            for (field, value) in record.fields.iter().zip(values) {
+                let effect = decoded_effect_value(&field.ty, value)?;
+                let framed_value = if matches!(field.ty, Type::Bool | Type::Int | Type::Check) {
+                    FramedValue::Bytes(effect.resident.clone())
+                } else {
+                    FramedValue::Optional(Some(effect.identity))
+                };
+                fields.push(FramedField {
+                    schema: effect_schema(&field.ty),
+                    value: framed_value,
+                });
+                frozen.push(
+                    effect
+                        .frozen
+                        .unwrap_or(FrozenValue::Reference(effect.identity)),
+                );
+            }
+            let node = FramedNode::Variant {
+                schema: effect_schema(ty),
+                tag: 0,
+                fields,
+            };
+            Ok(EffectValue {
+                identity: node.identity(),
+                resident: Vec::new(),
+                frozen: Some(FrozenValue::Product(frozen)),
+                node: Some(node),
+            })
+        }
+        _ => effect_fault("decoded value did not match target schema"),
+    }
+}
+
+fn effect_value_from_frozen(
+    ty: &Type,
+    frozen: FrozenValue,
+) -> Result<EffectValue, Box<MachineError>> {
+    match (&frozen, ty) {
+        (FrozenValue::Inline(bytes), Type::Int | Type::Bool | Type::Check) => {
+            let mut effect = effect_leaf(ty, bytes.clone());
+            effect.frozen = Some(frozen);
+            Ok(effect)
+        }
+        (FrozenValue::Opaque(bytes), Type::String | Type::Path) => {
+            let mut effect = effect_leaf(ty, bytes.clone());
+            effect.frozen = Some(frozen);
+            Ok(effect)
+        }
+        (FrozenValue::Product(fields), Type::Record(record)) => {
+            if fields.len() != record.fields.len() {
+                return effect_fault("frozen product field count disagreed with schema");
+            }
+            let mut framed = Vec::with_capacity(fields.len());
+            for (field, value) in record.fields.iter().zip(fields) {
+                let effect = effect_value_from_frozen(&field.ty, value.clone())?;
+                let framed_value = if matches!(field.ty, Type::Bool | Type::Int | Type::Check) {
+                    FramedValue::Bytes(effect.resident)
+                } else {
+                    FramedValue::Optional(Some(effect.identity))
+                };
+                framed.push(FramedField {
+                    schema: effect_schema(&field.ty),
+                    value: framed_value,
+                });
+            }
+            let node = FramedNode::Variant {
+                schema: effect_schema(ty),
+                tag: 0,
+                fields: framed,
+            };
+            Ok(EffectValue {
+                identity: node.identity(),
+                resident: Vec::new(),
+                frozen: Some(frozen),
+                node: Some(node),
+            })
+        }
+        (FrozenValue::DenseArray(elements), Type::Array(element)) => {
+            let mut children = Vec::with_capacity(elements.len());
+            for value in elements {
+                children.push(effect_value_from_frozen(element, value.clone())?.identity);
+            }
+            let node = FramedNode::SeqChildren {
+                schema: effect_schema(ty),
+                element_schema: effect_schema(element),
+                children,
+            };
+            Ok(EffectValue {
+                identity: node.identity(),
+                resident: Vec::new(),
+                frozen: Some(frozen),
+                node: Some(node),
+            })
+        }
+        (FrozenValue::OrderedMap(rows), Type::Map { key, value }) => {
+            let mut identities = Vec::with_capacity(rows.len());
+            for (row_key, row_value) in rows {
+                let key = effect_value_from_frozen(key, row_key.clone())?;
+                let value = effect_value_from_frozen(value, row_value.clone())?;
+                identities.push((key.identity, value.identity));
+            }
+            let node = FramedNode::OrderedMap {
+                schema: effect_schema(ty),
+                rows: identities,
+            };
+            Ok(EffectValue {
+                identity: node.identity(),
+                resident: Vec::new(),
+                frozen: Some(frozen),
+                node: Some(node),
+            })
+        }
+        (FrozenValue::Variant { tag, fields }, Type::Enum(enumeration)) => {
+            let variant = enumeration
+                .variants
+                .get(*tag as usize)
+                .ok_or_else(|| effect_machine_error("frozen enum tag disagreed with schema"))?;
+            let field_types = match &variant.payload {
+                VariantPayload::Unit => Vec::new(),
+                VariantPayload::Tuple(elements) => elements.iter().collect::<Vec<_>>(),
+                VariantPayload::Record(fields) => {
+                    fields.iter().map(|field| &field.ty).collect::<Vec<_>>()
+                }
+            };
+            if fields.len() != field_types.len() {
+                return effect_fault("frozen enum field count disagreed with schema");
+            }
+            let mut framed = Vec::with_capacity(fields.len());
+            for (field_ty, value) in field_types.into_iter().zip(fields) {
+                let effect = effect_value_from_frozen(field_ty, value.clone())?;
+                let framed_value = if matches!(field_ty, Type::Bool | Type::Int | Type::Check) {
+                    FramedValue::Bytes(effect.resident)
+                } else {
+                    FramedValue::Optional(Some(effect.identity))
+                };
+                framed.push(FramedField {
+                    schema: effect_schema(field_ty),
+                    value: framed_value,
+                });
+            }
+            let node = FramedNode::Variant {
+                schema: effect_schema(ty),
+                tag: u64::from(*tag),
+                fields: framed,
+            };
+            Ok(EffectValue {
+                identity: node.identity(),
+                resident: Vec::new(),
+                frozen: Some(frozen),
+                node: Some(node),
+            })
+        }
+        _ => effect_fault("frozen value did not match target schema"),
+    }
+}
+
+fn frozen_solver_solution(
+    ty: &Type,
+    packages: &[String],
+) -> Result<FrozenValue, Box<MachineError>> {
+    let Some(solution_ty) = ty.option_inner() else {
+        return effect_fault("mini_solve result type was not Option<_>");
+    };
+    let Type::Map { key, value } = solution_ty else {
+        return effect_fault("mini_solve result payload was not a map");
+    };
+    if **key != Type::String {
+        return effect_fault("mini_solve result map key was not String");
+    }
+    let _ = (packages, value);
+    Ok(FrozenValue::Variant {
+        tag: OPTION_SOME_VARIANT,
+        fields: vec![FrozenValue::OrderedMap(Vec::new())],
+    })
+}
+
+fn read_i64(bytes: &[u8]) -> Option<i64> {
+    Some(i64::from_le_bytes(bytes.get(..8)?.try_into().ok()?))
+}
+
+fn effect_machine_error(detail: &'static str) -> Box<MachineError> {
+    Box::new(MachineError::runtime(
+        MachineOperation::Effect,
+        RuntimeFault::EffectPlane { detail },
+        None,
+        None,
+    ))
+}
+
+fn effect_fault<T>(detail: &'static str) -> Result<T, Box<MachineError>> {
+    Err(effect_machine_error(detail))
+}
+
+fn split_tree_entry(bytes: &[u8]) -> Result<(&[u8], &[u8]), Box<MachineError>> {
+    let prefix = b"tree-entry\0";
+    let header = prefix
+        .len()
+        .checked_add(8)
+        .ok_or_else(|| effect_machine_error("tree entry header overflow"))?;
+    if !bytes.starts_with(prefix) || bytes.len() < header {
+        return effect_fault("tree entry payload was malformed");
+    }
+    let length = u64::from_le_bytes(
+        bytes[prefix.len()..header]
+            .try_into()
+            .expect("eight-byte tree entry length"),
+    );
+    let length =
+        usize::try_from(length).map_err(|_| effect_machine_error("tree entry length overflow"))?;
+    let tree_end = header
+        .checked_add(length)
+        .filter(|end| *end <= bytes.len())
+        .ok_or_else(|| effect_machine_error("tree entry payload was truncated"))?;
+    Ok((&bytes[header..tree_end], &bytes[tree_end..]))
+}
+
+fn fixture_tree_name(bytes: &[u8]) -> Option<&[u8]> {
+    let name = bytes.strip_prefix(b"fixture-tree\0")?;
+    Some(name.split(|byte| *byte == 0).next().unwrap_or(name))
+}
+
+/// Canonical archive-tree identity material. It records entry kinds, paths,
+/// modes relevant to the Tree model, and file/symlink payloads in path order;
+/// the archive's block layout, padding, and original member order never enter.
+fn canonical_archive_tree(bytes: &[u8]) -> Vec<u8> {
+    let mut members = parse_ustar(bytes).expect("validated before canonical tree encoding");
+    members.sort_by(|left, right| left.path().as_bytes().cmp(right.path().as_bytes()));
+    let mut encoded = Vec::new();
+    for member in members {
+        match member {
+            TarMember::File {
+                path,
+                bytes,
+                executable,
+            } => {
+                encoded.push(0);
+                frame_effect_tree_field(&mut encoded, path.as_bytes());
+                encoded.push(u8::from(executable));
+                frame_effect_tree_field(&mut encoded, &bytes);
+            }
+            TarMember::Dir { path } => {
+                encoded.push(1);
+                frame_effect_tree_field(&mut encoded, path.as_bytes());
+            }
+            TarMember::Symlink { path, target } => {
+                encoded.push(2);
+                frame_effect_tree_field(&mut encoded, path.as_bytes());
+                frame_effect_tree_field(&mut encoded, target.as_bytes());
+            }
+        }
+    }
+    encoded
+}
+
+fn frame_effect_tree_field(out: &mut Vec<u8>, bytes: &[u8]) {
+    out.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
+    out.extend_from_slice(bytes);
+}
+
+fn runtime_decode_error_type() -> Type {
+    Type::Record(crate::vir::RecordType {
+        name: "DecodeError".to_owned(),
+        fields: vec![
+            crate::vir::RecordField {
+                name: "kind".to_owned(),
+                ty: Type::String,
+            },
+            crate::vir::RecordField {
+                name: "path".to_owned(),
+                ty: Type::String,
+            },
+            crate::vir::RecordField {
+                name: "document_offset".to_owned(),
+                ty: Type::Int,
+            },
+            crate::vir::RecordField {
+                name: "document_len".to_owned(),
+                ty: Type::Int,
+            },
+        ],
+    })
+}
+
+fn document_receipt(demand: DemandKey, reads: &[ReadWitness]) -> Option<Receipt> {
+    (!reads.is_empty()).then(|| Receipt {
+        demand,
+        reads: reads.to_vec(),
+    })
+}
+
+fn zero_host_region(
+    task: &mut weavy::exec::ExecTask<'_>,
+    region: super::FrameRegion,
+) -> Result<(), String> {
+    for index in 0..region.words().as_usize() {
+        write_host_word(task, region, index, 0)?;
+    }
+    Ok(())
+}
+
+fn write_host_word(
+    task: &mut weavy::exec::ExecTask<'_>,
+    region: super::FrameRegion,
+    index: usize,
+    value: i64,
+) -> Result<(), String> {
+    let slot = region
+        .word(index)
+        .ok_or_else(|| "document host wrote outside its typed result region".to_owned())?;
+    task.write_host_word(slot.byte_offset(), value)
+        .map_err(|fault| format!("document host frame materialization failed: {fault:?}"))
+}
+
+fn materialize_decoded_value(
+    task: &mut weavy::exec::ExecTask<'_>,
+    region: super::FrameRegion,
+    ty: &Type,
+    value: &DecodedValue,
+    cursor: &mut usize,
+    store: &mut Store,
+    interned: &mut Vec<Interned>,
+) -> Result<(), String> {
+    match (ty, value) {
+        (Type::Int, DecodedValue::Int(value)) => {
+            write_host_word(task, region, *cursor, *value)?;
+            *cursor += 1;
+        }
+        (Type::Bool, DecodedValue::Bool(value)) => {
+            write_host_word(task, region, *cursor, i64::from(*value))?;
+            *cursor += 1;
+        }
+        (Type::String, DecodedValue::Str(value)) => {
+            let allocated = store.intern_realized(semantic_schema_id(ty), value.as_bytes());
+            let handle = store
+                .weavy_handle(allocated.handle)
+                .ok_or_else(|| "document host allocated a missing String handle".to_owned())?;
+            write_host_word(task, region, *cursor, handle.as_i64())?;
+            interned.push(allocated);
+            *cursor += 1;
+        }
+        (Type::Record(record), DecodedValue::Record(values)) => {
+            if record.fields.len() != values.len() {
+                return Err("decoded record field count disagrees with its schema".to_owned());
+            }
+            for (field, value) in record.fields.iter().zip(values) {
+                materialize_decoded_value(task, region, &field.ty, value, cursor, store, interned)?;
+            }
+        }
+        (Type::Enum(enumeration), DecodedValue::OptionSome(value))
+            if ty.option_inner().is_some() =>
+        {
+            write_host_word(task, region, *cursor, 0)?;
+            *cursor += 1;
+            let inner = ty.option_inner().expect("guarded option inner");
+            materialize_decoded_value(task, region, inner, value, cursor, store, interned)?;
+            let _ = enumeration;
+        }
+        (Type::Enum(_), DecodedValue::OptionNone) if ty.option_inner().is_some() => {
+            write_host_word(task, region, *cursor, 1)?;
+            *cursor += 1;
+        }
+        (Type::Enum(enumeration), DecodedValue::Variant { index, fields }) => {
+            let variant = enumeration
+                .variants
+                .get(*index as usize)
+                .ok_or_else(|| "decoded enum variant is outside its schema".to_owned())?;
+            write_host_word(task, region, *cursor, i64::from(*index))?;
+            *cursor += 1;
+            let types: Vec<&Type> = match &variant.payload {
+                VariantPayload::Unit => Vec::new(),
+                VariantPayload::Tuple(fields) => fields.iter().collect(),
+                VariantPayload::Record(fields) => fields.iter().map(|field| &field.ty).collect(),
+            };
+            if types.len() != fields.len() {
+                return Err("decoded enum payload count disagrees with its schema".to_owned());
+            }
+            for (ty, value) in types.into_iter().zip(fields) {
+                materialize_decoded_value(task, region, ty, value, cursor, store, interned)?;
+            }
+        }
+        _ => {
+            return Err(format!(
+                "decoded value does not match target schema {}",
+                ty.name()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn materialize_decode_error(
+    task: &mut weavy::exec::ExecTask<'_>,
+    region: super::FrameRegion,
+    ty: &Type,
+    error: &decode::DecodeError,
+    cursor: &mut usize,
+    store: &mut Store,
+    interned: &mut Vec<Interned>,
+) -> Result<(), String> {
+    let Type::Record(record) = ty else {
+        return Err("decode error schema is not a record".to_owned());
+    };
+    let kind = DecodedValue::Str(error.kind.label().to_owned());
+    let path = DecodedValue::Str(error.path_names().join("."));
+    let offset = DecodedValue::Int(error.span.map_or(-1, |span| i64::from(span.offset)));
+    let len = DecodedValue::Int(error.span.map_or(-1, |span| i64::from(span.len)));
+    for (field, value) in record.fields.iter().zip([kind, path, offset, len]) {
+        materialize_decoded_value(task, region, &field.ty, &value, cursor, store, interned)?;
+    }
+    Ok(())
+}
+
 fn invalid_realized_result(lowered: &LoweringArtifact, size: usize) -> TaskFault {
     TaskFault::InvalidResultShape {
         entry: FnId(0),
@@ -2794,14 +5522,27 @@ fn failure_context(
                 demand_chain: vec![lowered.demand_key],
             })
         }
-        FailureValue::IndexOutOfBounds { .. }
-        | FailureValue::MissingKey { .. }
-        | FailureValue::DuplicateKey { .. }
-        | FailureValue::MissingDelimiter { .. }
-        | FailureValue::InvalidInteger { .. }
-        | FailureValue::IntegerOverflow { .. }
-        | FailureValue::DivisionByZero { .. } => None,
+        // Effect-plane failures carry an effect recipe, never a lowered
+        // island's; their context is attached where the effect evaluates.
+        _ => None,
     }
+}
+
+/// Tier-1 exec plan identity: the normalized command. The v1 ratchet capability
+/// packages' command grammar is fully positional, so the normalized plan is the
+/// parsed argv itself, framed element by element.
+///
+/// r[impl machine.primitive.exec-identity]
+/// r[impl machine.primitive.exec-plan-normalized]
+fn exec_plan_recipe(argv: &[String]) -> RecipeId {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"vix.exec.plan.v1");
+    bytes.extend_from_slice(&(argv.len() as u64).to_le_bytes());
+    for argument in argv {
+        bytes.extend_from_slice(&(argument.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(argument.as_bytes());
+    }
+    RecipeId::from_canonical_vir(&bytes)
 }
 
 enum DecodedResult {

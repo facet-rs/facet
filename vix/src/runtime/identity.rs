@@ -26,6 +26,18 @@ impl RecipeId {
     pub fn from_canonical_vir(bytes: &[u8]) -> Self {
         Self(hash_framed(b"vix.recipe.v1", &[bytes]))
     }
+
+    /// Recipe identity for a machine-plane effect expression. The caller
+    /// supplies the VIR structural fingerprint, which intentionally excludes
+    /// partition-local node ids so duplicate pinned demands share one memo
+    /// preimage while their input identities remain part of that preimage.
+    #[must_use]
+    pub fn from_effect_fingerprint(fingerprint: &str) -> Self {
+        Self(hash_framed(
+            b"vix.effect.recipe.v1",
+            &[fingerprint.as_bytes()],
+        ))
+    }
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -76,6 +88,23 @@ pub struct Location {
 }
 
 impl Location {
+    fn from_segments(segments: Vec<String>) -> Self {
+        let fields = segments.iter().map(String::as_bytes).collect::<Vec<_>>();
+        Self {
+            id: LocationId(hash_framed(b"vix.location.v1", &fields)),
+            segments,
+        }
+    }
+
+    #[must_use]
+    pub fn with_source_revision(self, revision: &str) -> Self {
+        let mut segments = Vec::with_capacity(self.segments.len() + 2);
+        segments.push("source".to_owned());
+        segments.push(revision.to_owned());
+        segments.extend(self.segments);
+        Self::from_segments(segments)
+    }
+
     #[must_use]
     pub fn for_test_value(test_name: &str, stable_id: &str) -> Self {
         let segments = vec![
@@ -84,11 +113,7 @@ impl Location {
             "value".to_owned(),
             stable_id.to_owned(),
         ];
-        let fields = segments.iter().map(String::as_bytes).collect::<Vec<_>>();
-        Self {
-            id: LocationId(hash_framed(b"vix.location.v1", &fields)),
-            segments,
-        }
+        Self::from_segments(segments)
     }
 
     #[must_use]
@@ -99,11 +124,24 @@ impl Location {
             "check".to_owned(),
             island.to_string(),
         ];
-        let fields = segments.iter().map(String::as_bytes).collect::<Vec<_>>();
-        Self {
-            id: LocationId(hash_framed(b"vix.location.v1", &fields)),
-            segments,
-        }
+        Self::from_segments(segments)
+    }
+
+    /// The memo-nomination location of one effect demand, keyed by the
+    /// effect's node-id-independent structural fingerprint. Two structurally
+    /// identical effect expressions in one test nominate the same location, so
+    /// the second demand of an identical pinned fetch is an exact memo hit —
+    /// never a second effect spawn.
+    #[must_use]
+    pub fn for_test_effect(test_name: &str, fingerprint: &str) -> Self {
+        let digest = hash_framed(b"vix.effect.fingerprint.v1", &[fingerprint.as_bytes()]);
+        let segments = vec![
+            "test".to_owned(),
+            test_name.to_owned(),
+            "effect".to_owned(),
+            digest.hex(),
+        ];
+        Self::from_segments(segments)
     }
 
     /// Provenance-keyed location of one evaluated check: the site's check
@@ -131,6 +169,7 @@ impl Location {
         for key in dynamic_keys {
             segments.push(format!("key:{}:{}", key.schema.0.hex(), key.content.hex()));
         }
+        debug_assert_eq!(id, Location::from_segments(segments.clone()).id);
         Self { id, segments }
     }
 }

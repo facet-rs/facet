@@ -10,6 +10,9 @@ const PREC = {
   mul: 5,
   unary: 6,
   postfix: 7,
+  // `exec` reduces before a postfix `?` shifts, so `exec cap`…`?` catches the
+  // exec edge — `(exec cap`…`)?` — never the command construction.
+  exec: 8,
 };
 
 function sepBy(sep, rule) {
@@ -25,7 +28,20 @@ module.exports = grammar({
   rules: {
     source_file: ($) => repeat(field("item", $._item)),
 
-    _item: ($) => choice($.enum_item, $.struct_item, $.fn_item),
+    _item: ($) => choice($.import_item, $.enum_item, $.struct_item, $.fn_item),
+
+    // `import geometry::{Point, magnitude_sq};` / `import geometry::Point;`
+    // (ratchet rungs 106–110). One module segment, then either a single item
+    // name or a braced name list — exactly the surface the rungs spell.
+    import_item: ($) =>
+      seq(
+        "import",
+        field("module", $.identifier),
+        "::",
+        choice(field("name", $.identifier), field("names", $.import_name_list)),
+        ";",
+      ),
+    import_name_list: ($) => seq("{", sepBy(",", field("name", $.identifier)), "}"),
 
     attribute: ($) =>
       seq(
@@ -136,6 +152,9 @@ module.exports = grammar({
         $.match_expr,
         $.binary,
         $.unary,
+        $.exec_expr,
+        $.command_expr,
+        $.try_expr,
         $.call,
         $.where_call,
         $.method_call,
@@ -197,15 +216,52 @@ module.exports = grammar({
       );
     },
     unary: ($) => prec(PREC.unary, seq(field("op", choice("-", "!")), field("value", $._expr))),
-    call: ($) =>
+    // A capability-tagged backtick command template: `echo`"hello ratchet"``.
+    // The tag is an ordinary identifier resolving to a capability value; the
+    // template body is raw command text the capability's command grammar
+    // parses into typed argv roles (lang.command.typed).
+    command_expr: ($) =>
       prec(
         PREC.postfix,
-        seq(
-          field("callee", $.identifier),
-          field("args", $.arg_list),
-          optional(field("named_args", $.where_args)),
+        seq(field("tag", $.identifier), field("template", $.command_template)),
+      ),
+    command_template: () => token(seq("`", /[^`\n]*/, "`")),
+    // `exec command` demands a process run. Reduced above postfix so a
+    // trailing `?` catches the exec demand edge, not the command value.
+    exec_expr: ($) =>
+      prec(PREC.exec, seq("exec", field("command", $.command_expr))),
+    // Postfix `?` catches any expression edge: the operand's typed language
+    // failure becomes `Result::Err`, success becomes `Result::Ok`.
+    try_expr: ($) =>
+      prec(PREC.postfix, seq(field("value", $._expr), "?")),
+    call: ($) =>
+      choice(
+        // Type application (turbofish) at a call site: names the target schema
+        // explicitly, e.g. `try_json_decode<PkgRow>(doc)`. Dynamic precedence
+        // resolves the GLR `f<T>(x)` vs `(f < T) > (x)` ambiguity in favor of
+        // the type application; the trailing `(` makes it a genuine call.
+        prec.dynamic(
+          1,
+          prec(
+            PREC.postfix,
+            seq(
+              field("callee", $.identifier),
+              field("type_args", $.type_args),
+              field("args", $.arg_list),
+              optional(field("named_args", $.where_args)),
+            ),
+          ),
+        ),
+        prec(
+          PREC.postfix,
+          seq(
+            field("callee", $.identifier),
+            field("args", $.arg_list),
+            optional(field("named_args", $.where_args)),
+          ),
         ),
       ),
+    type_args: ($) => seq("<", sepBy(",", field("arg", $._type)), ">"),
     // A subject-less named call: the callee names both its bounds through
     // `where`, with no positional subject and no parentheses. `range where
     // { from, to }` is the canonical instance (calling.md: "range acts on
@@ -304,6 +360,8 @@ module.exports = grammar({
       choice(
         $.some_pattern,
         $.none_pattern,
+        $.ok_pattern,
+        $.err_pattern,
         $.record_pattern,
         $.variant_pattern,
         $.binding_pattern,
@@ -311,9 +369,13 @@ module.exports = grammar({
         $.number_pattern,
         $.wildcard_pattern,
         $.tuple_pattern,
-      ),
+    ),
     some_pattern: ($) => seq("Some", "(", field("payload", $._pattern), ")"),
     none_pattern: () => "None",
+    // `Result<T, E>` is a built-in enum; its `Ok`/`Err` patterns are built-in
+    // like `Option`'s `Some`/`None`.
+    ok_pattern: ($) => seq("Ok", "(", field("payload", $._pattern), ")"),
+    err_pattern: ($) => seq("Err", "(", field("payload", $._pattern), ")"),
     binding_pattern: ($) => field("binding", $.identifier),
     string_pattern: ($) => field("value", $.string),
     number_pattern: ($) => field("value", $.number),

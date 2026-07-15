@@ -1582,6 +1582,12 @@ impl JitTask {
         self.frames.len()
     }
 
+    /// The function owning the currently suspended frame.
+    #[must_use]
+    pub fn active_function(&self) -> FnId {
+        self.frames.last().expect("live frame").fn_id
+    }
+
     #[must_use]
     pub fn frame_arena_bytes(&self) -> usize {
         self.arena.len()
@@ -1851,9 +1857,18 @@ impl JitTask {
                     }
                     let callee = &program.fns[callee_id.0 as usize];
                     let callee_base = self.alloc_frame(callee);
-                    for copy in &desc.args {
+                    for (index, copy) in desc.args.iter().enumerate() {
                         let src = frame.base + copy.src as usize;
-                        let dst = callee_base + copy.dst as usize;
+                        let destination = if target_is_frame {
+                            verified.map_or(copy.dst, |verified| {
+                                crate::task::indirect_call_destination(
+                                    verified, callee_id, index, copy.dst,
+                                )
+                            })
+                        } else {
+                            copy.dst
+                        };
+                        let dst = callee_base + destination as usize;
                         self.arena.copy_within(src..src + copy.size as usize, dst);
                     }
                     // Boxed-closure capture threading, shared with the

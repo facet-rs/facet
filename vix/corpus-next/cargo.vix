@@ -1,0 +1,1276 @@
+use vix::{Arg, Map, Path, Target, Tree, VersionSet};
+use cargo_manifest::{
+    SparseIndexRow,
+    WorkspaceIndexState,
+    crate_name,
+    member_manifest,
+    package_name,
+    package_version,
+    package_version_in_workspace,
+    parse_sparse_jsonl,
+    problem_of_member,
+    selected_version_text,
+    selected_sparse_row,
+    solution_dep_ids_for_kind,
+    solution_dep_names_text,
+    workspace_index_package_names_text,
+    workspace_index_from_state,
+    workspace_member_only_package_count_for_members,
+    workspace_member_only_package_names_text_for_members,
+    workspace_index_state_with_transitive_sparse_rows_for_members,
+};
+use crate_build::{
+    CargoResolvedProfile,
+    CargoUnitKind,
+    RustExtern,
+    RustUnit,
+    build_script_rustc_cfgs,
+    compile_rust_unit,
+    default_rust_toolchain,
+    package_edition_from_source,
+};
+use rodin::{Index, Problem, SolveResult, root_candidate_count, root_version_count, solve, solve_selected_versions_text};
+
+fn taxon_members() -> [String] {
+    ["rust/taxon"]
+}
+
+fn taxon_workspace_root() -> Path {
+    p"phon"
+}
+
+fn facet_core_members() -> [String] {
+    ["facet-core"]
+}
+
+fn facet_core_workspace_root() -> Path {
+    p""
+}
+
+fn taxon_state(workspace: Tree, sparse_jsonl: String) -> WorkspaceIndexState {
+    workspace_index_state_with_transitive_sparse_rows_for_members(workspace, taxon_workspace_root(), sparse_jsonl, taxon_members())
+}
+
+fn member_names(workspace: Tree, workspace_root: Path, members: [String]) -> [String] {
+    member_names_impl(workspace, workspace_root, members, [])
+}
+
+fn member_names_impl(workspace: Tree, workspace_root: Path, members: [String], out: [String]) -> [String] {
+    match members.len() == 0 {
+        true => out,
+        false => member_names_impl_step(workspace, workspace_root, members.pop(), out),
+    }
+}
+
+fn member_names_impl_step(workspace: Tree, workspace_root: Path, popped: (String, [String]), out: [String]) -> [String] {
+    let manifest = member_manifest(workspace, workspace_root, popped.0);
+    member_names_impl(workspace, workspace_root, popped.1, out.push(package_name(manifest)))
+}
+
+fn taxon_root_pkg(state: WorkspaceIndexState) -> Int {
+    state.package_ids.get("taxon").unwrap()
+}
+
+fn taxon_index(state: WorkspaceIndexState) -> Index {
+    workspace_index_from_state(state)
+}
+
+fn taxon_root_version(workspace: Tree) -> String {
+    package_version_in_workspace(member_manifest(workspace, taxon_workspace_root(), "rust/taxon"), workspace)
+}
+
+fn taxon_problem(workspace: Tree, state: WorkspaceIndexState) -> Problem {
+    Problem {
+        root_pkg: taxon_root_pkg(state),
+        root_req: VersionSet::from_req("=" + taxon_root_version(workspace)),
+        root_features: [],
+        root_default_feature: 0,
+        root_default_features: false,
+    }
+}
+
+pub fn taxon_member_package_name(workspace: Tree, sparse_jsonl: String, target_name: String) -> String {
+    package_name(member_manifest(workspace, taxon_workspace_root(), "rust/taxon"))
+}
+
+pub fn taxon_literal_member_package_name(workspace: Tree, sparse_jsonl: String, target_name: String) -> String {
+    package_name(workspace / p"phon/rust/taxon")
+}
+
+pub fn taxon_member_package_version(workspace: Tree, sparse_jsonl: String, target_name: String) -> String {
+    package_version_in_workspace(member_manifest(workspace, taxon_workspace_root(), "rust/taxon"), workspace)
+}
+
+fn taxon_result(workspace: Tree, state: WorkspaceIndexState, target_name: String) -> SolveResult {
+    solve(taxon_index(state), taxon_problem(workspace, state), target_name)
+}
+
+fn facet_core_state(workspace: Tree, sparse_jsonl: String) -> WorkspaceIndexState {
+    workspace_index_state_with_transitive_sparse_rows_for_members(
+        workspace,
+        facet_core_workspace_root(),
+        sparse_jsonl,
+        facet_core_members(),
+    )
+}
+
+fn facet_core_root_pkg(state: WorkspaceIndexState) -> Int {
+    state.package_ids.get("facet-core").unwrap()
+}
+
+fn facet_core_index(state: WorkspaceIndexState) -> Index {
+    workspace_index_from_state(state)
+}
+
+fn facet_core_root_version(workspace: Tree) -> String {
+    package_version_in_workspace(
+        member_manifest(workspace, facet_core_workspace_root(), "facet-core"),
+        workspace,
+    )
+}
+
+fn facet_core_problem(workspace: Tree, state: WorkspaceIndexState) -> Problem {
+    Problem {
+        root_pkg: facet_core_root_pkg(state),
+        root_req: VersionSet::from_req("=" + facet_core_root_version(workspace)),
+        root_features: [],
+        root_default_feature: 0,
+        root_default_features: false,
+    }
+}
+
+fn facet_core_result(workspace: Tree, state: WorkspaceIndexState, target_name: String) -> SolveResult {
+    solve(facet_core_index(state), facet_core_problem(workspace, state), target_name)
+}
+
+fn selected_version(state: WorkspaceIndexState, result: SolveResult, name: String) -> String {
+    selected_version_text(state, result, name)
+}
+
+fn selected_row(rows: [SparseIndexRow], state: WorkspaceIndexState, result: SolveResult, name: String) -> SparseIndexRow {
+    let fallback = selected_row_by_name(rows, name);
+    match selected_sparse_row(rows, name, selected_version(state, result, name)) {
+        Some(row) => row,
+        None => fallback,
+    }
+}
+
+fn selected_row_by_name(rows: [SparseIndexRow], name: String) -> SparseIndexRow {
+    selected_row_by_name_option(rows, name).unwrap()
+}
+
+fn selected_row_by_name_option(rows: [SparseIndexRow], name: String) -> Option<SparseIndexRow> {
+    match rows.len() == 0 {
+        true => None,
+        false => selected_row_by_name_option_next(rows.pop(), name),
+    }
+}
+
+fn selected_row_by_name_option_next(popped: (SparseIndexRow, [SparseIndexRow]), name: String) -> Option<SparseIndexRow> {
+    match popped.0.name == name {
+        true => Some(popped.0),
+        false => match crate_name(popped.0.name) == name {
+            true => Some(popped.0),
+            false => selected_row_by_name_option(popped.1, name),
+        },
+    }
+}
+
+fn crate_url(row: SparseIndexRow) -> String {
+    "https://static.crates.io/crates/" + row.name + "/" + row.name + "-" + row.vers + ".crate"
+}
+
+fn crate_source(row: SparseIndexRow) -> Tree {
+    crate_archive(fetch(url: crate_url(row), sha256: row.cksum))
+}
+
+fn dev_lib_profile(package_name: String) -> CargoResolvedProfile {
+    CargoResolvedProfile {
+        name: "dev",
+        opt_level: "0",
+        debuginfo: "2",
+        debug_assertions: "true",
+        overflow_checks: "true",
+        panic: "unwind",
+        lto: "false",
+        codegen_units: "",
+        strip: "none",
+    }
+}
+
+fn build_dep_profile(package_name: String) -> CargoResolvedProfile {
+    CargoResolvedProfile {
+        name: "dev",
+        opt_level: "0",
+        debuginfo: "0",
+        debug_assertions: "true",
+        overflow_checks: "true",
+        panic: "unwind",
+        lto: "false",
+        codegen_units: "",
+        strip: "none",
+    }
+}
+
+fn target_arch_env(target_name: String) -> String {
+    target_name.before("-")
+}
+
+fn target_after_arch(target_name: String) -> String {
+    target_name.after("-")
+}
+
+fn target_vendor_env(target_name: String) -> String {
+    let rest = target_after_arch(target_name);
+    rest.before("-")
+}
+
+fn target_after_vendor(target_name: String) -> String {
+    let rest = target_after_arch(target_name);
+    rest.after("-")
+}
+
+fn target_after_vendor_before_dash(target_name: String) -> String {
+    let rest = target_after_vendor(target_name);
+    rest.before("-")
+}
+
+fn target_os_env(target_name: String) -> String {
+    match target_name.contains("apple-darwin") {
+        true => "macos",
+        false => match target_name.contains("unknown-linux") {
+            true => "linux",
+            false => match target_name.contains("pc-windows") {
+                true => "windows",
+                false => target_after_vendor_before_dash(target_name),
+            },
+        },
+    }
+}
+
+fn target_env_env(target_name: String) -> String {
+    let rest = target_after_vendor(target_name);
+    match rest.contains("-") {
+        true => rest.after("-"),
+        false => "",
+    }
+}
+
+fn extern_for(package: String, tree: Tree, subpath: Path) -> RustExtern {
+    let name = crate_name(package);
+    RustExtern {
+        name: name,
+        tree: tree,
+        subpath: subpath,
+    }
+}
+
+fn taxon_rows(sparse_jsonl: String) -> [SparseIndexRow] {
+    parse_sparse_jsonl(sparse_jsonl)
+}
+
+fn facet_core_rows(sparse_jsonl: String) -> [SparseIndexRow] {
+    parse_sparse_jsonl(sparse_jsonl)
+}
+
+struct CargoUnitSource {
+    manifest: Tree,
+    edition_source: Tree,
+}
+
+struct CargoBuildUnit {
+    package: Int,
+    package_name: String,
+    version: String,
+    name: String,
+    kind: String,
+    manifest: Tree,
+    edition_source: Tree,
+    source: Path,
+    deps: [Int],
+    metadata: Path,
+    link: Path,
+}
+
+struct CargoResolvedGraph {
+    root: Int,
+    target_name: String,
+    workspace: Tree,
+    member_names: [String],
+    member_paths: [String],
+    workspace_root: Path,
+    rows: [SparseIndexRow],
+    state: WorkspaceIndexState,
+    index: Index,
+    result: SolveResult,
+    packages: [Int],
+    build_packages: [Int],
+}
+
+fn lib_unit_id(package: Int) -> Int {
+    package * 2
+}
+
+fn build_script_unit_id(package: Int) -> Int {
+    package * 2 + 1
+}
+
+fn selected_package_ids(state: WorkspaceIndexState, result: SolveResult) -> [Int] {
+    selected_package_ids_from(state, result, state.packages, [])
+}
+
+fn selected_package_ids_from(state: WorkspaceIndexState, result: SolveResult, packages: [Int], out: [Int]) -> [Int] {
+    match packages.len() == 0 {
+        true => out,
+        false => selected_package_ids_tuple(state, result, packages.pop(), out),
+    }
+}
+
+fn selected_package_ids_tuple(state: WorkspaceIndexState, result: SolveResult, popped: (Int, [Int]), out: [Int]) -> [Int] {
+    let next = match popped.0 == 0 {
+        true => out,
+        false => match result.selected.get(popped.0) {
+            Some(_) => out.push(popped.0),
+            None => out,
+        },
+    };
+    selected_package_ids_from(state, result, popped.1, next)
+}
+
+fn package_id_for_name_in_packages(state: WorkspaceIndexState, name: String, packages: [Int]) -> Int {
+    match packages.len() == 0 {
+        true => 0,
+        false => package_id_for_name_in_packages_step(state, name, packages.pop()),
+    }
+}
+
+fn package_id_for_name_in_packages_step(state: WorkspaceIndexState, name: String, popped: (Int, [Int])) -> Int {
+    let package_name = state.names.get(popped.0).unwrap();
+    match crate_name(package_name) == crate_name(name) {
+        true => popped.0,
+        false => package_id_for_name_in_packages(state, name, popped.1),
+    }
+}
+
+fn package_id_for_name(state: WorkspaceIndexState, name: String) -> Int {
+    package_id_for_name_in_packages(state, name, state.packages)
+}
+
+fn selected_package_names_text_from(state: WorkspaceIndexState, package_ids: [Int], out: String) -> String {
+    match package_ids.len() == 0 {
+        true => out,
+        false => selected_package_names_text_next(state, package_ids.pop(), out),
+    }
+}
+
+fn selected_package_names_text_next(state: WorkspaceIndexState, popped: (Int, [Int]), out: String) -> String {
+    let package_name = state.names.get(popped.0).unwrap();
+    let next = match out == "" {
+        true => package_name,
+        false => out + "\n" + package_name,
+    };
+    selected_package_names_text_from(state, popped.1, next)
+}
+
+fn int_list_contains(values: [Int], needle: Int) -> Bool {
+    match values.len() == 0 {
+        true => false,
+        false => int_list_contains_tuple(values.pop(), needle),
+    }
+}
+
+fn int_list_contains_tuple(popped: (Int, [Int]), needle: Int) -> Bool {
+    match popped.0 == needle {
+        true => true,
+        false => int_list_contains(popped.1, needle),
+    }
+}
+
+fn append_unique_ints(out: [Int], values: [Int]) -> [Int] {
+    match values.len() == 0 {
+        true => out,
+        false => append_unique_ints_tuple(out, values.pop()),
+    }
+}
+
+fn append_unique_ints_tuple(out: [Int], popped: (Int, [Int])) -> [Int] {
+    let next = match int_list_contains(out, popped.0) {
+        true => out,
+        false => out.push(popped.0),
+    };
+    append_unique_ints(next, popped.1)
+}
+
+fn package_ids_to_lib_units(packages: [Int], out: [Int]) -> [Int] {
+    match packages.len() == 0 {
+        true => out,
+        false => package_ids_to_lib_units_tuple(packages.pop(), out),
+    }
+}
+
+fn package_ids_to_lib_units_tuple(popped: (Int, [Int]), out: [Int]) -> [Int] {
+    package_ids_to_lib_units(popped.1, out.push(lib_unit_id(popped.0)))
+}
+
+fn direct_build_dependency_packages(index: Index, result: SolveResult, target_name: String, packages: [Int], out: [Int]) -> [Int] {
+    match packages.len() == 0 {
+        true => out,
+        false => direct_build_dependency_packages_tuple(index, result, target_name, packages.pop(), out),
+    }
+}
+
+fn direct_build_dependency_packages_tuple(index: Index, result: SolveResult, target_name: String, popped: (Int, [Int]), out: [Int]) -> [Int] {
+    let direct = solution_dep_ids_for_kind(index, result, popped.0, target_name, "build");
+    direct_build_dependency_packages(index, result, target_name, popped.1, append_unique_ints(out, direct))
+}
+
+fn build_dependency_closure(index: Index, result: SolveResult, target_name: String, frontier: [Int], out: [Int]) -> [Int] {
+    match frontier.len() == 0 {
+        true => out,
+        false => build_dependency_closure_tuple(index, result, target_name, frontier.pop(), out),
+    }
+}
+
+fn build_dependency_closure_tuple(index: Index, result: SolveResult, target_name: String, popped: (Int, [Int]), out: [Int]) -> [Int] {
+    match int_list_contains(out, popped.0) {
+        true => build_dependency_closure(index, result, target_name, popped.1, out),
+        false => build_dependency_closure_new(index, result, target_name, popped, out.push(popped.0)),
+    }
+}
+
+fn build_dependency_closure_new(index: Index, result: SolveResult, target_name: String, popped: (Int, [Int]), out: [Int]) -> [Int] {
+    let normal = solution_dep_ids_for_kind(index, result, popped.0, target_name, "normal");
+    build_dependency_closure(index, result, target_name, append_unique_ints(popped.1, normal), out)
+}
+
+fn resolved_source_for_package(
+    workspace: Tree,
+    rows: [SparseIndexRow],
+    state: WorkspaceIndexState,
+    result: SolveResult,
+    member_names: [String],
+    member_paths: [String],
+    workspace_root: Path,
+    package: Int,
+) -> CargoUnitSource {
+    let package_name = state.names.get(package).unwrap();
+    let member_path = member_path_for_package(member_names, member_paths, package_name);
+    match member_path == "" {
+        true => resolved_registry_source(rows, state, result, package),
+        false => resolved_workspace_source_for_package(workspace, workspace_root, member_path),
+    }
+}
+
+fn member_path_for_package(member_names: [String], member_paths: [String], package_name: String) -> String {
+    match member_names.len() == 0 {
+        true => "",
+        false => member_path_for_package_step(member_names.pop(), member_paths.pop(), package_name),
+    }
+}
+
+fn member_path_for_package_step(names: (String, [String]), paths: (String, [String]), package_name: String) -> String {
+    match crate_name(names.0) == crate_name(package_name) {
+        true => paths.0,
+        false => member_path_for_package(names.1, paths.1, package_name),
+    }
+}
+
+fn resolved_workspace_source_for_package(workspace: Tree, workspace_root: Path, member_path: String) -> CargoUnitSource {
+    let manifest = member_manifest(workspace, workspace_root, member_path);
+    CargoUnitSource {
+        manifest: manifest,
+        edition_source: workspace,
+    }
+}
+
+fn resolved_source_for_package_for_graph(graph: CargoResolvedGraph, package: Int) -> CargoUnitSource {
+    resolved_source_for_package(
+        graph.workspace,
+        graph.rows,
+        graph.state,
+        graph.result,
+        graph.member_names,
+        graph.member_paths,
+        graph.workspace_root,
+        package,
+    )
+}
+
+fn resolved_registry_source(rows: [SparseIndexRow], state: WorkspaceIndexState, result: SolveResult, package: Int) -> CargoUnitSource {
+    let name = state.names.get(package).unwrap();
+    let manifest = crate_source(selected_row(rows, state, result, name));
+    CargoUnitSource {
+        manifest: manifest,
+        edition_source: manifest,
+    }
+}
+
+fn has_build_script(manifest: Tree) -> Bool {
+    manifest.glob("build.rs").len() > 0
+}
+
+fn unit_metadata_path(name: String) -> Path {
+    p"".join("lib" + name + ".rmeta")
+}
+
+fn unit_link_path(name: String) -> Path {
+    p"".join("lib" + name + ".rlib")
+}
+
+fn resolved_lib_unit(index: Index, result: SolveResult, target_name: String, source: CargoUnitSource, package: Int, build_packages: [Int]) -> CargoBuildUnit {
+    let package_name = package_name(source.manifest);
+    let name = crate_name(package_name);
+    let normal_packages = solution_dep_ids_for_kind(index, result, package, target_name, "normal");
+    let normal_units = package_ids_to_lib_units(normal_packages, []);
+    let deps = match has_build_script(source.manifest) {
+        true => normal_units.push(build_script_unit_id(package)),
+        false => normal_units,
+    };
+    let kind = match int_list_contains(build_packages, package) {
+        true => "build-dependency",
+        false => "lib",
+    };
+    CargoBuildUnit {
+        package: package,
+        package_name: package_name,
+        version: package_version(source.manifest),
+        name: name,
+        kind: kind,
+        manifest: source.manifest,
+        edition_source: source.edition_source,
+        source: p"src/lib.rs",
+        deps: deps,
+        metadata: unit_metadata_path(name),
+        link: unit_link_path(name),
+    }
+}
+
+fn resolved_build_script_unit(index: Index, result: SolveResult, target_name: String, source: CargoUnitSource, package: Int) -> CargoBuildUnit {
+    let package_name = package_name(source.manifest);
+    CargoBuildUnit {
+        package: package,
+        package_name: package_name,
+        version: package_version(source.manifest),
+        name: "build_script_build",
+        kind: "build-script",
+        manifest: source.manifest,
+        edition_source: source.edition_source,
+        source: p"build.rs",
+        deps: package_ids_to_lib_units(solution_dep_ids_for_kind(index, result, package, target_name, "build"), []),
+        metadata: p"build_script_build.rmeta",
+        link: p"build_script",
+    }
+}
+
+fn resolved_lib_unit_for_graph(graph: CargoResolvedGraph, package: Int) -> CargoBuildUnit {
+    let source = resolved_source_for_package_for_graph(graph, package);
+    resolved_lib_unit(
+        graph.index,
+        graph.result,
+        graph.target_name,
+        source,
+        package,
+        graph.build_packages,
+    )
+}
+
+fn resolved_build_script_unit_for_graph(graph: CargoResolvedGraph, package: Int) -> CargoBuildUnit {
+    let source = resolved_source_for_package_for_graph(graph, package);
+    match has_build_script(source.manifest) {
+        true => resolved_build_script_unit(graph.index, graph.result, graph.target_name, source, package),
+        false => missing_resolved_unit(graph, build_script_unit_id(package)),
+    }
+}
+
+fn taxon_resolved_graph(workspace: Tree, sparse_jsonl: String, target_name: String) -> CargoResolvedGraph {
+    let state = taxon_state(workspace, sparse_jsonl);
+    let index = taxon_index(state);
+    let result = taxon_result(workspace, state, target_name);
+    let root_pkg = taxon_root_pkg(state);
+    let packages = selected_package_ids(state, result);
+    let build_roots = direct_build_dependency_packages(index, result, target_name, packages, []);
+    let build_packages = build_dependency_closure(index, result, target_name, build_roots, []);
+    CargoResolvedGraph {
+        root: lib_unit_id(root_pkg),
+        target_name: target_name,
+        workspace: workspace,
+        member_names: member_names(workspace, taxon_workspace_root(), taxon_members()),
+        member_paths: taxon_members(),
+        workspace_root: taxon_workspace_root(),
+        rows: taxon_rows(sparse_jsonl),
+        state: state,
+        index: index,
+        result: result,
+        packages: packages,
+        build_packages: build_packages,
+    }
+}
+
+fn facet_core_resolved_graph(workspace: Tree, sparse_jsonl: String, target_name: String) -> CargoResolvedGraph {
+    let state = facet_core_state(workspace, sparse_jsonl);
+    let index = facet_core_index(state);
+    let result = solve(index, facet_core_problem(workspace, state), target_name);
+    let root_pkg = facet_core_root_pkg(state);
+    let packages = selected_package_ids(state, result);
+    let build_roots = direct_build_dependency_packages(index, result, target_name, packages, []);
+    let build_packages = build_dependency_closure(index, result, target_name, build_roots, []);
+    CargoResolvedGraph {
+        root: lib_unit_id(root_pkg),
+        target_name: target_name,
+        workspace: workspace,
+        member_names: member_names(workspace, facet_core_workspace_root(), facet_core_members()),
+        member_paths: facet_core_members(),
+        workspace_root: facet_core_workspace_root(),
+        rows: facet_core_rows(sparse_jsonl),
+        state: state,
+        index: index,
+        result: result,
+        packages: packages,
+        build_packages: build_packages,
+    }
+}
+
+fn resolved_unit(graph: CargoResolvedGraph, unit: Int) -> CargoBuildUnit {
+    resolved_unit_from_packages(graph, unit, graph.packages)
+}
+
+fn resolved_unit_from_packages(graph: CargoResolvedGraph, unit: Int, packages: [Int]) -> CargoBuildUnit {
+    match packages.len() == 0 {
+        true => missing_resolved_unit(graph, unit),
+        false => resolved_unit_from_packages_tuple(graph, unit, packages.pop()),
+    }
+}
+
+fn resolved_unit_from_packages_tuple(graph: CargoResolvedGraph, unit: Int, popped: (Int, [Int])) -> CargoBuildUnit {
+    match unit == lib_unit_id(popped.0) {
+        true => resolved_lib_unit_for_graph(graph, popped.0),
+        false => match unit == build_script_unit_id(popped.0) {
+            true => resolved_build_script_unit_for_graph(graph, popped.0),
+            false => resolved_unit_from_packages(graph, unit, popped.1),
+        },
+    }
+}
+
+fn missing_resolved_unit(graph: CargoResolvedGraph, unit: Int) -> CargoBuildUnit {
+    let missing: Map<Int, CargoBuildUnit> = {};
+    missing.get(unit).unwrap()
+}
+
+fn resolved_unit_profile(unit: CargoBuildUnit) -> CargoResolvedProfile {
+    match unit.kind == "lib" {
+        true => dev_lib_profile(unit.package_name),
+        false => build_dep_profile(unit.package_name),
+    }
+}
+
+fn resolved_dependency_trees(target: Target, graph: CargoResolvedGraph, deps: [Int], out: [Tree]) -> [Tree] {
+    match deps.len() == 0 {
+        true => out,
+        false => resolved_dependency_trees_tuple(target, graph, deps.pop(), out),
+    }
+}
+
+fn resolved_dependency_trees_tuple(target: Target, graph: CargoResolvedGraph, popped: (Int, [Int]), out: [Tree]) -> [Tree] {
+    let dep = resolved_unit(graph, popped.0);
+    match dep.kind == "build-script" {
+        true => resolved_dependency_trees(target, graph, popped.1, out),
+        false => resolved_dependency_trees_non_build(target, graph, popped, dep, out),
+    }
+}
+
+fn resolved_dependency_trees_non_build(target: Target, graph: CargoResolvedGraph, popped: (Int, [Int]), dep: CargoBuildUnit, out: [Tree]) -> [Tree] {
+    let nested = resolved_dependency_trees(target, graph, dep.deps, out);
+    let built = resolved_unit_built(target, graph, popped.0);
+    resolved_dependency_trees(target, graph, popped.1, nested.push(built))
+}
+
+fn resolved_externs(target: Target, graph: CargoResolvedGraph, deps: [Int], out: [RustExtern]) -> [RustExtern] {
+    match deps.len() == 0 {
+        true => out,
+        false => resolved_externs_tuple(target, graph, deps.pop(), out),
+    }
+}
+
+fn resolved_externs_tuple(target: Target, graph: CargoResolvedGraph, popped: (Int, [Int]), out: [RustExtern]) -> [RustExtern] {
+    let dep = resolved_unit(graph, popped.0);
+    let next = match dep.kind == "build-script" {
+        true => out,
+        false => out.push(extern_for(dep.package_name, resolved_unit_built(target, graph, popped.0), dep.link)),
+    };
+    resolved_externs(target, graph, popped.1, next)
+}
+
+fn resolved_build_script_cfgs(target: Target, graph: CargoResolvedGraph, deps: [Int], out: [String]) -> [String] {
+    match deps.len() == 0 {
+        true => out,
+        false => resolved_build_script_cfgs_tuple(target, graph, deps.pop(), out),
+    }
+}
+
+fn resolved_build_script_cfgs_tuple(target: Target, graph: CargoResolvedGraph, popped: (Int, [Int]), out: [String]) -> [String] {
+    let dep = resolved_unit(graph, popped.0);
+    let next = match dep.kind == "build-script" {
+        true => append_strings(out, build_script_rustc_cfgs(resolved_unit_built(target, graph, popped.0))),
+        false => out,
+    };
+    resolved_build_script_cfgs(target, graph, popped.1, next)
+}
+
+fn append_strings(out: [String], values: [String]) -> [String] {
+    match values.len() == 0 {
+        true => out,
+        false => append_strings_tuple(out, values.pop()),
+    }
+}
+
+fn append_strings_tuple(out: [String], popped: (String, [String])) -> [String] {
+    append_strings(out.push(popped.0), popped.1)
+}
+
+fn resolved_unit_env(unit: CargoBuildUnit) -> [Arg] {
+    [
+        Arg::Str("--env"),
+        Arg::Str("CARGO_MANIFEST_DIR="),
+        Arg::Interpolation { tree: unit.manifest, subpath: p"" },
+        Arg::Str("--env"),
+        Arg::Str("CARGO_PKG_VERSION=" + unit.version),
+    ]
+}
+
+fn resolved_unit_spec(target: Target, graph: CargoResolvedGraph, unit: CargoBuildUnit) -> RustUnit {
+    let build_script = unit.kind == "build-script";
+    RustUnit {
+        crate_name: unit.name,
+        crate_type: match build_script {
+            true => CargoUnitKind::BuildScript,
+            false => match unit.kind == "build-dependency" {
+                true => CargoUnitKind::BuildDependency,
+                false => CargoUnitKind::Lib,
+            },
+        },
+        toolchain: default_rust_toolchain(),
+        edition: package_edition_from_source(unit.edition_source, unit.manifest),
+        manifest: unit.manifest,
+        source: unit.source,
+        target: match build_script {
+            true => Target::host(),
+            false => match unit.kind == "build-dependency" {
+                true => Target::host(),
+                false => target,
+            },
+        },
+        emit_metadata: match build_script {
+            true => None,
+            false => Some(unit.metadata),
+        },
+        emit_link: Some(unit.link),
+        deps_trees: resolved_dependency_trees(target, graph, unit.deps, []),
+        externs: resolved_externs(target, graph, unit.deps, []),
+        cfgs: resolved_build_script_cfgs(target, graph, unit.deps, []),
+        env: resolved_unit_env(unit),
+        profile: Some(resolved_unit_profile(unit)),
+    }
+}
+
+fn version_major(version: String) -> String {
+    version.before(".")
+}
+
+fn version_minor(version: String) -> String {
+    version.after(".").before(".")
+}
+
+fn version_patch_with_pre(version: String) -> String {
+    version.after(".").after(".")
+}
+
+fn version_patch(version: String) -> String {
+    let patch = version_patch_with_pre(version);
+    match patch.contains("-") {
+        true => patch.before("-"),
+        false => patch,
+    }
+}
+
+fn version_pre(version: String) -> String {
+    let patch = version_patch_with_pre(version);
+    match patch.contains("-") {
+        true => patch.after("-"),
+        false => "",
+    }
+}
+
+fn resolved_build_script_binary(target: Target, graph: CargoResolvedGraph, unit_id: Int) -> Tree {
+    compile_rust_unit(resolved_unit_spec(target, graph, resolved_unit(graph, unit_id)))
+}
+
+fn resolved_build_script_run(target: Target, graph: CargoResolvedGraph, unit_id: Int, target_name: String) -> Tree {
+    let unit = resolved_unit(graph, unit_id);
+    let binary = resolved_build_script_binary(target, graph, unit_id);
+    build_script_run_exec(binary, unit.link, unit.manifest, unit.package_name, unit.version, target_name)
+}
+
+fn build_script_run_exec(binary: Tree, link: Path, manifest: Tree, package_name: String, version: String, target_name: String) -> Tree {
+    let build_script = "build-script-runner";
+    let major = version_major(version);
+    let minor = version_minor(version);
+    let patch = version_patch(version);
+    let pre = version_pre(version);
+    let arch = target_arch_env(target_name);
+    let vendor = target_vendor_env(target_name);
+    let os = target_os_env(target_name);
+    let target_env = target_env_env(target_name);
+    build_script! {
+        --requires-toolchain=cc
+        --executable {binary / link}
+        --stdout {p"build.stdout"}
+        --out-dir {p"out"}
+        --env OUT_DIR={p"out"}
+        --env CARGO_MANIFEST_DIR={manifest}
+        --env CARGO_PKG_NAME={package_name}
+        --env CARGO_PKG_VERSION={version}
+        --env CARGO_PKG_VERSION_MAJOR={major}
+        --env CARGO_PKG_VERSION_MINOR={minor}
+        --env CARGO_PKG_VERSION_PATCH={patch}
+        --env CARGO_PKG_VERSION_PRE={pre}
+        --env TARGET={target_name}
+        --env HOST={target_name}
+        --env RUSTC=rustc
+        --env OPT_LEVEL=0
+        --env PROFILE=debug
+        --env CARGO_CFG_TARGET_ARCH={arch}
+        --env CARGO_CFG_TARGET_VENDOR={vendor}
+        --env CARGO_CFG_TARGET_OS={os}
+        --env CARGO_CFG_TARGET_ENV={target_env}
+        --env CARGO_CFG_TARGET_ENDIAN=little
+    }
+}
+
+fn resolved_unit_built(target: Target, graph: CargoResolvedGraph, unit_id: Int) -> Tree {
+    let unit = resolved_unit(graph, unit_id);
+    match unit.kind == "build-script" {
+        true => resolved_build_script_run(target, graph, unit_id, graph.target_name),
+        false => compile_rust_unit(resolved_unit_spec(target, graph, unit)),
+    }
+}
+
+fn source_package_names_text(graph: CargoResolvedGraph, units: [Int], out: String) -> String {
+    match units.len() == 0 {
+        true => out,
+        false => source_package_names_text_tuple(graph, units.pop(), out),
+    }
+}
+
+fn source_package_names_text_tuple(graph: CargoResolvedGraph, popped: (Int, [Int]), out: String) -> String {
+    let package_name = graph.state.names.get(popped.0).unwrap();
+    let line = package_name + "\t" + package_name;
+    let next = match out == "" {
+        true => line,
+        false => out + "\n" + line,
+    };
+    source_package_names_text(graph, popped.1, next)
+}
+
+pub fn taxon_selected_versions(workspace: Tree, sparse_jsonl: String, target_name: String) -> String {
+    let state = taxon_state(workspace, sparse_jsonl);
+    solve_selected_versions_text(taxon_index(state), taxon_problem(workspace, state), target_name)
+}
+
+pub fn taxon_index_packages_text(workspace: Tree, sparse_jsonl: String, target_name: String) -> String {
+    workspace_index_package_names_text(taxon_state(workspace, sparse_jsonl))
+}
+
+pub fn taxon_index_package_count(workspace: Tree, sparse_jsonl: String, target_name: String) -> Int {
+    taxon_state(workspace, sparse_jsonl).packages.len()
+}
+
+pub fn taxon_root_pkg_id(workspace: Tree, sparse_jsonl: String, target_name: String) -> Int {
+    taxon_root_pkg(taxon_state(workspace, sparse_jsonl))
+}
+
+pub fn taxon_root_candidate_count(workspace: Tree, sparse_jsonl: String, target_name: String) -> Int {
+    let state = taxon_state(workspace, sparse_jsonl);
+    root_candidate_count(taxon_index(state), taxon_problem(workspace, state))
+}
+
+pub fn taxon_selected_package_names_text(workspace: Tree, sparse_jsonl: String, target_name: String) -> String {
+    let state = taxon_state(workspace, sparse_jsonl);
+    let result = taxon_result(workspace, state, target_name);
+    selected_package_names_text_from(state, selected_package_ids(state, result), "")
+}
+
+pub fn taxon_selected_package_ids(workspace: Tree, sparse_jsonl: String, target_name: String) -> [Int] {
+    let state = taxon_state(workspace, sparse_jsonl);
+    let result = taxon_result(workspace, state, target_name);
+    selected_package_ids(state, result)
+}
+
+pub fn taxon_root_version_count(workspace: Tree, sparse_jsonl: String, target_name: String) -> Int {
+    let state = taxon_state(workspace, sparse_jsonl);
+    root_version_count(taxon_index(state), taxon_problem(workspace, state))
+}
+
+pub fn taxon_member_only_package_count(workspace: Tree, sparse_jsonl: String, target_name: String) -> Int {
+    workspace_member_only_package_count_for_members(workspace, taxon_workspace_root(), taxon_members())
+}
+
+pub fn taxon_member_only_packages_text(workspace: Tree, sparse_jsonl: String, target_name: String) -> String {
+    workspace_member_only_package_names_text_for_members(workspace, taxon_workspace_root(), taxon_members())
+}
+
+pub fn taxon_root_deps_text(workspace: Tree, sparse_jsonl: String, target_name: String) -> String {
+    let state = taxon_state(workspace, sparse_jsonl);
+    let index = taxon_index(state);
+    let result = taxon_result(workspace, state, target_name);
+    solution_dep_names_text(state, index, result, taxon_root_pkg(state), target_name)
+}
+
+pub fn facet_core_selected_versions(workspace: Tree, sparse_jsonl: String, target_name: String) -> String {
+    let state = facet_core_state(workspace, sparse_jsonl);
+    solve_selected_versions_text(facet_core_index(state), facet_core_problem(workspace, state), target_name)
+}
+
+pub fn facet_core_root_selected_names(workspace: Tree, sparse_jsonl: String, target_name: String) -> String {
+    let state = facet_core_state(workspace, sparse_jsonl);
+    solve_selected_versions_text(facet_core_index(state), facet_core_problem(workspace, state), target_name)
+}
+
+pub fn facet_core_root_pkg_id(workspace: Tree, sparse_jsonl: String, target_name: String) -> Int {
+    facet_core_root_pkg(facet_core_state(workspace, sparse_jsonl))
+}
+
+pub fn facet_core_root_candidate_count(workspace: Tree, sparse_jsonl: String, target_name: String) -> Int {
+    let state = facet_core_state(workspace, sparse_jsonl);
+    root_candidate_count(facet_core_index(state), facet_core_problem(workspace, state))
+}
+
+pub fn facet_core_root_version_count(workspace: Tree, sparse_jsonl: String, target_name: String) -> Int {
+    let state = facet_core_state(workspace, sparse_jsonl);
+    root_version_count(facet_core_index(state), facet_core_problem(workspace, state))
+}
+
+pub fn facet_core_index_packages_text(workspace: Tree, sparse_jsonl: String, target_name: String) -> String {
+    workspace_index_package_names_text(facet_core_state(workspace, sparse_jsonl))
+}
+
+pub fn facet_core_index_package_count(workspace: Tree, sparse_jsonl: String, target_name: String) -> Int {
+    facet_core_state(workspace, sparse_jsonl).packages.len()
+}
+
+pub fn facet_core_root_deps_text(workspace: Tree, sparse_jsonl: String, target_name: String) -> String {
+    let state = facet_core_state(workspace, sparse_jsonl);
+    let index = facet_core_index(state);
+    let result = facet_core_result(workspace, state, target_name);
+    solution_dep_names_text(state, index, result, facet_core_root_pkg(state), target_name)
+}
+
+pub fn facet_core_source_package_names_text(workspace: Tree, sparse_jsonl: String, target_name: String) -> String {
+    let state = facet_core_state(workspace, sparse_jsonl);
+    let result = facet_core_result(workspace, state, target_name);
+    source_package_names_text(
+        facet_core_resolved_graph(workspace, sparse_jsonl, target_name),
+        selected_package_ids(state, result),
+        "",
+    )
+}
+
+pub fn facet_core_resolved_package_identity(workspace: Tree, sparse_jsonl: String, target_name: String, package_name: String) -> String {
+    let state = facet_core_state(workspace, sparse_jsonl);
+    let graph = facet_core_resolved_graph(workspace, sparse_jsonl, target_name);
+    let package = package_id_for_name(state, package_name);
+    let unit = resolved_unit(graph, lib_unit_id(package));
+    unit.package_name + " " + unit.version
+}
+
+pub fn facet_core_package_id(workspace: Tree, sparse_jsonl: String, target_name: String, package_name: String) -> Int {
+    package_id_for_name(facet_core_state(workspace, sparse_jsonl), package_name)
+}
+
+pub fn facet_core_resolved_package_link(workspace: Tree, sparse_jsonl: String, target_name: String, package_name: String) -> Tree {
+    let state = facet_core_state(workspace, sparse_jsonl);
+    let graph = facet_core_resolved_graph(workspace, sparse_jsonl, target_name);
+    let package = package_id_for_name(state, package_name);
+    resolved_unit_built(Target::host(), graph, lib_unit_id(package))
+}
+
+pub fn facet_core_build_script_dependency_unit_ids(workspace: Tree, sparse_jsonl: String, target_name: String) -> [Int] {
+    let state = facet_core_state(workspace, sparse_jsonl);
+    let graph = facet_core_resolved_graph(workspace, sparse_jsonl, target_name);
+    resolved_unit(graph, build_script_unit_id(facet_core_root_pkg(state))).deps
+}
+
+pub fn facet_core_sparse_rows_text(sparse_jsonl: String) -> String {
+    facet_core_sparse_rows_text_tuple(parse_sparse_jsonl(sparse_jsonl), [])
+}
+
+fn facet_core_sparse_rows_text_tuple(rows: [SparseIndexRow], out: [String]) -> String {
+    match rows.len() == 0 {
+        true => out.join("\n"),
+        false => facet_core_sparse_rows_text_entry(rows.pop(), out),
+    }
+}
+
+fn facet_core_sparse_rows_text_entry(popped: (SparseIndexRow, [SparseIndexRow]), out: [String]) -> String {
+    let next = out.push(sparse_row_name_line(popped.0));
+    facet_core_sparse_rows_text_tuple(popped.1, next)
+}
+
+fn sparse_row_name_line(row: SparseIndexRow) -> String {
+    row.name + " " + row.vers
+}
+
+pub fn facet_core_sparse_row_exists(sparse_jsonl: String, name: String, version: String) -> Int {
+    match selected_sparse_row(parse_sparse_jsonl(sparse_jsonl), name, version) {
+        Some(_) => 1,
+        None => 0,
+    }
+}
+
+pub fn facet_core_build_script_binary(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {
+    let state = facet_core_state(workspace, sparse_jsonl);
+    let package = state.package_ids.get("facet-core").unwrap();
+    resolved_build_script_binary(
+        Target::host(),
+        facet_core_resolved_graph(workspace, sparse_jsonl, target_name),
+        build_script_unit_id(package),
+    )
+}
+
+pub fn facet_core_build_script_run(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {
+    let state = facet_core_state(workspace, sparse_jsonl);
+    resolved_build_script_run(
+        Target::host(),
+        facet_core_resolved_graph(workspace, sparse_jsonl, target_name),
+        build_script_unit_id(state.package_ids.get("facet-core").unwrap()),
+        target_name,
+    )
+}
+
+pub fn facet_core_build_script_cfgs(workspace: Tree, sparse_jsonl: String, target_name: String) -> String {
+    let run = facet_core_build_script_run(workspace, sparse_jsonl, target_name);
+    build_script_rustc_cfgs(run).join("\n")
+}
+
+pub fn facet_core_build_script_run_without_declared_cc(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {
+    let state = facet_core_state(workspace, sparse_jsonl);
+    let graph = facet_core_resolved_graph(workspace, sparse_jsonl, target_name);
+    let unit_id = build_script_unit_id(state.package_ids.get("facet-core").unwrap());
+    let unit = resolved_unit(graph, unit_id);
+    let binary = facet_core_build_script_binary(workspace, sparse_jsonl, target_name);
+    let build_script = "build-script-runner";
+    let major = version_major(unit.version);
+    let minor = version_minor(unit.version);
+    let patch = version_patch(unit.version);
+    let pre = version_pre(unit.version);
+    let arch = target_arch_env(target_name);
+    let vendor = target_vendor_env(target_name);
+    let os = target_os_env(target_name);
+    let target_env = target_env_env(target_name);
+
+    build_script! {
+        --executable {binary / unit.link}
+        --stdout {p"build.stdout"}
+        --out-dir {p"out"}
+        --env OUT_DIR={p"out"}
+        --env CARGO_MANIFEST_DIR={unit.manifest}
+        --env CARGO_PKG_NAME={unit.package_name}
+        --env CARGO_PKG_VERSION={unit.version}
+        --env CARGO_PKG_VERSION_MAJOR={major}
+        --env CARGO_PKG_VERSION_MINOR={minor}
+        --env CARGO_PKG_VERSION_PATCH={patch}
+        --env CARGO_PKG_VERSION_PRE={pre}
+        --env TARGET={target_name}
+        --env HOST={target_name}
+        --env RUSTC=rustc
+        --env OPT_LEVEL=0
+        --env PROFILE=debug
+        --env CARGO_CFG_TARGET_ARCH={arch}
+        --env CARGO_CFG_TARGET_VENDOR={vendor}
+        --env CARGO_CFG_TARGET_OS={os}
+        --env CARGO_CFG_TARGET_ENV={target_env}
+        --env CARGO_CFG_TARGET_ENDIAN=little
+    }
+}
+
+pub fn facet_core_build_script_run_with_wrong_toolchain(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {
+    let state = facet_core_state(workspace, sparse_jsonl);
+    let graph = facet_core_resolved_graph(workspace, sparse_jsonl, target_name);
+    let unit_id = build_script_unit_id(state.package_ids.get("facet-core").unwrap());
+    let unit = resolved_unit(graph, unit_id);
+    let binary = facet_core_build_script_binary(workspace, sparse_jsonl, target_name);
+    let build_script = "build-script-runner";
+    let major = version_major(unit.version);
+    let minor = version_minor(unit.version);
+    let patch = version_patch(unit.version);
+    let pre = version_pre(unit.version);
+    let arch = target_arch_env(target_name);
+    let vendor = target_vendor_env(target_name);
+    let os = target_os_env(target_name);
+    let target_env = target_env_env(target_name);
+
+    build_script! {
+        --requires-toolchain=zigcc
+        --executable {binary / unit.link}
+        --stdout {p"build.stdout"}
+        --out-dir {p"out"}
+        --env OUT_DIR={p"out"}
+        --env CARGO_MANIFEST_DIR={unit.manifest}
+        --env CARGO_PKG_NAME={unit.package_name}
+        --env CARGO_PKG_VERSION={unit.version}
+        --env CARGO_PKG_VERSION_MAJOR={major}
+        --env CARGO_PKG_VERSION_MINOR={minor}
+        --env CARGO_PKG_VERSION_PATCH={patch}
+        --env CARGO_PKG_VERSION_PRE={pre}
+        --env TARGET={target_name}
+        --env HOST={target_name}
+        --env RUSTC=rustc
+        --env OPT_LEVEL=0
+        --env PROFILE=debug
+        --env CARGO_CFG_TARGET_ARCH={arch}
+        --env CARGO_CFG_TARGET_VENDOR={vendor}
+        --env CARGO_CFG_TARGET_OS={os}
+        --env CARGO_CFG_TARGET_ENV={target_env}
+        --env CARGO_CFG_TARGET_ENDIAN=little
+    }
+}
+
+pub fn facet_core_root_link(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {
+    let state = facet_core_state(workspace, sparse_jsonl);
+    resolved_unit_built(
+        Target::host(),
+        facet_core_resolved_graph(workspace, sparse_jsonl, target_name),
+        lib_unit_id(state.package_ids.get("facet-core").unwrap()),
+    )
+}
+
+pub fn taxon_source_package_names_text(workspace: Tree, sparse_jsonl: String, target_name: String) -> String {
+    let state = taxon_state(workspace, sparse_jsonl);
+    let result = taxon_result(workspace, state, target_name);
+    source_package_names_text(taxon_resolved_graph(workspace, sparse_jsonl, target_name), selected_package_ids(state, result), "")
+}
+
+pub fn taxon_blake3_build_rs(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {
+    let state = taxon_state(workspace, sparse_jsonl);
+    let graph = taxon_resolved_graph(workspace, sparse_jsonl, target_name);
+    resolved_unit(graph, lib_unit_id(state.package_ids.get("blake3").unwrap())).manifest / p"build.rs"
+}
+
+pub fn taxon_shlex_link(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {
+    let state = taxon_state(workspace, sparse_jsonl);
+    resolved_unit_built(Target::host(), taxon_resolved_graph(workspace, sparse_jsonl, target_name), lib_unit_id(state.package_ids.get("shlex").unwrap()))
+}
+
+pub fn taxon_cc_host_unit(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {
+    let state = taxon_state(workspace, sparse_jsonl);
+    resolved_unit_built(Target::host(), taxon_resolved_graph(workspace, sparse_jsonl, target_name), lib_unit_id(state.package_ids.get("cc").unwrap()))
+}
+
+pub fn taxon_blake3_build_script_run(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {
+    let state = taxon_state(workspace, sparse_jsonl);
+    let package = state.package_ids.get("blake3").unwrap();
+    resolved_build_script_run(Target::host(), taxon_resolved_graph(workspace, sparse_jsonl, target_name), build_script_unit_id(package), target_name)
+}
+
+fn taxon_blake3_build_script_binary(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {
+    let state = taxon_state(workspace, sparse_jsonl);
+    let package = state.package_ids.get("blake3").unwrap();
+    resolved_build_script_binary(Target::host(), taxon_resolved_graph(workspace, sparse_jsonl, target_name), build_script_unit_id(package))
+}
+
+pub fn taxon_blake3_build_script_run_without_declared_cc(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {
+    let state = taxon_state(workspace, sparse_jsonl);
+    let graph = taxon_resolved_graph(workspace, sparse_jsonl, target_name);
+    let unit_id = build_script_unit_id(state.package_ids.get("blake3").unwrap());
+    let unit = resolved_unit(graph, unit_id);
+    let binary = taxon_blake3_build_script_binary(workspace, sparse_jsonl, target_name);
+    let build_script = "build-script-runner";
+    let major = version_major(unit.version);
+    let minor = version_minor(unit.version);
+    let patch = version_patch(unit.version);
+    let pre = version_pre(unit.version);
+    let arch = target_arch_env(target_name);
+    let vendor = target_vendor_env(target_name);
+    let os = target_os_env(target_name);
+    let target_env = target_env_env(target_name);
+
+    build_script! {
+        --executable {binary / unit.link}
+        --stdout {p"build.stdout"}
+        --out-dir {p"out"}
+        --env OUT_DIR={p"out"}
+        --env CARGO_MANIFEST_DIR={unit.manifest}
+        --env CARGO_PKG_NAME={unit.package_name}
+        --env CARGO_PKG_VERSION={unit.version}
+        --env CARGO_PKG_VERSION_MAJOR={major}
+        --env CARGO_PKG_VERSION_MINOR={minor}
+        --env CARGO_PKG_VERSION_PATCH={patch}
+        --env CARGO_PKG_VERSION_PRE={pre}
+        --env TARGET={target_name}
+        --env HOST={target_name}
+        --env RUSTC=rustc
+        --env OPT_LEVEL=0
+        --env PROFILE=debug
+        --env CARGO_CFG_TARGET_ARCH={arch}
+        --env CARGO_CFG_TARGET_VENDOR={vendor}
+        --env CARGO_CFG_TARGET_OS={os}
+        --env CARGO_CFG_TARGET_ENV={target_env}
+        --env CARGO_CFG_TARGET_ENDIAN=little
+    }
+}
+
+pub fn taxon_blake3_build_script_run_with_wrong_toolchain(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {
+    let state = taxon_state(workspace, sparse_jsonl);
+    let graph = taxon_resolved_graph(workspace, sparse_jsonl, target_name);
+    let unit_id = build_script_unit_id(state.package_ids.get("blake3").unwrap());
+    let unit = resolved_unit(graph, unit_id);
+    let binary = taxon_blake3_build_script_binary(workspace, sparse_jsonl, target_name);
+    let build_script = "build-script-runner";
+    let major = version_major(unit.version);
+    let minor = version_minor(unit.version);
+    let patch = version_patch(unit.version);
+    let pre = version_pre(unit.version);
+    let arch = target_arch_env(target_name);
+    let vendor = target_vendor_env(target_name);
+    let os = target_os_env(target_name);
+    let target_env = target_env_env(target_name);
+
+    build_script! {
+        --requires-toolchain=zigcc
+        --executable {binary / unit.link}
+        --stdout {p"build.stdout"}
+        --out-dir {p"out"}
+        --env OUT_DIR={p"out"}
+        --env CARGO_MANIFEST_DIR={unit.manifest}
+        --env CARGO_PKG_NAME={unit.package_name}
+        --env CARGO_PKG_VERSION={unit.version}
+        --env CARGO_PKG_VERSION_MAJOR={major}
+        --env CARGO_PKG_VERSION_MINOR={minor}
+        --env CARGO_PKG_VERSION_PATCH={patch}
+        --env CARGO_PKG_VERSION_PRE={pre}
+        --env TARGET={target_name}
+        --env HOST={target_name}
+        --env RUSTC=rustc
+        --env OPT_LEVEL=0
+        --env PROFILE=debug
+        --env CARGO_CFG_TARGET_ARCH={arch}
+        --env CARGO_CFG_TARGET_VENDOR={vendor}
+        --env CARGO_CFG_TARGET_OS={os}
+        --env CARGO_CFG_TARGET_ENV={target_env}
+        --env CARGO_CFG_TARGET_ENDIAN=little
+    }
+}
+
+pub fn taxon_blake3_cfgs(workspace: Tree, sparse_jsonl: String, target_name: String) -> String {
+    let run = taxon_blake3_build_script_run(workspace, sparse_jsonl, target_name);
+    build_script_rustc_cfgs(run).join("\n")
+}
+
+pub fn taxon_blake3_link(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {
+    let state = taxon_state(workspace, sparse_jsonl);
+    resolved_unit_built(Target::host(), taxon_resolved_graph(workspace, sparse_jsonl, target_name), lib_unit_id(state.package_ids.get("blake3").unwrap()))
+}
+
+pub fn taxon_root_link(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {
+    let graph = taxon_resolved_graph(workspace, sparse_jsonl, target_name);
+    resolved_unit_built(Target::host(), graph, graph.root)
+}

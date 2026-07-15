@@ -106,6 +106,8 @@ pub const ORDERING_EQUAL_VARIANT: u32 = 1;
 pub const ORDERING_GREATER_VARIANT: u32 = 2;
 pub const OPTION_SOME_VARIANT: u32 = 0;
 pub const OPTION_NONE_VARIANT: u32 = 1;
+pub const RESULT_OK_VARIANT: u32 = 0;
+pub const RESULT_ERR_VARIANT: u32 = 1;
 
 impl EnumType {
     /// r[impl lang.value.ordering-is-enum]
@@ -141,6 +143,21 @@ impl EnumType {
         }
     }
 
+    /// The type a caught failure presents as: an opaque record carrying the
+    /// failure value's identity. Its field is not a legal surface identifier,
+    /// so programs can branch on `Err(_)` and pass the failure along, but not
+    /// forge one.
+    #[must_use]
+    pub fn failure_value() -> Type {
+        Type::Record(RecordType {
+            name: "Failure".to_owned(),
+            fields: vec![RecordField {
+                name: "$failure".to_owned(),
+                ty: Type::String,
+            }],
+        })
+    }
+
     #[must_use]
     pub fn option_inner(&self) -> Option<&Type> {
         let [some, none] = self.variants.as_slice() else {
@@ -157,6 +174,50 @@ impl EnumType {
             && matches!(none.payload, VariantPayload::Unit)
             && self.name == format!("Option<{}>", inner.name()))
         .then_some(inner)
+    }
+
+    /// The built-in `Result<Ok, Err>` failure-as-value enum: `Ok(T)` and
+    /// `Err(E)` single-payload tuple variants. Failure is an ordinary domain
+    /// value, not an exception (`r[lang.failure.typed]`).
+    #[must_use]
+    pub fn result(ok: Type, err: Type) -> Self {
+        let name = format!("Result<{}, {}>", ok.name(), err.name());
+        Self {
+            name,
+            variants: vec![
+                EnumVariant {
+                    name: "Ok".to_owned(),
+                    payload: VariantPayload::Tuple(vec![ok]),
+                },
+                EnumVariant {
+                    name: "Err".to_owned(),
+                    payload: VariantPayload::Tuple(vec![err]),
+                },
+            ],
+        }
+    }
+
+    /// The `(ok, err)` payload types iff this enum is the built-in `Result`
+    /// shape (matched structurally and by canonical name, like [`option_inner`]).
+    ///
+    /// [`option_inner`]: EnumType::option_inner
+    #[must_use]
+    pub fn result_inner(&self) -> Option<(&Type, &Type)> {
+        let [ok, err] = self.variants.as_slice() else {
+            return None;
+        };
+        let (VariantPayload::Tuple(ok_payload), VariantPayload::Tuple(err_payload)) =
+            (&ok.payload, &err.payload)
+        else {
+            return None;
+        };
+        let ([ok_ty], [err_ty]) = (ok_payload.as_slice(), err_payload.as_slice()) else {
+            return None;
+        };
+        (ok.name == "Ok"
+            && err.name == "Err"
+            && self.name == format!("Result<{}, {}>", ok_ty.name(), err_ty.name()))
+        .then_some((ok_ty, err_ty))
     }
 }
 
@@ -257,6 +318,9 @@ pub enum TraceCheck {
     MemoEntriesAtMost {
         bound: i64,
     },
+    MemoHitsAtLeast {
+        bound: i64,
+    },
     /// Store interns during the test are at most `bound`.
     StoreInternsAtMost {
         bound: i64,
@@ -303,37 +367,74 @@ pub enum TraceCheck {
     DemandedOnce {
         wire: DescribedWire,
     },
+    /// Exactly `count` effect processes were spawned over the whole run. A
+    /// memoized re-demand of the same (plan × capability) key spawns nothing,
+    /// so this is the whole-run process-count claim the testing chapter names.
+    RanProcesses {
+        count: i64,
+    },
+    /// The named external path was read during the run: it appears in at least
+    /// one demand receipt.
+    Read {
+        path: String,
+    },
+    /// The named external path was never read during the run: it appears in no
+    /// demand receipt. Read-recording is complete by construction — external
+    /// reads go through the recording fixture-store accessors — so absence in
+    /// the receipts is absence of the read.
+    NeverRead {
+        path: String,
+    },
+    /// Exactly `times` fetch effects were actually performed. Memoized
+    /// re-demands of an identical pinned fetch are memo hits and spawn no
+    /// effect, so they do not count.
+    Fetched {
+        times: i64,
+    },
 }
 
 /// A held description of an unevaluated invocation: which user function is
-/// invoked and, for a call-site selector, the exact scalar argument identities.
-/// This is the "wire" a trace-check constructor pins — it is never demanded,
-/// counted, or lowered to an island; it only names what to look for in the
-/// frozen completed-run demand log. Arguments are carried as their surface
-/// literals and resolved to canonical value identities where the check is
-/// evaluated, so this VIR type stays free of any runtime-identity dependency.
+/// invoked and which of its realizations the check selects. This is the "wire"
+/// a trace-check constructor pins — it is never demanded, counted, or lowered
+/// to an island; it only names what to look for in the frozen completed-run
+/// demand log. Selector contents are surface literals or authored-graph
+/// provenance, resolved to canonical identities where the check is evaluated,
+/// so this VIR type stays free of any runtime-identity dependency.
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct DescribedWire {
     /// The user function whose invocation this wire describes.
     pub function: FunctionId,
-    /// Literal scalar arguments of the described invocation, in order. Empty for
-    /// a zero-argument callee or a name-level selector.
-    pub arguments: Vec<WireArg>,
-    /// A name-level selector matches every argument demand of `function`
-    /// (`demanded_once(costly())` — one distinct realization total); a call-site
-    /// selector matches only the exact described argument identities
-    /// (`demanded_once(costly(1))`).
-    pub name_level: bool,
+    /// Which realizations of `function` the check selects.
+    pub selector: WireSelector,
+}
+
+/// How a described wire selects realized demands of its function.
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum WireSelector {
+    /// A name-level selector matches every argument demand of the function
+    /// (`demanded_once(costly())` — one distinct realization total).
+    Name,
+    /// A call-site selector matches only the exact described scalar argument
+    /// identities (`demanded_once(costly(1))`).
+    CallSite(Vec<WireArg>),
+    /// A binding selector names a let-bound invocation node in the authored
+    /// test graph (`let solve = mini_solve(...); ... demanded_once(solve)`).
+    /// It matches by the invocation's canonical structural preimage, so
+    /// composite and where-clause arguments — which have no literal spelling —
+    /// are selectable without demanding anything.
+    Binding(NodeId),
 }
 
 /// One scalar argument literal of a [`DescribedWire`]. Only closed scalar
 /// literals participate in a described selector; the wire never evaluates a
 /// sub-expression to obtain an argument.
-#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
 pub enum WireArg {
     Int(i64),
     Bool(bool),
+    FixtureTree(String),
 }
 
 /// One arm of a generator [`GeneratorStep::Match`]. The arm body is itself a
@@ -521,6 +622,39 @@ pub enum Type {
     /// ordinary Vix closure; a consuming operation (`sorted`) reads it and never
     /// materializes an `Order<T>` value in a Weavy frame.
     Order(Box<Type>),
+    /// A store-backed machine-plane value: one handle word whose canonical
+    /// resident bytes are its byte-comparable content. These values are
+    /// constructed only by machine primitives (the effect plane), never by
+    /// lowered pure vocabulary.
+    Extern(ExternKind),
+}
+
+/// The machine-plane value kinds of the tree/fetch band. `Tree` and
+/// `TreeEntry` projections resolve lazily against the store or an external
+/// fixture root; `Blob` is immutable bytes named by its vix ContentHash
+/// (`machine.identity.blake3`); `Registry`/`PinnedUrl` are the lock-time
+/// fixture-registry surface (`machine.primitive.fetch-is-pinned`).
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ExternKind {
+    Tree,
+    TreeEntry,
+    Blob,
+    Registry,
+    PinnedUrl,
+}
+
+impl ExternKind {
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Tree => "Tree",
+            Self::TreeEntry => "TreeEntry",
+            Self::Blob => "Blob",
+            Self::Registry => "Registry",
+            Self::PinnedUrl => "PinnedUrl",
+        }
+    }
 }
 
 impl Type {
@@ -614,6 +748,19 @@ impl Type {
     }
 
     #[must_use]
+    pub fn result(ok: Type, err: Type) -> Self {
+        Self::Enum(EnumType::result(ok, err))
+    }
+
+    #[must_use]
+    pub fn result_inner(&self) -> Option<(&Type, &Type)> {
+        let Self::Enum(enumeration) = self else {
+            return None;
+        };
+        enumeration.result_inner()
+    }
+
+    #[must_use]
     pub fn name(&self) -> String {
         match self {
             Self::Bool => "Bool".to_owned(),
@@ -643,6 +790,7 @@ impl Type {
                 format!("Stream<{}, {}>", key.name(), value.name())
             }
             Self::Order(subject) => format!("Order<{}>", subject.name()),
+            Self::Extern(kind) => kind.name().to_owned(),
         }
     }
 
@@ -656,6 +804,7 @@ impl Type {
             | Self::Check
             | Self::String
             | Self::Path
+            | Self::Extern(_)
             | Self::Array(_)
             | Self::Map { .. }
             | Self::Set(_) => Some(1),
@@ -684,7 +833,9 @@ impl Type {
     #[must_use]
     pub fn equality_is_structural(&self) -> bool {
         match self {
-            Self::Bool | Self::Int | Self::String | Self::Path => true,
+            // An Extern value's canonical resident bytes are its content, so
+            // byte equality is content-identity equality.
+            Self::Bool | Self::Int | Self::String | Self::Path | Self::Extern(_) => true,
             Self::Array(element) => element.equality_is_structural(),
             Self::Map { .. } | Self::Set(_) => false,
             Self::Function { .. } => false,
@@ -706,6 +857,7 @@ impl Type {
     pub fn structural_order_is_defined(&self) -> bool {
         match self {
             Self::Bool | Self::Int | Self::String | Self::Path => true,
+            Self::Extern(_) => false,
             Self::Array(element) => element.structural_order_is_defined(),
             Self::Map { .. } | Self::Set(_) => false,
             Self::Function { .. } => false,
@@ -738,6 +890,30 @@ impl Type {
 pub enum EffectKind {
     Pure,
     Codata,
+    /// A registered runtime-primitive demand (exec, fetch): the node's value is
+    /// produced by the scheduler-owned effect path, never by in-frame Weavy
+    /// code. Demanding it may spawn external work; not demanding it runs
+    /// nothing.
+    Effect,
+}
+
+/// The grammar owned by the typed document-deserialization primitive.
+///
+/// This lives in VIR rather than in the parser implementation: a dynamic
+/// decode is a semantic operation whose format and target schema participate in
+/// the recipe identity and are carried across the compiler/runtime boundary.
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum DecodeFormat {
+    Json,
+    Toml,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum MiniSolveRequirements {
+    Static { packages: Vec<String> },
+    FixtureWorkspace,
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
@@ -757,6 +933,15 @@ impl EffectFacts {
     pub const CODATA: Self = Self {
         kind: EffectKind::Codata,
         fallible: false,
+        placed: false,
+    };
+
+    /// Machine-plane primitive: fallible (an exec termination grammar may map
+    /// to a typed failure, a projection can miss, a fetch can fail integrity)
+    /// and never lowered to Weavy.
+    pub const EFFECT: Self = Self {
+        kind: EffectKind::Effect,
+        fallible: true,
         placed: false,
     };
 }
@@ -786,6 +971,14 @@ pub enum Op {
     /// where it is consumed, so an unconsumed wire issues no demand.
     AwaitWire {
         input: u32,
+    },
+    /// Parse one runtime String directly into `target` through the scheduler's
+    /// document host primitive. The node result is always
+    /// `Result<target, DecodeError>`; both success and structured parse failure
+    /// are ordinary typed frame values.
+    Decode {
+        format: DecodeFormat,
+        target: Type,
     },
     Tuple,
     Record,
@@ -914,6 +1107,8 @@ pub enum Op {
     StringParseInt,
     /// Test whether a string is a non-empty run of ASCII decimal digits.
     StringIsNumeric,
+    /// Split a string into its line-framed dense array view.
+    StringLines,
     /// Join a compiler-validated segment suffix onto a relative Path.
     PathJoin,
     /// Render a relative Path as its String spelling.
@@ -922,6 +1117,62 @@ pub enum Op {
     /// The operand is an inline scalar; the result is a fresh resident
     /// molten byte run, identical in byte semantics to a string literal.
     IntToString,
+    /// Run a command through the exec effect primitive. The single input is the
+    /// capability value (referenced by identity — its `ValueId` enters the
+    /// demand preimage); `argv` is the command grammar's parse of the template.
+    /// The node's value is the `ExecOutcome` the termination grammar produces;
+    /// a nonzero exit is a typed language failure, never a status integer.
+    ///
+    /// r[impl machine.primitive.exec-outcome]
+    /// r[impl machine.primitive.capabilities-by-identity]
+    Exec {
+        argv: Vec<String>,
+    },
+    /// Postfix `?`: catch the operand's demand edge. The operand becomes its
+    /// own demanded island; this node's value is `Result::Ok(value)` when that
+    /// demand publishes and `Result::Err(failure)` when it language-fails —
+    /// the failure participates as an ordinary value, address intact.
+    Try,
+    /// Open the named harness fixture tree as a lazy `Tree` value. Reads
+    /// nothing: the value's identity is the pending fixture-tree reference;
+    /// projections resolve — and record reads — only where demanded.
+    FixtureTree,
+    /// Project one segment (String) or a segment path (Path) through a Tree
+    /// or a Dir TreeEntry. Resolves lazily: it reads directory listings along
+    /// the projected path only, never sibling entries or file contents.
+    TreeProject,
+    /// Decode a File TreeEntry's content as UTF-8 text. This is the explicit
+    /// read of the file's bytes; it records the read in the demand's receipt.
+    TreeEntryText,
+    /// Glob over a Tree: a keyed codata recipe (`Stream<Path, Path>`) whose
+    /// collection reads only the directory listings the pattern traverses.
+    TreeGlob,
+    /// Open the offline harness fixture registry (the lock-time manifest).
+    FixtureRegistry,
+    /// Resolve an artifact name against the registry manifest into a
+    /// `PinnedUrl`: provenance URL plus the REQUIRED vix ContentHash
+    /// (`machine.primitive.fetch-is-pinned`).
+    RegistryUrl,
+    /// Fetch a pinned Blob by content identity: resolve the store first, only
+    /// then the (fixture) origin; verify the bytes against the pinned hash.
+    ///
+    /// r[impl machine.primitive.fetch-returns-a-blob]
+    /// r[impl machine.primitive.fetch-integrity-vs-identity]
+    Fetch,
+    /// Resolve the canonical package solver fixture lazily through visited
+    /// package-row reads. Inputs are the authored universe value and the
+    /// requirements map; receipts carry the package rows actually read.
+    MiniSolve {
+        function: FunctionId,
+        requirements: MiniSolveRequirements,
+    },
+    /// Extract an archive Blob into a Tree whose identity is the canonical
+    /// tree encoding — never the archive bytes' ContentHash.
+    ///
+    /// r[impl machine.identity.tree-model]
+    Untar,
+    /// The byte length of a Blob, read from the store entry.
+    BlobLen,
 }
 
 /// One SSA-like operation. Dependencies are explicit node ids; no Rust
@@ -1060,9 +1311,10 @@ pub struct Test {
 
 /// Typed, in-language `#[test]` metadata. Parsed once at compile time from the
 /// attribute arguments; the outer enforcing runner reads it before execution.
-#[derive(facet::Facet, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(facet::Facet, Clone, Debug, Default, PartialEq, Eq)]
 pub struct TestMetadata {
     pub budget: Budget,
+    pub rerun_with: Option<String>,
 }
 
 /// A test execution budget. Each dimension is independently optional; a ceiling
@@ -1098,6 +1350,7 @@ pub struct Module {
     pub functions: Vec<Function>,
     pub tests: Vec<Test>,
     pub force_molten_copy: bool,
+    pub force_scalar_call_boundaries: bool,
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -1133,6 +1386,11 @@ pub enum IslandPurpose {
     /// envelope is forced for every type — including scalars and strings — so the
     /// runtime always freezes a renderable structure.
     Snapshot,
+    /// A machine-plane primitive demand (tree projection, glob, fetch,
+    /// extract): its output node is an [`EffectKind::Effect`] op the runtime
+    /// evaluates directly against the store/fixture root with a recorded
+    /// read-set. Never lowered to a Weavy program.
+    Effect,
 }
 
 /// Content-free canonical graph provenance for a shared value producer. This
@@ -1161,16 +1419,25 @@ pub struct PartitionedValue {
     /// so a described-wire trace check can observe the invocation. Absent for an
     /// ordinary shared-publication island.
     pub wire: Option<WireProvenance>,
+    /// Present when this is an effect island ([`IslandPurpose::Effect`]): the
+    /// node-id-independent structural fingerprint of the effect's authored
+    /// subtree. Two structurally identical effect expressions nominate the
+    /// same memo location through this fingerprint, so the second demand of an
+    /// identical pinned fetch is an exact memo hit, never a second effect.
+    pub effect_fingerprint: Option<String>,
 }
 
-/// The described invocation a hoisted wire value island realizes: the callee
-/// user function and its exact scalar argument literals. Recorded so a
-/// described-wire trace check can select this realization by callee identity and
-/// argument identities.
+/// The described invocation a hoisted value or wire island realizes: the callee
+/// user function and, when every argument is a closed scalar literal, the exact
+/// argument literals. Recorded so a described-wire trace check can select this
+/// realization by callee identity, argument identities, or canonical preimage.
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct WireProvenance {
     pub function: FunctionId,
-    pub arguments: Vec<WireArg>,
+    /// `Some` when the invocation is call-site selectable (every argument is a
+    /// closed scalar literal); `None` for a composite or computed-argument
+    /// invocation, which remains selectable through its binding preimage.
+    pub arguments: Option<Vec<WireArg>>,
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
@@ -1186,10 +1453,42 @@ pub struct ArrayMapPartition {
     pub shape: ArrayMapExecutionShape,
 }
 
+/// One capability parameter of a test: a value the demand root (the harness)
+/// supplies by identity before any island of the test runs. It is named by the
+/// same [`ValueIslandId`] space as shared publications, so consuming islands
+/// list it in `value_inputs` and the runner resolves it from the same
+/// published-values map.
+///
+/// r[impl machine.primitive.capabilities-by-identity]
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct PartitionedCapability {
+    pub id: ValueIslandId,
+    pub parameter: ParameterId,
+    pub name: String,
+    pub ty: Type,
+}
+
+/// One `?` catch: after the operand island publishes (value or typed failure),
+/// the runner constructs the `Result` value under this id, so consuming check
+/// islands receive it as an ordinary pre-published enum input.
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct PartitionedCatch {
+    /// The Try node's published identity.
+    pub id: ValueIslandId,
+    /// The caught operand island (an effect island or an ordinary value island).
+    pub operand: ValueIslandId,
+    /// The `Result<T>` enum type the catch constructs.
+    pub result_type: Type,
+}
+
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct PartitionedTest {
     pub name: String,
+    /// Harness-supplied capability inputs, published before `values`.
+    pub capabilities: Vec<PartitionedCapability>,
     pub values: Vec<PartitionedValue>,
+    /// `?` catches, constructed after `values` publish and before any site runs.
+    pub catches: Vec<PartitionedCatch>,
     /// Argument islands demanded lazily through force-on-park, keyed by their
     /// [`ValueIslandId`]. A consuming island's [`Island::wire_inputs`] names one
     /// of these; the runner builds a `WireDemand` from it and drives it through
@@ -1375,6 +1674,48 @@ impl Module {
                     .insert(PublicationConsumer::GeneratorControl);
             }
         }
+        // Capability parameters: values the demand root supplies by identity
+        // (no ambient acquire). Each becomes a pre-published input every island
+        // may name; the harness interns the capability value before any island
+        // of this test runs.
+        //
+        // r[impl machine.primitive.capabilities-by-identity]
+        let capabilities = function
+            .parameters
+            .iter()
+            .map(|parameter| PartitionedCapability {
+                id: self.value_island_id(function.id, parameter.node),
+                parameter: parameter.id,
+                name: parameter.name.clone(),
+                ty: parameter.ty.clone(),
+            })
+            .collect::<Vec<_>>();
+        let capability_ids = function
+            .parameters
+            .iter()
+            .map(|parameter| {
+                (
+                    parameter.node,
+                    self.value_island_id(function.id, parameter.node),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        // Every effect root is an island boundary regardless of consumer count:
+        // a machine-plane primitive can never be lowered into a Weavy island, so
+        // it is hoisted into its own Effect island and consumed as a published
+        // value input. This includes exec roots (possibly caught with `?`) and
+        // tree/fetch/extract roots. Effect roots are the non-codata Effect-kind
+        // nodes; a codata effect recipe stays interior to the collection that
+        // realizes it.
+        let effect_nodes = function
+            .nodes
+            .iter()
+            .filter(|node| self.is_effect_root(node))
+            .collect::<Vec<_>>();
+        let effect_ids = effect_nodes
+            .iter()
+            .map(|node| (node.id, self.value_island_id(function.id, node.id)))
+            .collect::<BTreeMap<_, _>>();
         let mut shared = function
             .nodes
             .iter()
@@ -1384,6 +1725,7 @@ impl Module {
                     .is_some_and(|sites| sites.len() >= 2)
             })
             .filter(|node| is_shared_publication_candidate(node))
+            .filter(|node| !effect_ids.contains_key(&node.id))
             .collect::<Vec<_>>();
         let candidate_ids = shared.iter().map(|node| node.id).collect::<BTreeSet<_>>();
         shared.retain(|candidate| {
@@ -1397,6 +1739,37 @@ impl Module {
                     && consumer_sets.get(&other) == consumer_sets.get(&candidate.id)
             })
         });
+        let forced_scalar_calls = if self.force_scalar_call_boundaries {
+            function
+                .nodes
+                .iter()
+                .filter(|node| {
+                    is_scalar_call_candidate(node)
+                        && !matches!(node.op, Op::Call(callee) if callee == function.id)
+                        && !effect_ids.contains_key(&node.id)
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        let forced_eager_scalar_ids = forced_scalar_calls
+            .iter()
+            .filter(|candidate| {
+                function.nodes.iter().any(|consumer| {
+                    matches!(consumer.op, Op::Call(_)) && consumer.inputs.contains(&candidate.id)
+                })
+            })
+            .map(|candidate| candidate.id)
+            .collect::<BTreeSet<_>>();
+        for node in forced_scalar_calls
+            .iter()
+            .copied()
+            .filter(|node| forced_eager_scalar_ids.contains(&node.id))
+        {
+            if !shared.iter().any(|candidate| candidate.id == node.id) {
+                shared.push(node);
+            }
+        }
         shared.sort_by_key(|node| ValueIslandId {
             function: function.id,
             node: node.id,
@@ -1410,17 +1783,95 @@ impl Module {
         // Aggregate publications remain eager shared value islands.
         let mut wire_nodes = Vec::new();
         shared.retain(|node| {
-            if is_scalar_call_candidate(node) {
+            if is_scalar_call_candidate(node) && !forced_eager_scalar_ids.contains(&node.id) {
                 wire_nodes.push(*node);
                 false
             } else {
                 true
             }
         });
-        let shared_ids = shared
+        for node in forced_scalar_calls
+            .iter()
+            .copied()
+            .filter(|node| !forced_eager_scalar_ids.contains(&node.id))
+        {
+            if !wire_nodes.iter().any(|candidate| candidate.id == node.id) {
+                wire_nodes.push(node);
+            }
+        }
+        // Eager aggregate publications use the same structural representative
+        // rule as lazy wires. Every authored duplicate maps to the first
+        // representative's value island, so the Store/memo path realizes one
+        // content-keyed outcome rather than one location-keyed computation per
+        // spelling. This is the in-session reuse boundary for aggregate solver
+        // outcomes; it does not retain a fact independently across solves.
+        let (shared_ids, value_representatives) = {
+            let mut fingerprints = BTreeMap::new();
+            let mut representative_of = BTreeMap::<String, NodeId>::new();
+            let mut representatives = Vec::new();
+            let shared_ids = shared
+                .iter()
+                .map(|node| {
+                    let fingerprint = structural_fingerprint(function, node.id, &mut fingerprints);
+                    let representative =
+                        *representative_of.entry(fingerprint).or_insert_with(|| {
+                            representatives.push(node.id);
+                            node.id
+                        });
+                    (node.id, self.value_island_id(function.id, representative))
+                })
+                .collect::<BTreeMap<_, _>>();
+            (shared_ids, representatives)
+        };
+        // `?` catches: each consumed Try node publishes a constructed Result
+        // value; its operand becomes its own demanded island — the expression
+        // edge the catch holds — unless it is already an effect island.
+        let catch_nodes = function
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.op, Op::Try) && consumer_sets.contains_key(&node.id))
+            .collect::<Vec<_>>();
+        let mut catch_operand_nodes: Vec<&Node> = Vec::new();
+        for catch in &catch_nodes {
+            let operand = catch.inputs[0];
+            if effect_ids.contains_key(&operand)
+                || shared_ids.contains_key(&operand)
+                || catch_operand_nodes.iter().any(|node| node.id == operand)
+            {
+                continue;
+            }
+            catch_operand_nodes.push(&function.nodes[operand.0 as usize]);
+        }
+        let catch_operand_ids = catch_operand_nodes
             .iter()
             .map(|node| (node.id, self.value_island_id(function.id, node.id)))
             .collect::<BTreeMap<_, _>>();
+        let catches = catch_nodes
+            .iter()
+            .map(|node| PartitionedCatch {
+                id: self.value_island_id(function.id, node.id),
+                operand: self.value_island_id(function.id, node.inputs[0]),
+                result_type: node.ty.clone(),
+            })
+            .collect::<Vec<_>>();
+        // The pre-published inputs every island may name: ordinary shared
+        // publications, harness-supplied capability values, effect
+        // publications, catch operands, and constructed catches all arrive
+        // through the same value-input seam.
+        let published_ids = {
+            let mut map = shared_ids.clone();
+            map.extend(capability_ids.iter().map(|(node, value)| (*node, *value)));
+            map.extend(effect_ids.iter().map(|(node, value)| (*node, *value)));
+            map.extend(
+                catch_operand_ids
+                    .iter()
+                    .map(|(node, value)| (*node, *value)),
+            );
+            for node in &catch_nodes {
+                map.insert(node.id, self.value_island_id(function.id, node.id));
+            }
+            map
+        };
         // The non-strict argument nodes of every lazy call site: a call whose
         // callee has wire parameters demands each such argument inside the callee
         // through force-on-park, so the argument becomes its own wire island. Both
@@ -1471,16 +1922,38 @@ impl Module {
                 .collect::<BTreeMap<_, _>>();
             (wire_ids, lazy_arg_reps)
         };
-        let values = shared
+        // Eager publications: shared aggregates and effect roots, in one
+        // node-id-ordered (therefore dependency-ordered) vector, each built with
+        // every OTHER publication as a boundary. An effect island carries its
+        // structural fingerprint so identical effect expressions nominate one
+        // memo location.
+        let mut effect_fingerprints = BTreeMap::new();
+        let mut publications = value_representatives
+            .iter()
+            .map(|&node_id| (&function.nodes[node_id.0 as usize], IslandPurpose::Value))
+            .chain(
+                effect_nodes
+                    .iter()
+                    .map(|node| (*node, IslandPurpose::Effect)),
+            )
+            .chain(
+                catch_operand_nodes
+                    .iter()
+                    .map(|node| (*node, IslandPurpose::Value)),
+            )
+            .collect::<Vec<_>>();
+        publications.sort_by_key(|(node, _)| node.id);
+        let values = publications
             .iter()
             .enumerate()
-            .map(|(ordinal, node)| {
-                // A value island computes itself; only OTHER shared aggregates are
-                // pre-published inputs.
+            .map(|(ordinal, (node, purpose))| {
+                // A value island computes itself; only OTHER pre-published
+                // values (shared aggregates, capabilities, effect outcomes,
+                // catch operands and catch results) are inputs.
                 let representative_id = self.value_island_id(function.id, node.id);
-                let shared_here = shared_ids
+                let shared_here = published_ids
                     .iter()
-                    .filter(|(candidate, _)| **candidate != node.id)
+                    .filter(|(_, value)| **value != representative_id)
                     .map(|(candidate, value)| (*candidate, *value))
                     .collect();
                 let lazy_here = lazy_reps_excluding(&lazy_arg_reps, representative_id);
@@ -1490,14 +1963,19 @@ impl Module {
                         function,
                         node.id,
                         IslandId(u32::try_from(ordinal).expect("value island index fits u32")),
-                        IslandPurpose::Value,
+                        *purpose,
                         &IslandBoundary {
                             shared: &shared_here,
                             wires: &BTreeMap::new(),
                             lazy_arg_reps: &lazy_here,
                         },
                     ),
-                    wire: None,
+                    wire: matches!(purpose, IslandPurpose::Value)
+                        .then(|| invocation_provenance(function, node))
+                        .flatten(),
+                    effect_fingerprint: matches!(purpose, IslandPurpose::Effect).then(|| {
+                        structural_fingerprint(function, node.id, &mut effect_fingerprints)
+                    }),
                 }
             })
             .collect::<Vec<_>>();
@@ -1525,19 +2003,20 @@ impl Module {
                         IslandId(u32::try_from(ordinal).expect("wire island index fits u32")),
                         IslandPurpose::Value,
                         &IslandBoundary {
-                            shared: &shared_ids,
+                            shared: &published_ids,
                             wires: &wires_here,
                             lazy_arg_reps: &lazy_here,
                         },
                     ),
-                    wire: scalar_call_provenance(function, node),
+                    wire: invocation_provenance(function, node),
+                    effect_fingerprint: None,
                 }
             })
             .collect::<Vec<_>>();
         let generator = test
             .generator
             .has_conditional_sites()
-            .then(|| self.generator_task_island_with_shared(test, &shared_ids))
+            .then(|| self.generator_task_island_with_shared(test, &published_ids))
             .transpose()?;
         let mut islands = Vec::new();
         let mut sites = Vec::with_capacity(ordered.len());
@@ -1551,7 +2030,7 @@ impl Module {
                         IslandId(u32::try_from(island).expect("island index fits u32")),
                         IslandPurpose::Check,
                         &IslandBoundary {
-                            shared: &shared_ids,
+                            shared: &published_ids,
                             wires: &wire_ids,
                             lazy_arg_reps: &lazy_arg_reps,
                         },
@@ -1570,7 +2049,7 @@ impl Module {
                         IslandId(u32::try_from(island).expect("island index fits u32")),
                         IslandPurpose::Snapshot,
                         &IslandBoundary {
-                            shared: &shared_ids,
+                            shared: &published_ids,
                             wires: &wire_ids,
                             lazy_arg_reps: &lazy_arg_reps,
                         },
@@ -1589,7 +2068,9 @@ impl Module {
         }
         Ok(PartitionedTest {
             name: test.name.clone(),
+            capabilities,
             values,
+            catches,
             wire_islands,
             generator,
             islands,
@@ -1599,6 +2080,48 @@ impl Module {
 
     fn value_island_id(&self, function: FunctionId, node: NodeId) -> ValueIslandId {
         ValueIslandId { function, node }
+    }
+
+    fn is_effect_root(&self, node: &Node) -> bool {
+        if is_effect_root(node) {
+            return true;
+        }
+        let Op::Call(callee) = node.op else {
+            return false;
+        };
+        self.function_contains_effect(callee, &mut BTreeSet::new())
+    }
+
+    fn function_contains_effect(
+        &self,
+        function: FunctionId,
+        seen: &mut BTreeSet<FunctionId>,
+    ) -> bool {
+        if !seen.insert(function) {
+            return false;
+        }
+        self.functions
+            .get(function.0 as usize)
+            .is_some_and(|function| {
+                function.nodes.iter().any(|node| {
+                    is_effect_root(node)
+                        || matches!(node.op, Op::Call(callee) if self.function_contains_effect(callee, seen))
+                })
+            })
+    }
+
+    /// The canonical structural preimage of the subtree rooted at `node` in
+    /// `function`'s authored graph — the content key a binding-level described
+    /// wire selects on. Computed over the authored graph, never over an island
+    /// cut, so shared-value and wire substitutions cannot distort the preimage;
+    /// nothing is demanded, interned, or executed to produce it.
+    #[must_use]
+    pub fn invocation_preimage(&self, function: FunctionId, node: NodeId) -> String {
+        structural_fingerprint(
+            &self.functions[function.0 as usize],
+            node,
+            &mut BTreeMap::new(),
+        )
     }
 
     fn partition_function_output_with_shared(
@@ -2349,6 +2872,7 @@ fn island_reachable(nodes: &[Node], output: NodeId) -> BTreeSet<NodeId> {
 fn direct_callee(node: &Node) -> Option<FunctionId> {
     match node.op {
         Op::Call(callee) | Op::Closure(callee) => Some(callee),
+        Op::MiniSolve { function, .. } => Some(function),
         _ => None,
     }
 }
@@ -2434,24 +2958,34 @@ fn is_scalar_call_candidate(node: &Node) -> bool {
     matches!(node.op, Op::Call(_)) && matches!(node.ty, Type::Int | Type::Bool)
 }
 
-/// The described invocation a shared scalar call realizes, when every argument is
-/// a closed scalar literal. A call with a non-literal argument shares its
-/// computation but carries no described-wire provenance (nothing selects it).
-fn scalar_call_provenance(function: &Function, node: &Node) -> Option<WireProvenance> {
-    let Op::Call(callee) = node.op else {
-        return None;
+/// The described invocation a hoisted island realizes, when its root is a user
+/// call. Literal scalar arguments make the invocation call-site selectable;
+/// composite or computed arguments leave `arguments` as `None`, so the
+/// realization is selectable only through its binding preimage. A non-call root
+/// (a lazy argument expression) carries no invocation provenance.
+fn invocation_provenance(function: &Function, node: &Node) -> Option<WireProvenance> {
+    let callee = match node.op {
+        Op::Call(callee)
+        | Op::MiniSolve {
+            function: callee, ..
+        } => callee,
+        _ => return None,
     };
-    let mut arguments = Vec::with_capacity(node.inputs.len());
+    let mut literals = Vec::with_capacity(node.inputs.len());
+    let mut literal = true;
     for &input in &node.inputs {
         match function.nodes[input.0 as usize].op {
-            Op::Int(value) => arguments.push(WireArg::Int(value)),
-            Op::Bool(value) => arguments.push(WireArg::Bool(value)),
-            _ => return None,
+            Op::Int(value) => literals.push(WireArg::Int(value)),
+            Op::Bool(value) => literals.push(WireArg::Bool(value)),
+            _ => {
+                literal = false;
+                break;
+            }
         }
     }
     Some(WireProvenance {
         function: callee,
-        arguments,
+        arguments: literal.then_some(literals),
     })
 }
 
@@ -2482,6 +3016,28 @@ fn structural_fingerprint(
     fingerprint
 }
 
+/// An effect root is any machine-plane primitive node that publishes a value:
+/// it is an island boundary regardless of consumer count, because it can never
+/// lower into a Weavy program. A codata effect recipe (`Op::TreeGlob`, type
+/// `Stream<..>`) is not itself a root — the collection realizing it is.
+fn is_effect_root(node: &Node) -> bool {
+    matches!(
+        node.op,
+        Op::Exec { .. }
+            | Op::FixtureTree
+            | Op::TreeProject
+            | Op::TreeEntryText
+            | Op::FixtureRegistry
+            | Op::RegistryUrl
+            | Op::Fetch
+            | Op::MiniSolve { .. }
+            | Op::Untar
+            | Op::BlobLen
+    ) || (node.effect.kind == EffectKind::Effect
+        && matches!(node.op, Op::StreamCollect)
+        && !matches!(node.ty, Type::Stream { .. }))
+}
+
 fn is_shared_publication_candidate(node: &Node) -> bool {
     if is_scalar_call_candidate(node) {
         return true;
@@ -2498,7 +3054,7 @@ fn is_shared_publication_candidate(node: &Node) -> bool {
         {
             matches!(
                 node.op,
-                Op::Call(_) | Op::CallValue | Op::If { .. } | Op::Match { .. }
+                Op::Call(_) | Op::CallValue | Op::If { .. } | Op::Match { .. } | Op::Exec { .. }
             )
         }
         _ => false,
@@ -2571,6 +3127,12 @@ fn collect_publication_materializers(
         return;
     }
     if is_shared_publication_candidate(node) {
+        materializers.insert(node.id);
+    }
+    // A `?` catch is consumed as a pre-published value like a shared aggregate:
+    // registering it here makes its consumption visible so the partitioner can
+    // island its operand and publish the constructed Result.
+    if matches!(node.op, Op::Try) {
         materializers.insert(node.id);
     }
     for &input in &node.inputs {
@@ -2680,6 +3242,15 @@ fn collect_dependencies_stopping_at(
 }
 
 impl Island {
+    /// The effect node this island publishes, when its output is an effect
+    /// demand. An effect island is evaluated by the registered runtime
+    /// primitive, never lowered to a Weavy frame.
+    #[must_use]
+    pub fn effect_output(&self) -> Option<&Node> {
+        let output = self.nodes.iter().find(|node| node.id == self.output)?;
+        matches!(output.op, Op::Exec { .. }).then_some(output)
+    }
+
     pub(crate) fn local_function_ids(&self) -> BTreeMap<FunctionId, u32> {
         let mut ids = BTreeMap::from([(self.function, 0)]);
         for (index, function) in self.callees.iter().enumerate() {
@@ -2787,6 +3358,7 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
             match node.effect.kind {
                 EffectKind::Pure => 0,
                 EffectKind::Codata => 1,
+                EffectKind::Effect => 2,
             },
             u8::from(node.effect.fallible),
             u8::from(node.effect.placed),
@@ -2891,6 +3463,14 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
             op.push(84);
             op.extend_from_slice(&input.to_le_bytes());
         }
+        Op::Decode { format, target } => {
+            op.push(85);
+            op.push(match format {
+                DecodeFormat::Json => 0,
+                DecodeFormat::Toml => 1,
+            });
+            frame(&mut op, &canonical_type(target));
+        }
         Op::Div => op.push(23),
         Op::IsVariant { variant } => {
             op.push(24);
@@ -2948,10 +3528,50 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::StringSplitOnce => op.push(63),
         Op::StringParseInt => op.push(64),
         Op::StringIsNumeric => op.push(65),
+        Op::StringLines => op.push(66),
         Op::PathJoin => op.push(81),
         Op::PathToString => op.push(82),
         Op::IntToString => op.push(84),
         Op::Range => op.push(83),
+        Op::Exec { argv } => {
+            op.push(85);
+            frame(&mut op, &(argv.len() as u64).to_le_bytes());
+            for argument in argv {
+                frame(&mut op, argument.as_bytes());
+            }
+        }
+        Op::Try => op.push(86),
+        Op::FixtureTree => op.push(90),
+        Op::TreeProject => op.push(91),
+        Op::TreeEntryText => op.push(92),
+        Op::TreeGlob => op.push(93),
+        Op::FixtureRegistry => op.push(94),
+        Op::RegistryUrl => op.push(95),
+        Op::Fetch => op.push(96),
+        Op::MiniSolve {
+            function,
+            requirements,
+        } => {
+            op.push(99);
+            op.extend_from_slice(
+                &function_ids
+                    .get(function)
+                    .expect("mini_solve function belongs to the island closure")
+                    .to_le_bytes(),
+            );
+            match requirements {
+                MiniSolveRequirements::Static { packages } => {
+                    op.push(0);
+                    frame(&mut op, &(packages.len() as u64).to_le_bytes());
+                    for package in packages {
+                        frame(&mut op, package.as_bytes());
+                    }
+                }
+                MiniSolveRequirements::FixtureWorkspace => op.push(1),
+            }
+        }
+        Op::Untar => op.push(97),
+        Op::BlobLen => op.push(98),
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());
@@ -3095,6 +3715,11 @@ pub(crate) fn canonical_type(ty: &Type) -> Vec<u8> {
         Type::Set(element) => {
             let mut bytes = b"set".to_vec();
             frame(&mut bytes, &canonical_type(element));
+            bytes
+        }
+        Type::Extern(kind) => {
+            let mut bytes = b"extern".to_vec();
+            frame(&mut bytes, kind.name().as_bytes());
             bytes
         }
         Type::Stream { key, value } => {

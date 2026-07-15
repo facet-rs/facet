@@ -203,6 +203,16 @@ slow-timeout = { period = "120s", terminate-after = 5 }
 filter = 'package(vix) & test(accepted_rungs_verify_and_execute_through_one_executable)'
 slow-timeout = { period = "120s", terminate-after = 5 }
 
+# The rung-110 module-boundary identity oracle compiles three module-set
+# spellings, lowers their shared wire island, and runs two spellings through
+# both lanes: ~12s of CPU in isolation, but under full-workspace parallel
+# load its wall time has been observed past the default 180s cap (156s under
+# two concurrent workspace builds). Bounded and always passing; same leash as
+# the other heavy vix certificates.
+[[profile.default.overrides]]
+filter = 'package(vix) & test(=rung_110_recipe_identity_is_importer_independent)'
+slow-timeout = { period = "120s", terminate-after = 5 }
+
 # The cross-lane differential (F1) compiles the accepted canonical corpus
 # (through rung 065) once and executes every accepted rung through both an
 # explicitly-selected native Executable and an explicitly-selected interpreter

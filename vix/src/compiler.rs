@@ -9,12 +9,13 @@ use crate::support::{Span, Spanned};
 use crate::surface::{SurfaceParser, ast};
 use crate::vir::DescribedWire;
 use crate::vir::{
-    ArrayMapGrain, ArrayMapGrainKey, Budget, CheckRecipe, ControlRegion, EffectFacts, EnumType,
-    EnumVariant, Function, FunctionId, GeneratorArm, GeneratorBody, GeneratorStep,
-    MatchArm as VirMatchArm, Module, Node, NodeId, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT,
-    ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, OrderedMatchArm, Parameter, ParameterId,
-    ParameterKind, RecordField, RecordType, Test, TestMetadata, TraceCheck, Type, VariantPayload,
-    WireArg, YieldSite, YieldSiteId,
+    ArrayMapGrain, ArrayMapGrainKey, Budget, CheckRecipe, ControlRegion, EffectFacts, EffectKind,
+    EnumType, EnumVariant, ExternKind, Function, FunctionId, GeneratorArm, GeneratorBody,
+    GeneratorStep, MatchArm as VirMatchArm, MiniSolveRequirements, Module, Node, NodeId,
+    OPTION_NONE_VARIANT, OPTION_SOME_VARIANT, ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op,
+    OrderedMatchArm, Parameter, ParameterId, ParameterKind, RESULT_ERR_VARIANT, RESULT_OK_VARIANT,
+    RecordField, RecordType, Test, TestMetadata, TraceCheck, Type, VariantPayload, WireArg,
+    WireSelector, YieldSite, YieldSiteId,
 };
 
 pub struct Compiler {
@@ -31,6 +32,11 @@ pub struct CompilerConfig {
     /// When set, every `Array.fold` keeps the semantic copy path even where the
     /// strict one-item-append shape would otherwise be admitted molten.
     pub force_molten_copy: bool,
+    /// Force scalar user calls in observable source-revision audits to become
+    /// scheduler-owned demand boundaries. Strict scalar arguments publish first
+    /// as value inputs, so downstream demand keys are over `ValueId`s rather
+    /// than recompute-and-compare results.
+    pub force_scalar_call_boundaries: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -67,8 +73,28 @@ impl Compiler {
 
     /// Parse, check, and lower to architecture-neutral VIR.
     pub fn compile(&self, source: &str) -> Result<Compilation, Diagnostics> {
-        let ast = self.parser.parse(source)?;
-        let module = lower_module(&ast, self.config)?;
+        self.compile_with_modules(source, &[])
+    }
+
+    /// Parse a root source together with named library modules, resolve
+    /// imports and visibility, and lower the merged module set to VIR.
+    ///
+    /// Import-resolution diagnostics carry spans in the importing file's own
+    /// coordinates. Post-merge diagnostics in library code keep their own
+    /// file's byte spans, which may collide with root offsets — attribution
+    /// only; recipe identity is span-insensitive.
+    pub fn compile_with_modules(
+        &self,
+        source: &str,
+        modules: &[crate::modules::ModuleSource<'_>],
+    ) -> Result<Compilation, Diagnostics> {
+        let root = self.parser.parse(source)?;
+        let mut parsed = Vec::with_capacity(modules.len());
+        for module in modules {
+            parsed.push((module.name.to_owned(), self.parser.parse(module.source)?));
+        }
+        let merged = crate::modules::merge_module_set(root, &parsed)?;
+        let module = lower_module(&merged, self.config)?;
         let warnings = lint_module(&module);
         Ok(Compilation { module, warnings })
     }
@@ -244,7 +270,9 @@ impl<'a> TypeResolver<'a> {
                     enumeration.name.span,
                     TypeDeclaration::Enum(enumeration),
                 ),
-                ast::Item::Fn(_) => continue,
+                // Imports are consumed by the module front before lowering;
+                // a stray one contributes no type declaration.
+                ast::Item::Fn(_) | ast::Item::Import(_) => continue,
             };
             if name == "Ordering" {
                 return Err(Diagnostics::one(Diagnostic {
@@ -428,7 +456,12 @@ impl<'a> TypeResolver<'a> {
                 }
             }
             ast::Expr::Paren(expression) => self.resolve_expr_types(&expression.inner)?,
-            ast::Expr::Identifier(_)
+            ast::Expr::Try(expression) => self.resolve_expr_types(&expression.value)?,
+            // A command's tag is a value reference and its template a scalar
+            // token; neither mentions a type.
+            ast::Expr::Exec(_)
+            | ast::Expr::Command(_)
+            | ast::Expr::Identifier(_)
             | ast::Expr::Path(_)
             | ast::Expr::Str(_)
             | ast::Expr::Number(_)
@@ -687,7 +720,23 @@ impl<'a> TypeResolver<'a> {
             ast::Type::Path(path) if path_is(path, "Int") => Ok(Type::Int),
             ast::Type::Path(path) if path_is(path, "String") => Ok(Type::String),
             ast::Type::Path(path) if path_is(path, "Path") => Ok(Type::Path),
+            ast::Type::Path(path) if path_is(path, "Tree") => Ok(Type::Extern(ExternKind::Tree)),
+            ast::Type::Path(path) if path_is(path, "TreeEntry") => {
+                Ok(Type::Extern(ExternKind::TreeEntry))
+            }
+            ast::Type::Path(path) if path_is(path, "Blob") => Ok(Type::Extern(ExternKind::Blob)),
+            ast::Type::Path(path) if path_is(path, "Registry") => {
+                Ok(Type::Extern(ExternKind::Registry))
+            }
+            ast::Type::Path(path) if path_is(path, "PinnedUrl") => {
+                Ok(Type::Extern(ExternKind::PinnedUrl))
+            }
             ast::Type::Path(path) if path_is(path, "Check") => Ok(Type::Check),
+            ast::Type::Path(path)
+                if CAPABILITY_TYPE_NAMES.iter().any(|name| path_is(path, name)) =>
+            {
+                Ok(capability_type(&path_name(path)))
+            }
             ast::Type::Generic(_) if is_stream_check_type(ty) => Ok(Type::StreamCheck),
             ast::Type::Generic(generic) if path_is(&generic.base, "Option") => {
                 if generic.args.len() != 1 {
@@ -728,6 +777,15 @@ impl<'a> TypeResolver<'a> {
                 }
                 Ok(Type::set(element))
             }
+            ast::Type::Generic(generic) if path_is(&generic.base, "Result") => {
+                if generic.args.len() != 2 {
+                    return Err(invalid_arity(generic.span, 2, generic.args.len()));
+                }
+                let ok = self.resolve_type_with(&generic.args[0], substitutions)?;
+                let err = self.resolve_type_with(&generic.args[1], substitutions)?;
+                Ok(Type::result(ok, err))
+            }
+            ast::Type::Path(path) if path_is(path, "DecodeError") => Ok(decode_error_type()),
             ast::Type::Path(path) => {
                 let name = path_name(path);
                 if let Some(ty) = self.resolved.get(&name) {
@@ -763,15 +821,89 @@ impl<'a> TypeResolver<'a> {
     }
 }
 
+/// The capability types the ratchet harness can supply to a `#[test]` as
+/// parameters. A capability value is opaque: its single `$program` field is
+/// not a legal surface identifier, so a program can neither construct nor
+/// project one — it can only receive it and tag a command template with it.
+///
+/// r[impl machine.primitive.capabilities-by-identity]
+pub const CAPABILITY_TYPE_NAMES: &[&str] = &["Echo", "Sh"];
+
+/// The single opaque field carrying a capability's executable identity.
+pub const CAPABILITY_PROGRAM_FIELD: &str = "$program";
+
+#[must_use]
+pub fn capability_type(name: &str) -> Type {
+    Type::Record(RecordType {
+        name: name.to_owned(),
+        fields: vec![RecordField {
+            name: CAPABILITY_PROGRAM_FIELD.to_owned(),
+            ty: Type::String,
+        }],
+    })
+}
+
+#[must_use]
+pub fn is_capability_type(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::Record(record)
+            if record.fields.len() == 1 && record.fields[0].name == CAPABILITY_PROGRAM_FIELD
+    )
+}
+
+/// The completed view of one exec output stream under the ratchet capability
+/// packages' output protocol: line-framed text codata, keyed by line number.
+/// The payload field is not a legal surface identifier; `.collect()` is the
+/// only projection.
+#[must_use]
+pub fn byte_stream_type() -> Type {
+    Type::Record(RecordType {
+        name: "ByteStream".to_owned(),
+        fields: vec![RecordField {
+            name: "$lines".to_owned(),
+            ty: Type::map(Type::Int, Type::String),
+        }],
+    })
+}
+
+/// `exec`'s result type. There is no exit-status field: termination becomes
+/// the typed answer or a typed failure. (`answer`/`tree` await their rungs:
+/// unit values and `Tree` are not yet representable surface types here.)
+///
+/// r[impl machine.primitive.exec-outcome]
+/// r[impl machine.primitive.exit-status-is-not-a-value]
+#[must_use]
+pub fn exec_outcome_type() -> Type {
+    Type::Record(RecordType {
+        name: "ExecOutcome".to_owned(),
+        fields: vec![
+            RecordField {
+                name: "stdout".to_owned(),
+                ty: byte_stream_type(),
+            },
+            RecordField {
+                name: "stderr".to_owned(),
+                ty: byte_stream_type(),
+            },
+        ],
+    })
+}
+
 fn lower_module(source: &ast::SourceFile, config: CompilerConfig) -> Result<Module, Diagnostics> {
-    let types = TypeResolver::new(source)?.resolve_all(source)?;
+    let mut types = TypeResolver::new(source)?.resolve_all(source)?;
+    for name in CAPABILITY_TYPE_NAMES {
+        types
+            .entry((*name).to_owned())
+            .or_insert_with(|| capability_type(name));
+    }
     let declared_type_names = source
         .items
         .iter()
         .filter_map(|item| match item {
             ast::Item::Struct(record) => Some(record.name.value.as_str()),
             ast::Item::Enum(enumeration) => Some(enumeration.name.value.as_str()),
-            ast::Item::Fn(_) => None,
+            ast::Item::Fn(_) | ast::Item::Import(_) => None,
         })
         .collect::<BTreeSet<_>>();
     let mut signatures = BTreeMap::new();
@@ -814,6 +946,7 @@ fn lower_module(source: &ast::SourceFile, config: CompilerConfig) -> Result<Modu
     };
     let mut module = Module {
         force_molten_copy: config.force_molten_copy,
+        force_scalar_call_boundaries: config.force_scalar_call_boundaries,
         records: source
             .items
             .iter()
@@ -822,7 +955,7 @@ fn lower_module(source: &ast::SourceFile, config: CompilerConfig) -> Result<Modu
                     Some(Type::Record(record)) => Some(record.clone()),
                     _ => None,
                 },
-                ast::Item::Enum(_) | ast::Item::Fn(_) => None,
+                ast::Item::Enum(_) | ast::Item::Fn(_) | ast::Item::Import(_) => None,
             })
             .collect(),
         enums: resolved_enum_declarations(source, &types),
@@ -848,7 +981,7 @@ fn lower_module(source: &ast::SourceFile, config: CompilerConfig) -> Result<Modu
                 generator: lowered
                     .generator
                     .expect("test function lowering produces a generator body"),
-                metadata: signature.metadata,
+                metadata: signature.metadata.clone(),
             });
         }
         module.functions.push(lowered.function);
@@ -896,15 +1029,35 @@ fn anchor_function_diagnostics(
     mut diagnostics: Diagnostics,
 ) -> Diagnostics {
     for diagnostic in &mut diagnostics.entries {
-        if diagnostic.code != DiagnosticCode::NonExhaustiveMatch {
-            continue;
+        match diagnostic.code {
+            DiagnosticCode::NonExhaustiveMatch => {
+                let match_span = diagnostic.primary;
+                diagnostic.primary = function.name.span;
+                diagnostic.labels.push(Label {
+                    span: match_span,
+                    text: "non-exhaustive match occurs here".to_owned(),
+                });
+            }
+            // An unbound capability tag is the declaration's incompleteness:
+            // there is no way to name the tool HERE, so the primary span names
+            // the declaration (from its `#[test]` attribute — where capability
+            // parameters would have to be supplied) and the use site becomes a
+            // label. The CST item span absorbs leading trivia, so the anchor is
+            // the first attribute token, not the item span.
+            DiagnosticCode::UnboundIdentifier => {
+                let use_span = diagnostic.primary;
+                diagnostic.primary = function
+                    .attributes
+                    .first()
+                    .map(|attribute| attribute.span)
+                    .unwrap_or(function.name.span);
+                diagnostic.labels.push(Label {
+                    span: use_span,
+                    text: "used here without a declaring parameter".to_owned(),
+                });
+            }
+            _ => {}
         }
-        let match_span = diagnostic.primary;
-        diagnostic.primary = function.name.span;
-        diagnostic.labels.push(Label {
-            span: match_span,
-            text: "non-exhaustive match occurs here".to_owned(),
-        });
     }
     diagnostics
 }
@@ -919,11 +1072,24 @@ fn declare_function(
         .iter()
         .any(|attribute| attribute.name.value == "test");
     if is_test {
-        check_test_signature(function)?;
+        check_test_signature(function, types)?;
+        let mut names = BTreeSet::new();
+        let mut parameters = Vec::new();
+        for parameter in &function.params.params {
+            declare_parameter(
+                &mut parameters,
+                &mut names,
+                &parameter.name.value,
+                parameter.name.span,
+                &parameter.ty,
+                ParameterKind::Positional,
+                types,
+            )?;
+        }
         return Ok(FunctionSignature {
             id,
             is_test,
-            parameters: Vec::new(),
+            parameters,
             return_type: Type::StreamCheck,
             metadata: parse_test_metadata(function)?,
         });
@@ -1030,12 +1196,21 @@ fn declare_parameter(
     Ok(())
 }
 
-fn check_test_signature(function: &ast::FnItem) -> Result<(), Diagnostics> {
+fn check_test_signature(
+    function: &ast::FnItem,
+    types: &BTreeMap<String, Type>,
+) -> Result<(), Diagnostics> {
     let valid_return = function
         .return_type
         .as_ref()
         .is_some_and(is_stream_check_type);
-    if !function.params.params.is_empty()
+    // A test's positional parameters are exactly its capability inputs —
+    // typed values the harness (the demand root) supplies by identity.
+    // Anything else in the signature stays invalid.
+    let capability_params_only = function.params.params.iter().all(|parameter| {
+        lower_declared_type(&parameter.ty, types).is_ok_and(|ty| is_capability_type(&ty))
+    });
+    if !capability_params_only
         || function.where_params.is_some()
         || !valid_return
         || function.generics.is_some()
@@ -1045,7 +1220,7 @@ fn check_test_signature(function: &ast::FnItem) -> Result<(), Diagnostics> {
             primary: function.span,
             labels: Vec::new(),
             payload: DiagnosticPayload::Type {
-                expected: "fn() -> Stream<Check>".to_owned(),
+                expected: "fn(capabilities…) -> Stream<Check>".to_owned(),
                 found: function.name.value.clone(),
             },
         }));
@@ -1059,6 +1234,7 @@ fn check_test_signature(function: &ast::FnItem) -> Result<(), Diagnostics> {
 /// Unit-bearing literals are accepted only here, never in ordinary values.
 fn parse_test_metadata(function: &ast::FnItem) -> Result<TestMetadata, Diagnostics> {
     let mut budget = Budget::default();
+    let mut rerun_with = None;
     let mut seen: BTreeSet<String> = BTreeSet::new();
     for attribute in &function.attributes {
         if attribute.name.value != "test" {
@@ -1086,6 +1262,10 @@ fn parse_test_metadata(function: &ast::FnItem) -> Result<TestMetadata, Diagnosti
                     let (text, span) = attribute_quantity(field)?;
                     budget.rss_bytes = Some(byte_count(text, span)?);
                 }
+                "rerun_with" => {
+                    let (value, _) = attribute_string(field)?;
+                    rerun_with = Some(value.to_owned());
+                }
                 _ => {
                     return Err(field_diagnostic(
                         DiagnosticCode::UnknownField,
@@ -1097,7 +1277,7 @@ fn parse_test_metadata(function: &ast::FnItem) -> Result<TestMetadata, Diagnosti
             }
         }
     }
-    Ok(TestMetadata { budget })
+    Ok(TestMetadata { budget, rerun_with })
 }
 
 /// A budget field value must be a unit-bearing literal (`5s`, `256MB`); a bare
@@ -1113,6 +1293,22 @@ fn attribute_quantity(field: &ast::NamedValue) -> Result<(&str, Span), Diagnosti
         None => Err(type_mismatch(
             field.name.span,
             "a unit-bearing literal",
+            "bare field",
+        )),
+    }
+}
+
+fn attribute_string(field: &ast::NamedValue) -> Result<(&str, Span), Diagnostics> {
+    match &field.value {
+        Some(ast::Expr::Str(value)) => Ok((value.value.as_str(), value.span)),
+        Some(other) => Err(type_mismatch(
+            expr_span(other),
+            "a string literal",
+            "expression",
+        )),
+        None => Err(type_mismatch(
+            field.name.span,
+            "a string literal",
             "bare field",
         )),
     }
@@ -1263,6 +1459,17 @@ fn lower_declared_type(
         ast::Type::Path(path) if path_is(path, "Int") => Ok(Type::Int),
         ast::Type::Path(path) if path_is(path, "String") => Ok(Type::String),
         ast::Type::Path(path) if path_is(path, "Path") => Ok(Type::Path),
+        ast::Type::Path(path) if path_is(path, "Tree") => Ok(Type::Extern(ExternKind::Tree)),
+        ast::Type::Path(path) if path_is(path, "TreeEntry") => {
+            Ok(Type::Extern(ExternKind::TreeEntry))
+        }
+        ast::Type::Path(path) if path_is(path, "Blob") => Ok(Type::Extern(ExternKind::Blob)),
+        ast::Type::Path(path) if path_is(path, "Registry") => {
+            Ok(Type::Extern(ExternKind::Registry))
+        }
+        ast::Type::Path(path) if path_is(path, "PinnedUrl") => {
+            Ok(Type::Extern(ExternKind::PinnedUrl))
+        }
         ast::Type::Path(path) if path_is(path, "Check") => Ok(Type::Check),
         ast::Type::Generic(_) if is_stream_check_type(ty) => Ok(Type::StreamCheck),
         ast::Type::Generic(generic) if path_is(&generic.base, "Option") => {
@@ -1302,6 +1509,15 @@ fn lower_declared_type(
             }
             Ok(Type::set(element))
         }
+        ast::Type::Generic(generic) if path_is(&generic.base, "Result") => {
+            if generic.args.len() != 2 {
+                return Err(invalid_arity(generic.span, 2, generic.args.len()));
+            }
+            let ok = lower_declared_type(&generic.args[0], types)?;
+            let err = lower_declared_type(&generic.args[1], types)?;
+            Ok(Type::result(ok, err))
+        }
+        ast::Type::Path(path) if path_is(path, "DecodeError") => Ok(decode_error_type()),
         ast::Type::Path(path) => types
             .get(&path_name(path))
             .cloned()
@@ -1883,6 +2099,14 @@ fn bind_irrefutable_pattern(
             pattern.span,
             "refutable pattern",
         ))),
+        ast::Pattern::Ok(pattern) => Err(Diagnostics::one(Diagnostic::unsupported(
+            pattern.span,
+            "refutable pattern",
+        ))),
+        ast::Pattern::Err(pattern) => Err(Diagnostics::one(Diagnostic::unsupported(
+            pattern.span,
+            "refutable pattern",
+        ))),
         ast::Pattern::None(span) => Err(Diagnostics::one(Diagnostic::unsupported(
             *span,
             "refutable pattern",
@@ -1953,6 +2177,11 @@ fn lower_check(
                 bound: trace_bound(call)?,
             }));
         }
+        "memo_hits_at_least" => {
+            return Ok(CheckRecipe::Trace(TraceCheck::MemoHitsAtLeast {
+                bound: trace_bound(call)?,
+            }));
+        }
         "store_interns_at_most" => {
             return Ok(CheckRecipe::Trace(TraceCheck::StoreInternsAtMost {
                 bound: trace_bound(call)?,
@@ -2004,17 +2233,37 @@ fn lower_check(
         }
         "demanded" => {
             return Ok(CheckRecipe::Trace(TraceCheck::Demanded {
-                wire: described_wire(context, call)?,
+                wire: described_wire(nodes, bindings, context, call)?,
             }));
         }
         "never_demanded" => {
             return Ok(CheckRecipe::Trace(TraceCheck::NeverDemanded {
-                wire: described_wire(context, call)?,
+                wire: described_wire(nodes, bindings, context, call)?,
             }));
         }
         "demanded_once" => {
             return Ok(CheckRecipe::Trace(TraceCheck::DemandedOnce {
-                wire: described_wire(context, call)?,
+                wire: described_wire(nodes, bindings, context, call)?,
+            }));
+        }
+        "ran_processes" => {
+            return Ok(CheckRecipe::Trace(TraceCheck::RanProcesses {
+                count: trace_bound(call)?,
+            }));
+        }
+        "read" => {
+            return Ok(CheckRecipe::Trace(TraceCheck::Read {
+                path: trace_path(call)?,
+            }));
+        }
+        "never_read" => {
+            return Ok(CheckRecipe::Trace(TraceCheck::NeverRead {
+                path: trace_path(call)?,
+            }));
+        }
+        "fetched" => {
+            return Ok(CheckRecipe::Trace(TraceCheck::Fetched {
+                times: trace_bound(call)?,
             }));
         }
         _ => {}
@@ -2145,6 +2394,23 @@ fn trace_bound(call: &ast::Call) -> Result<i64, Diagnostics> {
     })
 }
 
+/// The path literal of a `never_read` trace check. It is read directly from
+/// the surface (`p"..."`) and validated as a relative path — never lowered or
+/// demanded, so pinning a never-read path costs no evaluation.
+fn trace_path(call: &ast::Call) -> Result<String, Diagnostics> {
+    check_arity(call, 1)?;
+    let argument = &call.args.args[0];
+    let ast::Expr::Path(path) = argument else {
+        return Err(type_mismatch(
+            expr_span(argument),
+            "a Path literal",
+            "expression",
+        ));
+    };
+    validate_path_literal(path.value.as_str(), path.span)?;
+    Ok(path.value.clone())
+}
+
 fn trace_function_calls(
     nodes: &mut Vec<Node>,
     bindings: &BTreeMap<String, LoweredValue>,
@@ -2194,12 +2460,33 @@ fn trace_function_calls(
 /// literals. A zero-argument selector `f()` on a function that declares
 /// parameters is a name-level selector (every argument demand of `f`); a
 /// call-site selector carries the literal arguments so equal-recipe/different-
-/// argument demands stay distinct. No node is built and no operand is evaluated.
+/// argument demands stay distinct. An identifier operand names a let-bound
+/// invocation — including composite and where-clause arguments, which have no
+/// literal spelling — selected by its already-lowered call node's canonical
+/// preimage. No node is built and no operand is evaluated.
 fn described_wire(
+    nodes: &[Node],
+    bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
     call: &ast::Call,
 ) -> Result<DescribedWire, Diagnostics> {
     check_arity(call, 1)?;
+    if let ast::Expr::Identifier(identifier) = &call.args.args[0] {
+        let bound = lookup_binding(bindings, &identifier.value, identifier.span)?;
+        let function = match nodes[bound.node.0 as usize].op {
+            Op::Call(function) | Op::MiniSolve { function, .. } => function,
+            _ => {
+                return Err(Diagnostics::one(Diagnostic::unsupported(
+                    identifier.span,
+                    "a described-wire binding names a let-bound function invocation",
+                )));
+            }
+        };
+        return Ok(DescribedWire {
+            function,
+            selector: WireSelector::Binding(bound.node),
+        });
+    }
     let ast::Expr::Call(operand) = &call.args.args[0] else {
         return Err(Diagnostics::one(Diagnostic::unsupported(
             expr_span(&call.args.args[0]),
@@ -2230,12 +2517,29 @@ fn described_wire(
         .args
         .iter()
         .map(wire_argument_literal)
-        .collect::<Result<Vec<_>, _>>()?;
-    let name_level = arguments.is_empty() && !signature.parameters.is_empty();
+        .collect::<Result<Vec<_>, _>>();
+    let selector = match arguments {
+        Ok(arguments) => {
+            if arguments.is_empty() && !signature.parameters.is_empty() {
+                WireSelector::Name
+            } else {
+                WireSelector::CallSite(arguments)
+            }
+        }
+        Err(diagnostics)
+            if operand
+                .args
+                .args
+                .iter()
+                .any(|argument| matches!(argument, ast::Expr::Record(_))) =>
+        {
+            return Err(diagnostics);
+        }
+        Err(_) => WireSelector::Name,
+    };
     Ok(DescribedWire {
         function: signature.id,
-        arguments,
-        name_level,
+        selector,
     })
 }
 
@@ -2252,6 +2556,17 @@ fn wire_argument_literal(argument: &ast::Expr) -> Result<WireArg, Diagnostics> {
             )
         }),
         ast::Expr::Bool(boolean) => Ok(WireArg::Bool(boolean.value)),
+        ast::Expr::Call(call) if call.callee.value == "fixture_tree" => {
+            check_arity(call, 1)?;
+            let ast::Expr::Str(name) = &call.args.args[0] else {
+                return Err(type_mismatch(
+                    expr_span(&call.args.args[0]),
+                    "a fixture_tree string literal",
+                    "expression",
+                ));
+            };
+            Ok(WireArg::FixtureTree(name.value.clone()))
+        }
         other => Err(Diagnostics::one(Diagnostic::unsupported(
             expr_span(other),
             "a described-wire argument must be a closed scalar literal",
@@ -2274,6 +2589,11 @@ enum PreludeReceiverType {
     Stream,
     Int,
     Path,
+    ByteStream,
+    Tree,
+    TreeEntry,
+    Blob,
+    Registry,
 }
 
 impl PreludeReceiverType {
@@ -2286,6 +2606,11 @@ impl PreludeReceiverType {
             Type::Stream { .. } => Some(Self::Stream),
             Type::Int => Some(Self::Int),
             Type::Path => Some(Self::Path),
+            Type::Record(record) if record.name == "ByteStream" => Some(Self::ByteStream),
+            Type::Extern(ExternKind::Tree) => Some(Self::Tree),
+            Type::Extern(ExternKind::TreeEntry) => Some(Self::TreeEntry),
+            Type::Extern(ExternKind::Blob) => Some(Self::Blob),
+            Type::Extern(ExternKind::Registry) => Some(Self::Registry),
             _ => None,
         }
     }
@@ -2304,6 +2629,7 @@ enum PreludeMethod {
     StringSplitOnce,
     StringParseInt,
     StringIsNumeric,
+    StringLines,
     ArraySorted,
     ArrayStream,
     IntRem,
@@ -2325,6 +2651,11 @@ enum PreludeMethod {
     StreamSplitMin,
     PathToString,
     IntToString,
+    ByteStreamCollect,
+    TreeGlob,
+    TreeEntryText,
+    BlobLen,
+    RegistryUrl,
 }
 
 #[derive(Clone, Copy)]
@@ -2407,6 +2738,12 @@ impl PreludeMethodRegistry {
                 name: "is_numeric",
                 arity: 0,
                 method: PreludeMethod::StringIsNumeric,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::String,
+                name: "lines",
+                arity: 0,
+                method: PreludeMethod::StringLines,
             },
             PreludeMethodEntry {
                 receiver: PreludeReceiverType::Array,
@@ -2505,6 +2842,12 @@ impl PreludeMethodRegistry {
                 method: PreludeMethod::StreamCollect,
             },
             PreludeMethodEntry {
+                receiver: PreludeReceiverType::ByteStream,
+                name: "collect",
+                arity: 0,
+                method: PreludeMethod::ByteStreamCollect,
+            },
+            PreludeMethodEntry {
                 receiver: PreludeReceiverType::Stream,
                 name: "find_min",
                 arity: 1,
@@ -2533,6 +2876,30 @@ impl PreludeMethodRegistry {
                 name: "to_string",
                 arity: 0,
                 method: PreludeMethod::IntToString,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Tree,
+                name: "glob",
+                arity: 1,
+                method: PreludeMethod::TreeGlob,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::TreeEntry,
+                name: "text",
+                arity: 0,
+                method: PreludeMethod::TreeEntryText,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Blob,
+                name: "len",
+                arity: 0,
+                method: PreludeMethod::BlobLen,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Registry,
+                name: "url",
+                arity: 1,
+                method: PreludeMethod::RegistryUrl,
             },
         ],
     };
@@ -2646,11 +3013,20 @@ fn lower_value_expected(
         ast::Expr::Call(call) if call.callee.value == "Some" => {
             lower_some(nodes, bindings, context, call, expected)
         }
+        ast::Expr::Call(call) if try_decode_format(&call.callee.value).is_some() => {
+            lower_try_decode(nodes, bindings, context, call)
+        }
         ast::Expr::Call(call) if decode_format(&call.callee.value).is_some() => {
-            lower_decode(nodes, call, expected)
+            lower_decode(nodes, bindings, context, call, expected)
+        }
+        ast::Expr::Call(call) if effect_intrinsic(&call.callee.value) => {
+            lower_effect_intrinsic(nodes, bindings, context, call)
         }
         ast::Expr::Call(call) => lower_call(nodes, bindings, context, call),
         ast::Expr::WhereCall(call) => lower_where_call(nodes, bindings, context, call),
+        ast::Expr::Command(command) => lower_command(nodes, bindings, context, command),
+        ast::Expr::Exec(exec) => lower_exec(nodes, bindings, context, exec),
+        ast::Expr::Try(try_expr) => lower_try(nodes, bindings, context, try_expr),
         ast::Expr::Binary(binary) => lower_binary(nodes, bindings, context, binary),
         ast::Expr::Variant(variant) => lower_variant(nodes, bindings, context, variant, expected),
         ast::Expr::Match(match_expr) => lower_match(nodes, bindings, context, match_expr, expected),
@@ -2701,6 +3077,13 @@ fn lower_value_expected(
         ast::Expr::Record(record) => lower_named_constructor(nodes, bindings, context, record),
         ast::Expr::Field(field) => {
             let receiver = lower_value(nodes, bindings, context, &field.receiver)?;
+            // `DecodeError.message` is a rendered projection, not a stored field.
+            if let ast::Member::Identifier(name) = &field.name
+                && name.value == "message"
+                && is_decode_error(&receiver.ty)
+            {
+                return Ok(lower_decode_error_message(nodes, &receiver, field.span));
+            }
             let (index_value, ty) = match &field.name {
                 ast::Member::Index(index) => {
                     let index_value = index.value.parse::<usize>().map_err(|_| {
@@ -3492,6 +3875,20 @@ fn lower_method_call(
             ),
             ty: Type::Bool,
         }),
+        PreludeMethod::StringLines => {
+            let ty = Type::array(Type::String);
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::PURE,
+                    vec![receiver.node],
+                    Op::StringLines,
+                ),
+                ty,
+            })
+        }
         PreludeMethod::ArrayStream => {
             let Type::Array(element) = &receiver.ty else {
                 unreachable!("array stream registry entry has an array receiver")
@@ -3821,17 +4218,89 @@ fn lower_method_call(
                 .stream_types()
                 .ok_or_else(|| type_mismatch(call.span, "Stream<K, V>", receiver.ty.name()))?;
             let ty = Type::map(key.clone(), value.clone());
+            // Collecting an effect codata recipe (a tree glob) is itself the
+            // machine-plane demand that realizes it; collecting a pure stream
+            // stays lowered vocabulary.
+            let receiver_kind = nodes
+                .iter()
+                .find(|node| node.id == receiver.node)
+                .map(|node| node.effect.kind);
+            let effect = if receiver_kind == Some(EffectKind::Effect) {
+                EffectFacts::EFFECT
+            } else {
+                EffectFacts {
+                    fallible: true,
+                    ..EffectFacts::PURE
+                }
+            };
             Ok(LoweredValue {
                 node: push_node(
                     nodes,
                     call.span,
                     ty.clone(),
-                    EffectFacts {
-                        fallible: true,
-                        ..EffectFacts::PURE
-                    },
+                    effect,
                     vec![receiver.node],
                     Op::StreamCollect,
+                ),
+                ty,
+            })
+        }
+        PreludeMethod::TreeGlob => {
+            let pattern = lower_value(nodes, bindings, context, &positional[0])?;
+            require_type(&pattern, &Type::String, expr_span(&positional[0]))?;
+            let ty = Type::stream(Type::Path, Type::Path);
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::EFFECT,
+                    vec![receiver.node, pattern.node],
+                    Op::TreeGlob,
+                ),
+                ty,
+            })
+        }
+        PreludeMethod::TreeEntryText => {
+            let ty = Type::String;
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::EFFECT,
+                    vec![receiver.node],
+                    Op::TreeEntryText,
+                ),
+                ty,
+            })
+        }
+        PreludeMethod::BlobLen => {
+            let ty = Type::Int;
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::EFFECT,
+                    vec![receiver.node],
+                    Op::BlobLen,
+                ),
+                ty,
+            })
+        }
+        PreludeMethod::RegistryUrl => {
+            let name = lower_value(nodes, bindings, context, &positional[0])?;
+            require_type(&name, &Type::String, expr_span(&positional[0]))?;
+            let ty = Type::Extern(ExternKind::PinnedUrl);
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::EFFECT,
+                    vec![receiver.node, name.node],
+                    Op::RegistryUrl,
                 ),
                 ty,
             })
@@ -3928,6 +4397,24 @@ fn lower_method_call(
             ),
             ty: Type::String,
         }),
+        // Completing an exec output stream to its semantic content: under the
+        // ratchet capability packages' line-framed output protocol the
+        // completed value is the line-keyed map, physically the stream
+        // record's single payload field.
+        PreludeMethod::ByteStreamCollect => {
+            let ty = Type::map(Type::Int, Type::String);
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::PURE,
+                    vec![receiver.node],
+                    Op::Project { index: 0 },
+                ),
+                ty,
+            })
+        }
         PreludeMethod::IntToString => {
             require_type(&receiver, &Type::Int, expr_span(&call.receiver))?;
             Ok(LoweredValue {
@@ -4041,6 +4528,82 @@ fn decode_format(name: &str) -> Option<DecodeFormat> {
     }
 }
 
+/// The machine-plane primitive constructors of the tree/fetch band. Each
+/// lowers to an [`EffectKind::Effect`] node the partitioner hoists into its
+/// own effect island; nothing here is a Weavy-lowerable pure operation.
+fn effect_intrinsic(name: &str) -> bool {
+    matches!(
+        name,
+        "fixture_tree" | "fixture_registry" | "fetch" | "untar"
+    )
+}
+
+fn lower_effect_intrinsic(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    call: &ast::Call,
+) -> Result<LoweredValue, Diagnostics> {
+    if call.named_args.is_some() {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            call.span,
+            "named arguments on a primitive constructor",
+        )));
+    }
+    let (ty, op, inputs) = match call.callee.value.as_str() {
+        "fixture_tree" => {
+            check_arity(call, 1)?;
+            let name = lower_value(nodes, bindings, context, &call.args.args[0])?;
+            require_type(&name, &Type::String, expr_span(&call.args.args[0]))?;
+            (
+                Type::Extern(ExternKind::Tree),
+                Op::FixtureTree,
+                vec![name.node],
+            )
+        }
+        "fixture_registry" => {
+            check_arity(call, 0)?;
+            (
+                Type::Extern(ExternKind::Registry),
+                Op::FixtureRegistry,
+                Vec::new(),
+            )
+        }
+        "fetch" => {
+            check_arity(call, 1)?;
+            let pinned = lower_value(nodes, bindings, context, &call.args.args[0])?;
+            require_type(
+                &pinned,
+                &Type::Extern(ExternKind::PinnedUrl),
+                expr_span(&call.args.args[0]),
+            )?;
+            (Type::Extern(ExternKind::Blob), Op::Fetch, vec![pinned.node])
+        }
+        "untar" => {
+            check_arity(call, 1)?;
+            let blob = lower_value(nodes, bindings, context, &call.args.args[0])?;
+            require_type(
+                &blob,
+                &Type::Extern(ExternKind::Blob),
+                expr_span(&call.args.args[0]),
+            )?;
+            (Type::Extern(ExternKind::Tree), Op::Untar, vec![blob.node])
+        }
+        other => unreachable!("effect intrinsic dispatch matched `{other}`"),
+    };
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            call.span,
+            ty.clone(),
+            EffectFacts::EFFECT,
+            inputs,
+            op,
+        ),
+        ty,
+    })
+}
+
 fn decode_format_label(format: DecodeFormat) -> &'static str {
     match format {
         DecodeFormat::Json => "JSON",
@@ -4066,8 +4629,264 @@ fn runtime_decode_unavailable(
     })
 }
 
+/// The fallible decode surface: `try_json_decode<T>(doc)`. Unlike the infallible
+/// [`decode_format`] fold (062–065), this returns a first-class
+/// `Result<T, DecodeError>` — a decode that fails is a *value*, not a compile
+/// error (`r[lang.failure.typed]`). The target schema is named by the call-site
+/// turbofish, not inferred from a `let` annotation.
+fn try_decode_format(name: &str) -> Option<DecodeFormat> {
+    match name {
+        "try_json_decode" => Some(DecodeFormat::Json),
+        "try_toml_decode" => Some(DecodeFormat::Toml),
+        _ => None,
+    }
+}
+
+/// The `DecodeError` value surfaced as the `Err` payload of a decode `Result`.
+/// Its stored fields are the STRUCTURAL identity of the failure: a stable
+/// machine `kind` discriminant (never rendered prose) and the dotted field
+/// `path` that reached it. The human `message` is a projection over these
+/// fields (see [`lower_decode_error_message`]), never a stored field — a
+/// rendered message is presentation, not the error's identity
+/// (`r[lang.failure.typed]`, `errors.md`).
+const DECODE_ERROR_KIND_FIELD: u32 = 0;
+const DECODE_ERROR_PATH_FIELD: u32 = 1;
+
+fn decode_error_type() -> Type {
+    Type::Record(RecordType {
+        name: "DecodeError".to_owned(),
+        fields: vec![
+            RecordField {
+                name: "kind".to_owned(),
+                ty: Type::String,
+            },
+            RecordField {
+                name: "path".to_owned(),
+                ty: Type::String,
+            },
+            RecordField {
+                name: "document_offset".to_owned(),
+                ty: Type::Int,
+            },
+            RecordField {
+                name: "document_len".to_owned(),
+                ty: Type::Int,
+            },
+        ],
+    })
+}
+
+/// Is `ty` the built-in `DecodeError` value shape?
+fn is_decode_error(ty: &Type) -> bool {
+    matches!(ty, Type::Record(record) if record.name == "DecodeError")
+}
+
+fn push_string_literal(nodes: &mut Vec<Node>, span: Span, value: String) -> NodeId {
+    push_node(
+        nodes,
+        span,
+        Type::String,
+        EffectFacts::PURE,
+        Vec::new(),
+        Op::String(value),
+    )
+}
+
+/// Construct a `DecodeError` value from a [`decode::DecodeError`]: its stable
+/// kind label and its dotted field path, in declaration order. Building the same
+/// structured fields a runtime decode would build keeps the constant fold
+/// identity-equivalent to the runtime primitive's success/failure value.
+fn lower_decode_error_value(
+    nodes: &mut Vec<Node>,
+    error: &decode::DecodeError,
+    span: Span,
+) -> LoweredValue {
+    let kind = push_string_literal(nodes, span, error.kind.label().to_owned());
+    let path = push_string_literal(nodes, span, error.path_names().join("."));
+    let document_offset = push_node(
+        nodes,
+        span,
+        Type::Int,
+        EffectFacts::PURE,
+        Vec::new(),
+        Op::Int(error.span.map_or(-1, |span| i64::from(span.offset))),
+    );
+    let document_len = push_node(
+        nodes,
+        span,
+        Type::Int,
+        EffectFacts::PURE,
+        Vec::new(),
+        Op::Int(error.span.map_or(-1, |span| i64::from(span.len))),
+    );
+    let ty = decode_error_type();
+    LoweredValue {
+        node: push_node(
+            nodes,
+            span,
+            ty.clone(),
+            EffectFacts::PURE,
+            vec![kind, path, document_offset, document_len],
+            Op::Record,
+        ),
+        ty,
+    }
+}
+
+/// Wrap a value in a `Result<T, DecodeError>` variant (`Ok`/`Err`).
+fn lower_result_variant(
+    nodes: &mut Vec<Node>,
+    payload: LoweredValue,
+    variant: u32,
+    result_ty: &Type,
+    span: Span,
+) -> LoweredValue {
+    LoweredValue {
+        node: push_node(
+            nodes,
+            span,
+            result_ty.clone(),
+            EffectFacts::PURE,
+            vec![payload.node],
+            Op::Variant { variant },
+        ),
+        ty: result_ty.clone(),
+    }
+}
+
+/// Project the rendered `message` String of a `DecodeError` value. The message
+/// is a presentation projection over the structural fields — `"<kind> at
+/// <path>"` — computed from the stored discriminant and field path, so it
+/// carries no identity of its own.
+fn lower_decode_error_message(
+    nodes: &mut Vec<Node>,
+    receiver: &LoweredValue,
+    span: Span,
+) -> LoweredValue {
+    let kind = push_node(
+        nodes,
+        span,
+        Type::String,
+        EffectFacts::PURE,
+        vec![receiver.node],
+        Op::Project {
+            index: DECODE_ERROR_KIND_FIELD,
+        },
+    );
+    let path = push_node(
+        nodes,
+        span,
+        Type::String,
+        EffectFacts::PURE,
+        vec![receiver.node],
+        Op::Project {
+            index: DECODE_ERROR_PATH_FIELD,
+        },
+    );
+    let separator = push_string_literal(nodes, span, " at ".to_owned());
+    let prefix = push_node(
+        nodes,
+        span,
+        Type::String,
+        EffectFacts::PURE,
+        vec![kind, separator],
+        Op::StringConcat,
+    );
+    LoweredValue {
+        node: push_node(
+            nodes,
+            span,
+            Type::String,
+            EffectFacts::PURE,
+            vec![prefix, path],
+            Op::StringConcat,
+        ),
+        ty: Type::String,
+    }
+}
+
+/// Lower `try_json_decode<T>(doc)` to a `Result<T, DecodeError>`. On a
+/// compile-time-constant document this is the **constant fold** of the runtime
+/// doc-parse primitive: the decode is run once at compile time and its success
+/// or typed-failure value is emitted as ordinary typed construction, provably
+/// the same value the runtime primitive produces for that document.
+fn lower_try_decode(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    call: &ast::Call,
+) -> Result<LoweredValue, Diagnostics> {
+    let format = try_decode_format(&call.callee.value).expect("try-decode intrinsic name");
+    if call.named_args.is_some() {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            call.span,
+            "named arguments on a decode call",
+        )));
+    }
+    check_arity(call, 1)?;
+    let Some(type_args) = &call.type_args else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            call.span,
+            "try_json_decode without a target type application",
+        )));
+    };
+    if type_args.args.len() != 1 {
+        return Err(invalid_arity(type_args.span, 1, type_args.args.len()));
+    }
+    let target = lower_declared_type(&type_args.args[0], context.types)?;
+    let result_ty = Type::result(target.clone(), decode_error_type());
+
+    let ast::Expr::Str(document) = &call.args.args[0] else {
+        let document = lower_value_expected(
+            nodes,
+            bindings,
+            context,
+            &call.args.args[0],
+            Some(&Type::String),
+        )?;
+        require_type(&document, &Type::String, expr_span(&call.args.args[0]))?;
+        return Ok(LoweredValue {
+            node: push_node(
+                nodes,
+                call.span,
+                result_ty.clone(),
+                EffectFacts::PURE,
+                vec![document.node],
+                Op::Decode { format, target },
+            ),
+            ty: result_ty,
+        });
+    };
+
+    // Constant fold: decode the literal once and emit the resulting Result value.
+    match decode::decode(format, &document.value, &target) {
+        Ok(decoded) => {
+            let value = lower_decoded_value(nodes, &decoded, &target, call.span)?;
+            Ok(lower_result_variant(
+                nodes,
+                value,
+                RESULT_OK_VARIANT,
+                &result_ty,
+                call.span,
+            ))
+        }
+        Err(error) => {
+            let value = lower_decode_error_value(nodes, &error, call.span);
+            Ok(lower_result_variant(
+                nodes,
+                value,
+                RESULT_ERR_VARIANT,
+                &result_ty,
+                call.span,
+            ))
+        }
+    }
+}
+
 fn lower_decode(
     nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
     call: &ast::Call,
     expected: Option<&Type>,
 ) -> Result<LoweredValue, Diagnostics> {
@@ -4086,11 +4905,28 @@ fn lower_decode(
         return Err(runtime_decode_unavailable(call.span, format, None));
     };
     let ast::Expr::Str(document) = &call.args.args[0] else {
-        return Err(runtime_decode_unavailable(
-            expr_span(&call.args.args[0]),
-            format,
-            Some(target),
-        ));
+        let document = lower_value_expected(
+            nodes,
+            bindings,
+            context,
+            &call.args.args[0],
+            Some(&Type::String),
+        )?;
+        require_type(&document, &Type::String, expr_span(&call.args.args[0]))?;
+        return Ok(LoweredValue {
+            node: push_node(
+                nodes,
+                call.span,
+                target.clone(),
+                EffectFacts::PURE,
+                vec![document.node],
+                Op::Decode {
+                    format,
+                    target: target.clone(),
+                },
+            ),
+            ty: target.clone(),
+        });
     };
     let decoded = decode::decode(format, &document.value, target)
         .map_err(|error| decode_failed_diagnostic(call.span, format, target, &error))?;
@@ -4276,6 +5112,8 @@ fn collect_pattern_names(pattern: &ast::Pattern, out: &mut BTreeSet<String>) {
             }
         }
         ast::Pattern::Some(some) => collect_pattern_names(&some.payload, out),
+        ast::Pattern::Ok(ok) => collect_pattern_names(&ok.payload, out),
+        ast::Pattern::Err(err) => collect_pattern_names(&err.payload, out),
         ast::Pattern::Variant(variant) => {
             if let Some(payload) = &variant.tuple_payload {
                 for element in &payload.elems {
@@ -4394,6 +5232,18 @@ fn collect_free_idents_expr(
             }
         }
         ast::Expr::Field(field) => collect_free_idents_expr(&field.receiver, bound, out),
+        // A command tag is a value reference to a capability binding.
+        ast::Expr::Command(command) => {
+            if !bound.contains(&command.tag.value) {
+                out.insert(command.tag.value.clone());
+            }
+        }
+        ast::Expr::Exec(exec) => {
+            if !bound.contains(&exec.command.tag.value) {
+                out.insert(exec.command.tag.value.clone());
+            }
+        }
+        ast::Expr::Try(try_expr) => collect_free_idents_expr(&try_expr.value, bound, out),
         ast::Expr::Variant(variant) => {
             if let Some(payload) = &variant.tuple_payload {
                 for argument in &payload.args {
@@ -5183,6 +6033,9 @@ fn expr_references_name(expression: &ast::Expr, name: &str) -> bool {
         | ast::Expr::Bool(_) => false,
         ast::Expr::Paren(paren) => expr_references_name(&paren.inner, name),
         ast::Expr::Unary(unary) => expr_references_name(&unary.value, name),
+        ast::Expr::Command(command) => command.tag.value == name,
+        ast::Expr::Exec(exec) => exec.command.tag.value == name,
+        ast::Expr::Try(try_expr) => expr_references_name(&try_expr.value, name),
         ast::Expr::Binary(binary) => {
             expr_references_name(&binary.left, name) || expr_references_name(&binary.right, name)
         }
@@ -6397,6 +7250,14 @@ fn lower_ordered_pattern(
             pattern.span,
             "guarded option pattern",
         ))),
+        ast::Pattern::Ok(pattern) => Err(Diagnostics::one(Diagnostic::unsupported(
+            pattern.span,
+            "guarded result pattern",
+        ))),
+        ast::Pattern::Err(pattern) => Err(Diagnostics::one(Diagnostic::unsupported(
+            pattern.span,
+            "guarded result pattern",
+        ))),
         ast::Pattern::None(span) => Err(Diagnostics::one(Diagnostic::unsupported(
             *span,
             "guarded option pattern",
@@ -6491,6 +7352,8 @@ fn pattern_span(pattern: &ast::Pattern) -> Span {
     match pattern {
         ast::Pattern::Some(pattern) => pattern.span,
         ast::Pattern::None(span) => *span,
+        ast::Pattern::Ok(pattern) => pattern.span,
+        ast::Pattern::Err(pattern) => pattern.span,
         ast::Pattern::Record(pattern) => pattern.span,
         ast::Pattern::Variant(pattern) => pattern.span,
         ast::Pattern::Binding(pattern) => pattern.span,
@@ -6670,6 +7533,8 @@ fn find_variant<'a>(
 enum EnumPattern<'a> {
     Some(&'a ast::SomePattern),
     None(Span),
+    Ok(&'a ast::OkPattern),
+    Err(&'a ast::ErrPattern),
     Variant(&'a ast::VariantPattern),
     Record(&'a ast::RecordPattern),
 }
@@ -6678,6 +7543,8 @@ fn enum_pattern(pattern: &ast::Pattern) -> Option<EnumPattern<'_>> {
     match pattern {
         ast::Pattern::Some(pattern) => Some(EnumPattern::Some(pattern)),
         ast::Pattern::None(span) => Some(EnumPattern::None(*span)),
+        ast::Pattern::Ok(pattern) => Some(EnumPattern::Ok(pattern)),
+        ast::Pattern::Err(pattern) => Some(EnumPattern::Err(pattern)),
         ast::Pattern::Variant(pattern) => Some(EnumPattern::Variant(pattern)),
         ast::Pattern::Record(pattern) => Some(EnumPattern::Record(pattern)),
         _ => None,
@@ -6688,6 +7555,8 @@ fn enum_pattern_span(pattern: EnumPattern<'_>) -> Span {
     match pattern {
         EnumPattern::Some(pattern) => pattern.span,
         EnumPattern::None(span) => span,
+        EnumPattern::Ok(pattern) => pattern.span,
+        EnumPattern::Err(pattern) => pattern.span,
         EnumPattern::Variant(pattern) => pattern.span,
         EnumPattern::Record(pattern) => pattern.span,
     }
@@ -6720,6 +7589,34 @@ fn find_enum_pattern_variant<'a>(
                 OPTION_NONE_VARIANT as usize,
                 &enumeration.variants[OPTION_NONE_VARIANT as usize],
                 span,
+            ))
+        }
+        EnumPattern::Ok(pattern) => {
+            if enumeration.result_inner().is_none() {
+                return Err(type_mismatch(
+                    pattern.span,
+                    "Result<_, _>",
+                    enumeration.name.clone(),
+                ));
+            }
+            Ok((
+                RESULT_OK_VARIANT as usize,
+                &enumeration.variants[RESULT_OK_VARIANT as usize],
+                pattern.span,
+            ))
+        }
+        EnumPattern::Err(pattern) => {
+            if enumeration.result_inner().is_none() {
+                return Err(type_mismatch(
+                    pattern.span,
+                    "Result<_, _>",
+                    enumeration.name.clone(),
+                ));
+            }
+            Ok((
+                RESULT_ERR_VARIANT as usize,
+                &enumeration.variants[RESULT_ERR_VARIANT as usize],
+                pattern.span,
             ))
         }
         EnumPattern::Variant(pattern) => {
@@ -6786,6 +7683,28 @@ fn bind_enum_pattern(
             bind_irrefutable_pattern(nodes, bindings, &pattern.payload, &projected)
         }
         (EnumPattern::None(_), VariantPayload::Unit) => Ok(()),
+        (EnumPattern::Ok(pattern), VariantPayload::Tuple(types)) if types.len() == 1 => {
+            let projected = project_variant_field(
+                nodes,
+                scrutinee,
+                variant_index,
+                0,
+                &types[0],
+                pattern_span(&pattern.payload),
+            )?;
+            bind_irrefutable_pattern(nodes, bindings, &pattern.payload, &projected)
+        }
+        (EnumPattern::Err(pattern), VariantPayload::Tuple(types)) if types.len() == 1 => {
+            let projected = project_variant_field(
+                nodes,
+                scrutinee,
+                variant_index,
+                0,
+                &types[0],
+                pattern_span(&pattern.payload),
+            )?;
+            bind_irrefutable_pattern(nodes, bindings, &pattern.payload, &projected)
+        }
         (EnumPattern::Variant(pattern), VariantPayload::Unit)
             if pattern.tuple_payload.is_none() =>
         {
@@ -6951,6 +7870,154 @@ fn expr_span_of_named(named: &ast::WhereArgs, name: &str) -> Span {
         .map_or(named.span, expr_span)
 }
 
+/// Resolve a command template's capability tag. The tag is an ordinary value
+/// reference — a root injects a capability value or a solve returns one; there
+/// is no ambient tool namespace to fall back to — so a tag that names nothing
+/// is an unbound identifier, not a special capability error.
+///
+/// r[impl machine.primitive.capabilities-by-identity]
+fn resolve_command_capability(
+    bindings: &BTreeMap<String, LoweredValue>,
+    command: &ast::CommandExpr,
+) -> Result<LoweredValue, Diagnostics> {
+    bindings.get(&command.tag.value).cloned().ok_or_else(|| {
+        Diagnostics::one(Diagnostic {
+            code: DiagnosticCode::UnboundIdentifier,
+            primary: command.tag.span,
+            labels: Vec::new(),
+            payload: DiagnosticPayload::Name {
+                name: command.tag.value.clone(),
+            },
+        })
+    })
+}
+
+/// A bare command template names a `Command<A>` value. Constructing one
+/// without demanding it awaits a later rung; the capability tag still resolves
+/// first so an undeclared tool fails as an unbound identifier.
+fn lower_command(
+    _nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    _context: &ModuleContext<'_>,
+    command: &ast::CommandExpr,
+) -> Result<LoweredValue, Diagnostics> {
+    let _capability = resolve_command_capability(bindings, command)?;
+    Err(Diagnostics::one(Diagnostic::unsupported(
+        command.span,
+        "a command value outside `exec`",
+    )))
+}
+
+/// The ratchet capability packages' command grammar: whitespace-separated
+/// argv elements; a double-quoted element keeps interior whitespace and drops
+/// its quotes. The band's templates are fully literal (no `{expr}` splices
+/// yet), so the parse is closed at compile time and the argv enters the
+/// canonical recipe.
+///
+/// r[impl lang.command.typed]
+fn parse_command_template(template: &Spanned<String>) -> Result<Vec<String>, Diagnostics> {
+    let text = template
+        .value
+        .strip_prefix('`')
+        .and_then(|rest| rest.strip_suffix('`'))
+        .unwrap_or(&template.value);
+    let mut argv = Vec::new();
+    let mut chars = text.chars().peekable();
+    loop {
+        while chars.peek().is_some_and(|c| c.is_whitespace()) {
+            chars.next();
+        }
+        let Some(&next) = chars.peek() else {
+            break;
+        };
+        if next == '"' {
+            chars.next();
+            let mut element = String::new();
+            loop {
+                match chars.next() {
+                    Some('"') => break,
+                    Some(ch) => element.push(ch),
+                    None => {
+                        return Err(Diagnostics::one(Diagnostic::unsupported(
+                            template.span,
+                            "unterminated quoted command argument",
+                        )));
+                    }
+                }
+            }
+            argv.push(element);
+        } else {
+            let mut element = String::new();
+            while let Some(&ch) = chars.peek() {
+                if ch.is_whitespace() {
+                    break;
+                }
+                element.push(ch);
+                chars.next();
+            }
+            argv.push(element);
+        }
+    }
+    Ok(argv)
+}
+
+/// `exec command` — an effect demand. The capability value is the node's only
+/// input, so its identity enters the demand preimage; the parsed argv enters
+/// the canonical recipe. The result is the `ExecOutcome` value; a nonzero exit
+/// is a typed language failure at this node's site.
+fn lower_exec(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    _context: &ModuleContext<'_>,
+    exec: &ast::ExecExpr,
+) -> Result<LoweredValue, Diagnostics> {
+    let capability = resolve_command_capability(bindings, &exec.command)?;
+    if !is_capability_type(&capability.ty) {
+        return Err(type_mismatch(
+            exec.command.tag.span,
+            "a capability value",
+            capability.ty.name(),
+        ));
+    }
+    let argv = parse_command_template(&exec.command.template)?;
+    let ty = exec_outcome_type();
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            exec.span,
+            ty.clone(),
+            EffectFacts::EFFECT,
+            vec![capability.node],
+            Op::Exec { argv },
+        ),
+        ty,
+    })
+}
+
+fn lower_try(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    try_expr: &ast::TryExpr,
+) -> Result<LoweredValue, Diagnostics> {
+    let operand = lower_value(nodes, bindings, context, &try_expr.value)?;
+    let ty = Type::Enum(EnumType::result(
+        operand.ty.clone(),
+        EnumType::failure_value(),
+    ));
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            try_expr.span,
+            ty.clone(),
+            EffectFacts::PURE,
+            vec![operand.node],
+            Op::Try,
+        ),
+        ty,
+    })
+}
+
 fn lower_call(
     nodes: &mut Vec<Node>,
     bindings: &BTreeMap<String, LoweredValue>,
@@ -6979,6 +8046,10 @@ fn lower_direct_call(
             call.span,
             "calling a test function",
         )));
+    }
+
+    if let Some(value) = lower_lazy_mini_solve_call(nodes, bindings, context, call, signature)? {
+        return Ok(value);
     }
 
     let positional = signature
@@ -7061,6 +8132,155 @@ fn lower_direct_call(
         ),
         ty: signature.return_type.clone(),
     })
+}
+
+fn lower_lazy_mini_solve_call(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    call: &ast::Call,
+    signature: &FunctionSignature,
+) -> Result<Option<LoweredValue>, Diagnostics> {
+    if call.callee.value != "mini_solve" || !is_lazy_solver_signature(signature) {
+        return Ok(None);
+    }
+    let positional = signature
+        .parameters
+        .iter()
+        .find(|parameter| parameter.kind == ParameterKind::Positional)
+        .expect("lazy mini_solve signature has one positional parameter");
+    if call.args.args.len() != 1 {
+        return Err(invalid_arity(call.span, 1, call.args.args.len()));
+    }
+    let universe = lower_value_expected(
+        nodes,
+        bindings,
+        context,
+        &call.args.args[0],
+        Some(&positional.ty),
+    )?;
+    require_type(&universe, &positional.ty, expr_span(&call.args.args[0]))?;
+
+    let named_args = call.named_args.as_ref().ok_or_else(|| {
+        invalid_arity(call.span, signature.parameters.len(), call.args.args.len())
+    })?;
+    if named_args.fields.len() != 1 {
+        return Err(invalid_arity(
+            named_args.span,
+            signature.parameters.len(),
+            call.args.args.len() + named_args.fields.len(),
+        ));
+    }
+    let field = &named_args.fields[0];
+    if field.name.value != "requirements" {
+        return Err(Diagnostics::one(Diagnostic {
+            code: DiagnosticCode::UnknownName,
+            primary: field.name.span,
+            labels: Vec::new(),
+            payload: DiagnosticPayload::Name {
+                name: field.name.value.clone(),
+            },
+        }));
+    }
+    let parameter = signature
+        .parameters
+        .iter()
+        .find(|parameter| {
+            parameter.kind == ParameterKind::Named && parameter.name == "requirements"
+        })
+        .expect("lazy mini_solve signature has a requirements parameter");
+    let (descriptor, _requirements) = if field
+        .value
+        .as_ref()
+        .is_some_and(is_fixture_requirements_call)
+    {
+        (MiniSolveRequirements::FixtureWorkspace, None)
+    } else {
+        let requirements = if let Some(expression) = &field.value {
+            lower_value_expected(nodes, bindings, context, expression, Some(&parameter.ty))?
+        } else {
+            lookup_binding(bindings, &field.name.value, field.name.span)?
+        };
+        require_type(&requirements, &parameter.ty, field.span)?;
+        (
+            mini_solve_requirements_descriptor(nodes, requirements.node, field.span)?,
+            Some(requirements),
+        )
+    };
+
+    Ok(Some(LoweredValue {
+        node: push_node(
+            nodes,
+            call.span,
+            signature.return_type.clone(),
+            EffectFacts::EFFECT,
+            Vec::new(),
+            Op::MiniSolve {
+                function: signature.id,
+                requirements: descriptor,
+            },
+        ),
+        ty: signature.return_type.clone(),
+    }))
+}
+
+fn is_fixture_requirements_call(expression: &ast::Expr) -> bool {
+    matches!(expression, ast::Expr::MethodCall(call) if call.name.value == "requirements")
+}
+
+fn mini_solve_requirements_descriptor(
+    nodes: &[Node],
+    node: NodeId,
+    span: Span,
+) -> Result<MiniSolveRequirements, Diagnostics> {
+    let map = &nodes[node.0 as usize];
+    let Op::Map = map.op else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            span,
+            "mini_solve lazy requirements descriptor",
+        )));
+    };
+    let mut packages = Vec::with_capacity(map.inputs.len() / 2);
+    for pair in map.inputs.chunks_exact(2) {
+        let key = &nodes[pair[0].0 as usize];
+        let Op::String(package) = &key.op else {
+            return Err(Diagnostics::one(Diagnostic::unsupported(
+                key.span,
+                "mini_solve lazy requirements use literal package names",
+            )));
+        };
+        packages.push(package.clone());
+    }
+    packages.sort();
+    packages.dedup();
+    Ok(MiniSolveRequirements::Static { packages })
+}
+
+fn is_lazy_solver_signature(signature: &FunctionSignature) -> bool {
+    if signature.parameters.len() != 2 {
+        return false;
+    }
+    let Some(universe) = signature
+        .parameters
+        .iter()
+        .find(|parameter| parameter.kind == ParameterKind::Positional)
+    else {
+        return false;
+    };
+    let Type::Record(record) = &universe.ty else {
+        return false;
+    };
+    if record.name != "PackageUniverse" {
+        return false;
+    }
+    if !matches!(record.fields.as_slice(), [field] if field.name == "marker" && field.ty == Type::Int)
+    {
+        return false;
+    }
+    signature
+        .parameters
+        .iter()
+        .any(|parameter| parameter.kind == ParameterKind::Named && parameter.name == "requirements")
 }
 
 fn lower_value_call(
@@ -7268,6 +8488,54 @@ fn lower_binary(
             require_type(&right, &Type::Int, expr_span(&binary.right))?;
             (Type::Int, Op::Mul)
         }
+        "/" if matches!(
+            left.ty,
+            Type::Extern(ExternKind::Tree) | Type::Extern(ExternKind::TreeEntry)
+        ) =>
+        {
+            // Tree projection: one Name segment (a string literal) or a Path
+            // (projection through several maps). The projection resolves
+            // lazily; undemanded siblings are never read.
+            let projector = match &right.ty {
+                Type::String => {
+                    let literal = nodes
+                        .iter()
+                        .find(|node| node.id == right.node)
+                        .and_then(|node| match &node.op {
+                            Op::String(value) => Some(value.clone()),
+                            _ => None,
+                        })
+                        .ok_or_else(|| {
+                            Diagnostics::one(Diagnostic::unsupported(
+                                expr_span(&binary.right),
+                                "dynamic tree Name segments",
+                            ))
+                        })?;
+                    validate_path_segment(&literal, expr_span(&binary.right))?;
+                    right.node
+                }
+                Type::Path => right.node,
+                _ => {
+                    return Err(type_mismatch(
+                        expr_span(&binary.right),
+                        "a Name segment literal or Path",
+                        right.ty.name(),
+                    ));
+                }
+            };
+            let ty = Type::Extern(ExternKind::TreeEntry);
+            return Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    binary.span,
+                    ty.clone(),
+                    EffectFacts::EFFECT,
+                    vec![left.node, projector],
+                    Op::TreeProject,
+                ),
+                ty,
+            });
+        }
         "/" if left.ty == Type::Path => {
             let ast::Expr::Str(segment) = &binary.right else {
                 return Err(Diagnostics::one(Diagnostic::unsupported(
@@ -7466,60 +8734,249 @@ fn push_equality_condition(
     right: &LoweredValue,
     negate: bool,
 ) -> NodeId {
-    let equal = match &left.ty {
-        Type::Map { key, value } => {
-            let key_array = Type::array(key.as_ref().clone());
-            let value_array = Type::array(value.as_ref().clone());
-            let keys_left = push_project(nodes, span, left.node, key_array.clone(), Op::MapKeys);
-            let keys_right = push_project(nodes, span, right.node, key_array, Op::MapKeys);
-            let keys_equal = push_eq(nodes, span, keys_left, keys_right);
-            // The value projections and their comparison form the `then` region
-            // of a short-circuiting `keys_equal && values_equal`.
-            let values_start = nodes.len();
-            let values_left =
-                push_project(nodes, span, left.node, value_array.clone(), Op::MapValues);
-            let values_right = push_project(nodes, span, right.node, value_array, Op::MapValues);
-            let values_equal = push_eq(nodes, span, values_left, values_right);
-            let consequent = control_region(nodes, values_start, values_equal);
-            let alternative_start = nodes.len();
-            let alternative_value = lower_bool_constant(nodes, span, false);
-            let alternative = control_region(nodes, alternative_start, alternative_value.node);
-            push_node(
-                nodes,
-                span,
-                Type::Bool,
-                EffectFacts::PURE,
-                vec![keys_equal],
-                Op::If {
-                    consequent,
-                    alternative,
-                },
-            )
-        }
-        Type::Set(element) => {
-            let element_array = Type::array(element.as_ref().clone());
-            let left_values =
-                push_project(nodes, span, left.node, element_array.clone(), Op::SetValues);
-            let right_values = push_project(nodes, span, right.node, element_array, Op::SetValues);
-            push_eq(nodes, span, left_values, right_values)
-        }
-        _ => {
-            return push_node(
-                nodes,
-                span,
-                Type::Bool,
-                EffectFacts::PURE,
-                vec![left.node, right.node],
-                if negate { Op::Ne } else { Op::Eq },
-            );
-        }
-    };
+    if left.ty.equality_is_structural() {
+        return push_node(
+            nodes,
+            span,
+            Type::Bool,
+            EffectFacts::PURE,
+            vec![left.node, right.node],
+            if negate { Op::Ne } else { Op::Eq },
+        );
+    }
+    let equal = push_structural_equality(nodes, span, left.node, right.node, &left.ty);
     if negate {
         let alternative = lower_bool_constant(nodes, span, false);
         push_eq(nodes, span, equal, alternative.node)
     } else {
         equal
     }
+}
+
+/// One Bool node deciding `left == right` for `ty`, decomposed at compile time
+/// when the type's in-frame equality is not one structural word walk. Maps and
+/// Sets compare their canonical key/value array projections; a non-structural
+/// enum compares variant tags and, only inside the both-same-variant region,
+/// each payload field recursively; non-structural tuples and records compare
+/// field by field with short-circuiting conjunction. Structural types remain a
+/// single `Op::Eq`. Every guarded projection lives inside its `If` region, so a
+/// mismatched variant never projects a payload and a failed prefix never
+/// compares a later field. This builds an ordinary pure recipe — no new
+/// execution primitive, island, or demand shape.
+fn push_structural_equality(
+    nodes: &mut Vec<Node>,
+    span: Span,
+    left: NodeId,
+    right: NodeId,
+    ty: &Type,
+) -> NodeId {
+    if ty.equality_is_structural() {
+        return push_eq(nodes, span, left, right);
+    }
+    match ty {
+        Type::Map { key, value } => {
+            let key_array = Type::array(key.as_ref().clone());
+            let value_array = Type::array(value.as_ref().clone());
+            let keys_left = push_project(nodes, span, left, key_array.clone(), Op::MapKeys);
+            let keys_right = push_project(nodes, span, right, key_array.clone(), Op::MapKeys);
+            let keys_equal =
+                push_structural_equality(nodes, span, keys_left, keys_right, &key_array);
+            // The value projections and their comparison form the `then` region
+            // of a short-circuiting `keys_equal && values_equal`.
+            let values_start = nodes.len();
+            let values_left = push_project(nodes, span, left, value_array.clone(), Op::MapValues);
+            let values_right = push_project(nodes, span, right, value_array.clone(), Op::MapValues);
+            let values_equal =
+                push_structural_equality(nodes, span, values_left, values_right, &value_array);
+            push_guarded_equality(nodes, span, keys_equal, values_start, values_equal)
+        }
+        Type::Set(element) => {
+            let element_array = Type::array(element.as_ref().clone());
+            let left_values = push_project(nodes, span, left, element_array.clone(), Op::SetValues);
+            let right_values =
+                push_project(nodes, span, right, element_array.clone(), Op::SetValues);
+            push_structural_equality(nodes, span, left_values, right_values, &element_array)
+        }
+        Type::Enum(enumeration) => {
+            let enumeration = enumeration.clone();
+            push_enum_equality(nodes, span, left, right, &enumeration, 0)
+        }
+        Type::Tuple(elements) => {
+            let elements = elements.clone();
+            push_field_conjunction(nodes, span, &elements, 0, &mut |nodes, index, ty| {
+                (
+                    push_project(nodes, span, left, ty.clone(), Op::Project { index }),
+                    push_project(nodes, span, right, ty.clone(), Op::Project { index }),
+                )
+            })
+        }
+        Type::Record(record) => {
+            let fields: Vec<Type> = record.fields.iter().map(|field| field.ty.clone()).collect();
+            push_field_conjunction(nodes, span, &fields, 0, &mut |nodes, index, ty| {
+                (
+                    push_project(nodes, span, left, ty.clone(), Op::Project { index }),
+                    push_project(nodes, span, right, ty.clone(), Op::Project { index }),
+                )
+            })
+        }
+        // Functions, streams, and other non-value shapes keep today's typed
+        // lowering boundary rather than inventing an equality for them.
+        _ => push_eq(nodes, span, left, right),
+    }
+}
+
+/// `if condition { <consequent region from `consequent_start`> } else { false }`
+/// — the short-circuit conjunction step every decomposed equality uses. The
+/// consequent region is captured before the `false` constant is pushed, so the
+/// guarded projections belong to exactly one region.
+fn push_guarded_equality(
+    nodes: &mut Vec<Node>,
+    span: Span,
+    condition: NodeId,
+    consequent_start: usize,
+    consequent_output: NodeId,
+) -> NodeId {
+    let consequent = control_region(nodes, consequent_start, consequent_output);
+    let alternative_start = nodes.len();
+    let alternative_value = lower_bool_constant(nodes, span, false);
+    let alternative = control_region(nodes, alternative_start, alternative_value.node);
+    push_node(
+        nodes,
+        span,
+        Type::Bool,
+        EffectFacts::PURE,
+        vec![condition],
+        Op::If {
+            consequent,
+            alternative,
+        },
+    )
+}
+
+/// Variant-tag chain for a non-structural enum equality: for each variant, when
+/// the left value holds it, the right value must hold it too and the payloads
+/// must compare equal inside that doubly-guarded region. The final variant needs
+/// no left-tag test — exhaustiveness makes it the only remaining case.
+fn push_enum_equality(
+    nodes: &mut Vec<Node>,
+    span: Span,
+    left: NodeId,
+    right: NodeId,
+    enumeration: &EnumType,
+    index: usize,
+) -> NodeId {
+    let variant = u32::try_from(index).expect("variant index fits u32");
+    let last = index + 1 == enumeration.variants.len();
+    let both_here = |nodes: &mut Vec<Node>| -> NodeId {
+        let right_is = push_node(
+            nodes,
+            span,
+            Type::Bool,
+            EffectFacts::PURE,
+            vec![right],
+            Op::IsVariant { variant },
+        );
+        let payload_start = nodes.len();
+        let payload_equal = push_variant_payload_equality(
+            nodes,
+            span,
+            left,
+            right,
+            variant,
+            &enumeration.variants[index].payload,
+        );
+        push_guarded_equality(nodes, span, right_is, payload_start, payload_equal)
+    };
+    if last {
+        return both_here(nodes);
+    }
+    let left_is = push_node(
+        nodes,
+        span,
+        Type::Bool,
+        EffectFacts::PURE,
+        vec![left],
+        Op::IsVariant { variant },
+    );
+    let consequent_start = nodes.len();
+    let here = both_here(nodes);
+    let consequent = control_region(nodes, consequent_start, here);
+    let alternative_start = nodes.len();
+    let rest = push_enum_equality(nodes, span, left, right, enumeration, index + 1);
+    let alternative = control_region(nodes, alternative_start, rest);
+    push_node(
+        nodes,
+        span,
+        Type::Bool,
+        EffectFacts::PURE,
+        vec![left_is],
+        Op::If {
+            consequent,
+            alternative,
+        },
+    )
+}
+
+/// Field-wise payload comparison for one shared variant. Both values are known
+/// to hold `variant` where this is emitted, so each `VariantProject` is safe. A
+/// unit payload is trivially equal.
+fn push_variant_payload_equality(
+    nodes: &mut Vec<Node>,
+    span: Span,
+    left: NodeId,
+    right: NodeId,
+    variant: u32,
+    payload: &VariantPayload,
+) -> NodeId {
+    let field_types: Vec<Type> = match payload {
+        VariantPayload::Unit => Vec::new(),
+        VariantPayload::Tuple(fields) => fields.clone(),
+        VariantPayload::Record(fields) => fields.iter().map(|field| field.ty.clone()).collect(),
+    };
+    push_field_conjunction(nodes, span, &field_types, 0, &mut |nodes, field, ty| {
+        (
+            push_project(
+                nodes,
+                span,
+                left,
+                ty.clone(),
+                Op::VariantProject { variant, field },
+            ),
+            push_project(
+                nodes,
+                span,
+                right,
+                ty.clone(),
+                Op::VariantProject { variant, field },
+            ),
+        )
+    })
+}
+
+type FieldProject<'a> = dyn FnMut(&mut Vec<Node>, u32, &Type) -> (NodeId, NodeId) + 'a;
+
+/// Short-circuit conjunction over per-field equalities: field `i + 1` is
+/// projected and compared only inside the region where field `i` already
+/// compared equal. An empty field list is `true`.
+fn push_field_conjunction(
+    nodes: &mut Vec<Node>,
+    span: Span,
+    field_types: &[Type],
+    index: usize,
+    project: &mut FieldProject<'_>,
+) -> NodeId {
+    let Some(ty) = field_types.get(index) else {
+        return lower_bool_constant(nodes, span, true).node;
+    };
+    let field = u32::try_from(index).expect("field index fits u32");
+    let (left, right) = project(nodes, field, ty);
+    let field_equal = push_structural_equality(nodes, span, left, right, ty);
+    if index + 1 == field_types.len() {
+        return field_equal;
+    }
+    let rest_start = nodes.len();
+    let rest = push_field_conjunction(nodes, span, field_types, index + 1, project);
+    push_guarded_equality(nodes, span, field_equal, rest_start, rest)
 }
 
 fn push_project(nodes: &mut Vec<Node>, span: Span, source: NodeId, ty: Type, op: Op) -> NodeId {
@@ -7689,6 +9146,9 @@ fn expr_span(expression: &ast::Expr) -> Span {
         ast::Expr::Record(value) => value.span,
         ast::Expr::Tuple(value) => value.span,
         ast::Expr::Paren(value) => value.span,
+        ast::Expr::Exec(value) => value.span,
+        ast::Expr::Command(value) => value.span,
+        ast::Expr::Try(value) => value.span,
         ast::Expr::Identifier(value) => value.span,
         ast::Expr::Path(value) => value.span,
         ast::Expr::Str(value) => value.span,

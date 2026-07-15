@@ -9,6 +9,8 @@ use crate::support::Span;
 pub enum DiagnosticCode {
     ParseRejected,
     DuplicateDefinition,
+    /// An `import` of a non-`pub` item from another module (rung 107).
+    PrivateImport,
     InvalidTestSignature,
     UnsupportedExpression,
     TypeMismatch,
@@ -26,6 +28,10 @@ pub enum DiagnosticCode {
     VariantPayloadMismatch,
     NonExhaustiveMatch,
     ExpressionStatement,
+    /// A command template's capability tag names nothing in scope: a test's
+    /// capabilities are parameters the harness supplies, so an undeclared tool
+    /// is an ordinary unbound identifier, not a special capability error.
+    UnboundIdentifier,
     UnusedMustUse,
     UnknownMethod,
     /// A compile-time constant-fold decode of a literal document failed: the
@@ -148,6 +154,11 @@ impl Diagnostic {
             }
             DiagnosticPayload::Name { name } => match self.code {
                 DiagnosticCode::UnknownMethod => format!("unknown method {name}"),
+                // The reject-rung contract renderings (107/109): the payload
+                // keeps the offending name; the message is the diagnostic.
+                DiagnosticCode::PrivateImport => "private".to_owned(),
+                DiagnosticCode::DuplicateDefinition => "duplicate name".to_owned(),
+                DiagnosticCode::UnboundIdentifier => format!("unbound identifier `{name}`"),
                 _ => name.clone(),
             },
             DiagnosticPayload::Type { expected, found } => match self.code {
