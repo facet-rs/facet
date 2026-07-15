@@ -99,3 +99,56 @@ fn unregistered_name_is_an_unknown_name() {
     let source = program("not_a_primitive where { text: \"x\" }");
     assert!(diagnostic_codes(&source).contains(&DiagnosticCode::UnknownName));
 }
+
+// --- Task 4: the real runtime -> compiler path ---
+
+use vix::runtime::primitive::{MemoPolicy, PrimitiveName, PrimitiveSet, RegistrationError};
+
+#[derive(facet::Facet)]
+struct AddRequest {
+    left: i64,
+    right: i64,
+}
+#[derive(facet::Facet)]
+struct AddResponse {
+    sum: i64,
+}
+
+#[test]
+fn a_registered_primitive_set_compiles_a_real_call() {
+    let mut set = PrimitiveSet::new();
+    set.register_function::<AddResponse, AddRequest, _>(
+        "add_numbers",
+        MemoPolicy::Hermetic,
+        |req: AddRequest| {
+            Ok(AddResponse {
+                sum: req.left + req.right,
+            })
+        },
+    )
+    .unwrap();
+    let manifest = set.compiler_manifest();
+    let source = "#[test]\nfn t() -> Stream<Check> {\n    let r = add_numbers where { left: 40, right: 2 };\n    yield expect_eq(r.sum, 42);\n}\n";
+    let compilation = Compiler::new()
+        .with_primitives(manifest)
+        .compile(source)
+        .expect("registered primitive call compiles");
+    assert!(
+        compilation
+            .module
+            .functions
+            .iter()
+            .flat_map(|function| function.nodes.iter())
+            .any(|node| matches!(node.op, Op::EffectRequest { .. })),
+        "the call lowers to an effect request",
+    );
+}
+
+#[test]
+fn a_primitive_cannot_take_a_reserved_builtin_name() {
+    // Precedence guard: a registered name can never shadow `range` (or any builtin).
+    assert!(matches!(
+        PrimitiveName::new("range"),
+        Err(RegistrationError::ReservedName { .. })
+    ));
+}

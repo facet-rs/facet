@@ -67,6 +67,15 @@ fn is_valid_primitive_name(name: &str) -> bool {
 pub struct PrimitiveId(pub Digest);
 
 impl PrimitiveId {
+    /// The VIR-embeddable form of this id: its 32 content bytes. `vir` cannot
+    /// name `PrimitiveId` (layering — r[machine.ir.vix-level]), so the compiler
+    /// carries this in `Op::EffectRequest` and the scheduler converts back in
+    /// phase 05.
+    #[must_use]
+    pub fn effect_id(&self) -> crate::vir::EffectId {
+        crate::vir::EffectId(self.0.0)
+    }
+
     #[must_use]
     pub fn derive(
         name: &PrimitiveName,

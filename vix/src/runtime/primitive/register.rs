@@ -112,6 +112,25 @@ impl PrimitiveSet {
     pub fn descriptors(&self) -> impl Iterator<Item = &PrimitiveDescriptor> {
         self.entries.values().map(|primitive| primitive.descriptor())
     }
+
+    /// Project the registered descriptors into a compiler manifest — vir types
+    /// and effect ids only, no handlers (r[machine.primitive.registered]). This
+    /// is the `runtime -> compiler` boundary; `compiler` never imports `runtime`.
+    #[must_use]
+    pub fn compiler_manifest(&self) -> crate::compiler::PrimitiveManifest {
+        let mut manifest = crate::compiler::PrimitiveManifest::new();
+        for descriptor in self.descriptors() {
+            manifest.insert(
+                descriptor.name.as_str(),
+                crate::compiler::PrimitiveSignature {
+                    effect: descriptor.id.effect_id(),
+                    request: descriptor.request.vix_type.clone(),
+                    response: descriptor.response.vix_type.clone(),
+                },
+            );
+        }
+        manifest
+    }
 }
 
 fn registered_schema<T: facet::Facet<'static>>() -> Result<RegisteredSchema, RegistrationError> {
