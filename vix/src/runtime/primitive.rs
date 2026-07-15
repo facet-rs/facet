@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use crate::schema::SchemaRef;
+use crate::schema::{SchemaPattern, SchemaRef};
 
 use super::{DemandKey, ReadObservation, ReadProjection, ReadWitness, Receipt, ValueId};
 
@@ -24,15 +24,15 @@ pub enum PrimitiveMemoPolicy {
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct PrimitiveDescriptor {
     pub id: PrimitiveId,
-    pub request_schema: SchemaRef,
-    pub response_schema: SchemaRef,
-    pub failure_schema: SchemaRef,
+    pub request_schema: SchemaPattern,
+    pub response_schema: SchemaPattern,
+    pub failure_schema: SchemaPattern,
     pub memo_policy: PrimitiveMemoPolicy,
     pub protocol_version: u32,
     /// Minimal declared capability types. FV-E3 enriches these into semantic
     /// admissibility constraints; concrete capabilities are always request
     /// values referenced by `ValueId`.
-    pub capability_schemas: Vec<SchemaRef>,
+    pub capability_schemas: Vec<SchemaPattern>,
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -103,6 +103,92 @@ pub trait EffectAuthority: Send + Sync {
     fn mint_mount_grant(&self, request: &ValueId) -> Result<ValueId, PrimitiveMachineError>;
 }
 
+#[derive(Default)]
+pub struct StagedEffectAuthority {
+    inputs: BTreeMap<ValueId, Vec<u8>>,
+    staged: Mutex<BTreeMap<ValueId, Vec<u8>>>,
+    events: Mutex<Vec<PrimitiveEvent>>,
+}
+
+impl StagedEffectAuthority {
+    #[must_use]
+    pub fn new(inputs: impl IntoIterator<Item = (ValueId, Vec<u8>)>) -> Self {
+        Self {
+            inputs: inputs.into_iter().collect(),
+            ..Self::default()
+        }
+    }
+
+    #[must_use]
+    pub fn staged_body(&self, identity: &ValueId) -> Option<Vec<u8>> {
+        self.staged
+            .lock()
+            .expect("staged authority mutex poisoned")
+            .get(identity)
+            .cloned()
+    }
+
+    #[must_use]
+    pub fn events(&self) -> Vec<PrimitiveEvent> {
+        self.events
+            .lock()
+            .expect("staged authority mutex poisoned")
+            .clone()
+    }
+}
+
+impl EffectAuthority for StagedEffectAuthority {
+    fn read(
+        &self,
+        source: &ValueId,
+        projection: &ReadProjection,
+    ) -> Result<WitnessedValue, PrimitiveMachineError> {
+        if !matches!(projection, ReadProjection::Whole) {
+            return Err(PrimitiveMachineError::AuthorityViolation {
+                detail: "staged authority only admits whole-value reads".to_owned(),
+            });
+        }
+        let bytes = if let Some(bytes) = self.inputs.get(source) {
+            bytes.clone()
+        } else {
+            self.staged
+                .lock()
+                .expect("staged authority mutex poisoned")
+                .get(source)
+                .cloned()
+                .ok_or_else(|| PrimitiveMachineError::Unavailable {
+                    detail: "staged effect input is absent".to_owned(),
+                })?
+        };
+        Ok(WitnessedValue {
+            identity: source.clone(),
+            bytes,
+            observation: ReadObservation::Value(source.clone()),
+        })
+    }
+
+    fn intern(&self, schema: &SchemaRef, bytes: &[u8]) -> Result<ValueId, PrimitiveMachineError> {
+        let identity = super::FramedNode::leaf(schema.clone(), bytes.to_vec()).identity();
+        self.staged
+            .lock()
+            .expect("staged authority mutex poisoned")
+            .insert(identity.clone(), bytes.to_vec());
+        Ok(identity)
+    }
+
+    fn emit(&self, event: PrimitiveEvent) -> Result<(), PrimitiveMachineError> {
+        self.events
+            .lock()
+            .expect("staged authority mutex poisoned")
+            .push(event);
+        Ok(())
+    }
+
+    fn mint_mount_grant(&self, request: &ValueId) -> Result<ValueId, PrimitiveMachineError> {
+        Ok(request.clone())
+    }
+}
+
 #[derive(Clone)]
 pub struct EffectCtx {
     demand: DemandKey,
@@ -126,6 +212,11 @@ impl EffectCtx {
             authority,
             transaction: Arc::new(Mutex::new(EffectTransaction::default())),
         }
+    }
+
+    #[must_use]
+    pub fn demand(&self) -> DemandKey {
+        self.demand
     }
 
     pub fn read(
@@ -380,6 +471,52 @@ pub struct PrimitiveRegistry {
     primitives: BTreeMap<PrimitiveId, Arc<dyn Primitive>>,
 }
 
+pub struct PrimitiveDispatcher {
+    registry: Arc<PrimitiveRegistry>,
+    in_flight: Mutex<BTreeMap<DemandKey, EffectTicket>>,
+}
+
+impl PrimitiveDispatcher {
+    #[must_use]
+    pub fn new(registry: Arc<PrimitiveRegistry>) -> Self {
+        Self {
+            registry,
+            in_flight: Mutex::new(BTreeMap::new()),
+        }
+    }
+
+    pub fn begin_or_join(
+        &self,
+        id: &PrimitiveId,
+        request: ValueId,
+        ctx: EffectCtx,
+    ) -> Result<EffectTicket, PrimitiveDispatchError> {
+        let demand = ctx.demand();
+        let mut in_flight = self.in_flight.lock().expect("dispatcher mutex poisoned");
+        if let Some(ticket) = in_flight.get(&demand) {
+            return Ok(ticket.clone());
+        }
+        let ticket = self.registry.begin(id, request, ctx)?;
+        in_flight.insert(demand, ticket.clone());
+        Ok(ticket)
+    }
+
+    pub fn retire(&self, demand: DemandKey) -> Option<EffectTicket> {
+        self.in_flight
+            .lock()
+            .expect("dispatcher mutex poisoned")
+            .remove(&demand)
+    }
+
+    #[must_use]
+    pub fn in_flight(&self) -> usize {
+        self.in_flight
+            .lock()
+            .expect("dispatcher mutex poisoned")
+            .len()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PrimitiveRegistrationError {
     Duplicate(PrimitiveId),
@@ -414,7 +551,11 @@ impl PrimitiveRegistry {
             .primitives
             .get(id)
             .ok_or_else(|| PrimitiveDispatchError::Unregistered(id.clone()))?;
-        if request.schema != primitive.descriptor().request_schema {
+        if !primitive
+            .descriptor()
+            .request_schema
+            .matches(&request.schema)
+        {
             return Err(PrimitiveDispatchError::RequestSchema {
                 primitive: id.clone(),
                 expected: primitive.descriptor().request_schema.clone(),
@@ -430,7 +571,7 @@ pub enum PrimitiveDispatchError {
     Unregistered(PrimitiveId),
     RequestSchema {
         primitive: PrimitiveId,
-        expected: SchemaRef,
+        expected: SchemaPattern,
         found: SchemaRef,
     },
 }

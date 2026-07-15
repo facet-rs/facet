@@ -1,11 +1,12 @@
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use vix::runtime::{
     EffectAuthority, EffectCtx, EffectTicket, FramedNode, JournalObservation, Primitive,
-    PrimitiveCompletion, PrimitiveDescriptor, PrimitiveDispatchError, PrimitiveEvent, PrimitiveId,
-    PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveRegistry, ReadObservation, ReadProjection,
-    TicketCompletionError, ValueId, WitnessedValue,
+    PrimitiveCompletion, PrimitiveDescriptor, PrimitiveDispatchError, PrimitiveDispatcher,
+    PrimitiveEvent, PrimitiveId, PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveRegistry,
+    ReadObservation, ReadProjection, TicketCompletionError, ValueId, WitnessedValue,
 };
 use vix::schema::SchemaRef;
 use vix::vir::Type;
@@ -68,6 +69,7 @@ impl EffectAuthority for MemoryAuthority {
 
 struct EchoPrimitive {
     descriptor: PrimitiveDescriptor,
+    begins: AtomicUsize,
 }
 
 impl Primitive for EchoPrimitive {
@@ -76,10 +78,11 @@ impl Primitive for EchoPrimitive {
     }
 
     fn begin(&self, request: ValueId, ctx: EffectCtx) -> EffectTicket {
+        self.begins.fetch_add(1, Ordering::Relaxed);
         let (ticket, completer) = ctx.ticket(|| {});
         let publication = ctx
             .read(&request, ReadProjection::Whole)
-            .and_then(|value| ctx.intern(&self.descriptor.response_schema, &value.bytes))
+            .and_then(|value| ctx.intern(&Type::String.schema_ref(), &value.bytes))
             .map(PrimitiveCompletion::Ok)
             .and_then(|completion| ctx.finish(completion));
         let publication = match publication {
@@ -102,9 +105,9 @@ fn descriptor() -> PrimitiveDescriptor {
             name: "echo".to_owned(),
             version: 1,
         },
-        request_schema: Type::String.schema_ref(),
-        response_schema: Type::String.schema_ref(),
-        failure_schema: Type::String.schema_ref(),
+        request_schema: vix::schema::SchemaPattern::exact(&Type::String.schema_ref()),
+        response_schema: vix::schema::SchemaPattern::exact(&Type::String.schema_ref()),
+        failure_schema: vix::schema::SchemaPattern::exact(&Type::String.schema_ref()),
         memo_policy: PrimitiveMemoPolicy::Hermetic,
         protocol_version: 1,
         capability_schemas: Vec::new(),
@@ -123,6 +126,7 @@ fn registered_dispatch_records_reads_without_an_opt_in_receipt_call() {
 
     let primitive = Arc::new(EchoPrimitive {
         descriptor: descriptor(),
+        begins: AtomicUsize::new(0),
     });
     let mut registry = PrimitiveRegistry::default();
     registry
@@ -154,6 +158,7 @@ fn request_schema_is_checked_before_primitive_code_runs() {
     });
     let primitive = Arc::new(EchoPrimitive {
         descriptor: descriptor(),
+        begins: AtomicUsize::new(0),
     });
     let mut registry = PrimitiveRegistry::default();
     registry
@@ -168,6 +173,46 @@ fn request_schema_is_checked_before_primitive_code_runs() {
         ),
         Err(PrimitiveDispatchError::RequestSchema { .. })
     ));
+}
+
+#[test]
+fn duplicate_running_demand_joins_one_registered_primitive_ticket() {
+    let authority = Arc::new(MemoryAuthority::default());
+    let request = authority.insert(Type::String.schema_ref(), b"same request");
+    let demand = vix::runtime::DemandKey::from_preimage(&vix::runtime::DemandPreimage {
+        closure: vix::runtime::RecipeId::from_canonical_vir(b"dispatch-dedup"),
+        arguments: vec![request.clone()],
+    });
+    let primitive = Arc::new(EchoPrimitive {
+        descriptor: descriptor(),
+        begins: AtomicUsize::new(0),
+    });
+    let mut registry = PrimitiveRegistry::default();
+    registry
+        .register(primitive.clone())
+        .expect("primitive registers");
+    let dispatcher = PrimitiveDispatcher::new(Arc::new(registry));
+
+    let first = dispatcher
+        .begin_or_join(
+            &primitive.descriptor.id,
+            request.clone(),
+            EffectCtx::new(demand, authority.clone()),
+        )
+        .expect("first demand begins");
+    let second = dispatcher
+        .begin_or_join(
+            &primitive.descriptor.id,
+            request,
+            EffectCtx::new(demand, authority),
+        )
+        .expect("duplicate demand joins");
+
+    assert_eq!(primitive.begins.load(Ordering::Relaxed), 1);
+    assert_eq!(first.demand(), second.demand());
+    assert_eq!(first.outcome(), second.outcome());
+    assert_eq!(dispatcher.in_flight(), 1);
+    assert!(dispatcher.retire(demand).is_some());
 }
 
 #[test]

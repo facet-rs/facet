@@ -121,6 +121,49 @@ impl SchemaRef {
         }]);
         Self::concrete(resolved[0].id)
     }
+
+    #[must_use]
+    pub fn for_facet<T: facet::Facet<'static>>() -> Self {
+        let resolved = taxon::resolve_ids(facet::taxon_bridge::schemas_of(T::SHAPE));
+        Self::concrete(resolved[0].id)
+    }
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum SchemaPattern {
+    Concrete {
+        id: SchemaId,
+        args: Vec<SchemaPattern>,
+    },
+    Var {
+        name: String,
+    },
+}
+
+impl SchemaPattern {
+    #[must_use]
+    pub fn exact(schema: &SchemaRef) -> Self {
+        Self::Concrete {
+            id: schema.id,
+            args: schema.args.iter().map(Self::exact).collect(),
+        }
+    }
+
+    #[must_use]
+    pub fn matches(&self, schema: &SchemaRef) -> bool {
+        match self {
+            Self::Concrete { id, args } => {
+                *id == schema.id
+                    && args.len() == schema.args.len()
+                    && args
+                        .iter()
+                        .zip(&schema.args)
+                        .all(|(pattern, argument)| pattern.matches(argument))
+            }
+            Self::Var { .. } => true,
+        }
+    }
 }
 
 impl fmt::Display for SchemaRef {
