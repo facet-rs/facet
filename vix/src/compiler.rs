@@ -20,6 +20,7 @@ use crate::vir::{
 pub struct Compiler {
     parser: SurfaceParser,
     config: CompilerConfig,
+    primitives: PrimitiveManifest,
 }
 
 /// Compile-time knobs that select between observationally identical execution
@@ -47,12 +48,47 @@ impl core::ops::Deref for Compilation {
     }
 }
 
+/// A compiler-facing projection of the registered primitives: exactly what
+/// `lower_where_call` needs to type-check `name where { ... }`, and nothing about
+/// handlers or the runtime. Built by the runtime from `PrimitiveDescriptor`s
+/// (r[machine.primitive.registered]); vir-only, so `compiler` keeps zero
+/// dependency on `runtime`.
+#[derive(Clone, Debug, Default)]
+pub struct PrimitiveManifest {
+    entries: BTreeMap<String, PrimitiveSignature>,
+}
+
+/// One registered primitive's compile-time shape: the effect id embedded in
+/// `Op::EffectRequest`, plus the request and response vir types.
+#[derive(Clone, Debug)]
+pub struct PrimitiveSignature {
+    pub effect: crate::vir::EffectId,
+    pub request: Type,
+    pub response: Type,
+}
+
+impl PrimitiveManifest {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn insert(&mut self, name: impl Into<String>, signature: PrimitiveSignature) {
+        self.entries.insert(name.into(), signature);
+    }
+
+    fn get(&self, name: &str) -> Option<&PrimitiveSignature> {
+        self.entries.get(name)
+    }
+}
+
 impl Compiler {
     #[must_use]
     pub fn new() -> Self {
         Self {
             parser: SurfaceParser::new(),
             config: CompilerConfig::default(),
+            primitives: PrimitiveManifest::default(),
         }
     }
 
@@ -62,13 +98,22 @@ impl Compiler {
         Self {
             parser: SurfaceParser::new(),
             config,
+            primitives: PrimitiveManifest::default(),
         }
+    }
+
+    /// A compiler that resolves `name where { ... }` calls against the registered
+    /// primitives in `primitives`.
+    #[must_use]
+    pub fn with_primitives(mut self, primitives: PrimitiveManifest) -> Self {
+        self.primitives = primitives;
+        self
     }
 
     /// Parse, check, and lower to architecture-neutral VIR.
     pub fn compile(&self, source: &str) -> Result<Compilation, Diagnostics> {
         let ast = self.parser.parse(source)?;
-        let module = lower_module(&ast, self.config)?;
+        let module = lower_module(&ast, self.config, &self.primitives)?;
         let warnings = lint_module(&module);
         Ok(Compilation { module, warnings })
     }
@@ -138,6 +183,7 @@ struct ParameterSignature {
 struct ModuleContext<'a> {
     signatures: &'a BTreeMap<String, FunctionSignature>,
     types: &'a BTreeMap<String, Type>,
+    primitives: &'a PrimitiveManifest,
     closures: RefCell<ClosureState>,
     config: CompilerConfig,
 }
@@ -763,7 +809,11 @@ impl<'a> TypeResolver<'a> {
     }
 }
 
-fn lower_module(source: &ast::SourceFile, config: CompilerConfig) -> Result<Module, Diagnostics> {
+fn lower_module(
+    source: &ast::SourceFile,
+    config: CompilerConfig,
+    primitives: &PrimitiveManifest,
+) -> Result<Module, Diagnostics> {
     let types = TypeResolver::new(source)?.resolve_all(source)?;
     let declared_type_names = source
         .items
@@ -804,6 +854,7 @@ fn lower_module(source: &ast::SourceFile, config: CompilerConfig) -> Result<Modu
     let context = ModuleContext {
         signatures: &signatures,
         types: &types,
+        primitives,
         closures: RefCell::new(ClosureState {
             next_function: u32::try_from(ordered_signatures.len())
                 .expect("module function count fits u32"),
@@ -7705,5 +7756,21 @@ fn type_span(ty: &ast::Type) -> Span {
         ast::Type::Generic(value) => value.span,
         ast::Type::Tuple(value) => value.span,
         ast::Type::Path(value) => value.span,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compiler_accepts_a_primitive_manifest_as_a_no_op_for_builtins() {
+        let source = "#[test]\nfn t() -> Stream<Check> {\n    yield expect_eq(1, 1);\n}\n";
+        let baseline = Compiler::new().compile(source).expect("baseline compiles");
+        let with_manifest = Compiler::new()
+            .with_primitives(PrimitiveManifest::new())
+            .compile(source)
+            .expect("an empty manifest changes nothing");
+        assert_eq!(baseline.module, with_manifest.module);
     }
 }
