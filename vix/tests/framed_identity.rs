@@ -9,11 +9,15 @@ use std::path::Path;
 
 use vix::runtime::{
     DemandKey, DemandPreimage, FramedField, FramedHasher, FramedNode, FramedValue, Location,
-    RecipeId, SchemaId, Store, ValueId,
+    RecipeId, Store, ValueId,
 };
+use vix::schema::SchemaRef;
 
-fn schema(name: &str) -> SchemaId {
-    SchemaId::named(name)
+fn schema(name: &str) -> SchemaRef {
+    SchemaRef::for_kind(taxon::Kind::External {
+        kind: name.to_owned(),
+        metadata: None,
+    })
 }
 
 /// Certificate 1 — role and length-prefix structural distinctions.
@@ -29,35 +33,35 @@ fn roles_and_length_prefixes_are_structurally_distinct() {
 
     let leaf = {
         let mut h = FramedHasher::new();
-        h.start(s, 1).bytes(b"\x01\x02");
+        h.start(&s, 1).bytes(b"\x01\x02");
         h.finish()
     };
     let sequence = {
         let mut h = FramedHasher::new();
-        h.start(s, 2).seq_len(2);
-        h.seq_element(0, es).bytes(b"\x01");
-        h.seq_element(1, es).bytes(b"\x02");
+        h.start(&s, 2).seq_len(2);
+        h.seq_element(0, &es).bytes(b"\x01");
+        h.seq_element(1, &es).bytes(b"\x02");
         h.finish()
     };
     let fields = {
         let mut h = FramedHasher::new();
-        h.start(s, 2);
-        h.field(0, es).bytes(b"\x01");
-        h.field(1, es).bytes(b"\x02");
+        h.start(&s, 2);
+        h.field(0, &es).bytes(b"\x01");
+        h.field(1, &es).bytes(b"\x02");
         h.finish()
     };
     let one_field = {
         let mut h = FramedHasher::new();
-        h.start(s, 1);
-        h.field(0, es).bytes(b"\x01\x02");
+        h.start(&s, 1);
+        h.field(0, &es).bytes(b"\x01\x02");
         h.finish()
     };
     let variant = {
         let mut h = FramedHasher::new();
-        h.start(s, 2);
+        h.start(&s, 2);
         h.variant(0);
-        h.field(0, es).bytes(b"\x01");
-        h.field(1, es).bytes(b"\x02");
+        h.field(0, &es).bytes(b"\x01");
+        h.field(1, &es).bytes(b"\x02");
         h.finish()
     };
 
@@ -73,14 +77,14 @@ fn roles_and_length_prefixes_are_structurally_distinct() {
     // same following bytes.
     let map_role = {
         let mut h = FramedHasher::new();
-        h.start(s, 1);
+        h.start(&s, 1);
         h.map_pair(0).bytes(b"\x01");
         h.finish()
     };
     let seq_role = {
         let mut h = FramedHasher::new();
-        h.start(s, 1).seq_len(1);
-        h.seq_element(0, es).bytes(b"\x01");
+        h.start(&s, 1).seq_len(1);
+        h.seq_element(0, &es).bytes(b"\x01");
         h.finish()
     };
     assert_ne!(map_role, seq_role, "map-pair and seq-element roles differ");
@@ -122,7 +126,7 @@ fn scalar_leaf_dedupes_and_matches_node_identity() {
 #[test]
 fn identity_is_layout_independent_and_content_sensitive() {
     let s = schema("layout.subject");
-    let node = FramedNode::leaf(s, b"semantic".to_vec());
+    let node = FramedNode::leaf(s.clone(), b"semantic".to_vec());
     let mut store = Store::default();
 
     // Same semantic value, two different physical resident encodings (padding,
@@ -159,27 +163,27 @@ fn nested_children_are_by_referent_not_handle() {
 
     // Two stores that assign different handle integers to the same values.
     let mut store_a = Store::default();
-    let x_a = store_a.intern_realized(element, b"x").identity;
-    let y_a = store_a.intern_realized(element, b"y").identity;
+    let x_a = store_a.intern_realized(element.clone(), b"x").identity;
+    let y_a = store_a.intern_realized(element.clone(), b"y").identity;
 
     let mut store_b = Store::default();
     // Pad so identical values land on different handle integers here.
     let _pad = store_b.intern_realized(schema("child.pad"), b"pad");
     let _pad2 = store_b.intern_realized(schema("child.pad"), b"pad2");
-    let y_b = store_b.intern_realized(element, b"y").identity;
-    let x_b = store_b.intern_realized(element, b"x").identity;
+    let y_b = store_b.intern_realized(element.clone(), b"y").identity;
+    let x_b = store_b.intern_realized(element.clone(), b"x").identity;
 
     assert_eq!(x_a, x_b, "referent identity independent of handle integer");
     assert_eq!(y_a, y_b, "referent identity independent of handle integer");
 
     let node_a = FramedNode::SeqChildren {
-        schema: container,
-        element_schema: element,
-        children: vec![x_a, y_a],
+        schema: container.clone(),
+        element_schema: element.clone(),
+        children: vec![x_a.clone(), y_a.clone()],
     };
     let node_b = FramedNode::SeqChildren {
-        schema: container,
-        element_schema: element,
+        schema: container.clone(),
+        element_schema: element.clone(),
         children: vec![x_b, y_b],
     };
     assert_eq!(
@@ -190,8 +194,8 @@ fn nested_children_are_by_referent_not_handle() {
 
     // Sequence order is still structural.
     let reversed = FramedNode::SeqChildren {
-        schema: container,
-        element_schema: element,
+        schema: container.clone(),
+        element_schema: element.clone(),
         children: vec![y_a, x_a],
     };
     assert_ne!(node_a.identity(), reversed.identity());
@@ -211,8 +215,8 @@ fn streaming_and_bulk_sequence_match() {
         packed.extend_from_slice(&i.to_le_bytes());
     }
     let bulk = FramedNode::SeqInline {
-        schema: s,
-        element_schema: es,
+        schema: s.clone(),
+        element_schema: es.clone(),
         element_width: 8,
         canonical_bytes: packed,
     };
@@ -222,12 +226,12 @@ fn streaming_and_bulk_sequence_match() {
     // per-element buffers.
     let streamed = {
         let mut h = FramedHasher::new();
-        h.start(s, count).seq_len(count);
+        h.start(&s, count).seq_len(count);
         for i in 0..count {
-            h.seq_element(i, es).bytes(&i.to_le_bytes());
+            h.seq_element(i, &es).bytes(&i.to_le_bytes());
         }
         ValueId {
-            schema: s,
+            schema: s.clone(),
             content: h.finish(),
         }
     };
@@ -284,7 +288,7 @@ fn identity_families_are_epoch_separated() {
     let value_content = FramedNode::leaf(schema("epoch.value"), seed.as_bytes().to_vec())
         .identity()
         .content;
-    let schema_family = SchemaId::named(seed).0;
+    let schema_family = schema(seed).canonical_bytes();
     let recipe_family = RecipeId::from_canonical_vir(seed.as_bytes()).0;
     let demand_family = DemandKey::from_preimage(&DemandPreimage {
         closure: RecipeId::from_canonical_vir(seed.as_bytes()),
@@ -293,13 +297,8 @@ fn identity_families_are_epoch_separated() {
     .0;
     let location_family = Location::for_test_island(seed, 0).id.0;
 
-    let families = [
-        value_content,
-        schema_family,
-        recipe_family,
-        demand_family,
-        location_family,
-    ];
+    assert_ne!(value_content.0.as_slice(), schema_family.as_slice());
+    let families = [value_content, recipe_family, demand_family, location_family];
     for (i, a) in families.iter().enumerate() {
         for b in &families[i + 1..] {
             assert_ne!(
@@ -318,10 +317,10 @@ fn failure_leaf_uses_framed_roles_via_the_writer() {
     // confirm the field/optional value forms compile against the public tree.
     let s = schema("failure.demo");
     let child_schema = schema("failure.subject");
-    let subject = FramedNode::leaf(child_schema, b"subject".to_vec()).identity();
+    let subject = FramedNode::leaf(child_schema.clone(), b"subject".to_vec()).identity();
 
     let with_subject = FramedNode::Variant {
-        schema: s,
+        schema: s.clone(),
         tag: 1,
         fields: vec![
             FramedField {
@@ -329,7 +328,7 @@ fn failure_leaf_uses_framed_roles_via_the_writer() {
                 value: FramedValue::Bytes(7u32.to_le_bytes().to_vec()),
             },
             FramedField {
-                schema: child_schema,
+                schema: child_schema.clone(),
                 value: FramedValue::Optional(Some(subject)),
             },
         ],
@@ -343,7 +342,7 @@ fn failure_leaf_uses_framed_roles_via_the_writer() {
                 value: FramedValue::Bytes(7u32.to_le_bytes().to_vec()),
             },
             FramedField {
-                schema: child_schema,
+                schema: child_schema.clone(),
                 value: FramedValue::Optional(None),
             },
         ],

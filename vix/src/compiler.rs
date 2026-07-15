@@ -3,8 +3,14 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
+use taxon::{
+    Field as TaxonField, Kind as TaxonKind, SchemaRef as TaxonSchemaRef, Variant as TaxonVariant,
+    VariantPayload as TaxonVariantPayload,
+};
+
 use crate::decode::{self, DecodeFormat, DecodedValue};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics, Label};
+use crate::schema::{SchemaBatch, SchemaRef, SchemaSet};
 use crate::support::{Span, Spanned};
 use crate::surface::{SurfaceParser, ast};
 use crate::vir::DescribedWire;
@@ -249,14 +255,192 @@ impl<'a> TypeDeclaration<'a> {
     }
 }
 
+fn semantic_schema_set(source: &ast::SourceFile) -> Result<SchemaSet, Diagnostics> {
+    let mut batch = SchemaBatch::vix_builtins();
+    let mut declarations = BTreeMap::new();
+    for item in &source.items {
+        let (name, span) = match item {
+            ast::Item::Struct(record) => (&record.name.value, record.name.span),
+            ast::Item::Enum(enumeration) => (&enumeration.name.value, enumeration.name.span),
+            ast::Item::Fn(_) | ast::Item::Import(_) => continue,
+        };
+        if batch.named_ref(name).is_some() || declarations.insert(name.clone(), span).is_some() {
+            return Err(Diagnostics::one(Diagnostic {
+                code: DiagnosticCode::DuplicateDefinition,
+                primary: span,
+                labels: Vec::new(),
+                payload: DiagnosticPayload::Name { name: name.clone() },
+            }));
+        }
+        batch.reserve_named(name);
+    }
+
+    for item in &source.items {
+        match item {
+            ast::Item::Struct(record) => {
+                let fields = record
+                    .fields
+                    .fields
+                    .iter()
+                    .map(|field| {
+                        surface_taxon_ref(&field.ty, &mut batch, &BTreeSet::new()).map(|schema| {
+                            TaxonField {
+                                name: field.name.value.clone(),
+                                schema,
+                                required: true,
+                            }
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                batch.add_named(
+                    &record.name.value,
+                    Vec::new(),
+                    TaxonKind::Struct {
+                        name: record.name.value.clone(),
+                        fields,
+                    },
+                );
+            }
+            ast::Item::Enum(enumeration) => {
+                let parameters = enumeration
+                    .generics
+                    .as_ref()
+                    .map(|generics| {
+                        generics
+                            .params
+                            .iter()
+                            .map(|parameter| parameter.value.clone())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let parameter_set = parameters.iter().cloned().collect::<BTreeSet<_>>();
+                let variants = enumeration
+                    .variants
+                    .variants
+                    .iter()
+                    .enumerate()
+                    .map(|(index, variant)| {
+                        let payload = match &variant.payload {
+                            None => TaxonVariantPayload::Unit,
+                            Some(ast::VariantTypePayload::Tuple(tuple)) => {
+                                let elements = tuple
+                                    .elems
+                                    .iter()
+                                    .map(|element| {
+                                        surface_taxon_ref(element, &mut batch, &parameter_set)
+                                    })
+                                    .collect::<Result<Vec<_>, _>>()?;
+                                if let [element] = elements.as_slice() {
+                                    TaxonVariantPayload::Newtype(element.clone())
+                                } else {
+                                    TaxonVariantPayload::Tuple(elements)
+                                }
+                            }
+                            Some(ast::VariantTypePayload::Record(record)) => {
+                                TaxonVariantPayload::Struct(
+                                    record
+                                        .fields
+                                        .iter()
+                                        .map(|field| {
+                                            surface_taxon_ref(&field.ty, &mut batch, &parameter_set)
+                                                .map(|schema| TaxonField {
+                                                    name: field.name.value.clone(),
+                                                    schema,
+                                                    required: true,
+                                                })
+                                        })
+                                        .collect::<Result<Vec<_>, _>>()?,
+                                )
+                            }
+                        };
+                        Ok(TaxonVariant {
+                            name: variant.name.value.clone(),
+                            index: u32::try_from(index).expect("enum variant index fits u32"),
+                            payload,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, Diagnostics>>()?;
+                batch.add_named(
+                    &enumeration.name.value,
+                    parameters,
+                    TaxonKind::Enum {
+                        name: enumeration.name.value.clone(),
+                        variants,
+                    },
+                );
+            }
+            ast::Item::Fn(_) | ast::Item::Import(_) => {}
+        }
+    }
+    Ok(batch.finish())
+}
+
+fn surface_taxon_ref(
+    ty: &ast::Type,
+    batch: &mut SchemaBatch,
+    type_parameters: &BTreeSet<String>,
+) -> Result<TaxonSchemaRef, Diagnostics> {
+    match ty {
+        ast::Type::Path(path) => {
+            let name = path_name(path);
+            if type_parameters.contains(&name) {
+                return Ok(TaxonSchemaRef::var(name));
+            }
+            batch
+                .named_ref(&name)
+                .ok_or_else(|| unknown_name(path.span, name))
+        }
+        ast::Type::Generic(generic) => {
+            let name = path_name(&generic.base);
+            if type_parameters.contains(&name) {
+                return Err(Diagnostics::one(Diagnostic::unsupported(
+                    generic.span,
+                    format!("generic type parameter `{name}` cannot take arguments"),
+                )));
+            }
+            let args = generic
+                .args
+                .iter()
+                .map(|argument| surface_taxon_ref(argument, batch, type_parameters))
+                .collect::<Result<Vec<_>, _>>()?;
+            batch
+                .generic_ref(&name, args)
+                .ok_or_else(|| unknown_name(generic.base.span, name))
+        }
+        ast::Type::Array(array) => {
+            let element = surface_taxon_ref(&array.elem, batch, type_parameters)?;
+            Ok(batch
+                .generic_ref("Array", vec![element])
+                .expect("Array builtin schema is registered"))
+        }
+        ast::Type::Tuple(tuple) => {
+            let elements = tuple
+                .elems
+                .iter()
+                .map(|element| surface_taxon_ref(element, batch, type_parameters))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(batch.add_anonymous(TaxonKind::Tuple { elements }))
+        }
+        ast::Type::Function(function) => {
+            let parameter = surface_taxon_ref(&function.parameter, batch, type_parameters)?;
+            let result = surface_taxon_ref(&function.result, batch, type_parameters)?;
+            Ok(batch
+                .generic_ref("Fn", vec![parameter, result])
+                .expect("Fn builtin schema is registered"))
+        }
+    }
+}
+
 struct TypeResolver<'a> {
     declarations: BTreeMap<String, TypeDeclaration<'a>>,
     resolving: BTreeSet<String>,
     resolved: BTreeMap<String, Type>,
+    schemas: SchemaSet,
 }
 
 impl<'a> TypeResolver<'a> {
     fn new(source: &'a ast::SourceFile) -> Result<Self, Diagnostics> {
+        let schemas = semantic_schema_set(source)?;
         let mut declarations = BTreeMap::new();
         for item in &source.items {
             let (name, span, declaration) = match item {
@@ -295,6 +479,7 @@ impl<'a> TypeResolver<'a> {
             declarations,
             resolving: BTreeSet::new(),
             resolved: BTreeMap::from([("Ordering".to_owned(), Type::ordering())]),
+            schemas,
         })
     }
 
@@ -511,10 +696,14 @@ impl<'a> TypeResolver<'a> {
         }
 
         let ty = match declaration {
-            TypeDeclaration::Record(record) => Type::Record(RecordType {
-                name: name.to_owned(),
-                fields: self.resolve_record_fields(name, &record.fields.fields)?,
-            }),
+            TypeDeclaration::Record(record) => Type::Record(RecordType::with_schema(
+                name,
+                self.resolve_record_fields(name, &record.fields.fields)?,
+                self.schemas
+                    .named(name)
+                    .expect("declared record has a Taxon schema")
+                    .clone(),
+            )),
             TypeDeclaration::Enum(enumeration) => {
                 let mut variant_names = BTreeSet::new();
                 let mut variants = Vec::with_capacity(enumeration.variants.variants.len());
@@ -548,10 +737,14 @@ impl<'a> TypeResolver<'a> {
                         payload,
                     });
                 }
-                Type::Enum(EnumType {
-                    name: name.to_owned(),
+                Type::Enum(EnumType::with_schema(
+                    name,
                     variants,
-                })
+                    self.schemas
+                        .named(name)
+                        .expect("declared enum has a Taxon schema")
+                        .clone(),
+                ))
             }
         };
         self.resolving.remove(name);
@@ -592,7 +785,7 @@ impl<'a> TypeResolver<'a> {
         }
 
         let mut substitutions = BTreeMap::new();
-        for (parameter, argument) in generics.params.iter().zip(arguments) {
+        for (parameter, argument) in generics.params.iter().zip(arguments.iter().cloned()) {
             if substitutions
                 .insert(parameter.value.clone(), argument)
                 .is_some()
@@ -647,10 +840,14 @@ impl<'a> TypeResolver<'a> {
                 payload,
             });
         }
-        let ty = Type::Enum(EnumType {
-            name: name.clone(),
-            variants,
-        });
+        let schema = SchemaRef::generic(
+            self.schemas
+                .named(base)
+                .expect("declared generic enum has a Taxon schema")
+                .id,
+            arguments.iter().map(Type::schema_ref).collect(),
+        );
+        let ty = Type::Enum(EnumType::with_schema(name.clone(), variants, schema));
         self.resolving.remove(&name);
         self.resolved.insert(name, ty.clone());
         Ok(ty)
@@ -834,13 +1031,13 @@ pub const CAPABILITY_PROGRAM_FIELD: &str = "$program";
 
 #[must_use]
 pub fn capability_type(name: &str) -> Type {
-    Type::Record(RecordType {
-        name: name.to_owned(),
-        fields: vec![RecordField {
+    Type::Record(RecordType::new(
+        name,
+        vec![RecordField {
             name: CAPABILITY_PROGRAM_FIELD.to_owned(),
             ty: Type::String,
         }],
-    })
+    ))
 }
 
 #[must_use]
@@ -858,13 +1055,13 @@ pub fn is_capability_type(ty: &Type) -> bool {
 /// only projection.
 #[must_use]
 pub fn byte_stream_type() -> Type {
-    Type::Record(RecordType {
-        name: "ByteStream".to_owned(),
-        fields: vec![RecordField {
+    Type::Record(RecordType::new(
+        "ByteStream",
+        vec![RecordField {
             name: "$lines".to_owned(),
             ty: Type::map(Type::Int, Type::String),
         }],
-    })
+    ))
 }
 
 /// `exec`'s result type. There is no exit-status field: termination becomes
@@ -875,9 +1072,9 @@ pub fn byte_stream_type() -> Type {
 /// r[impl machine.primitive.exit-status-is-not-a-value]
 #[must_use]
 pub fn exec_outcome_type() -> Type {
-    Type::Record(RecordType {
-        name: "ExecOutcome".to_owned(),
-        fields: vec![
+    Type::Record(RecordType::new(
+        "ExecOutcome",
+        vec![
             RecordField {
                 name: "stdout".to_owned(),
                 ty: byte_stream_type(),
@@ -887,7 +1084,7 @@ pub fn exec_outcome_type() -> Type {
                 ty: byte_stream_type(),
             },
         ],
-    })
+    ))
 }
 
 fn lower_module(source: &ast::SourceFile, config: CompilerConfig) -> Result<Module, Diagnostics> {
@@ -4653,9 +4850,9 @@ const DECODE_ERROR_KIND_FIELD: u32 = 0;
 const DECODE_ERROR_PATH_FIELD: u32 = 1;
 
 fn decode_error_type() -> Type {
-    Type::Record(RecordType {
-        name: "DecodeError".to_owned(),
-        fields: vec![
+    Type::Record(RecordType::new(
+        "DecodeError",
+        vec![
             RecordField {
                 name: "kind".to_owned(),
                 ty: Type::String,
@@ -4673,7 +4870,7 @@ fn decode_error_type() -> Type {
                 ty: Type::Int,
             },
         ],
-    })
+    ))
 }
 
 /// Is `ty` the built-in `DecodeError` value shape?

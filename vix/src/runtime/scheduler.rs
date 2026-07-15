@@ -12,6 +12,7 @@ use crate::decode::{self, DecodedValue};
 use crate::lowering::{
     DocumentParseCall, LoweringArtifact, LoweringAttribution, ValueInputBinding,
 };
+use crate::schema::SchemaRef;
 use crate::vir::{
     ExternKind, Function, FunctionId, Island, IslandId, MiniSolveRequirements, NodeId,
     OPTION_SOME_VARIANT, Op, Type, VariantPayload,
@@ -19,8 +20,7 @@ use crate::vir::{
 
 use super::fixture::{FixtureEntryKind, FixtureReadError, FixtureStore, TarMember, parse_ustar};
 use super::identity::{
-    DemandKey, DemandPreimage, Digest, Location, LocationId, RecipeId, SchemaId, ValueId,
-    hash_framed,
+    DemandKey, DemandPreimage, Digest, Location, LocationId, RecipeId, ValueId, hash_framed,
 };
 use super::identity::{FramedField, FramedNode, FramedValue};
 use super::model::{
@@ -252,7 +252,7 @@ impl PersistentRuntimeState {
                         location: entry.location.clone(),
                         key: entry.key,
                         preimage: entry.preimage.clone(),
-                        result: store_entry.identity,
+                        result: store_entry.identity.clone(),
                         receipt: Some(entry.receipt.clone().unwrap_or_else(|| Receipt {
                             demand: entry.key,
                             reads: Vec::new(),
@@ -456,7 +456,7 @@ impl<S: EventSink> Runtime<S> {
                 .is_some_and(|receipt| self.reverify_receipt(receipt))
             {
                 Some(PersistentClaimRejectionReason::UnverifiableReceipt)
-            } else if self.store.handle_for_identity(claim.result).is_none() {
+            } else if self.store.handle_for_identity(&claim.result).is_none() {
                 Some(PersistentClaimRejectionReason::MissingValue)
             } else {
                 None
@@ -473,7 +473,7 @@ impl<S: EventSink> Runtime<S> {
             }
             let result = self
                 .store
-                .handle_for_identity(claim.result)
+                .handle_for_identity(&claim.result)
                 .expect("claim result was checked above");
             self.insert_memo(MemoEntry {
                 location: claim.location.clone(),
@@ -527,28 +527,28 @@ impl<S: EventSink> Runtime<S> {
     }
 
     fn reverify_read_witness(&self, read: &ReadWitness) -> bool {
-        match read.observation {
+        match &read.observation {
             ReadObservation::Value(observed) => {
                 if read.projection == "typed-doc-parse" {
-                    return observed == read.source;
+                    return observed == &read.source;
                 }
                 if read.projection == "registry/manifest" {
                     return self
                         .fixture_store
                         .registry_manifest()
                         .is_ok_and(|manifest| {
-                            effect_leaf(&Type::String, manifest.into_bytes()).identity == observed
+                            effect_leaf(&Type::String, manifest.into_bytes()).identity == *observed
                         });
                 }
                 if let Ok(bytes) = self.fixture_store.tree_file_bytes(&read.projection) {
-                    return effect_leaf(&Type::String, bytes).identity == observed;
+                    return effect_leaf(&Type::String, bytes).identity == *observed;
                 }
                 if let Ok(bytes) = self
                     .fixture_store
                     .fetch_url(&format!("fixture://{}", read.projection))
                 {
                     return effect_leaf(&Type::Extern(ExternKind::Blob), bytes).identity
-                        == observed;
+                        == *observed;
                 }
                 false
             }
@@ -559,7 +559,7 @@ impl<S: EventSink> Runtime<S> {
             ReadObservation::Directory { digest } => self
                 .fixture_store
                 .tree_dir_entries(&read.projection)
-                .is_ok_and(|entries| directory_observation_digest(&entries) == digest),
+                .is_ok_and(|entries| directory_observation_digest(&entries) == *digest),
             ReadObservation::Unverifiable => false,
         }
     }
@@ -690,7 +690,7 @@ impl<S: EventSink> Runtime<S> {
         let read = ReadWitness {
             source: effect_leaf(&Type::String, b"fixture-index".to_vec()).identity,
             projection: projection.to_owned(),
-            observation: ReadObservation::Value(value.identity),
+            observation: ReadObservation::Value(value.identity.clone()),
         };
         validation_reads.push(read.clone());
         let interned = self
@@ -698,7 +698,7 @@ impl<S: EventSink> Runtime<S> {
             .intern_realized(semantic_schema_id(&Type::String), &value.resident);
         self.store
             .attach_frozen(interned.handle, FrozenValue::Opaque(value.resident.clone()));
-        self.observe_interned(interned);
+        self.observe_interned(&interned);
         self.insert_memo(MemoEntry {
             location,
             key,
@@ -792,7 +792,10 @@ impl<S: EventSink> Runtime<S> {
         let IslandInputs { arguments, wires } = inputs;
         let invocation = DemandExecution::new(
             lowered,
-            arguments.iter().map(|argument| argument.identity).collect(),
+            arguments
+                .iter()
+                .map(|argument| argument.identity.clone())
+                .collect(),
         );
         let lowered = &invocation;
         self.emit(EventKind::Demanded {
@@ -822,7 +825,8 @@ impl<S: EventSink> Runtime<S> {
                         None,
                     )
                 })?
-                .identity;
+                .identity
+                .clone();
             let passed = failure.is_none()
                 && self
                     .store
@@ -867,7 +871,8 @@ impl<S: EventSink> Runtime<S> {
                         None,
                     )
                 })?
-                .identity;
+                .identity
+                .clone();
             let passed = failure.is_none()
                 && self
                     .store
@@ -918,7 +923,8 @@ impl<S: EventSink> Runtime<S> {
                         None,
                     )
                 })?
-                .identity;
+                .identity
+                .clone();
             let passed = failure.is_none()
                 && self
                     .store
@@ -1004,7 +1010,7 @@ impl<S: EventSink> Runtime<S> {
             self.transition_demand(lowered.demand_key, DemandState::Failed)?;
             return Ok(Evaluation {
                 handle: argument.handle,
-                identity: argument.identity,
+                identity: argument.identity.clone(),
                 passed: false,
                 memo: MemoVerdict::Miss,
                 failure: Some(failure),
@@ -1441,7 +1447,7 @@ impl<S: EventSink> Runtime<S> {
                         .intern_realized(semantic_schema_id(&lowered.output_type), bytes);
                     self.store
                         .attach_frozen(interned.handle, FrozenValue::Inline(bytes.to_vec()));
-                    self.observe_interned(interned);
+                    self.observe_interned(&interned);
                     self.memo.insert(
                         location.id,
                         MemoEntry {
@@ -1460,11 +1466,11 @@ impl<S: EventSink> Runtime<S> {
                     self.transition_demand(lowered.demand_key, DemandState::Ready)?;
                     self.emit(EventKind::Completed {
                         key: lowered.demand_key,
-                        identity: interned.identity,
+                        identity: interned.identity.clone(),
                     });
                     return Ok(Evaluation {
                         handle: interned.handle,
-                        identity: interned.identity,
+                        identity: interned.identity.clone(),
                         passed: true,
                         memo: MemoVerdict::Miss,
                         failure: None,
@@ -1502,7 +1508,7 @@ impl<S: EventSink> Runtime<S> {
                     if let Some(frozen) = realized.frozen {
                         self.store.attach_frozen(interned.handle, frozen);
                     }
-                    self.observe_interned(interned);
+                    self.observe_interned(&interned);
                     self.counters.successful_aggregate_freezes += 1;
                     if lowered.forced_copy_value {
                         self.counters.forced_copy_selections += 1;
@@ -1527,11 +1533,11 @@ impl<S: EventSink> Runtime<S> {
                     self.transition_demand(lowered.demand_key, DemandState::Ready)?;
                     self.emit(EventKind::Completed {
                         key: lowered.demand_key,
-                        identity: interned.identity,
+                        identity: interned.identity.clone(),
                     });
                     return Ok(Evaluation {
                         handle: interned.handle,
-                        identity: interned.identity,
+                        identity: interned.identity.clone(),
                         passed: true,
                         memo: MemoVerdict::Miss,
                         failure: None,
@@ -1579,7 +1585,7 @@ impl<S: EventSink> Runtime<S> {
                     };
                     let report_context = failure_context(&failure, lowered, attribution);
                     let interned = self.store.intern_failure(failure.clone(), &[]);
-                    self.observe_interned(interned);
+                    self.observe_interned(&interned);
                     self.memo.insert(
                         location.id,
                         MemoEntry {
@@ -1603,7 +1609,7 @@ impl<S: EventSink> Runtime<S> {
                     });
                     return Ok(Evaluation {
                         handle: interned.handle,
-                        identity: interned.identity,
+                        identity: interned.identity.clone(),
                         passed: false,
                         memo: MemoVerdict::Miss,
                         failure: Some(failure),
@@ -1705,8 +1711,8 @@ impl<S: EventSink> Runtime<S> {
             };
             let interned = self
                 .store
-                .intern_realized(SchemaId::named("vix.Check.v1"), &[u8::from(passed)]);
-            self.observe_interned(interned);
+                .intern_realized(Type::Check.schema_ref(), &[u8::from(passed)]);
+            self.observe_interned(&interned);
 
             self.memo.insert(
                 location.id,
@@ -1726,7 +1732,7 @@ impl<S: EventSink> Runtime<S> {
             self.transition_demand(lowered.demand_key, DemandState::Ready)?;
             self.emit(EventKind::Completed {
                 key: lowered.demand_key,
-                identity: interned.identity,
+                identity: interned.identity.clone(),
             });
             return Ok(Evaluation {
                 handle: interned.handle,
@@ -1755,7 +1761,10 @@ impl<S: EventSink> Runtime<S> {
         let recipe = RecipeId::from_effect_fingerprint(fingerprint);
         let preimage = DemandPreimage {
             closure: recipe,
-            arguments: arguments.iter().map(|argument| argument.identity).collect(),
+            arguments: arguments
+                .iter()
+                .map(|argument| argument.identity.clone())
+                .collect(),
         };
         let key = DemandKey::from_preimage(&preimage);
         self.emit(EventKind::Demanded { key });
@@ -1788,7 +1797,7 @@ impl<S: EventSink> Runtime<S> {
             .flatten();
         if let Some(handle) = memo_handle {
             let (identity, failure) = match self.store.entry(handle) {
-                Some(stored) => (stored.identity, stored.failure().cloned()),
+                Some(stored) => (stored.identity.clone(), stored.failure().cloned()),
                 None => {
                     return Err(Box::new(MachineError::runtime(
                         MachineOperation::MemoRead,
@@ -1823,7 +1832,7 @@ impl<S: EventSink> Runtime<S> {
                 .is_some_and(|receipt| self.reverify_receipt(receipt))
         {
             let (identity, failure) = match self.store.entry(entry.result) {
-                Some(stored) => (stored.identity, stored.failure().cloned()),
+                Some(stored) => (stored.identity.clone(), stored.failure().cloned()),
                 None => {
                     return Err(Box::new(MachineError::runtime(
                         MachineOperation::MemoRead,
@@ -1920,7 +1929,7 @@ impl<S: EventSink> Runtime<S> {
             if let Some(frozen) = value.frozen {
                 self.store.attach_frozen(interned.handle, frozen);
             }
-            self.observe_interned(interned);
+            self.observe_interned(&interned);
             self.memo.insert(
                 location.id,
                 MemoEntry {
@@ -1942,7 +1951,7 @@ impl<S: EventSink> Runtime<S> {
             self.transition_demand(key, DemandState::Ready)?;
             self.emit(EventKind::Completed {
                 key,
-                identity: interned.identity,
+                identity: interned.identity.clone(),
             });
             if let Op::MiniSolve { function, .. } = effect_output.op {
                 self.record_wire_demand(function, None, fingerprint.to_owned());
@@ -1976,7 +1985,7 @@ impl<S: EventSink> Runtime<S> {
                     ))
                 })?;
                 Ok(EffectValue {
-                    identity: argument.identity,
+                    identity: argument.identity.clone(),
                     resident: stored.resident_bytes().unwrap_or_default().to_vec(),
                     frozen: stored.frozen().cloned(),
                     node: None,
@@ -2190,9 +2199,9 @@ impl<S: EventSink> Runtime<S> {
                 let text = core::str::from_utf8(&document.resident)
                     .map_err(|_| effect_machine_error("decode input was not UTF-8"))?;
                 reads.push(ReadWitness {
-                    source: document.identity,
+                    source: document.identity.clone(),
                     projection: "typed-doc-parse".to_owned(),
-                    observation: ReadObservation::Value(document.identity),
+                    observation: ReadObservation::Value(document.identity.clone()),
                 });
                 let decoded = decode::decode(*format, text, target)
                     .map_err(|_| effect_machine_error("effect decode failed"))?;
@@ -2263,7 +2272,7 @@ impl<S: EventSink> Runtime<S> {
                 reads.push(super::model::ReadWitness {
                     source,
                     projection,
-                    observation: ReadObservation::Value(value.identity),
+                    observation: ReadObservation::Value(value.identity.clone()),
                 });
                 Ok(EffectTerm::Value(value))
             }
@@ -2289,11 +2298,11 @@ impl<S: EventSink> Runtime<S> {
                     let path_node =
                         FramedNode::leaf(effect_schema(&Type::Path), path.as_bytes().to_vec());
                     let interned = self.store.intern_tree(&path_node, path.as_bytes());
-                    self.observe_interned(interned);
-                    rows.push((interned.identity, interned.identity));
+                    self.observe_interned(&interned);
+                    rows.push((interned.identity.clone(), interned.identity.clone()));
                     frozen.push((
-                        FrozenValue::Reference(interned.identity),
-                        FrozenValue::Reference(interned.identity),
+                        FrozenValue::Reference(interned.identity.clone()),
+                        FrozenValue::Reference(interned.identity.clone()),
                     ));
                 }
                 rows.sort();
@@ -2364,7 +2373,7 @@ impl<S: EventSink> Runtime<S> {
                 reads.push(super::model::ReadWitness {
                     source: pinned_identity,
                     projection: projection.to_owned(),
-                    observation: ReadObservation::Value(blob.identity),
+                    observation: ReadObservation::Value(blob.identity.clone()),
                 });
                 self.counters.fetches_performed += 1;
                 Ok(EffectTerm::Value(blob))
@@ -2433,7 +2442,7 @@ impl<S: EventSink> Runtime<S> {
                 .fixture_store
                 .tree_file_bytes(&projection)
                 .map_err(|_| effect_machine_error("fixture tree entry was not a file"))?;
-            return Ok((entry.identity, projection, bytes));
+            return Ok((entry.identity.clone(), projection, bytes));
         }
         let path = core::str::from_utf8(path)
             .map_err(|_| effect_machine_error("archive tree path was not UTF-8"))?;
@@ -2449,7 +2458,7 @@ impl<S: EventSink> Runtime<S> {
                 _ => None,
             })
             .ok_or_else(|| effect_machine_error("archive tree entry was not a file"))?;
-        Ok((entry.identity, path.to_owned(), member))
+        Ok((entry.identity.clone(), path.to_owned(), member))
     }
 
     fn tree_glob_paths(
@@ -2484,7 +2493,7 @@ impl<S: EventSink> Runtime<S> {
                 .tree_dir_entries(&projection)
                 .map_err(|_| effect_machine_error("fixture glob directory was unavailable"))?;
             reads.push(super::model::ReadWitness {
-                source: tree.identity,
+                source: tree.identity.clone(),
                 projection,
                 observation: ReadObservation::Directory {
                     digest: directory_observation_digest(&entries),
@@ -2537,7 +2546,10 @@ impl<S: EventSink> Runtime<S> {
     ) -> Result<GeneratorOutcome, Box<MachineError>> {
         let invocation = DemandExecution::new(
             lowered,
-            arguments.iter().map(|argument| argument.identity).collect(),
+            arguments
+                .iter()
+                .map(|argument| argument.identity.clone())
+                .collect(),
         );
         let lowered = &invocation;
         self.emit(EventKind::Demanded {
@@ -3074,7 +3086,7 @@ impl<S: EventSink> Runtime<S> {
     ) -> Result<GeneratorOutcome, Box<MachineError>> {
         let context = failure_context(&failure, lowered, attribution);
         let interned = self.store.intern_failure(failure.clone(), &[]);
-        self.observe_interned(interned);
+        self.observe_interned(&interned);
         self.transition_task(task, TaskState::Completed)?;
         self.transition_demand(lowered.demand_key, DemandState::Failed)?;
         self.emit(EventKind::LanguageFailed {
@@ -3095,8 +3107,8 @@ impl<S: EventSink> Runtime<S> {
             .map(|constant| {
                 let interned = self
                     .store
-                    .intern_realized(constant.store_schema, &constant.bytes);
-                self.observe_interned(interned);
+                    .intern_realized(constant.store_schema.clone(), &constant.bytes);
+                self.observe_interned(&interned);
                 interned.handle
             })
             .collect()
@@ -3131,9 +3143,9 @@ impl<S: EventSink> Runtime<S> {
         .map_err(|_| "document host input is not UTF-8 String data".to_owned())?
         .to_owned();
         reads.push(ReadWitness {
-            source: entry.identity,
+            source: entry.identity.clone(),
             projection: "typed-doc-parse".to_owned(),
-            observation: ReadObservation::Value(entry.identity),
+            observation: ReadObservation::Value(entry.identity.clone()),
         });
 
         let result = decode::decode(plan.format, &input, &plan.target);
@@ -3184,13 +3196,13 @@ impl<S: EventSink> Runtime<S> {
             }
         }
         for interned in interned {
-            self.observe_interned(interned);
+            self.observe_interned(&interned);
         }
         self.counters.document_parse_host_calls += 1;
         Ok(())
     }
 
-    fn observe_interned(&mut self, interned: Interned) {
+    fn observe_interned(&mut self, interned: &Interned) {
         self.counters.bytes_hashed += interned.bytes_hashed;
         if interned.deduped {
             self.counters.store_dedups += 1;
@@ -3198,7 +3210,7 @@ impl<S: EventSink> Runtime<S> {
             self.counters.store_interns += 1;
         }
         self.emit(EventKind::StoreAlloc {
-            identity: interned.identity,
+            identity: interned.identity.clone(),
             deduped: interned.deduped,
         });
     }
@@ -3338,7 +3350,7 @@ impl<S: EventSink> Runtime<S> {
     ) -> Result<Evaluation, Box<MachineError>> {
         let report_context = failure_context(&failure, lowered, attribution);
         let interned = self.store.intern_failure(failure.clone(), &[]);
-        self.observe_interned(interned);
+        self.observe_interned(&interned);
         self.memo.insert(
             location.id,
             MemoEntry {
@@ -3479,7 +3491,7 @@ impl<S: EventSink> Runtime<S> {
     /// r[impl machine.primitive.capabilities-by-identity]
     pub fn publish_capability(&mut self, ty: &Type, program: &str) -> Evaluation {
         let string_schema = semantic_schema_id(&Type::String);
-        let program_leaf = FramedNode::leaf(string_schema, program.as_bytes().to_vec());
+        let program_leaf = FramedNode::leaf(string_schema.clone(), program.as_bytes().to_vec());
         let node = FramedNode::Variant {
             schema: semantic_schema_id(ty),
             tag: 0,
@@ -3493,7 +3505,7 @@ impl<S: EventSink> Runtime<S> {
             interned.handle,
             FrozenValue::Product(vec![FrozenValue::Opaque(program.as_bytes().to_vec())]),
         );
-        self.observe_interned(interned);
+        self.observe_interned(&interned);
         Evaluation {
             handle: interned.handle,
             identity: interned.identity,
@@ -3537,13 +3549,13 @@ impl<S: EventSink> Runtime<S> {
         let plan_recipe = exec_plan_recipe(argv);
         let demand_preimage = DemandPreimage {
             closure: plan_recipe,
-            arguments: vec![capability.identity],
+            arguments: vec![capability.identity.clone()],
         };
         let demand_key = DemandKey::from_preimage(&demand_preimage);
         let receipt = Receipt {
             demand: demand_key,
             reads: vec![ReadWitness {
-                source: capability.identity,
+                source: capability.identity.clone(),
                 projection: "capability.program".to_owned(),
                 observation: ReadObservation::Unverifiable,
             }],
@@ -3712,7 +3724,7 @@ impl<S: EventSink> Runtime<S> {
                 self.transition_demand(demand_key, DemandState::Ready)?;
                 self.emit(EventKind::Completed {
                     key: demand_key,
-                    identity: interned.identity,
+                    identity: interned.identity.clone(),
                 });
                 return Ok(Evaluation {
                     handle: interned.handle,
@@ -3745,7 +3757,7 @@ impl<S: EventSink> Runtime<S> {
             };
             let report_context = effect_context(&failure);
             let interned = self.store.intern_failure(failure.clone(), &output.stderr);
-            self.observe_interned(interned);
+            self.observe_interned(&interned);
             self.memo.insert(
                 location.id,
                 MemoEntry {
@@ -3794,7 +3806,7 @@ impl<S: EventSink> Runtime<S> {
                 None,
             )
         })?;
-        let identity = entry.identity;
+        let identity = entry.identity.clone();
         let failure = entry.failure().cloned();
         self.counters.memo_hits_exact += 1;
         self.emit(EventKind::Memo {
@@ -3838,8 +3850,9 @@ impl<S: EventSink> Runtime<S> {
             let mut rows = Vec::new();
             let mut frozen_rows = Vec::new();
             for (index, line) in text.lines().enumerate() {
-                let key = FramedNode::leaf(int_schema, (index as i64).to_le_bytes().to_vec());
-                let value = FramedNode::leaf(string_schema, line.as_bytes().to_vec());
+                let key =
+                    FramedNode::leaf(int_schema.clone(), (index as i64).to_le_bytes().to_vec());
+                let value = FramedNode::leaf(string_schema.clone(), line.as_bytes().to_vec());
                 rows.push((key.identity(), value.identity()));
                 frozen_rows.push((
                     FrozenValue::Inline((index as i64).to_le_bytes().to_vec()),
@@ -3884,7 +3897,7 @@ impl<S: EventSink> Runtime<S> {
             interned.handle,
             FrozenValue::Product(vec![stdout_frozen, stderr_frozen]),
         );
-        self.observe_interned(interned);
+        self.observe_interned(&interned);
         interned
     }
 
@@ -3936,11 +3949,11 @@ impl<S: EventSink> Runtime<S> {
                     | Type::Array(_)
                     | Type::Map { .. }
                     | Type::Set(_) => (
-                        FramedValue::Optional(Some(operand.identity)),
-                        FrozenValue::Reference(operand.identity),
+                        FramedValue::Optional(Some(operand.identity.clone())),
+                        FrozenValue::Reference(operand.identity.clone()),
                     ),
                     _ => (
-                        FramedValue::Optional(Some(operand.identity)),
+                        FramedValue::Optional(Some(operand.identity.clone())),
                         entry.frozen().cloned().ok_or_else(malformed)?,
                     ),
                 };
@@ -3953,11 +3966,11 @@ impl<S: EventSink> Runtime<S> {
                 let err_ty = payload_type(1)?;
                 let rendered = format!(
                     "{}:{}",
-                    operand.identity.schema.0.hex(),
+                    operand.identity.schema,
                     operand.identity.content.hex()
                 );
                 let string_schema = semantic_schema_id(&Type::String);
-                let leaf = FramedNode::leaf(string_schema, rendered.as_bytes().to_vec());
+                let leaf = FramedNode::leaf(string_schema.clone(), rendered.as_bytes().to_vec());
                 let marker = FramedNode::Variant {
                     schema: semantic_schema_id(&err_ty),
                     tag: 0,
@@ -3991,7 +4004,7 @@ impl<S: EventSink> Runtime<S> {
                 fields: vec![frozen_field],
             },
         );
-        self.observe_interned(interned);
+        self.observe_interned(&interned);
         Ok(Evaluation {
             handle: interned.handle,
             identity: interned.identity,
@@ -4083,7 +4096,7 @@ fn render_frozen(
                 | Type::Tuple(_)
         )
     {
-        let referent = deref_frozen(store, *id)?;
+        let referent = deref_frozen(store, id.clone())?;
         return render_frozen(store, ty, referent, indent, out);
     }
     match ty {
@@ -4261,7 +4274,7 @@ fn leaf_bytes(store: &Store, frozen: &FrozenValue) -> Result<Vec<u8>, String> {
         FrozenValue::Inline(bytes) | FrozenValue::Opaque(bytes) => Ok(bytes.clone()),
         FrozenValue::Reference(id) => {
             let handle = store
-                .handle_for_identity(*id)
+                .handle_for_identity(id)
                 .ok_or_else(|| "snapshot reference is not resident in the store".to_owned())?;
             store
                 .entry(handle)
@@ -4275,7 +4288,7 @@ fn leaf_bytes(store: &Store, frozen: &FrozenValue) -> Result<Vec<u8>, String> {
 
 fn deref_frozen(store: &Store, id: ValueId) -> Result<&FrozenValue, String> {
     let handle = store
-        .handle_for_identity(id)
+        .handle_for_identity(&id)
         .ok_or_else(|| "snapshot reference is not resident in the store".to_owned())?;
     store
         .entry(handle)
@@ -4513,8 +4526,8 @@ fn realize_structural_node<'task>(
                         .entry_by_weavy_handle(handle)
                         .ok_or_else(|| invalid_realized_result(lowered, 0))?;
                     Ok((
-                        FramedNode::Reference(entry.identity),
-                        FrozenValue::Reference(entry.identity),
+                        FramedNode::Reference(entry.identity.clone()),
+                        FrozenValue::Reference(entry.identity.clone()),
                         0,
                     ))
                 }
@@ -4580,8 +4593,8 @@ fn realize_structural_node<'task>(
                     let entry = store
                         .entry_by_weavy_handle(handle)
                         .ok_or_else(|| invalid_realized_result(lowered, 0))?;
-                    let node = FramedNode::Reference(entry.identity);
-                    Ok((node, FrozenValue::Reference(entry.identity), 0))
+                    let node = FramedNode::Reference(entry.identity.clone());
+                    Ok((node, FrozenValue::Reference(entry.identity.clone()), 0))
                 }
                 ResolvedTaskValue::TaskMolten(bytes) => {
                     let Type::Array(element) = ty else {
@@ -4864,7 +4877,7 @@ fn frozen_to_weavy(
         (FrozenValue::Reference(identity), _) => {
             let schema = publication_schema(binding, ty)?;
             let handle = store
-                .handle_for_identity(*identity)
+                .handle_for_identity(identity)
                 .and_then(|handle| store.weavy_handle(handle))
                 .ok_or(())?;
             Ok(weavy::exec::FrozenValue::Store { schema, handle })
@@ -5033,11 +5046,11 @@ fn read_payload_word(bytes: &[u8], offset: usize) -> Option<i64> {
     ))
 }
 
-fn semantic_schema_id(ty: &Type) -> SchemaId {
-    SchemaId::named(&format!("vix.semantic.v1:{}", ty.name()))
+fn semantic_schema_id(ty: &Type) -> SchemaRef {
+    ty.schema_ref()
 }
 
-fn effect_schema(ty: &Type) -> SchemaId {
+fn effect_schema(ty: &Type) -> SchemaRef {
     semantic_schema_id(ty)
 }
 
@@ -5083,7 +5096,7 @@ fn decoded_effect_value(ty: &Type, value: &DecodedValue) -> Result<EffectValue, 
                 let framed_value = if matches!(field.ty, Type::Bool | Type::Int | Type::Check) {
                     FramedValue::Bytes(effect.resident.clone())
                 } else {
-                    FramedValue::Optional(Some(effect.identity))
+                    FramedValue::Optional(Some(effect.identity.clone()))
                 };
                 fields.push(FramedField {
                     schema: effect_schema(&field.ty),
@@ -5092,7 +5105,7 @@ fn decoded_effect_value(ty: &Type, value: &DecodedValue) -> Result<EffectValue, 
                 frozen.push(
                     effect
                         .frozen
-                        .unwrap_or(FrozenValue::Reference(effect.identity)),
+                        .unwrap_or(FrozenValue::Reference(effect.identity.clone())),
                 );
             }
             let node = FramedNode::Variant {
@@ -5338,9 +5351,9 @@ fn frame_effect_tree_field(out: &mut Vec<u8>, bytes: &[u8]) {
 }
 
 fn runtime_decode_error_type() -> Type {
-    Type::Record(crate::vir::RecordType {
-        name: "DecodeError".to_owned(),
-        fields: vec![
+    Type::Record(crate::vir::RecordType::new(
+        "DecodeError",
+        vec![
             crate::vir::RecordField {
                 name: "kind".to_owned(),
                 ty: Type::String,
@@ -5358,7 +5371,7 @@ fn runtime_decode_error_type() -> Type {
                 ty: Type::Int,
             },
         ],
-    })
+    ))
 }
 
 fn document_receipt(demand: DemandKey, reads: &[ReadWitness]) -> Option<Receipt> {
@@ -6342,8 +6355,7 @@ fn passing() -> Stream<Check> {
         // The production realized-scalar path routes through the closed writer:
         // its identity is exactly the framed scalar-leaf identity, computed here
         // independently of the store.
-        let expected =
-            FramedNode::leaf(SchemaId::named("vix.Check.v1"), vec![u8::from(true)]).identity();
+        let expected = FramedNode::leaf(Type::Check.schema_ref(), vec![u8::from(true)]).identity();
         assert_eq!(
             evaluation.identity, expected,
             "realized check identity is the framed leaf identity from the closed writer"

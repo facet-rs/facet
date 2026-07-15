@@ -26,8 +26,9 @@ use weavy::{
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics};
 use crate::runtime::{
     DemandKey, DemandPreimage, FrameRegion, FrameSlot, FrameWords, MachineAttribution,
-    MachineError, MachineOperation, RecipeId, SchemaId,
+    MachineError, MachineOperation, RecipeId,
 };
+use crate::schema::SchemaRef;
 use crate::support::Span;
 use crate::vir::{
     ArrayMapExecutionShape, ArrayMapPartition, DecodeFormat, EnumType, EnumVariant, Function,
@@ -84,7 +85,7 @@ pub struct ValueConstant {
     pub node: NodeRef,
     pub root: ConstantBinding,
     pub owner: ConstantBinding,
-    pub store_schema: SchemaId,
+    pub store_schema: SchemaRef,
     pub bytes: Vec<u8>,
 }
 
@@ -93,7 +94,7 @@ pub struct ValueInputBinding {
     pub value: ValueIslandId,
     pub entry: usize,
     pub schema: Option<WeavySchemaRef>,
-    pub store_schema: SchemaId,
+    pub store_schema: SchemaRef,
     pub payload_element_schema: Option<WeavySchemaRef>,
     pub ty: Type,
     pub publication_schemas: Vec<(Type, WeavySchemaRef)>,
@@ -106,7 +107,7 @@ pub struct ValueInputBinding {
 pub(crate) struct DocumentParseCall {
     pub(crate) format: DecodeFormat,
     pub(crate) target: Type,
-    pub(crate) target_schema: SchemaId,
+    pub(crate) target_schema: SchemaRef,
     pub(crate) infallible: bool,
     pub(crate) input: FrameRegion,
     pub(crate) output: FrameRegion,
@@ -133,9 +134,9 @@ impl ArrayOutcomeAbi {
     #[must_use]
     pub fn for_value(value: Type) -> Self {
         Self {
-            ty: Type::Enum(EnumType {
-                name: format!("$array_outcome<{}>", value.name()),
-                variants: vec![
+            ty: Type::Enum(EnumType::new(
+                format!("$array_outcome<{}>", value.name()),
+                vec![
                     EnumVariant {
                         name: "Ok".to_owned(),
                         payload: VariantPayload::Tuple(vec![value]),
@@ -177,7 +178,7 @@ impl ArrayOutcomeAbi {
                         payload: VariantPayload::Tuple(vec![Type::Int]),
                     },
                 ],
-            }),
+            )),
             ok_variant: 0,
             index_out_of_bounds_variant: 1,
             array_machine_variant: 2,
@@ -196,7 +197,7 @@ struct PendingValueConstant {
     node: NodeRef,
     root_slot: FrameSlot,
     owner_slot: FrameSlot,
-    store_schema: SchemaId,
+    store_schema: SchemaRef,
     bytes: Vec<u8>,
     span: Span,
 }
@@ -214,7 +215,7 @@ pub struct LoweringArtifact {
     pub value_inputs: Vec<ValueInputBinding>,
     pub(crate) document_parse_calls: Vec<DocumentParseCall>,
     pub output_type: Type,
-    pub output_schema: SchemaId,
+    pub output_schema: SchemaRef,
     pub forced_copy_value: bool,
     pub publishes_value: bool,
     /// This island exists only to publish a value for a snapshot check. Its
@@ -270,7 +271,7 @@ impl LoweringArtifact {
             value_inputs: self.value_inputs.clone(),
             document_parse_calls: self.document_parse_calls.clone(),
             output_type: self.output_type.clone(),
-            output_schema: self.output_schema,
+            output_schema: self.output_schema.clone(),
             forced_copy_value: self.forced_copy_value,
             publishes_value: self.publishes_value,
             publishes_snapshot: self.publishes_snapshot,
@@ -301,7 +302,7 @@ impl LoweringArtifact {
                 constant.owner.entry,
                 constant.owner.slot.byte_offset(),
                 constant.owner.schema,
-                constant.store_schema.0.hex(),
+                constant.store_schema,
                 constant.bytes.len()
             );
         }
@@ -311,7 +312,7 @@ impl LoweringArtifact {
                 "doc-parse host[{index}] format={:?} target={} schema={} input=frame[{}] output=frame[{}]",
                 call.format,
                 call.target.name(),
-                call.target_schema.0.hex(),
+                call.target_schema,
                 call.input.start().byte_offset(),
                 call.output.start().byte_offset(),
             );
@@ -642,7 +643,7 @@ fn lower_island(
         value_inputs,
         document_parse_calls,
         output_type: output.ty.clone(),
-        output_schema: semantic_schema_id(&output.ty),
+        output_schema: semantic_schema_ref(&output.ty),
         forced_copy_value: island.forced_copy_value,
         publishes_value: matches!(
             island.purpose,
@@ -682,14 +683,14 @@ fn publication_capability_registered(ty: &Type) -> bool {
     }
 }
 
-fn semantic_schema_id(ty: &Type) -> SchemaId {
-    SchemaId::named(&format!("vix.semantic.v1:{}", ty.name()))
+fn semantic_schema_ref(ty: &Type) -> SchemaRef {
+    ty.schema_ref()
 }
 
 fn decode_error_type() -> Type {
-    Type::Record(crate::vir::RecordType {
-        name: "DecodeError".to_owned(),
-        fields: vec![
+    Type::Record(crate::vir::RecordType::new(
+        "DecodeError",
+        vec![
             crate::vir::RecordField {
                 name: "kind".to_owned(),
                 ty: Type::String,
@@ -707,7 +708,7 @@ fn decode_error_type() -> Type {
                 ty: Type::Int,
             },
         ],
-    })
+    ))
 }
 
 fn bind_value_inputs(
@@ -744,7 +745,7 @@ fn bind_value_inputs(
                 value: *value,
                 entry,
                 schema,
-                store_schema: semantic_schema_id(&parameter.ty),
+                store_schema: semantic_schema_ref(&parameter.ty),
                 payload_element_schema: match &parameter.ty {
                     Type::Array(element) => Some(schemas.schema_for(element, span)?),
                     _ => None,
@@ -6074,7 +6075,7 @@ fn lower_node(
             lowering.document_parse_calls.push(DocumentParseCall {
                 format: *format,
                 target: target.clone(),
-                target_schema: semantic_schema_id(target),
+                target_schema: semantic_schema_ref(target),
                 infallible,
                 input: input.region,
                 output: dst_region,
@@ -6126,14 +6127,14 @@ fn lower_node(
                 node: constant,
                 root_slot,
                 owner_slot: dst_slot,
-                store_schema: SchemaId::named("vix.String.v1"),
+                store_schema: Type::String.schema_ref(),
                 bytes: value.as_bytes().to_vec(),
                 span: node.span,
             };
             if let Some(previous) = lowering.constants.insert(constant, pending)
                 && (previous.root_slot != root_slot
                     || previous.owner_slot != dst_slot
-                    || previous.store_schema != SchemaId::named("vix.String.v1")
+                    || previous.store_schema != Type::String.schema_ref()
                     || previous.bytes != value.as_bytes())
             {
                 return Err(lowering_diagnostic(
@@ -6167,12 +6168,12 @@ fn lower_node(
                 .get(&lowering.context.root_function)
                 .ok_or_else(|| lowering_diagnostic(node.span, "missing island root layout"))?;
             let root_slot = root_layout.constant_slot(constant, node.span)?;
-            let store_schema = SchemaId::named("vix.Path.v1");
+            let store_schema = Type::Path.schema_ref();
             let pending = PendingValueConstant {
                 node: constant,
                 root_slot,
                 owner_slot: dst_slot,
-                store_schema,
+                store_schema: store_schema.clone(),
                 bytes: value.as_bytes().to_vec(),
                 span: node.span,
             };

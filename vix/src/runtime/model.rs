@@ -205,7 +205,7 @@ pub struct ReadWitness {
     pub observation: ReadObservation,
 }
 
-#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ReadObservation {
     Value(ValueId),

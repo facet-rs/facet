@@ -8,7 +8,8 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
-use vix::runtime::{FramedNode, SchemaId};
+use vix::runtime::FramedNode;
+use vix::schema::SchemaRef;
 
 thread_local! {
     static COUNT_ALLOCATIONS: Cell<bool> = const { Cell::new(false) };
@@ -51,8 +52,14 @@ fn inline_sequence(count: usize) -> FramedNode {
         canonical_bytes.extend_from_slice(&i.to_le_bytes());
     }
     FramedNode::SeqInline {
-        schema: SchemaId::named("scaling.seq"),
-        element_schema: SchemaId::named("scaling.element"),
+        schema: SchemaRef::for_kind(taxon::Kind::External {
+            kind: "scaling.seq".to_owned(),
+            metadata: None,
+        }),
+        element_schema: SchemaRef::for_kind(taxon::Kind::External {
+            kind: "scaling.element".to_owned(),
+            metadata: None,
+        }),
         element_width: 8,
         canonical_bytes,
     }

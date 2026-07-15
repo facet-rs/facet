@@ -39,6 +39,7 @@ pub mod reloc_selection;
 #[cfg(all(feature = "runner-rpc", not(target_arch = "wasm32")))]
 pub mod rpc_process;
 pub mod runtime;
+pub mod schema;
 pub mod surface;
 pub mod value;
 pub mod vir;

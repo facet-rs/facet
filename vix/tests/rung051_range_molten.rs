@@ -290,13 +290,25 @@ fn differential() -> Stream<Check> {
         .plain
         .checks
         .iter()
-        .map(|check| (check.provenance.clone(), check.identity, check.passed))
+        .map(|check| {
+            (
+                check.provenance.clone(),
+                check.identity.clone(),
+                check.passed,
+            )
+        })
         .collect();
     let copy_ids: Vec<_> = copy
         .plain
         .checks
         .iter()
-        .map(|check| (check.provenance.clone(), check.identity, check.passed))
+        .map(|check| {
+            (
+                check.provenance.clone(),
+                check.identity.clone(),
+                check.passed,
+            )
+        })
         .collect();
     assert_eq!(
         molten_ids, copy_ids,
@@ -336,7 +348,7 @@ fn duplicates() -> Stream<Check> {
             .plain
             .checks
             .iter()
-            .map(|check| (check.provenance.clone(), check.identity))
+            .map(|check| (check.provenance.clone(), check.identity.clone()))
             .collect()
     };
     assert_eq!(

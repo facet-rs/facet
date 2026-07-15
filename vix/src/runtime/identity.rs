@@ -1,3 +1,5 @@
+use crate::schema::SchemaRef;
+
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Digest(pub [u8; 32]);
 
@@ -5,16 +7,6 @@ impl Digest {
     #[must_use]
     pub fn hex(self) -> String {
         hex::encode(self.0)
-    }
-}
-
-#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SchemaId(pub Digest);
-
-impl SchemaId {
-    #[must_use]
-    pub fn named(name: &str) -> Self {
-        Self(hash_framed(b"vix.schema.v1", &[name.as_bytes()]))
     }
 }
 
@@ -40,9 +32,9 @@ impl RecipeId {
     }
 }
 
-#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ValueId {
-    pub schema: SchemaId,
+    pub schema: SchemaRef,
     pub content: Digest,
 }
 
@@ -62,13 +54,16 @@ impl DemandKey {
     /// r[impl machine.memo.no-recompute-at-lookup]
     #[must_use]
     pub fn from_preimage(preimage: &DemandPreimage) -> Self {
-        let mut fields = Vec::with_capacity(1 + preimage.arguments.len() * 2);
-        fields.push(preimage.closure.0.0.as_slice());
+        let mut writer = FramedHasher::for_domain(b"vix.demand.v2");
+        writer.tag(Role::Aux);
+        writer.framed(&preimage.closure.0.0);
         for argument in &preimage.arguments {
-            fields.push(argument.schema.0.0.as_slice());
-            fields.push(argument.content.0.as_slice());
+            writer.tag(Role::Aux);
+            writer.schema_ref(&argument.schema);
+            writer.tag(Role::Aux);
+            writer.framed(&argument.content.0);
         }
-        Self(hash_framed(b"vix.demand.v1", &fields))
+        Self(writer.finish())
     }
 }
 
@@ -158,19 +153,10 @@ impl Location {
             "check".to_owned(),
             site.to_string(),
         ];
-        let id = {
-            let mut fields = segments.iter().map(String::as_bytes).collect::<Vec<_>>();
-            for key in dynamic_keys {
-                fields.push(&key.schema.0.0);
-                fields.push(&key.content.0);
-            }
-            LocationId(hash_framed(b"vix.location.v1", &fields))
-        };
         for key in dynamic_keys {
-            segments.push(format!("key:{}:{}", key.schema.0.hex(), key.content.hex()));
+            segments.push(format!("key:{}:{}", key.schema, key.content.hex()));
         }
-        debug_assert_eq!(id, Location::from_segments(segments.clone()).id);
-        Self { id, segments }
+        Self::from_segments(segments)
     }
 }
 
@@ -180,7 +166,7 @@ impl Location {
 /// deliberately NOT bit-compatible with the retired flat `hash_framed`/raw-ABI
 /// digests. Equal semantic values still dedupe; unequal role/shape values do
 /// not collide structurally.
-const VALUE_EPOCH_DOMAIN: &[u8] = b"vix.identity.value.framed.v1";
+const VALUE_EPOCH_DOMAIN: &[u8] = b"vix.identity.value.framed.v2.schema-ref";
 
 /// Role tags. Every framed component begins with its role byte, so the hashed
 /// stream is prefix-free and unambiguous. Ordinals are load-bearing epoch
@@ -273,27 +259,28 @@ impl FramedHasher {
         self.raw(bytes);
     }
 
-    /// Schemas are fixed-width 32-byte digests; no length prefix is needed, but
-    /// they must never be an ABI offset or program-local ordinal.
+    /// Append the complete resolved semantic reference. Taxon's content-derived
+    /// declaration id and every concrete type argument participate; a Weavy ABI
+    /// ordinal can never enter this path.
     ///
     /// r[impl machine.identity.schema-ref]
-    fn schema_id(&mut self, schema: SchemaId) {
-        self.raw(&schema.0.0);
+    fn schema_ref(&mut self, schema: &SchemaRef) {
+        self.framed(&schema.canonical_bytes());
     }
 
     /// Open a value: role, its stable schema identity, and its arity.
-    pub fn start(&mut self, schema: SchemaId, arity: u64) -> &mut Self {
+    pub fn start(&mut self, schema: &SchemaRef, arity: u64) -> &mut Self {
         self.tag(Role::Start);
-        self.schema_id(schema);
+        self.schema_ref(schema);
         self.word(arity);
         self
     }
 
     /// A positional record/variant field header.
-    pub fn field(&mut self, index: u64, schema: SchemaId) -> &mut Self {
+    pub fn field(&mut self, index: u64, schema: &SchemaRef) -> &mut Self {
         self.tag(Role::Field);
         self.word(index);
-        self.schema_id(schema);
+        self.schema_ref(schema);
         self
     }
 
@@ -312,10 +299,10 @@ impl FramedHasher {
     }
 
     /// One ordered-sequence element header.
-    pub fn seq_element(&mut self, index: u64, schema: SchemaId) -> &mut Self {
+    pub fn seq_element(&mut self, index: u64, schema: &SchemaRef) -> &mut Self {
         self.tag(Role::SeqElement);
         self.word(index);
-        self.schema_id(schema);
+        self.schema_ref(schema);
         self
     }
 
@@ -339,9 +326,9 @@ impl FramedHasher {
     /// process-local indirection and are never hash-visible.
     ///
     /// r[impl machine.identity.handle-by-referent]
-    pub fn child(&mut self, child: ValueId) -> &mut Self {
+    pub fn child(&mut self, child: &ValueId) -> &mut Self {
         self.tag(Role::Child);
-        self.schema_id(child.schema);
+        self.schema_ref(&child.schema);
         self.raw(&child.content.0);
         self
     }
@@ -386,10 +373,9 @@ pub enum FramedNode {
     /// An already-resolved child identity used while framing a larger value.
     Reference(ValueId),
     /// A scalar/opaque leaf: canonical bytes under one stable schema.
-    Leaf { schema: SchemaId, bytes: Vec<u8> },
-    /// A tagged variant: discriminant then role-tagged payload fields.
+    Leaf { schema: SchemaRef, bytes: Vec<u8> },
     Variant {
-        schema: SchemaId,
+        schema: SchemaRef,
         tag: u64,
         fields: Vec<FramedField>,
     },
@@ -397,27 +383,27 @@ pub enum FramedNode {
     /// bytes per element contiguously; the element count is
     /// `canonical_bytes.len() / element_width`.
     SeqInline {
-        schema: SchemaId,
-        element_schema: SchemaId,
+        schema: SchemaRef,
+        element_schema: SchemaRef,
         element_width: u32,
         canonical_bytes: Vec<u8>,
     },
     /// A sequence of already-interned children, contributed by referent
     /// `ValueId` (handle-independent).
     SeqChildren {
-        schema: SchemaId,
-        element_schema: SchemaId,
+        schema: SchemaRef,
+        element_schema: SchemaRef,
         children: Vec<ValueId>,
     },
     /// Canonical key-ordered map rows. Both key and value contribute only their
     /// semantic referent identities; ordered arena topology and handles do not.
     OrderedMap {
-        schema: SchemaId,
+        schema: SchemaRef,
         rows: Vec<(ValueId, ValueId)>,
     },
     /// Canonical element-ordered set members by semantic identity.
     OrderedSet {
-        schema: SchemaId,
+        schema: SchemaRef,
         elements: Vec<ValueId>,
     },
 }
@@ -425,7 +411,7 @@ pub enum FramedNode {
 /// A positional field of a [`FramedNode::Variant`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FramedField {
-    pub schema: SchemaId,
+    pub schema: SchemaRef,
     pub value: FramedValue,
 }
 
@@ -442,21 +428,21 @@ pub enum FramedValue {
 impl FramedNode {
     /// A scalar/opaque leaf convenience constructor.
     #[must_use]
-    pub fn leaf(schema: SchemaId, bytes: Vec<u8>) -> Self {
+    pub fn leaf(schema: SchemaRef, bytes: Vec<u8>) -> Self {
         Self::Leaf { schema, bytes }
     }
 
     /// The value's stable Vix schema identity.
     #[must_use]
-    pub fn schema(&self) -> SchemaId {
+    pub fn schema(&self) -> &SchemaRef {
         match self {
-            Self::Reference(identity) => identity.schema,
+            Self::Reference(identity) => &identity.schema,
             Self::Leaf { schema, .. }
             | Self::Variant { schema, .. }
             | Self::SeqInline { schema, .. }
             | Self::SeqChildren { schema, .. }
             | Self::OrderedMap { schema, .. }
-            | Self::OrderedSet { schema, .. } => *schema,
+            | Self::OrderedSet { schema, .. } => schema,
         }
     }
 
@@ -469,12 +455,12 @@ impl FramedNode {
     #[must_use]
     pub fn identity(&self) -> ValueId {
         if let Self::Reference(identity) = self {
-            return *identity;
+            return identity.clone();
         }
         let mut writer = FramedHasher::new();
         self.hash_into(&mut writer);
         ValueId {
-            schema: self.schema(),
+            schema: self.schema().clone(),
             content: writer.finish(),
         }
     }
@@ -482,20 +468,20 @@ impl FramedNode {
     fn hash_into(&self, writer: &mut FramedHasher) {
         match self {
             Self::Reference(identity) => {
-                writer.child(*identity);
+                writer.child(identity);
             }
             Self::Leaf { schema, bytes } => {
-                writer.start(*schema, 1).bytes(bytes);
+                writer.start(schema, 1).bytes(bytes);
             }
             Self::Variant {
                 schema,
                 tag,
                 fields,
             } => {
-                writer.start(*schema, fields.len() as u64);
+                writer.start(schema, fields.len() as u64);
                 writer.variant(*tag);
                 for (index, field) in fields.iter().enumerate() {
-                    writer.field(index as u64, field.schema);
+                    writer.field(index as u64, &field.schema);
                     match &field.value {
                         FramedValue::Bytes(payload) => {
                             writer.bytes(payload);
@@ -504,7 +490,7 @@ impl FramedNode {
                             writer.variant(0);
                         }
                         FramedValue::Optional(Some(child)) => {
-                            writer.variant(1).child(*child);
+                            writer.variant(1).child(child);
                         }
                     }
                 }
@@ -517,11 +503,11 @@ impl FramedNode {
             } => {
                 let width = *element_width as usize;
                 let count = canonical_bytes.len().checked_div(width).unwrap_or(0);
-                writer.start(*schema, count as u64).seq_len(count as u64);
+                writer.start(schema, count as u64).seq_len(count as u64);
                 for index in 0..count {
                     let start = index * width;
                     writer
-                        .seq_element(index as u64, *element_schema)
+                        .seq_element(index as u64, element_schema)
                         .bytes(&canonical_bytes[start..start + width]);
                 }
             }
@@ -531,30 +517,30 @@ impl FramedNode {
                 children,
             } => {
                 writer
-                    .start(*schema, children.len() as u64)
+                    .start(schema, children.len() as u64)
                     .seq_len(children.len() as u64);
                 for (index, child) in children.iter().enumerate() {
                     writer
-                        .seq_element(index as u64, *element_schema)
-                        .child(*child);
+                        .seq_element(index as u64, element_schema)
+                        .child(child);
                 }
             }
             Self::OrderedMap { schema, rows } => {
                 writer
-                    .start(*schema, rows.len() as u64)
+                    .start(schema, rows.len() as u64)
                     .seq_len(rows.len() as u64);
                 for (index, (key, value)) in rows.iter().enumerate() {
-                    writer.map_pair(index as u64).child(*key).child(*value);
+                    writer.map_pair(index as u64).child(key).child(value);
                 }
             }
             Self::OrderedSet { schema, elements } => {
                 writer
-                    .start(*schema, elements.len() as u64)
+                    .start(schema, elements.len() as u64)
                     .seq_len(elements.len() as u64);
                 for (index, element) in elements.iter().enumerate() {
                     writer
-                        .seq_element(index as u64, element.schema)
-                        .child(*element);
+                        .seq_element(index as u64, &element.schema)
+                        .child(element);
                 }
             }
         }

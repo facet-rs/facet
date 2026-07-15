@@ -13,8 +13,8 @@ use vix::ratchet::{
     run_source_with_snapshots_and_lane,
 };
 use vix::runtime::{
-    DemandState, EventKind, FailureValue, MemoVerdict, ProcessTermination, SchemaId,
-    SnapshotOutcome, TaskState,
+    DemandState, EventKind, FailureValue, MemoVerdict, ProcessTermination, SnapshotOutcome,
+    TaskState,
 };
 use vix::surface::{SurfaceParser, ast};
 use vix::vir::{
@@ -3761,11 +3761,11 @@ fn rung_026_arrays_run_through_verified_execution_without_publication() {
         let published_schemas = lane
             .values
             .iter()
-            .map(|value| value.identity.schema)
+            .map(|value| value.identity.schema.clone())
             .collect::<BTreeSet<_>>();
-        assert!(lane.events.iter().all(|event| match event.kind {
+        assert!(lane.events.iter().all(|event| match &event.kind {
             EventKind::StoreAlloc { identity, .. } => {
-                identity.schema == SchemaId::named("vix.Check.v1")
+                identity.schema == VirType::Check.schema_ref()
                     || published_schemas.contains(&identity.schema)
             }
             _ => true,
@@ -3837,11 +3837,11 @@ fn rung_027_array_map_runs_through_shared_publication() {
         let published_schemas = lane
             .values
             .iter()
-            .map(|value| value.identity.schema)
+            .map(|value| value.identity.schema.clone())
             .collect::<BTreeSet<_>>();
-        assert!(lane.events.iter().all(|event| match event.kind {
+        assert!(lane.events.iter().all(|event| match &event.kind {
             EventKind::StoreAlloc { identity, .. } => {
-                identity.schema == SchemaId::named("vix.Check.v1")
+                identity.schema == VirType::Check.schema_ref()
                     || published_schemas.contains(&identity.schema)
             }
             _ => true,
@@ -4649,11 +4649,11 @@ fn general_array_map() -> Stream<Check> {
         let published_schemas = lane
             .values
             .iter()
-            .map(|value| value.identity.schema)
+            .map(|value| value.identity.schema.clone())
             .collect::<BTreeSet<_>>();
-        assert!(lane.events.iter().all(|event| match event.kind {
+        assert!(lane.events.iter().all(|event| match &event.kind {
             EventKind::StoreAlloc { identity, .. } => {
-                identity.schema == SchemaId::named("vix.Check.v1")
+                identity.schema == VirType::Check.schema_ref()
                     || published_schemas.contains(&identity.schema)
             }
             _ => true,
@@ -4926,11 +4926,11 @@ fn computed_array_and_dynamic_index() -> Stream<Check> {
         let published_schemas = lane
             .values
             .iter()
-            .map(|value| value.identity.schema)
+            .map(|value| value.identity.schema.clone())
             .collect::<BTreeSet<_>>();
-        assert!(lane.events.iter().all(|event| match event.kind {
+        assert!(lane.events.iter().all(|event| match &event.kind {
             EventKind::StoreAlloc { identity, .. } => {
-                identity.schema == SchemaId::named("vix.Check.v1")
+                identity.schema == VirType::Check.schema_ref()
                     || published_schemas.contains(&identity.schema)
             }
             _ => true,
@@ -5937,8 +5937,8 @@ fn t() -> Stream<Check> {
     let store_identities = |run: &vix::ratchet::SuiteRun| {
         run.events
             .iter()
-            .filter_map(|event| match event.kind {
-                EventKind::StoreAlloc { identity, .. } => Some(identity),
+            .filter_map(|event| match &event.kind {
+                EventKind::StoreAlloc { identity, .. } => Some(identity.clone()),
                 _ => None,
             })
             .collect::<Vec<_>>()
@@ -6210,7 +6210,7 @@ fn t() -> Stream<Check> {
     let check_value_ids = |run: &vix::ratchet::SuiteRun| {
         run.checks
             .iter()
-            .map(|check| check.identity)
+            .map(|check| check.identity.clone())
             .collect::<Vec<_>>()
     };
     assert_eq!(

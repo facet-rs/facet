@@ -6,10 +6,11 @@
 
 use std::path::Path;
 
-use vix::runtime::{FramedNode, SchemaId};
+use vix::runtime::FramedNode;
+use vix::vir::{ExternKind, Type};
 
 fn blob_identity_hex(bytes: &[u8]) -> String {
-    let node = FramedNode::leaf(SchemaId::named("vix.semantic.v1:Blob"), bytes.to_vec());
+    let node = FramedNode::leaf(Type::Extern(ExternKind::Blob).schema_ref(), bytes.to_vec());
     node.identity().content.hex()
 }
 

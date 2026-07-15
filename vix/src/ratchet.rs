@@ -12,8 +12,8 @@ use crate::runtime::{
     ChaosPolicy, Counters, DemandState, Evaluation, Event, EventKind, EventLog, FailureContext,
     FailureValue, FramedNode, GeneratorOutcome, IslandInputs, Location, MachineError, MemoVerdict,
     PersistentRuntimeJournal, PersistentRuntimeJournalError, PersistentRuntimeJournalLoadReport,
-    PersistentRuntimeState, RealizedWireDemand, Runtime, SchemaId, SnapshotCapture,
-    SnapshotOutcome, TaskState, ValueId, WireDemand,
+    PersistentRuntimeState, RealizedWireDemand, Runtime, SnapshotCapture, SnapshotOutcome,
+    TaskState, ValueId, WireDemand,
 };
 use crate::vir::{
     DescribedWire, FunctionId, Island, IslandId, Module, Op, PartitionedRecipe, PartitionedValue,
@@ -397,20 +397,22 @@ struct TraceSnapshot {
 /// same way an evaluated scalar value interns, so a described literal selects
 /// the exact realized argument identity without demanding anything.
 fn wire_arg_identity(arg: &WireArg) -> ValueId {
-    let (ty_name, bytes) = match arg {
-        WireArg::Int(value) => ("Int", value.to_le_bytes().to_vec()),
-        WireArg::Bool(value) => ("Bool", i64::from(*value).to_le_bytes().to_vec()),
+    let (ty, bytes) = match arg {
+        WireArg::Int(value) => (crate::vir::Type::Int, value.to_le_bytes().to_vec()),
+        WireArg::Bool(value) => (
+            crate::vir::Type::Bool,
+            i64::from(*value).to_le_bytes().to_vec(),
+        ),
         WireArg::FixtureTree(name) => {
             let mut bytes = b"fixture-tree\0".to_vec();
             bytes.extend(name.as_bytes());
-            ("Tree", bytes)
+            (
+                crate::vir::Type::Extern(crate::vir::ExternKind::Tree),
+                bytes,
+            )
         }
     };
-    FramedNode::leaf(
-        SchemaId::named(&format!("vix.semantic.v1:{ty_name}")),
-        bytes,
-    )
-    .identity()
+    FramedNode::leaf(ty.schema_ref(), bytes).identity()
 }
 
 /// An at-most trace comparison: the observed counter and whether it stays
@@ -1242,7 +1244,10 @@ fn evaluate_value_site(
         },
         chaos,
     )?;
-    let argument_identities = arguments.iter().map(|argument| argument.identity).collect();
+    let argument_identities = arguments
+        .iter()
+        .map(|argument| argument.identity.clone())
+        .collect();
     Ok(CheckRun {
         provenance,
         identity: Some(evaluation.identity),
@@ -1318,7 +1323,10 @@ fn evaluate_snapshot_site(
         },
         chaos,
     )?;
-    let argument_identities = arguments.iter().map(|argument| argument.identity).collect();
+    let argument_identities = arguments
+        .iter()
+        .map(|argument| argument.identity.clone())
+        .collect();
     // If the value publication itself language-failed, there is nothing to
     // render; surface that as the check failure with its own attribution.
     if !evaluation.passed || evaluation.failure.is_some() {
@@ -1535,7 +1543,7 @@ fn run_lane(
             }
             values.push(ValuePublicationRun {
                 provenance: value.id,
-                identity: evaluation.identity,
+                identity: evaluation.identity.clone(),
                 failure: evaluation.failure.clone(),
             });
             published_values.insert(value.id, evaluation);
@@ -1548,7 +1556,7 @@ fn run_lane(
             let evaluation = runtime.publish_catch(&catch.result_type, &operand)?;
             values.push(ValuePublicationRun {
                 provenance: catch.id,
-                identity: evaluation.identity,
+                identity: evaluation.identity.clone(),
                 failure: None,
             });
             published_values.insert(catch.id, evaluation);

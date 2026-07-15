@@ -3,7 +3,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
+use taxon::{Kind as TaxonKind, Variant as TaxonVariant, VariantPayload as TaxonVariantPayload};
+
 use crate::diagnostic::{Diagnostic, Diagnostics};
+use crate::schema::{SchemaRef, builtin_schema, generic_builtin_schema, taxon_field};
 use crate::support::Span;
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -34,6 +37,39 @@ pub struct RecordField {
 pub struct RecordType {
     pub name: String,
     pub fields: Vec<RecordField>,
+    pub schema: SchemaRef,
+}
+
+impl RecordType {
+    #[must_use]
+    pub fn new(name: impl Into<String>, fields: Vec<RecordField>) -> Self {
+        let name = name.into();
+        let schema = SchemaRef::for_kind(TaxonKind::Struct {
+            name: name.clone(),
+            fields: fields
+                .iter()
+                .map(|field| taxon_field(&field.name, &field.ty.schema_ref()))
+                .collect(),
+        });
+        Self {
+            name,
+            fields,
+            schema,
+        }
+    }
+
+    #[must_use]
+    pub fn with_schema(
+        name: impl Into<String>,
+        fields: Vec<RecordField>,
+        schema: SchemaRef,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            fields,
+            schema,
+        }
+    }
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -99,6 +135,7 @@ pub struct EnumVariant {
 pub struct EnumType {
     pub name: String,
     pub variants: Vec<EnumVariant>,
+    pub schema: SchemaRef,
 }
 
 pub const ORDERING_LESS_VARIANT: u32 = 0;
@@ -110,27 +147,81 @@ pub const RESULT_OK_VARIANT: u32 = 0;
 pub const RESULT_ERR_VARIANT: u32 = 1;
 
 impl EnumType {
+    #[must_use]
+    pub fn new(name: impl Into<String>, variants: Vec<EnumVariant>) -> Self {
+        let name = name.into();
+        let schema = SchemaRef::for_kind(TaxonKind::Enum {
+            name: name.clone(),
+            variants: variants
+                .iter()
+                .enumerate()
+                .map(|(index, variant)| TaxonVariant {
+                    name: variant.name.clone(),
+                    index: u32::try_from(index).expect("enum variant index fits u32"),
+                    payload: match &variant.payload {
+                        VariantPayload::Unit => TaxonVariantPayload::Unit,
+                        VariantPayload::Tuple(elements) if elements.len() == 1 => {
+                            TaxonVariantPayload::Newtype(elements[0].schema_ref().to_taxon())
+                        }
+                        VariantPayload::Tuple(elements) => TaxonVariantPayload::Tuple(
+                            elements
+                                .iter()
+                                .map(Type::schema_ref)
+                                .map(|schema| schema.to_taxon())
+                                .collect(),
+                        ),
+                        VariantPayload::Record(fields) => TaxonVariantPayload::Struct(
+                            fields
+                                .iter()
+                                .map(|field| taxon_field(&field.name, &field.ty.schema_ref()))
+                                .collect(),
+                        ),
+                    },
+                })
+                .collect(),
+        });
+        Self {
+            name,
+            variants,
+            schema,
+        }
+    }
+
+    #[must_use]
+    pub fn with_schema(
+        name: impl Into<String>,
+        variants: Vec<EnumVariant>,
+        schema: SchemaRef,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            variants,
+            schema,
+        }
+    }
+
     /// r[impl lang.value.ordering-is-enum]
     #[must_use]
     pub fn ordering() -> Self {
-        Self {
-            name: "Ordering".to_owned(),
-            variants: ["Less", "Equal", "Greater"]
+        Self::new(
+            "Ordering",
+            ["Less", "Equal", "Greater"]
                 .into_iter()
                 .map(|name| EnumVariant {
                     name: name.to_owned(),
                     payload: VariantPayload::Unit,
                 })
                 .collect(),
-        }
+        )
     }
 
     /// r[impl machine.value.option-no-store-alloc]
     #[must_use]
     pub fn option(inner: Type) -> Self {
-        Self {
-            name: format!("Option<{}>", inner.name()),
-            variants: vec![
+        let schema = generic_builtin_schema("Option", vec![inner.schema_ref()]);
+        Self::with_schema(
+            format!("Option<{}>", inner.name()),
+            vec![
                 EnumVariant {
                     name: "Some".to_owned(),
                     payload: VariantPayload::Tuple(vec![inner]),
@@ -140,7 +231,8 @@ impl EnumType {
                     payload: VariantPayload::Unit,
                 },
             ],
-        }
+            schema,
+        )
     }
 
     /// The type a caught failure presents as: an opaque record carrying the
@@ -149,13 +241,13 @@ impl EnumType {
     /// forge one.
     #[must_use]
     pub fn failure_value() -> Type {
-        Type::Record(RecordType {
-            name: "Failure".to_owned(),
-            fields: vec![RecordField {
+        Type::Record(RecordType::new(
+            "Failure",
+            vec![RecordField {
                 name: "$failure".to_owned(),
                 ty: Type::String,
             }],
-        })
+        ))
     }
 
     #[must_use]
@@ -182,9 +274,10 @@ impl EnumType {
     #[must_use]
     pub fn result(ok: Type, err: Type) -> Self {
         let name = format!("Result<{}, {}>", ok.name(), err.name());
-        Self {
+        let schema = generic_builtin_schema("Result", vec![ok.schema_ref(), err.schema_ref()]);
+        Self::with_schema(
             name,
-            variants: vec![
+            vec![
                 EnumVariant {
                     name: "Ok".to_owned(),
                     payload: VariantPayload::Tuple(vec![ok]),
@@ -194,7 +287,8 @@ impl EnumType {
                     payload: VariantPayload::Tuple(vec![err]),
                 },
             ],
-        }
+            schema,
+        )
     }
 
     /// The `(ok, err)` payload types iff this enum is the built-in `Result`
@@ -658,6 +752,42 @@ impl ExternKind {
 }
 
 impl Type {
+    /// The Taxon-derived semantic schema carried by value identity. Weavy's
+    /// numeric `SchemaRef` remains a separate program-local ABI index.
+    #[must_use]
+    pub fn schema_ref(&self) -> SchemaRef {
+        match self {
+            Self::Bool => builtin_schema("Bool"),
+            Self::Int => builtin_schema("Int"),
+            Self::Check => builtin_schema("Check"),
+            Self::StreamCheck => builtin_schema("StreamCheck"),
+            Self::String => builtin_schema("String"),
+            Self::Path => builtin_schema("Path"),
+            Self::Function { parameter, result } => {
+                generic_builtin_schema("Fn", vec![parameter.schema_ref(), result.schema_ref()])
+            }
+            Self::Tuple(elements) => SchemaRef::for_kind(TaxonKind::Tuple {
+                elements: elements
+                    .iter()
+                    .map(Self::schema_ref)
+                    .map(|schema| schema.to_taxon())
+                    .collect(),
+            }),
+            Self::Record(record) => record.schema.clone(),
+            Self::Enum(enumeration) => enumeration.schema.clone(),
+            Self::Array(element) => generic_builtin_schema("Array", vec![element.schema_ref()]),
+            Self::Map { key, value } => {
+                generic_builtin_schema("Map", vec![key.schema_ref(), value.schema_ref()])
+            }
+            Self::Set(element) => generic_builtin_schema("Set", vec![element.schema_ref()]),
+            Self::Stream { key, value } => {
+                generic_builtin_schema("Stream", vec![key.schema_ref(), value.schema_ref()])
+            }
+            Self::Order(subject) => generic_builtin_schema("Order", vec![subject.schema_ref()]),
+            Self::Extern(kind) => builtin_schema(kind.name()),
+        }
+    }
+
     #[must_use]
     pub fn ordering() -> Self {
         Self::Enum(EnumType::ordering())

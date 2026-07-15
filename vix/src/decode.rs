@@ -707,9 +707,9 @@ mod tests {
     use crate::vir::{EnumType, EnumVariant, RecordField, RecordType, Type, VariantPayload};
 
     fn dep_spec() -> Type {
-        Type::Enum(EnumType {
-            name: "DepSpec".to_owned(),
-            variants: vec![
+        Type::Enum(EnumType::new(
+            "DepSpec",
+            vec![
                 EnumVariant {
                     name: "Req".to_owned(),
                     payload: VariantPayload::Tuple(vec![Type::String]),
@@ -728,7 +728,7 @@ mod tests {
                     ]),
                 },
             ],
-        })
+        ))
     }
 
     #[test]
@@ -765,9 +765,9 @@ mod tests {
     }
 
     fn pkg_row() -> Type {
-        Type::Record(RecordType {
-            name: "PkgRow".to_owned(),
-            fields: vec![
+        Type::Record(RecordType::new(
+            "PkgRow",
+            vec![
                 RecordField {
                     name: "name".to_owned(),
                     ty: Type::String,
@@ -781,7 +781,7 @@ mod tests {
                     ty: Type::Bool,
                 },
             ],
-        })
+        ))
     }
 
     #[test]
@@ -804,13 +804,13 @@ mod tests {
 
     #[test]
     fn decode_toml_nested_struct() {
-        let manifest = Type::Record(RecordType {
-            name: "Manifest".to_owned(),
-            fields: vec![RecordField {
+        let manifest = Type::Record(RecordType::new(
+            "Manifest",
+            vec![RecordField {
                 name: "package".to_owned(),
-                ty: Type::Record(RecordType {
-                    name: "Package".to_owned(),
-                    fields: vec![
+                ty: Type::Record(RecordType::new(
+                    "Package",
+                    vec![
                         RecordField {
                             name: "name".to_owned(),
                             ty: Type::String,
@@ -820,9 +820,9 @@ mod tests {
                             ty: Type::String,
                         },
                     ],
-                }),
+                )),
             }],
-        });
+        ));
         let value = decode(
             DecodeFormat::Toml,
             "[package]\nname = \"taxon\"\nversion = \"0.1.0\"\n",
@@ -840,9 +840,9 @@ mod tests {
 
     #[test]
     fn decode_optional_fields() {
-        let dep_decl = Type::Record(RecordType {
-            name: "DepDecl".to_owned(),
-            fields: vec![
+        let dep_decl = Type::Record(RecordType::new(
+            "DepDecl",
+            vec![
                 RecordField {
                     name: "version".to_owned(),
                     ty: Type::option(Type::String),
@@ -852,7 +852,7 @@ mod tests {
                     ty: Type::option(Type::String),
                 },
             ],
-        });
+        ));
         let value = decode(DecodeFormat::Json, "{\"version\":\"^1.0\"}", &dep_decl)
             .expect("absent option field decodes to None");
         assert_eq!(
@@ -890,9 +890,9 @@ mod tests {
     #[test]
     fn ambiguous_enum_forms_are_rejected_not_first_matched() {
         // Two short (single-String tuple) forms: a scalar document is ambiguous.
-        let two_short = Type::Enum(EnumType {
-            name: "TwoShort".to_owned(),
-            variants: vec![
+        let two_short = Type::Enum(EnumType::new(
+            "TwoShort",
+            vec![
                 EnumVariant {
                     name: "A".to_owned(),
                     payload: VariantPayload::Tuple(vec![Type::String]),
@@ -902,7 +902,7 @@ mod tests {
                     payload: VariantPayload::Tuple(vec![Type::String]),
                 },
             ],
-        });
+        ));
         let err = decode(DecodeFormat::Json, "\"x\"", &two_short)
             .expect_err("two short forms are ambiguous");
         assert_eq!(
@@ -913,9 +913,9 @@ mod tests {
         );
 
         // Two table (record) forms: an object document is ambiguous.
-        let two_table = Type::Enum(EnumType {
-            name: "TwoTable".to_owned(),
-            variants: vec![
+        let two_table = Type::Enum(EnumType::new(
+            "TwoTable",
+            vec![
                 EnumVariant {
                     name: "A".to_owned(),
                     payload: VariantPayload::Record(vec![RecordField {
@@ -931,7 +931,7 @@ mod tests {
                     }]),
                 },
             ],
-        });
+        ));
         let err = decode(DecodeFormat::Json, "{\"x\":true}", &two_table)
             .expect_err("two table forms are ambiguous");
         assert_eq!(
