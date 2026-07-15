@@ -1132,11 +1132,35 @@ pub struct Island {
     /// `value_inputs`, a wire input is resolved lazily — a wire under an untaken
     /// branch is never awaited, so it is never demanded.
     pub wire_inputs: Vec<ValueIslandId>,
+    /// Demanded effect inputs, one per [`Op::EffectRequest`] this island consumes.
+    /// Parallel to `wire_inputs` but a distinct path: an effect has no producer
+    /// island, so each edge names the request island plus the primitive identity
+    /// the phase-05 scheduler resolves at the demand layer. The consuming node is
+    /// rewritten to an [`Op::Parameter`] reading the interned response as a
+    /// realized value input; these params occupy `parameters[value_inputs.len()..]`
+    /// so the value-input positional binding is untouched.
+    ///
+    /// r[impl machine.primitive.registered]
+    pub effect_inputs: Vec<EffectEdge>,
     pub forced_copy_value: bool,
     pub nodes: Vec<Node>,
     pub output: NodeId,
     pub callees: Vec<Function>,
     pub array_map_partitions: Vec<ArrayMapPartition>,
+}
+
+/// One generic effect edge: the inter-island cut the partitioner makes at an
+/// [`Op::EffectRequest`] node. `primitive` is the registered effect's identity —
+/// the vir-local [`EffectId`], never a `runtime::PrimitiveId` (r[machine.ir.vix-level]) —
+/// and `request` names the value island that produces the request record. Unlike
+/// [`Island::wire_inputs`], which structurally assumes a *producer* island, an
+/// effect has no producer: the phase-05 scheduler resolves it at the demand layer
+/// from this one edge, keyed entirely by the [`EffectId`] data
+/// (r[machine.primitive.registered]).
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EffectEdge {
+    pub primitive: EffectId,
+    pub request: ValueIslandId,
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
@@ -1214,6 +1238,14 @@ pub struct PartitionedTest {
     /// equal invocations collapse to one entry, so an awaited wire memoizes to a
     /// single realization.
     pub wire_islands: Vec<PartitionedValue>,
+    /// The request islands demanded by effect edges, one per distinct request
+    /// record, keyed by their [`ValueIslandId`]. A consuming island's
+    /// [`Island::effect_inputs`] names one of these as its `request`; phase 05
+    /// evaluates it as an ordinary pure demand, interns the request value, and
+    /// resolves the effect at the demand layer. Parallel to `wire_islands`;
+    /// carried and lowered up front here, never resolved in this phase
+    /// (r[machine.execution.facts-precomputed]).
+    pub effect_islands: Vec<PartitionedValue>,
     pub generator: Option<Island>,
     /// Value-check islands, in site order. A [`PartitionedRecipe::Value`]
     /// indexes into this vector. Trace sites contribute no island.
@@ -1253,6 +1285,10 @@ struct IslandBoundary<'a> {
     shared: &'a BTreeMap<NodeId, ValueIslandId>,
     wires: &'a BTreeMap<NodeId, ValueIslandId>,
     lazy_arg_reps: &'a BTreeMap<NodeId, ValueIslandId>,
+    /// Effect requests to cut at: each [`Op::EffectRequest`] node id maps to the
+    /// generic [`EffectEdge`] recorded on the consuming island. Distinct from the
+    /// wire path — an effect has no producer island.
+    effects: &'a BTreeMap<NodeId, EffectEdge>,
 }
 
 impl Module {
@@ -1434,6 +1470,38 @@ impl Module {
                 true
             }
         });
+        // Effect requests: each `Op::EffectRequest` node consumes a request-record
+        // node (its sole input) and is typed as the Response. Partitioning cuts at
+        // the effect node — the request subtree becomes its own value island and
+        // the consumer reads the interned response as a realized value input. The
+        // effect edge is a distinct path from wires/shared, so effect nodes are
+        // held out of the shared set (r[machine.primitive.registered]).
+        let effect_node_ids: BTreeSet<NodeId> = function
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.op, Op::EffectRequest { .. }))
+            .map(|node| node.id)
+            .collect();
+        shared.retain(|node| !effect_node_ids.contains(&node.id));
+        let mut effects = BTreeMap::new();
+        let mut request_nodes = BTreeSet::new();
+        for node in &function.nodes {
+            let Op::EffectRequest { primitive } = node.op else {
+                continue;
+            };
+            let request_node = *node
+                .inputs
+                .first()
+                .expect("Op::EffectRequest consumes its request record");
+            request_nodes.insert(request_node);
+            effects.insert(
+                node.id,
+                EffectEdge {
+                    primitive,
+                    request: self.value_island_id(function.id, request_node),
+                },
+            );
+        }
         let shared_ids = shared
             .iter()
             .map(|node| (node.id, self.value_island_id(function.id, node.id)))
@@ -1512,6 +1580,7 @@ impl Module {
                             shared: &shared_here,
                             wires: &BTreeMap::new(),
                             lazy_arg_reps: &lazy_here,
+                            effects: &effects,
                         },
                     ),
                     wire: None,
@@ -1545,9 +1614,42 @@ impl Module {
                             shared: &shared_ids,
                             wires: &wires_here,
                             lazy_arg_reps: &lazy_here,
+                            effects: &effects,
                         },
                     ),
                     wire: scalar_call_provenance(function, node),
+                }
+            })
+            .collect::<Vec<_>>();
+        // The request islands demanded through effect edges. Each computes its
+        // request record from ordinary shared inputs; the effect node that
+        // consumes it is downstream, so a request island never contains it. One
+        // island per distinct request node, mirroring the wire-island seam.
+        let effect_islands = request_nodes
+            .iter()
+            .enumerate()
+            .map(|(ordinal, &request_node)| {
+                let representative_id = self.value_island_id(function.id, request_node);
+                let shared_here = shared_ids
+                    .iter()
+                    .filter(|(candidate, _)| **candidate != request_node)
+                    .map(|(candidate, value)| (*candidate, *value))
+                    .collect();
+                PartitionedValue {
+                    id: representative_id,
+                    island: self.partition_function_output_with_shared(
+                        function,
+                        request_node,
+                        IslandId(u32::try_from(ordinal).expect("effect island index fits u32")),
+                        IslandPurpose::Value,
+                        &IslandBoundary {
+                            shared: &shared_here,
+                            wires: &BTreeMap::new(),
+                            lazy_arg_reps: &BTreeMap::new(),
+                            effects: &effects,
+                        },
+                    ),
+                    wire: None,
                 }
             })
             .collect::<Vec<_>>();
@@ -1571,6 +1673,7 @@ impl Module {
                             shared: &shared_ids,
                             wires: &wire_ids,
                             lazy_arg_reps: &lazy_arg_reps,
+                            effects: &effects,
                         },
                     ));
                     PartitionedRecipe::Value { island }
@@ -1590,6 +1693,7 @@ impl Module {
                             shared: &shared_ids,
                             wires: &wire_ids,
                             lazy_arg_reps: &lazy_arg_reps,
+                            effects: &effects,
                         },
                     ));
                     PartitionedRecipe::Snapshot {
@@ -1608,6 +1712,7 @@ impl Module {
             name: test.name.clone(),
             values,
             wire_islands,
+            effect_islands,
             generator,
             islands,
             sites,
@@ -1630,11 +1735,13 @@ impl Module {
             shared,
             wires,
             lazy_arg_reps,
+            effects,
         } = *boundary;
         let stop = shared
             .keys()
             .chain(wires.keys())
             .chain(lazy_arg_reps.keys())
+            .chain(effects.keys())
             .copied()
             .collect();
         let mut needed = BTreeSet::new();
@@ -1673,6 +1780,35 @@ impl Module {
                 node.inputs.clear();
                 wire_inputs.push(value);
             }
+        }
+        // A cut effect: the `Op::EffectRequest` node reads its interned Response as
+        // a bound realized value input. It becomes an `Op::Parameter` allocated
+        // AFTER every value-input parameter, so the value_inputs<->parameters
+        // positional binding is untouched; the parallel `effect_inputs` edge
+        // records the primitive identity and request island for the phase-05
+        // scheduler. This is a distinct loop from the wire/shared cut above
+        // (r[machine.primitive.registered]).
+        let mut effect_inputs = Vec::new();
+        for node in &mut nodes {
+            if !matches!(node.op, Op::EffectRequest { .. }) {
+                continue;
+            }
+            let Some(&edge) = effects.get(&node.id) else {
+                continue;
+            };
+            let id = ParameterId(
+                u32::try_from(parameters.len()).expect("effect parameter count fits u32"),
+            );
+            node.op = Op::Parameter(id);
+            node.inputs.clear();
+            parameters.push(Parameter {
+                id,
+                node: node.id,
+                name: format!("$effect_{}", edge.request.stable_segment()),
+                ty: node.ty.clone(),
+                kind: ParameterKind::Positional,
+            });
+            effect_inputs.push(edge);
         }
         prune_control_regions(&mut nodes, &needed);
         // A fused field projection or awaited wire consumer no longer references
@@ -1764,6 +1900,7 @@ impl Module {
             parameters,
             value_inputs,
             wire_inputs,
+            effect_inputs,
             forced_copy_value: matches!(purpose, IslandPurpose::Value | IslandPurpose::Snapshot)
                 && self.force_molten_copy,
             nodes,
@@ -1833,6 +1970,7 @@ impl Module {
             parameters,
             value_inputs,
             wire_inputs: Vec::new(),
+            effect_inputs: Vec::new(),
             forced_copy_value: false,
             nodes,
             output,

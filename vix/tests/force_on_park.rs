@@ -39,6 +39,7 @@ fn island(id: u32, nodes: Vec<Node>, output: u32, wire_inputs: Vec<ValueIslandId
         parameters: Vec::new(),
         value_inputs: Vec::new(),
         wire_inputs,
+        effect_inputs: Vec::new(),
         forced_copy_value: false,
         nodes,
         output: NodeId(output),
