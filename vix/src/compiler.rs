@@ -10,6 +10,7 @@ use taxon::{
 
 use crate::decode::{self, DecodeFormat, DecodedValue};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics, Label};
+use crate::runtime::{pinned_blob_ref_type, pinned_fetch_primitive_id, pinned_fetch_request_type};
 use crate::schema::{SchemaBatch, SchemaRef, SchemaSet};
 use crate::support::{Span, Spanned};
 use crate::surface::{SurfaceParser, ast};
@@ -4490,7 +4491,7 @@ fn lower_method_call(
         PreludeMethod::RegistryUrl => {
             let name = lower_value(nodes, bindings, context, &positional[0])?;
             require_type(&name, &Type::String, expr_span(&positional[0]))?;
-            let ty = Type::Extern(ExternKind::PinnedUrl);
+            let ty = pinned_blob_ref_type();
             Ok(LoweredValue {
                 node: push_node(
                     nodes,
@@ -4748,6 +4749,34 @@ fn lower_effect_intrinsic(
             "named arguments on a primitive constructor",
         )));
     }
+    if call.callee.value == "fetch" {
+        check_arity(call, 1)?;
+        let pin = lower_value(nodes, bindings, context, &call.args.args[0])?;
+        require_type(&pin, &pinned_blob_ref_type(), expr_span(&call.args.args[0]))?;
+        let request_ty = pinned_fetch_request_type();
+        let request = push_node(
+            nodes,
+            call.span,
+            request_ty,
+            EffectFacts::PURE,
+            vec![pin.node],
+            Op::Record,
+        );
+        let ty = Type::Extern(ExternKind::Blob);
+        return Ok(LoweredValue {
+            node: push_node(
+                nodes,
+                call.span,
+                ty.clone(),
+                EffectFacts::PURE,
+                vec![request],
+                Op::InvokePrimitive {
+                    primitive: pinned_fetch_primitive_id(),
+                },
+            ),
+            ty,
+        });
+    }
     let (ty, op, inputs) = match call.callee.value.as_str() {
         "fixture_tree" => {
             check_arity(call, 1)?;
@@ -4767,16 +4796,7 @@ fn lower_effect_intrinsic(
                 Vec::new(),
             )
         }
-        "fetch" => {
-            check_arity(call, 1)?;
-            let pinned = lower_value(nodes, bindings, context, &call.args.args[0])?;
-            require_type(
-                &pinned,
-                &Type::Extern(ExternKind::PinnedUrl),
-                expr_span(&call.args.args[0]),
-            )?;
-            (Type::Extern(ExternKind::Blob), Op::Fetch, vec![pinned.node])
-        }
+        "fetch" => unreachable!("registered fetch returned above"),
         "untar" => {
             check_arity(call, 1)?;
             let blob = lower_value(nodes, bindings, context, &call.args.args[0])?;

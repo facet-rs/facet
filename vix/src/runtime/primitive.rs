@@ -79,6 +79,25 @@ pub struct ProgressivePublication {
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct ValueBodyCandidate {
+    pub claimed: ValueId,
+    pub bytes: Vec<u8>,
+}
+
+pub trait ValuePersistence: Send + Sync {
+    fn get(&self, value: &ValueId) -> Result<Option<ValueBodyCandidate>, PrimitiveMachineError>;
+    fn put(&self, value: &ValueId, bytes: &[u8]) -> Result<(), PrimitiveMachineError>;
+}
+
+pub trait OriginAdapter: Send + Sync {
+    fn read(
+        &self,
+        capability: &ValueId,
+        coordinate: &str,
+    ) -> Result<Vec<u8>, PrimitiveMachineError>;
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct PrimitivePublication {
     pub completion: PrimitiveCompletion,
     pub receipt: Receipt,
@@ -105,6 +124,10 @@ pub struct PrimitiveValue {
 pub enum PrimitiveValueBody {
     Bytes(Vec<u8>),
     Product(Vec<PrimitiveField>),
+    Sequence {
+        element_schema: SchemaRef,
+        elements: Vec<PrimitiveValue>,
+    },
     Variant {
         tag: u32,
         fields: Vec<PrimitiveField>,
@@ -142,7 +165,9 @@ impl PrimitiveValue {
     pub fn resident_bytes(&self) -> &[u8] {
         match &self.body {
             PrimitiveValueBody::Bytes(bytes) => bytes,
-            PrimitiveValueBody::Product(_) | PrimitiveValueBody::Variant { .. } => &[],
+            PrimitiveValueBody::Product(_)
+            | PrimitiveValueBody::Sequence { .. }
+            | PrimitiveValueBody::Variant { .. } => &[],
         }
     }
 
@@ -156,6 +181,14 @@ impl PrimitiveValue {
                 schema: self.schema.clone(),
                 tag: 0,
                 fields: fields.iter().map(PrimitiveField::framed).collect(),
+            },
+            PrimitiveValueBody::Sequence {
+                element_schema,
+                elements,
+            } => FramedNode::SeqChildren {
+                schema: self.schema.clone(),
+                element_schema: element_schema.clone(),
+                children: elements.iter().map(PrimitiveValue::identity).collect(),
             },
             PrimitiveValueBody::Variant { tag, fields } => FramedNode::Variant {
                 schema: self.schema.clone(),
@@ -190,7 +223,9 @@ pub trait EffectAuthority: Send + Sync {
     fn intern_value(&self, value: PrimitiveValue) -> Result<ValueId, PrimitiveMachineError> {
         match &value.body {
             PrimitiveValueBody::Bytes(bytes) => self.intern(&value.schema, bytes),
-            PrimitiveValueBody::Product(_) | PrimitiveValueBody::Variant { .. } => {
+            PrimitiveValueBody::Product(_)
+            | PrimitiveValueBody::Sequence { .. }
+            | PrimitiveValueBody::Variant { .. } => {
                 Err(PrimitiveMachineError::AuthorityViolation {
                     detail: "effect authority does not admit structural values".to_owned(),
                 })
@@ -207,6 +242,27 @@ pub trait EffectAuthority: Send + Sync {
             detail: format!("semantic schema {schema} is not present in this effect snapshot"),
         })
     }
+
+    fn persisted_candidate(
+        &self,
+        _value: &ValueId,
+    ) -> Result<Option<ValueBodyCandidate>, PrimitiveMachineError> {
+        Ok(None)
+    }
+
+    fn persist_value(&self, _value: &ValueId, _bytes: &[u8]) -> Result<(), PrimitiveMachineError> {
+        Ok(())
+    }
+
+    fn origin_candidate(
+        &self,
+        _capability: &ValueId,
+        _coordinate: &str,
+    ) -> Result<Vec<u8>, PrimitiveMachineError> {
+        Err(PrimitiveMachineError::Unavailable {
+            detail: "no origin adapter is installed for this effect snapshot".to_owned(),
+        })
+    }
 }
 
 #[derive(Default)]
@@ -215,6 +271,8 @@ pub struct StagedEffectAuthority {
     staged: Mutex<BTreeMap<ValueId, PrimitiveValue>>,
     events: Mutex<Vec<PrimitiveEvent>>,
     schema_types: BTreeMap<SchemaRef, Type>,
+    persistence: Option<Arc<dyn ValuePersistence>>,
+    origin: Option<Arc<dyn OriginAdapter>>,
 }
 
 impl StagedEffectAuthority {
@@ -229,6 +287,18 @@ impl StagedEffectAuthority {
     #[must_use]
     pub fn with_schema_types(mut self, types: impl IntoIterator<Item = (SchemaRef, Type)>) -> Self {
         self.schema_types = types.into_iter().collect();
+        self
+    }
+
+    #[must_use]
+    pub fn with_value_persistence(mut self, persistence: Arc<dyn ValuePersistence>) -> Self {
+        self.persistence = Some(persistence);
+        self
+    }
+
+    #[must_use]
+    pub fn with_origin_adapter(mut self, origin: Arc<dyn OriginAdapter>) -> Self {
+        self.origin = Some(origin);
         self
     }
 
@@ -321,6 +391,34 @@ impl EffectAuthority for StagedEffectAuthority {
             }
         })
     }
+
+    fn persisted_candidate(
+        &self,
+        value: &ValueId,
+    ) -> Result<Option<ValueBodyCandidate>, PrimitiveMachineError> {
+        self.persistence
+            .as_ref()
+            .map_or(Ok(None), |persistence| persistence.get(value))
+    }
+
+    fn persist_value(&self, value: &ValueId, bytes: &[u8]) -> Result<(), PrimitiveMachineError> {
+        self.persistence
+            .as_ref()
+            .map_or(Ok(()), |persistence| persistence.put(value, bytes))
+    }
+
+    fn origin_candidate(
+        &self,
+        capability: &ValueId,
+        coordinate: &str,
+    ) -> Result<Vec<u8>, PrimitiveMachineError> {
+        self.origin
+            .as_ref()
+            .ok_or_else(|| PrimitiveMachineError::Unavailable {
+                detail: "no origin adapter is installed for this effect snapshot".to_owned(),
+            })?
+            .read(capability, coordinate)
+    }
 }
 
 #[derive(Clone)]
@@ -393,6 +491,46 @@ impl EffectCtx {
 
     pub fn type_for_schema(&self, schema: &SchemaRef) -> Result<Type, PrimitiveMachineError> {
         self.authority.type_for_schema(schema)
+    }
+
+    pub fn persisted_candidate(
+        &self,
+        value: &ValueId,
+    ) -> Result<Option<ValueBodyCandidate>, PrimitiveMachineError> {
+        self.authority.persisted_candidate(value)
+    }
+
+    pub fn persist_value(
+        &self,
+        value: &ValueId,
+        bytes: &[u8],
+    ) -> Result<(), PrimitiveMachineError> {
+        self.authority.persist_value(value, bytes)
+    }
+
+    pub fn origin_candidate(
+        &self,
+        capability: &ValueId,
+        coordinate: &str,
+        expected: &ValueId,
+    ) -> Result<Vec<u8>, PrimitiveMachineError> {
+        let bytes = self.authority.origin_candidate(capability, coordinate)?;
+        let observed = FramedNode::leaf(expected.schema.clone(), bytes.clone()).identity();
+        if &observed != expected {
+            return Err(PrimitiveMachineError::CorruptCandidate { source: observed });
+        }
+        self.transaction
+            .lock()
+            .expect("effect transaction mutex poisoned")
+            .reads
+            .push(ReadWitness {
+                source: capability.clone(),
+                projection: ReadProjection::Origin {
+                    coordinate: coordinate.to_owned(),
+                },
+                observation: ReadObservation::Value(observed),
+            });
+        Ok(bytes)
     }
 
     pub fn observe(&self, observation: JournalObservation) {

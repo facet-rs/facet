@@ -629,6 +629,35 @@ impl<'task> TaskValueResolver<'task> {
         Ok(ResolvedDenseArray { elements })
     }
 
+    /// Resolve a verified host-plan word as a dense value. The caller supplies
+    /// the program-local schema witness from its verified ABI plan; the raw
+    /// task handle never becomes a semantic identity or escapes this borrow.
+    pub fn resolve_dense_host_word(
+        &self,
+        word: i64,
+        schema: SchemaRef,
+    ) -> Result<ResolvedDenseArray<'task>, TaskFault> {
+        self.resolve_dense(TaskValueRef {
+            word,
+            schema,
+            lifetime: core::marker::PhantomData,
+        })
+    }
+
+    /// Resolve one verified host-plan reference word under its program-local
+    /// schema witness without exposing task arena internals.
+    pub fn resolve_host_word(
+        &self,
+        word: i64,
+        schema: SchemaRef,
+    ) -> Option<ResolvedTaskValue<'task>> {
+        self.resolve(TaskValueRef {
+            word,
+            schema,
+            lifetime: core::marker::PhantomData,
+        })
+    }
+
     fn structural(
         &self,
         bytes: &'task [u8],
@@ -1395,6 +1424,86 @@ impl ExecTask<'_> {
                 contract: self.executable.verified.contract(),
             },
         )
+    }
+
+    /// Inspect a completed result through its verified frame-region shape,
+    /// whether or not that result also has a structural product/enum shape.
+    /// This is the result-side counterpart of [`Self::with_value_resolver`]:
+    /// scalar and handle-only results remain typed without fabricating an enum
+    /// envelope solely to make them inspectable.
+    pub fn with_result_value_resolver<R>(
+        &self,
+        use_result: impl for<'task> FnOnce(
+            TaskStructuralValue<'task>,
+            TaskValueResolver<'task>,
+        ) -> Result<R, TaskFault>,
+    ) -> Result<R, TaskFault> {
+        self.check_result_available()?;
+        let function = self.executable.function(self.entry)?;
+        let region = function.result;
+        let declared = &function.frame.regions[region.0 as usize];
+        let bytes = self.result()?;
+        let expected = declared
+            .shape
+            .checked_byte_len()
+            .ok_or(TaskFault::InvalidResultShape {
+                entry: self.entry,
+                region,
+                size: bytes.len(),
+            })?;
+        if bytes.len() != expected {
+            return Err(TaskFault::InvalidResultShape {
+                entry: self.entry,
+                region,
+                size: bytes.len(),
+            });
+        }
+        let contract = self.executable.verified.contract();
+        let value_shape = declared
+            .value_shape
+            .map(|shape| {
+                contract
+                    .value_shapes
+                    .get(shape.0 as usize)
+                    .ok_or(TaskFault::InvalidResultShape {
+                        entry: self.entry,
+                        region,
+                        size: bytes.len(),
+                    })
+            })
+            .transpose()?;
+        let molten = match &self.lane {
+            Lane::Interpreter(task) => task.molten(),
+            Lane::Native(task) => task.molten(),
+        };
+        use_result(
+            TaskStructuralValue {
+                bytes,
+                entry: self.entry,
+                region,
+                shape: &declared.shape,
+                value_shape,
+                value_shapes: &contract.value_shapes,
+            },
+            TaskValueResolver { molten, contract },
+        )
+    }
+
+    /// Borrow the active task's opaque value resolver while it is suspended at
+    /// a verified host boundary. The higher-ranked closure prevents task-local
+    /// handles, molten bytes, and resolver state from escaping into the host.
+    pub fn with_value_resolver<R>(
+        &self,
+        use_resolver: impl for<'task> FnOnce(TaskValueResolver<'task>) -> R,
+    ) -> R {
+        let molten = match &self.lane {
+            Lane::Interpreter(task) => task.molten(),
+            Lane::Native(task) => task.molten(),
+        };
+        use_resolver(TaskValueResolver {
+            molten,
+            contract: self.executable.verified.contract(),
+        })
     }
 
     /// Number of descriptors the task published, available once the task is

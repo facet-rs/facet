@@ -1969,6 +1969,19 @@ impl Module {
                 shared.push(node);
             }
         }
+        // Registered primitive invocations are eager value publications. Their
+        // Weavy task must suspend and resume through the generic host boundary;
+        // a downstream legacy effect island may consume the published value,
+        // but can never absorb and reinterpret the invocation itself.
+        for node in function
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.op, Op::InvokePrimitive { .. }))
+        {
+            if !shared.iter().any(|candidate| candidate.id == node.id) {
+                shared.push(node);
+            }
+        }
         shared.sort_by_key(|node| ValueIslandId {
             function: function.id,
             node: node.id,

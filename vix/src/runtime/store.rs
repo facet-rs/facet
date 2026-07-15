@@ -342,6 +342,12 @@ impl Store {
         self.entries.get(handle.0 as usize)
     }
 
+    pub(crate) fn resident_entries(&self) -> impl Iterator<Item = &StoreEntry> {
+        self.entries
+            .iter()
+            .filter(|entry| entry.resident_bytes().is_some())
+    }
+
     pub(crate) fn entry_by_weavy_handle(&self, handle: StoreHandle) -> Option<&StoreEntry> {
         self.entries.get(handle.index())
     }

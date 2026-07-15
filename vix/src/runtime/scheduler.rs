@@ -4,8 +4,8 @@ use std::ops::Deref;
 use std::sync::Arc;
 
 use weavy::exec::{
-    FallbackReason, FaultSite, LaneKind, ResolvedTaskValue, StoreHandle, TaskFault,
-    TaskStructuralValue, TaskValueResolver,
+    FallbackReason, FaultSite, LaneKind, ResolvedTaskValue, TaskFault, TaskStructuralValue,
+    TaskValueResolver,
 };
 use weavy::task::{FnId, HostFn, TaskEvent as WeavyTaskEvent, TaskStep};
 
@@ -13,7 +13,7 @@ use crate::lowering::{LoweringArtifact, LoweringAttribution, ValueInputBinding};
 use crate::schema::SchemaRef;
 use crate::vir::{
     ExternKind, Function, FunctionId, Island, IslandId, MiniSolveRequirements, NodeId,
-    OPTION_SOME_VARIANT, Op, Type, VariantPayload,
+    OPTION_NONE_VARIANT, OPTION_SOME_VARIANT, Op, Type, VariantPayload,
 };
 
 use super::fixture::{FixtureEntryKind, FixtureReadError, FixtureStore, TarMember, parse_ustar};
@@ -34,9 +34,9 @@ use super::store::{
     StoreJournalLoadReport,
 };
 use super::{
-    DecodePrimitive, EffectCtx, PrimitiveCompletion, PrimitiveDispatcher, PrimitiveField,
-    PrimitiveFieldValue, PrimitiveRegistry, PrimitiveValue, PrimitiveValueBody,
-    StagedEffectAuthority,
+    DecodePrimitive, EffectCtx, PinnedFetchPrimitive, PrimitiveCompletion, PrimitiveDispatcher,
+    PrimitiveField, PrimitiveFieldValue, PrimitiveRegistry, PrimitiveValue, PrimitiveValueBody,
+    StagedEffectAuthority, blob_id_type, origin_hint_type,
 };
 use super::{MachineAttribution, MachineError, MachineOperation, RuntimeFault};
 
@@ -355,6 +355,9 @@ fn default_primitive_dispatcher() -> PrimitiveDispatcher {
     registry
         .register(Arc::new(DecodePrimitive::default()))
         .expect("the built-in decode primitive is registered once");
+    registry
+        .register(Arc::new(PinnedFetchPrimitive::default()))
+        .expect("the built-in pinned fetch primitive is registered once");
     PrimitiveDispatcher::new(Arc::new(registry))
 }
 
@@ -2346,7 +2349,7 @@ impl<S: EventSink> Runtime<S> {
                     effect_machine_error("fixture registry manifest was unavailable")
                 })?;
                 reads.push(super::model::ReadWitness {
-                    source: registry.identity,
+                    source: registry.identity.clone(),
                     projection: ReadProjection::RegistryManifest,
                     observation: ReadObservation::Value(
                         effect_leaf(&Type::String, manifest.clone().into_bytes()).identity,
@@ -2361,10 +2364,56 @@ impl<S: EventSink> Runtime<S> {
                 });
                 let (url, hash) = row
                     .ok_or_else(|| effect_machine_error("fixture registry artifact was absent"))?;
-                Ok(EffectTerm::Value(effect_leaf(
+                let blob_schema = Type::Extern(ExternKind::Blob).schema_ref();
+                let blob_id = PrimitiveValue {
+                    schema: blob_id_type().schema_ref(),
+                    body: PrimitiveValueBody::Product(vec![
+                        primitive_child_field(PrimitiveValue::bytes(
+                            Type::Extern(ExternKind::Schema).schema_ref(),
+                            blob_schema.canonical_bytes(),
+                        )),
+                        primitive_child_field(PrimitiveValue::bytes(
+                            Type::String.schema_ref(),
+                            hash.into_bytes(),
+                        )),
+                    ]),
+                };
+                let capability =
+                    primitive_value_from_effect(&Type::Extern(ExternKind::Registry), &registry)?;
+                let origin = PrimitiveValue {
+                    schema: origin_hint_type().schema_ref(),
+                    body: PrimitiveValueBody::Product(vec![
+                        primitive_child_field(capability),
+                        primitive_child_field(PrimitiveValue::bytes(
+                            Type::String.schema_ref(),
+                            url.into_bytes(),
+                        )),
+                    ]),
+                };
+                effect_value_from_primitive(
                     &node.ty,
-                    format!("{url}\n{hash}").into_bytes(),
-                )))
+                    PrimitiveValue {
+                        schema: node.ty.schema_ref(),
+                        body: PrimitiveValueBody::Product(vec![
+                            primitive_child_field(blob_id),
+                            primitive_child_field(PrimitiveValue {
+                                schema: Type::array(origin_hint_type()).schema_ref(),
+                                body: PrimitiveValueBody::Sequence {
+                                    element_schema: origin_hint_type().schema_ref(),
+                                    elements: vec![origin],
+                                },
+                            }),
+                            primitive_child_field(PrimitiveValue {
+                                schema: Type::option(Type::String).schema_ref(),
+                                body: PrimitiveValueBody::Variant {
+                                    tag: OPTION_NONE_VARIANT,
+                                    fields: Vec::new(),
+                                },
+                            }),
+                        ]),
+                    },
+                )
+                .map(EffectTerm::Value)
             }
             Op::Fetch => {
                 let EffectTerm::Value(pinned) = input(0, self)? else {
@@ -2561,16 +2610,33 @@ impl<S: EventSink> Runtime<S> {
             .get(request.plan)
             .cloned()
             .ok_or_else(|| format!("primitive host plan {} is absent", request.plan))?;
-        let request_value =
-            primitive_value_from_frame(&request.frame, plan.input, &plan.request, &self.store)?;
+        let request_value = task.with_value_resolver(|resolver| {
+            primitive_value_from_frame(
+                &request.frame,
+                plan.input,
+                &plan.request,
+                &self.store,
+                &resolver,
+                &plan.abi_schemas,
+            )
+        })?;
         let request_id = request_value.identity();
         let primitive_demand = primitive_demand_key(&plan.primitive, &request_id);
         let mut catalog = BTreeMap::new();
         insert_schema_type(&plan.request, &mut catalog);
         insert_schema_type(&plan.response, &mut catalog);
+        let mut authority_inputs = vec![(request_id.clone(), request_value.clone())];
+        authority_inputs.extend(self.store.resident_entries().filter_map(|entry| {
+            let bytes = entry.resident_bytes()?;
+            Some((
+                entry.identity.clone(),
+                PrimitiveValue::bytes(entry.identity.schema.clone(), bytes.to_vec()),
+            ))
+        }));
         let authority = Arc::new(
-            StagedEffectAuthority::new([(request_id.clone(), request_value.clone())])
-                .with_schema_types(catalog),
+            StagedEffectAuthority::new(authority_inputs)
+                .with_schema_types(catalog)
+                .with_origin_adapter(Arc::new(self.fixture_store.clone())),
         );
         let ticket = self
             .primitive_dispatcher
@@ -2580,11 +2646,25 @@ impl<S: EventSink> Runtime<S> {
                 EffectCtx::new(primitive_demand, authority.clone()),
             )
             .map_err(|error| format!("registered primitive dispatch failed: {error:?}"))?;
-        let publication = ticket.outcome().ok_or_else(|| {
-            "registered primitive suspended without a completion event".to_owned()
-        })?;
+        let (completion_tx, completion_rx) = std::sync::mpsc::sync_channel(1);
+        let subscription = ticket.join(move |publication| {
+            let _ = completion_tx.send(publication);
+        });
+        let publication = match ticket.outcome() {
+            Some(publication) => publication,
+            None => completion_rx.recv().map_err(|_| {
+                "primitive completion registration closed without delivery".to_owned()
+            })?,
+        };
+        drop(subscription);
         self.primitive_dispatcher.retire(primitive_demand);
         self.counters.primitive_invocations += 1;
+        self.counters.fetches_performed += publication
+            .receipt
+            .reads
+            .iter()
+            .filter(|read| matches!(read.projection, ReadProjection::Origin { .. }))
+            .count() as u64;
         let identity = match publication.completion {
             PrimitiveCompletion::Ok(identity) => identity,
             PrimitiveCompletion::Failed(identity) => {
@@ -4330,10 +4410,13 @@ fn realize_value(
     lowered: &LoweringArtifact,
     store: &Store,
 ) -> Result<RealizedValue, TaskFault> {
-    task.with_result_resolver(|result, resolver| {
-        let selector = u32::try_from(result.enum_selector()?)
-            .map_err(|_| invalid_realized_result(lowered, 0))?;
-        let value = result.as_value().enum_field(selector, 0)?;
+    task.with_result_value_resolver(|result, resolver| {
+        let value = if lowered.array_outcome.is_some() {
+            let selector = result.enum_selector()?;
+            result.enum_field(selector, 0)?
+        } else {
+            result
+        };
         // A snapshot island realizes EVERY type through the structural walker so
         // scalars, strings, and collections all attach a renderable frozen tree.
         // Identity comes from the framed node, so the (empty) resident is fine.
@@ -4676,13 +4759,14 @@ fn realize_resolved<'task>(
             let entry = store
                 .entry_by_weavy_handle(handle)
                 .ok_or_else(|| invalid_realized_result(lowered, 0))?;
+            if entry.identity.schema != ty.schema_ref() {
+                return Err(invalid_realized_result(lowered, 0));
+            }
             let resident = entry
                 .resident_bytes()
                 .ok_or_else(|| invalid_realized_result(lowered, 0))?
                 .to_vec();
-            // A root that is already store-backed needs no freeze. Nested store
-            // references are handled by `realize_array` through their ValueId.
-            Err(invalid_realized_result(lowered, resident.len()))
+            Ok((FramedNode::Reference(entry.identity.clone()), resident, 0))
         }
         ResolvedTaskValue::LentMolten { .. } => Err(invalid_realized_result(lowered, 0)),
     }
@@ -4866,7 +4950,7 @@ fn frozen_to_weavy(
                 .ok_or(())?;
             Ok(weavy::exec::FrozenValue::Store { schema, handle })
         }
-        (FrozenValue::Opaque(bytes), Type::String | Type::Path) => {
+        (FrozenValue::Opaque(bytes), Type::String | Type::Path | Type::Extern(_)) => {
             Ok(weavy::exec::FrozenValue::Opaque {
                 schema: publication_schema(binding, ty)?,
                 bytes: bytes.clone(),
@@ -5070,6 +5154,8 @@ fn primitive_value_from_frame(
     region: super::FrameRegion,
     ty: &Type,
     store: &Store,
+    resolver: &TaskValueResolver<'_>,
+    abi_schemas: &[(Type, weavy::SchemaRef)],
 ) -> Result<PrimitiveValue, String> {
     let expected = ty
         .word_width()
@@ -5082,7 +5168,7 @@ fn primitive_value_from_frame(
             ty.name()
         ));
     }
-    primitive_value_from_frame_at(frame, region, 0, ty, store)
+    primitive_value_from_frame_at(frame, region, 0, ty, store, resolver, abi_schemas)
 }
 
 fn primitive_value_from_frame_at(
@@ -5091,6 +5177,8 @@ fn primitive_value_from_frame_at(
     offset: usize,
     ty: &Type,
     store: &Store,
+    resolver: &TaskValueResolver<'_>,
+    abi_schemas: &[(Type, weavy::SchemaRef)],
 ) -> Result<PrimitiveValue, String> {
     let schema = ty.schema_ref();
     match ty {
@@ -5100,29 +5188,46 @@ fn primitive_value_from_frame_at(
         )),
         Type::String | Type::Path | Type::Extern(_) => {
             let word = frame_word(frame, region, offset)?;
-            let index = usize::try_from(word)
-                .map_err(|_| format!("negative primitive Store handle {word}"))?;
-            let handle = StoreHandle::new(index)
-                .ok_or_else(|| format!("primitive Store handle {index} is out of range"))?;
-            let entry = store
-                .entry_by_weavy_handle(handle)
-                .ok_or_else(|| format!("primitive Store handle {index} is absent"))?;
-            if entry.identity.schema != schema {
-                return Err(format!(
-                    "primitive Store handle schema {} disagrees with {}",
-                    entry.identity.schema, schema
-                ));
-            }
-            let bytes = entry
-                .resident_bytes()
-                .ok_or_else(|| format!("primitive Store handle {index} is not resident"))?;
-            Ok(PrimitiveValue::bytes(schema, bytes.to_vec()))
+            let abi_schema = abi_schema_for_type(ty, abi_schemas)?;
+            let bytes = match resolver
+                .resolve_host_word(word, abi_schema)
+                .ok_or_else(|| "primitive reference handle is absent".to_owned())?
+            {
+                ResolvedTaskValue::Store(handle) => {
+                    let entry = store
+                        .entry_by_weavy_handle(handle)
+                        .ok_or_else(|| "primitive Store handle is absent".to_owned())?;
+                    if entry.identity.schema != schema {
+                        return Err(format!(
+                            "primitive Store handle schema {} disagrees with {}",
+                            entry.identity.schema, schema
+                        ));
+                    }
+                    entry
+                        .resident_bytes()
+                        .ok_or_else(|| "primitive Store handle is not resident".to_owned())?
+                        .to_vec()
+                }
+                ResolvedTaskValue::TaskMolten(bytes) => bytes.to_vec(),
+                ResolvedTaskValue::LentMolten { .. } => {
+                    return Err("primitive request cannot retain lent molten bytes".to_owned());
+                }
+            };
+            Ok(PrimitiveValue::bytes(schema, bytes))
         }
         Type::Tuple(elements) => {
             let mut cursor = offset;
             let mut fields = Vec::with_capacity(elements.len());
             for element in elements {
-                let value = primitive_value_from_frame_at(frame, region, cursor, element, store)?;
+                let value = primitive_value_from_frame_at(
+                    frame,
+                    region,
+                    cursor,
+                    element,
+                    store,
+                    resolver,
+                    abi_schemas,
+                )?;
                 fields.push(primitive_field(element, value)?);
                 cursor += primitive_type_words(element)?;
             }
@@ -5135,7 +5240,15 @@ fn primitive_value_from_frame_at(
             let mut cursor = offset;
             let mut fields = Vec::with_capacity(record.fields.len());
             for field in &record.fields {
-                let value = primitive_value_from_frame_at(frame, region, cursor, &field.ty, store)?;
+                let value = primitive_value_from_frame_at(
+                    frame,
+                    region,
+                    cursor,
+                    &field.ty,
+                    store,
+                    resolver,
+                    abi_schemas,
+                )?;
                 fields.push(primitive_field(&field.ty, value)?);
                 cursor += primitive_type_words(&field.ty)?;
             }
@@ -5156,7 +5269,15 @@ fn primitive_value_from_frame_at(
             let mut cursor = offset + 1;
             let mut fields = Vec::with_capacity(field_types.len());
             for field_ty in field_types {
-                let value = primitive_value_from_frame_at(frame, region, cursor, field_ty, store)?;
+                let value = primitive_value_from_frame_at(
+                    frame,
+                    region,
+                    cursor,
+                    field_ty,
+                    store,
+                    resolver,
+                    abi_schemas,
+                )?;
                 fields.push(primitive_field(field_ty, value)?);
                 cursor += primitive_type_words(field_ty)?;
             }
@@ -5165,8 +5286,27 @@ fn primitive_value_from_frame_at(
                 body: PrimitiveValueBody::Variant { tag, fields },
             })
         }
+        Type::Array(element) => {
+            let word = frame_word(frame, region, offset)?;
+            let schema = abi_schema_for_type(ty, abi_schemas)?;
+            let dense = resolver
+                .resolve_dense_host_word(word, schema)
+                .map_err(|fault| format!("primitive array resolution failed: {fault:?}"))?;
+            let elements = dense
+                .elements()
+                .iter()
+                .copied()
+                .map(|value| primitive_value_from_task(value, element, store, resolver))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(PrimitiveValue {
+                schema: ty.schema_ref(),
+                body: PrimitiveValueBody::Sequence {
+                    element_schema: element.schema_ref(),
+                    elements,
+                },
+            })
+        }
         Type::Function { .. }
-        | Type::Array(_)
         | Type::Map { .. }
         | Type::Set(_)
         | Type::Stream { .. }
@@ -5197,6 +5337,147 @@ fn primitive_field(ty: &Type, value: PrimitiveValue) -> Result<PrimitiveField, S
             value: PrimitiveFieldValue::Child(Box::new(value)),
         })
     }
+}
+
+fn primitive_value_from_task(
+    value: TaskStructuralValue<'_>,
+    ty: &Type,
+    store: &Store,
+    resolver: &TaskValueResolver<'_>,
+) -> Result<PrimitiveValue, String> {
+    let schema = ty.schema_ref();
+    match ty {
+        Type::Bool | Type::Int | Type::Check => Ok(PrimitiveValue::bytes(
+            schema,
+            value
+                .scalar_word()
+                .map_err(|fault| format!("primitive scalar resolution failed: {fault:?}"))?
+                .to_le_bytes()
+                .to_vec(),
+        )),
+        Type::String | Type::Path | Type::Extern(_) => {
+            let reference = value
+                .value_ref()
+                .map_err(|fault| format!("primitive reference resolution failed: {fault:?}"))?;
+            let bytes = match resolver
+                .resolve(reference)
+                .ok_or_else(|| "primitive reference handle is absent".to_owned())?
+            {
+                ResolvedTaskValue::Store(handle) => store
+                    .entry_by_weavy_handle(handle)
+                    .and_then(StoreEntry::resident_bytes)
+                    .ok_or_else(|| "primitive Store reference is not resident".to_owned())?
+                    .to_vec(),
+                ResolvedTaskValue::TaskMolten(bytes) => bytes.to_vec(),
+                ResolvedTaskValue::LentMolten { .. } => {
+                    return Err("primitive request cannot retain a lent molten value".to_owned());
+                }
+            };
+            Ok(PrimitiveValue::bytes(schema, bytes))
+        }
+        Type::Tuple(elements) => {
+            let fields = elements
+                .iter()
+                .enumerate()
+                .map(|(index, ty)| {
+                    let index = u32::try_from(index)
+                        .map_err(|_| "primitive tuple field index overflowed".to_owned())?;
+                    let field = value.product_field(index).map_err(|fault| {
+                        format!("primitive tuple field resolution failed: {fault:?}")
+                    })?;
+                    primitive_value_from_task(field, ty, store, resolver)
+                        .and_then(|value| primitive_field(ty, value))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(PrimitiveValue {
+                schema,
+                body: PrimitiveValueBody::Product(fields),
+            })
+        }
+        Type::Record(record) => {
+            let fields = record
+                .fields
+                .iter()
+                .enumerate()
+                .map(|(index, declared)| {
+                    let index = u32::try_from(index)
+                        .map_err(|_| "primitive record field index overflowed".to_owned())?;
+                    let field = value.product_field(index).map_err(|fault| {
+                        format!("primitive record field resolution failed: {fault:?}")
+                    })?;
+                    primitive_value_from_task(field, &declared.ty, store, resolver)
+                        .and_then(|value| primitive_field(&declared.ty, value))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(PrimitiveValue {
+                schema,
+                body: PrimitiveValueBody::Product(fields),
+            })
+        }
+        Type::Enum(enumeration) => {
+            let tag = value
+                .enum_selector()
+                .map_err(|fault| format!("primitive enum resolution failed: {fault:?}"))?;
+            let variant = enumeration
+                .variants
+                .get(tag as usize)
+                .ok_or_else(|| format!("primitive enum tag {tag} is out of range"))?;
+            let fields = variant_field_types(&variant.payload)
+                .into_iter()
+                .enumerate()
+                .map(|(index, ty)| {
+                    let index = u32::try_from(index)
+                        .map_err(|_| "primitive enum field index overflowed".to_owned())?;
+                    let field = value.enum_field(tag, index).map_err(|fault| {
+                        format!("primitive enum field resolution failed: {fault:?}")
+                    })?;
+                    primitive_value_from_task(field, ty, store, resolver)
+                        .and_then(|value| primitive_field(ty, value))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(PrimitiveValue {
+                schema,
+                body: PrimitiveValueBody::Variant { tag, fields },
+            })
+        }
+        Type::Array(element) => {
+            let reference = value
+                .value_ref()
+                .map_err(|fault| format!("primitive array reference failed: {fault:?}"))?;
+            let dense = resolver
+                .resolve_dense(reference)
+                .map_err(|fault| format!("primitive array resolution failed: {fault:?}"))?;
+            let elements = dense
+                .elements()
+                .iter()
+                .copied()
+                .map(|value| primitive_value_from_task(value, element, store, resolver))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(PrimitiveValue {
+                schema,
+                body: PrimitiveValueBody::Sequence {
+                    element_schema: element.schema_ref(),
+                    elements,
+                },
+            })
+        }
+        Type::Function { .. }
+        | Type::Map { .. }
+        | Type::Set(_)
+        | Type::Stream { .. }
+        | Type::Order(_)
+        | Type::StreamCheck => Err(format!("primitive task codec does not admit {}", ty.name())),
+    }
+}
+
+fn abi_schema_for_type(
+    ty: &Type,
+    abi_schemas: &[(Type, weavy::SchemaRef)],
+) -> Result<weavy::SchemaRef, String> {
+    abi_schemas
+        .iter()
+        .find_map(|(candidate, schema)| (candidate == ty).then_some(*schema))
+        .ok_or_else(|| format!("{} is absent from the primitive ABI catalog", ty.name()))
 }
 
 fn write_primitive_value(
@@ -5425,6 +5706,13 @@ fn primitive_field_from_effect(
     }
 }
 
+fn primitive_child_field(value: PrimitiveValue) -> PrimitiveField {
+    PrimitiveField {
+        schema: value.schema.clone(),
+        value: PrimitiveFieldValue::Child(Box::new(value)),
+    }
+}
+
 fn primitive_value_from_effect(
     ty: &Type,
     value: &EffectValue,
@@ -5524,6 +5812,17 @@ fn primitive_value_from_frozen(
                 body: PrimitiveValueBody::Variant { tag: *tag, fields },
             })
         }
+        (Type::Array(element), FrozenValue::DenseArray(values)) => values
+            .iter()
+            .map(|value| primitive_value_from_frozen(element, value))
+            .collect::<Result<Vec<_>, _>>()
+            .map(|elements| PrimitiveValue {
+                schema: ty.schema_ref(),
+                body: PrimitiveValueBody::Sequence {
+                    element_schema: element.schema_ref(),
+                    elements,
+                },
+            }),
         _ => effect_fault("frozen value cannot become a primitive value"),
     }
 }
@@ -5597,6 +5896,17 @@ fn primitive_value_to_frozen(
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(FrozenValue::Variant { tag: *tag, fields })
         }
+        (
+            Type::Array(element),
+            PrimitiveValueBody::Sequence {
+                element_schema,
+                elements,
+            },
+        ) if element_schema == &element.schema_ref() => elements
+            .iter()
+            .map(|value| primitive_value_to_frozen(element, value))
+            .collect::<Result<Vec<_>, _>>()
+            .map(FrozenValue::DenseArray),
         _ => effect_fault("primitive value cannot be frozen as its invocation type"),
     }
 }
@@ -5928,11 +6238,17 @@ fn decode_result(
     lowered: &LoweringArtifact,
 ) -> Result<DecodedResult, Box<TaskFault>> {
     let Some(abi) = &lowered.array_outcome else {
-        // A `Check` island's word is its pass/fail verdict; a scalar `Int`/`Bool`
-        // value island's word is the demanded value itself.
-        return Ok(match lowered.output_type {
-            Type::Int | Type::Bool => DecodedResult::OkScalarValue(task.result_i64()?),
-            _ => DecodedResult::OkScalar(task.result_i64()? != 0),
+        // A `Check` island's word is its pass/fail verdict. Scalar value
+        // publications carry the demanded word directly; handle and structural
+        // publications are realized through their verified result region without
+        // manufacturing an array-outcome envelope.
+        return Ok(if lowered.publishes_value {
+            match lowered.output_type {
+                Type::Int | Type::Bool => DecodedResult::OkScalarValue(task.result_i64()?),
+                _ => DecodedResult::OkValue,
+            }
+        } else {
+            DecodedResult::OkScalar(task.result_i64()? != 0)
         });
     };
     let result = task.result_structural()?;

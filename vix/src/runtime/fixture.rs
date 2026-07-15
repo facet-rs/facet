@@ -198,6 +198,26 @@ impl FixtureStore {
     }
 }
 
+impl super::OriginAdapter for FixtureStore {
+    fn read(
+        &self,
+        capability: &super::ValueId,
+        coordinate: &str,
+    ) -> Result<Vec<u8>, super::PrimitiveMachineError> {
+        if capability.schema
+            != crate::vir::Type::Extern(crate::vir::ExternKind::Registry).schema_ref()
+        {
+            return Err(super::PrimitiveMachineError::PolicyRejected {
+                detail: "fixture origin requires a Registry capability".to_owned(),
+            });
+        }
+        self.fetch_url(coordinate)
+            .map_err(|_| super::PrimitiveMachineError::Unavailable {
+                detail: format!("fixture origin {coordinate} is unavailable"),
+            })
+    }
+}
+
 /// One extracted archive member, in archive order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TarMember {

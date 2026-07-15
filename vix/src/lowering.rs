@@ -107,6 +107,7 @@ pub(crate) struct PrimitiveCall {
     pub(crate) response: Type,
     pub(crate) input: FrameRegion,
     pub(crate) output: FrameRegion,
+    pub(crate) abi_schemas: Vec<(Type, WeavySchemaRef)>,
 }
 
 /// The internal result ABI carried by every function in an array-bearing
@@ -6169,12 +6170,26 @@ fn lower_node(
             let host = i64::try_from(lowering.primitive_calls.len()).map_err(|_| {
                 lowering_diagnostic(node.span, "primitive host plan index overflow")
             })?;
+            let abi_schemas = lowering
+                .context
+                .schemas
+                .types
+                .iter()
+                .map(|ty| {
+                    lowering
+                        .context
+                        .schemas
+                        .schema_for(ty, node.span)
+                        .map(|schema| (ty.clone(), schema))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
             lowering.primitive_calls.push(PrimitiveCall {
                 primitive: primitive.clone(),
                 request: request.ty.clone(),
                 response: node.ty.clone(),
                 input: request.region,
                 output: dst_region,
+                abi_schemas,
             });
             (
                 vec![

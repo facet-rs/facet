@@ -761,7 +761,13 @@ fn rung_029_array_fold_runs_in_authored_position_order() {
     let partitioned = compilation.partition_test(&compilation.tests[0]);
     let mut cache = LoweringCache::default();
     let mut string_concats = 0usize;
-    for island in &partitioned.islands {
+    for island in partitioned
+        .values
+        .iter()
+        .map(|value| &value.island)
+        .chain(partitioned.wire_islands.iter().map(|value| &value.island))
+        .chain(partitioned.islands.iter())
+    {
         let lowered = cache
             .get_or_lower(island)
             .expect("rung 029 verifies before production execution");

@@ -3,6 +3,7 @@
 mod abi;
 mod decode_primitive;
 mod error;
+mod fetch_primitive;
 mod fixture;
 mod identity;
 mod model;
@@ -14,6 +15,7 @@ mod store;
 pub use abi::*;
 pub use decode_primitive::*;
 pub use error::*;
+pub use fetch_primitive::*;
 pub use fixture::*;
 pub use identity::*;
 pub use model::*;
