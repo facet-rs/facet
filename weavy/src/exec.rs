@@ -10,6 +10,7 @@
 //! rule is not claimed.
 
 use std::mem::size_of;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::jit::task_lane::{JitExecutable, JitTask};
@@ -1023,7 +1024,14 @@ impl Executable {
         self.lane_facts
     }
 
-    pub fn spawn(&self, entry: FnId) -> Result<ExecTask<'_>, TaskFault> {
+    /// Spawn a task that OWNS a reference-counted handle to this executable. The
+    /// returned [`ExecTask`] is `'static`: it can be retained across drive calls
+    /// and stored off the drive stack (a scheduler's parked-task registry) while
+    /// its verified frame is suspended, without borrowing any transient lowered
+    /// value. The inner interpreter/JIT task holds no program borrow — the
+    /// program is supplied to each `run` — so this handle is the only executable
+    /// reference the task keeps.
+    pub fn spawn(self: &Rc<Self>, entry: FnId) -> Result<ExecTask, TaskFault> {
         self.validate_entry(entry)?;
         let entry_count = self.function(entry)?.entries.len();
         let lane = match &self.native {
@@ -1035,7 +1043,7 @@ impl Executable {
             )),
         };
         Ok(ExecTask {
-            executable: self,
+            executable: Rc::clone(self),
             entry,
             lane,
             poisoned: None,
@@ -1091,9 +1099,12 @@ impl Executable {
     }
 }
 
-/// A running verified task bound to its [`Executable`].
-pub struct ExecTask<'exec> {
-    executable: &'exec Executable,
+/// A running verified task that owns a reference-counted handle to its
+/// [`Executable`]. Owning the handle (rather than borrowing it) makes the task
+/// `'static`, so a scheduler may retain a suspended frame off the drive stack
+/// and resume it later without any lifetime tied to a transient lowered value.
+pub struct ExecTask {
+    executable: Rc<Executable>,
     entry: FnId,
     lane: Lane,
     poisoned: Option<TaskFault>,
@@ -1107,7 +1118,7 @@ enum Lane {
     Native(JitTask),
 }
 
-impl ExecTask<'_> {
+impl ExecTask {
     pub fn write_entry_i64(&mut self, index: usize, value: i64) -> Result<(), TaskFault> {
         self.write_entry_word(index, value, EntryWriteKind::Scalar)
     }
@@ -2551,7 +2562,7 @@ mod tests {
             schemas: vec![],
             value_shapes,
         };
-        let executable = Executable::new(program.verify(contract).unwrap());
+        let executable = Rc::new(Executable::new(program.verify(contract).unwrap()));
         let mut task = executable.spawn(FnId(0)).unwrap();
         assert_eq!(task.drive(&mut [], &[]), Ok(TaskStep::Done));
         assert_eq!(
@@ -2806,7 +2817,7 @@ mod tests {
             }],
             value_shapes,
         };
-        let executable = Executable::new(program.verify(contract).unwrap());
+        let executable = Rc::new(Executable::new(program.verify(contract).unwrap()));
         let mut task = executable.spawn(FnId(0)).unwrap();
         task.write_entry_store_handle(0, SchemaRef(0), StoreHandle::new(3).unwrap())
             .unwrap();
@@ -2828,7 +2839,7 @@ mod tests {
         } else {
             unsafe { std::env::remove_var("WEAVY_JIT") };
         }
-        let executable = Executable::new(verified);
+        let executable = Rc::new(Executable::new(verified));
         match previous {
             Some(value) => unsafe { std::env::set_var("WEAVY_JIT", value) },
             None => unsafe { std::env::remove_var("WEAVY_JIT") },
@@ -2892,7 +2903,7 @@ mod tests {
         } else {
             unsafe { std::env::remove_var("WEAVY_JIT") };
         }
-        let executable = Executable::new(verified);
+        let executable = Rc::new(Executable::new(verified));
         match previous {
             Some(value) => unsafe { std::env::set_var("WEAVY_JIT", value) },
             None => unsafe { std::env::remove_var("WEAVY_JIT") },
@@ -3504,7 +3515,7 @@ mod tests {
         } else {
             unsafe { std::env::remove_var("WEAVY_JIT") };
         }
-        let executable = Executable::new(verify(ordered_write_program()));
+        let executable = Rc::new(Executable::new(verify(ordered_write_program())));
         match previous {
             Some(value) => unsafe { std::env::set_var("WEAVY_JIT", value) },
             None => unsafe { std::env::remove_var("WEAVY_JIT") },
@@ -3717,7 +3728,7 @@ mod tests {
     #[test]
     fn public_executable_runs_verified_program_and_caches_native_compile() {
         task_lane::reset_jit_program_compile_count();
-        let executable = Executable::new(verify(scalar_add_program()));
+        let executable = Rc::new(Executable::new(verify(scalar_add_program())));
         let mut task = executable.spawn(FnId(0)).expect("entry shape");
         task.write_entry_i64(0, 20).unwrap();
         task.write_entry_i64(1, 22).unwrap();
@@ -3744,7 +3755,7 @@ mod tests {
 
     #[test]
     fn drive_table_lengths_fault_before_execution() {
-        let executable = Executable::new(verify(awaiting_program()));
+        let executable = Rc::new(Executable::new(verify(awaiting_program())));
         let mut task = executable.spawn(FnId(0)).unwrap();
 
         let fault = task.drive(&mut [false], &[0, 0]).unwrap_err();
@@ -3774,7 +3785,7 @@ mod tests {
 
     #[test]
     fn public_entry_accessor_rejects_non_scalar_entries() {
-        let executable = Executable::new(verify(non_scalar_entry_program()));
+        let executable = Rc::new(Executable::new(verify(non_scalar_entry_program())));
         assert!(matches!(
             executable.spawn(FnId(0)),
             Err(TaskFault::InvalidEntryShape {
@@ -3787,7 +3798,7 @@ mod tests {
 
     #[test]
     fn public_spawn_rejects_callable_entry_until_typed_writer_exists() {
-        let executable = Executable::new(verify(callable_entry_program()));
+        let executable = Rc::new(Executable::new(verify(callable_entry_program())));
         let Err(fault) = executable.spawn(FnId(0)) else {
             panic!("callable entry must be rejected until it has a typed writer");
         };
@@ -3803,11 +3814,13 @@ mod tests {
 
     #[test]
     fn public_spawn_accepts_structural_entry_for_typed_writer() {
-        let executable = Executable::new(verify(structural_entry_program(Op::EnumIsVariant {
-            dst: RegionId(1),
-            value: RegionId(0),
-            variant: 0,
-        })));
+        let executable = Rc::new(Executable::new(verify(structural_entry_program(
+            Op::EnumIsVariant {
+                dst: RegionId(1),
+                value: RegionId(0),
+                variant: 0,
+            },
+        ))));
         let mut task = executable
             .spawn(FnId(0))
             .expect("structural entry is admitted");
@@ -3824,7 +3837,7 @@ mod tests {
 
     #[test]
     fn public_entry_writer_reports_out_of_range_index_without_fake_region() {
-        let executable = Executable::new(verify(scalar_identity_program()));
+        let executable = Rc::new(Executable::new(verify(scalar_identity_program())));
         let mut task = executable.spawn(FnId(0)).unwrap();
 
         assert_eq!(
@@ -3842,7 +3855,7 @@ mod tests {
 
     #[test]
     fn public_spawn_rejects_unknown_entry_function() {
-        let executable = Executable::new(verify(scalar_add_program()));
+        let executable = Rc::new(Executable::new(verify(scalar_add_program())));
         let Err(fault) = executable.spawn(FnId(99)) else {
             panic!("unknown entry function must fault");
         };
@@ -3857,7 +3870,7 @@ mod tests {
 
     #[test]
     fn result_accessor_rejects_non_scalar_result_shape() {
-        let executable = Executable::new(verify(non_scalar_result_program()));
+        let executable = Rc::new(Executable::new(verify(non_scalar_result_program())));
         let mut task = executable.spawn(FnId(0)).unwrap();
         assert_eq!(task.drive(&mut [], &[]), Ok(TaskStep::Done));
         assert!(matches!(
@@ -3872,7 +3885,7 @@ mod tests {
 
     #[test]
     fn result_before_first_drive_faults_typed() {
-        let executable = Executable::new(verify(scalar_identity_program()));
+        let executable = Rc::new(Executable::new(verify(scalar_identity_program())));
         let mut task = executable.spawn(FnId(0)).unwrap();
         task.write_entry_i64(0, 7).unwrap();
 
@@ -3893,7 +3906,7 @@ mod tests {
 
     #[test]
     fn result_after_parked_faults_typed() {
-        let executable = Executable::new(verify(entry_then_await_program()));
+        let executable = Rc::new(Executable::new(verify(entry_then_await_program())));
         let mut task = executable.spawn(FnId(0)).unwrap();
         task.write_entry_i64(0, 5).unwrap();
 
@@ -3911,8 +3924,37 @@ mod tests {
     }
 
     #[test]
+    fn suspended_task_is_retained_off_stack_and_resumes_at_frame_state() {
+        // FV-D1D L2.0 ownership contract: because a task owns its executable
+        // through an Arc, it is `'static` and can be moved into a registry off
+        // the drive stack while its frame is suspended, then resumed later — no
+        // borrow of any transient lowered value keeps it alive.
+        let mut registry: Vec<ExecTask> = Vec::new();
+        {
+            let executable = Rc::new(Executable::new(verify(entry_then_await_program())));
+            let mut task = executable.spawn(FnId(0)).unwrap();
+            task.write_entry_i64(0, 5).unwrap();
+            assert_eq!(
+                task.drive(&mut [false], &[0]),
+                Ok(TaskStep::Parked { input: 0 })
+            );
+            // Retain the suspended frame off the stack; the local `executable`
+            // Arc is dropped at scope end, and the task keeps the executable
+            // alive through its own owned handle.
+            registry.push(task);
+        }
+        let mut task = registry.pop().expect("the suspended task was retained");
+        assert_eq!(task.state(), ExecTaskState::Parked { input: 0 });
+        // Resume: deliver the awaited completion. The frame continues at its
+        // exact parked PC/register state and returns the resumed value.
+        assert_eq!(task.drive(&mut [true], &[37]), Ok(TaskStep::Done));
+        assert_eq!(task.state(), ExecTaskState::Done);
+        assert_eq!(task.result_i64(), Ok(37));
+    }
+
+    #[test]
     fn result_after_done_is_available_and_redrive_faults_typed() {
-        let executable = Executable::new(verify(scalar_identity_program()));
+        let executable = Rc::new(Executable::new(verify(scalar_identity_program())));
         let mut task = executable.spawn(FnId(0)).unwrap();
         task.write_entry_i64(0, 7).unwrap();
 
@@ -3937,7 +3979,7 @@ mod tests {
 
     #[test]
     fn poisoned_result_precedes_incomplete_state_fault() {
-        let executable = Executable::new(verify(awaiting_program()));
+        let executable = Rc::new(Executable::new(verify(awaiting_program())));
         let mut task = executable.spawn(FnId(0)).unwrap();
 
         assert_eq!(
@@ -3957,7 +3999,7 @@ mod tests {
 
     #[test]
     fn drive_faults_when_declared_entry_was_not_written() {
-        let executable = Executable::new(verify(scalar_add_program()));
+        let executable = Rc::new(Executable::new(verify(scalar_add_program())));
         let mut task = executable.spawn(FnId(0)).unwrap();
         task.write_entry_i64(0, 20).unwrap();
 
@@ -3978,7 +4020,7 @@ mod tests {
 
     #[test]
     fn duplicate_entry_write_faults_without_mutating() {
-        let executable = Executable::new(verify(scalar_identity_program()));
+        let executable = Rc::new(Executable::new(verify(scalar_identity_program())));
         let mut task = executable.spawn(FnId(0)).unwrap();
         task.write_entry_i64(0, 7).unwrap();
         assert_eq!(
@@ -3998,7 +4040,7 @@ mod tests {
     fn wrong_entry_writer_faults_without_mutating_or_initializing() {
         let schema = SchemaRef(0);
         let handle = StoreHandle::new(7).unwrap();
-        let executable = Executable::new(verify(mixed_scalar_handle_program()));
+        let executable = Rc::new(Executable::new(verify(mixed_scalar_handle_program())));
         let mut task = executable.spawn(FnId(0)).unwrap();
 
         assert_eq!(
@@ -4031,7 +4073,7 @@ mod tests {
     #[test]
     fn mixed_scalar_and_handle_entries_initialize_completely() {
         let schema = SchemaRef(0);
-        let executable = Executable::new(verify(mixed_scalar_handle_program()));
+        let executable = Rc::new(Executable::new(verify(mixed_scalar_handle_program())));
         let mut task = executable.spawn(FnId(0)).unwrap();
 
         task.write_entry_i64(0, 42).unwrap();
@@ -4043,7 +4085,7 @@ mod tests {
 
     #[test]
     fn entry_writers_close_after_any_drive_attempt() {
-        let executable = Executable::new(verify(scalar_identity_program()));
+        let executable = Rc::new(Executable::new(verify(scalar_identity_program())));
         let mut task = executable.spawn(FnId(0)).unwrap();
         task.write_entry_i64(0, 7).unwrap();
         assert_eq!(task.drive(&mut [], &[]), Ok(TaskStep::Done));
@@ -4056,7 +4098,7 @@ mod tests {
             })
         );
 
-        let executable = Executable::new(verify(entry_then_await_program()));
+        let executable = Rc::new(Executable::new(verify(entry_then_await_program())));
         let mut task = executable.spawn(FnId(0)).unwrap();
         task.write_entry_i64(0, 5).unwrap();
         assert_eq!(
@@ -4136,7 +4178,7 @@ mod tests {
         ];
 
         for (callee, name, matches_expected) in cases {
-            let executable = Executable::new(verify(indirect_program()));
+            let executable = Rc::new(Executable::new(verify(indirect_program())));
             let mut task = executable.spawn(FnId(0)).unwrap();
             task.adversarial_write_word_at_offset_for_test(0, callee);
             task.write_entry_i64(0, 21).unwrap();
@@ -4160,7 +4202,7 @@ mod tests {
             store: &store,
             molten: &[],
         };
-        let executable = Executable::new(verify(compare_program()));
+        let executable = Rc::new(Executable::new(verify(compare_program())));
         let mut task = executable.spawn(FnId(0)).unwrap();
         task.write_entry_store_handle(0, SchemaRef(0), StoreHandle::new(0).unwrap())
             .unwrap();
@@ -4791,7 +4833,7 @@ mod tests {
 
     #[test]
     fn public_publication_log_captures_branch_multiplicity_and_copies() {
-        let executable = Executable::new(verify(publication_program()));
+        let executable = Rc::new(Executable::new(verify(publication_program())));
 
         // Nonzero n takes the second publish: two descriptors, each an exact
         // copy of the captured (n, marker) frame value.
@@ -4824,7 +4866,7 @@ mod tests {
 
     #[test]
     fn public_publication_log_records_single_descriptor_on_zero_branch() {
-        let executable = Executable::new(verify(publication_program()));
+        let executable = Rc::new(Executable::new(verify(publication_program())));
         let mut task = executable.spawn(FnId(0)).expect("entry shape");
         task.write_entry_i64(0, 0).unwrap();
         assert_eq!(task.drive(&mut [], &[]), Ok(TaskStep::Done));
@@ -4837,7 +4879,7 @@ mod tests {
 
     #[test]
     fn public_publication_log_is_empty_when_nothing_is_published() {
-        let executable = Executable::new(verify(scalar_add_program()));
+        let executable = Rc::new(Executable::new(verify(scalar_add_program())));
         let mut task = executable.spawn(FnId(0)).expect("entry shape");
         task.write_entry_i64(0, 20).unwrap();
         task.write_entry_i64(1, 22).unwrap();
@@ -4851,7 +4893,7 @@ mod tests {
 
     #[test]
     fn public_publication_preserves_result_lifecycle() {
-        let executable = Executable::new(verify(publication_program()));
+        let executable = Rc::new(Executable::new(verify(publication_program())));
 
         // Before the task is done the log is not observable.
         let task = executable.spawn(FnId(0)).expect("entry shape");
@@ -4902,7 +4944,7 @@ mod tests {
         let _guard = env_guard();
         let previous = std::env::var_os("WEAVY_JIT");
         unsafe { std::env::set_var("WEAVY_JIT", "0") };
-        let executable = Executable::new(verify(scalar_add_program()));
+        let executable = Rc::new(Executable::new(verify(scalar_add_program())));
         restore_env(previous);
 
         assert_eq!(executable.lane_facts().selected, LaneKind::Interpreter);

@@ -1130,7 +1130,7 @@ impl<S: EventSink> Runtime<S> {
                 continue;
             }
 
-            let mut task = match lowered.executable().spawn(FnId(0)) {
+            let mut task = match lowered.executable_rc().spawn(FnId(0)) {
                 Ok(task) => task,
                 Err(fault) => {
                     let error =
@@ -2687,7 +2687,7 @@ impl<S: EventSink> Runtime<S> {
 
     fn complete_primitive_host_call(
         &mut self,
-        task: &mut weavy::exec::ExecTask<'_>,
+        task: &mut weavy::exec::ExecTask,
         lowered: &DemandExecution<'_>,
         request: PrimitiveHostRequest,
     ) -> Result<Vec<ReadWitness>, PrimitiveHostFailure> {
@@ -2893,7 +2893,7 @@ impl<S: EventSink> Runtime<S> {
                 continue;
             }
 
-            let mut task = match lowered.executable().spawn(FnId(0)) {
+            let mut task = match lowered.executable_rc().spawn(FnId(0)) {
                 Ok(task) => task,
                 Err(fault) => {
                     let error =
@@ -4500,7 +4500,7 @@ struct RealizedValue {
 }
 
 fn realize_value(
-    task: &weavy::exec::ExecTask<'_>,
+    task: &weavy::exec::ExecTask,
     lowered: &LoweringArtifact,
     store: &Store,
 ) -> Result<RealizedValue, TaskFault> {
@@ -5575,7 +5575,7 @@ fn abi_schema_for_type(
 }
 
 fn write_primitive_value(
-    task: &mut weavy::exec::ExecTask<'_>,
+    task: &mut weavy::exec::ExecTask,
     region: super::FrameRegion,
     offset: usize,
     ty: &Type,
@@ -5656,7 +5656,7 @@ fn write_primitive_value(
 }
 
 fn write_primitive_field(
-    task: &mut weavy::exec::ExecTask<'_>,
+    task: &mut weavy::exec::ExecTask,
     region: super::FrameRegion,
     offset: usize,
     ty: &Type,
@@ -5681,7 +5681,7 @@ fn write_primitive_field(
 }
 
 fn write_primitive_word(
-    task: &mut weavy::exec::ExecTask<'_>,
+    task: &mut weavy::exec::ExecTask,
     region: super::FrameRegion,
     offset: usize,
     word: i64,
@@ -6328,7 +6328,7 @@ enum DecodedResult {
 }
 
 fn decode_result(
-    task: &weavy::exec::ExecTask<'_>,
+    task: &weavy::exec::ExecTask,
     lowered: &LoweringArtifact,
 ) -> Result<DecodedResult, Box<TaskFault>> {
     let Some(abi) = &lowered.array_outcome else {

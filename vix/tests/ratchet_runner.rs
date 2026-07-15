@@ -6613,7 +6613,7 @@ fn tail_loop_executes_ten_million_iterations_in_the_selected_lane() {
         .clone()
         .verify(lowered.contract().clone())
         .expect("lowered tail loop re-verifies");
-    let executable = Executable::with_trace_mode(verified, TraceMode::Production);
+    let executable = std::rc::Rc::new(Executable::with_trace_mode(verified, TraceMode::Production));
     let mut task = executable
         .spawn(FnId(frame as u32))
         .expect("count_up spawns as a verified entry");
@@ -6688,7 +6688,7 @@ fn tail_loop_innards_diagnostic_lane_retains_marks() {
         .clone()
         .verify(lowered.contract().clone())
         .expect("lowered tail loop re-verifies");
-    let executable = Executable::with_trace_mode(verified, TraceMode::Innards);
+    let executable = std::rc::Rc::new(Executable::with_trace_mode(verified, TraceMode::Innards));
     let mut task = executable
         .spawn(FnId(frame as u32))
         .expect("count_up spawns as a verified entry");

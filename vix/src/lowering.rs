@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
+use std::rc::Rc;
 
 use weavy::exec::{Executable, LaneRequest};
 use weavy::mem::Layout;
@@ -205,7 +206,7 @@ pub struct LoweringArtifact {
     pub recipe: RecipeId,
     pub demand_key: DemandKey,
     pub demand_preimage: DemandPreimage,
-    executable: Executable,
+    executable: Rc<Executable>,
     pub array_outcome: Option<ArrayOutcomeAbi>,
     pub pc_nodes: Vec<Vec<NodeRef>>,
     pub constants: Vec<ValueConstant>,
@@ -255,13 +256,21 @@ impl LoweringArtifact {
         &self.executable
     }
 
+    /// A retained handle to the executable: spawning through this yields a
+    /// `'static` [`weavy::exec::ExecTask`] a scheduler can suspend and resume off
+    /// the drive stack without borrowing this artifact.
+    #[must_use]
+    pub fn executable_rc(&self) -> Rc<Executable> {
+        Rc::clone(&self.executable)
+    }
+
     #[cfg(test)]
     pub(crate) fn with_test_verified_executable(&self, executable: Executable) -> Self {
         Self {
             recipe: self.recipe,
             demand_key: self.demand_key,
             demand_preimage: self.demand_preimage.clone(),
-            executable,
+            executable: Rc::new(executable),
             array_outcome: self.array_outcome.clone(),
             pc_nodes: self.pc_nodes.clone(),
             constants: self.constants.clone(),
@@ -635,7 +644,7 @@ fn lower_island(
         // Keep source-attributed `Op::Trace` nodes in the verified program. The
         // cache chooses bounded Production tracing for ordinary execution or
         // explicit Innards tracing for diagnostics.
-        executable: Executable::with_lane(verified, trace_mode, lane),
+        executable: Rc::new(Executable::with_lane(verified, trace_mode, lane)),
         array_outcome,
         pc_nodes,
         constants,
