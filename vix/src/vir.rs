@@ -1839,7 +1839,22 @@ impl Module {
     }
 
     pub fn try_partition_test(&self, test: &Test) -> Result<PartitionedTest, Diagnostics> {
-        let function = &self.functions[test.function.0 as usize];
+        // Cut every mixed effect+primitive helper call so no primitive is ever
+        // absorbed into a machine-plane effect island (FV-D1D Layer 1). This is a
+        // structural pre-pass over the authored graph; a test with no such call
+        // is returned unchanged. When splicing renumbers the function's nodes, the
+        // test's generator references move through the same map so the shared
+        // node-id space stays consistent.
+        let (function, remap) =
+            self.inline_mixed_primitive_calls(&self.functions[test.function.0 as usize])?;
+        let function = &function;
+        let remapped_test;
+        let test = if let Some(remap) = &remap {
+            remapped_test = remap_test_nodes(test, remap);
+            &remapped_test
+        } else {
+            test
+        };
         // Every site, in stable YieldSiteId order (dense across value and trace
         // sites). Island ordinals compact over value sites only, so a site is
         // keyed by its YieldSiteId, never by its position after filtering.
@@ -2325,6 +2340,179 @@ impl Module {
                         || matches!(node.op, Op::Call(callee) if self.function_contains_effect(callee, seen))
                 })
             })
+    }
+
+    /// Whether `function` transitively invokes a registered primitive. A callee
+    /// that both `function_contains_effect` and `function_contains_primitive`
+    /// would be routed wholesale into a machine-plane effect island, so its
+    /// primitive would reach the legacy interpreter that has no primitive
+    /// authority. Such calls are cut by [`Self::inline_mixed_primitive_calls`].
+    fn function_contains_primitive(
+        &self,
+        function: FunctionId,
+        seen: &mut BTreeSet<FunctionId>,
+    ) -> bool {
+        if !seen.insert(function) {
+            return false;
+        }
+        self.functions
+            .get(function.0 as usize)
+            .is_some_and(|function| {
+                function.nodes.iter().any(|node| {
+                    matches!(node.op, Op::InvokePrimitive { .. })
+                        || matches!(node.op, Op::Call(callee) if self.function_contains_primitive(callee, seen))
+                })
+            })
+    }
+
+    /// Whether `function` reaches `target` through any call edge (including
+    /// itself when `function == target`). Used to reject inlining a mixed
+    /// primitive/effect callee that participates in a recursive cycle, where
+    /// call-site specialization would not terminate.
+    fn function_reaches(
+        &self,
+        function: FunctionId,
+        target: FunctionId,
+        seen: &mut BTreeSet<FunctionId>,
+    ) -> bool {
+        if !seen.insert(function) {
+            return false;
+        }
+        self.functions
+            .get(function.0 as usize)
+            .is_some_and(|function| {
+                function.nodes.iter().any(|node| {
+                    let callee = match node.op {
+                        Op::Call(callee) | Op::Closure(callee) => Some(callee),
+                        Op::MiniSolve {
+                            function: callee, ..
+                        } => Some(callee),
+                        _ => None,
+                    };
+                    callee.is_some_and(|callee| {
+                        callee == target || self.function_reaches(callee, target, seen)
+                    })
+                })
+            })
+    }
+
+    /// A `Call` whose callee mixes effect roots and a registered primitive must
+    /// be cut so the primitive is never absorbed into an effect island. This
+    /// specializes each such call site by splicing the callee's authored graph
+    /// into the caller with fresh, call-context-distinct node identities, so the
+    /// existing effect-root/primitive publication rules produce the required
+    /// dependency-ordered stages: the effect publications that build the request,
+    /// the verified-Weavy primitive publication, then the pure continuation.
+    ///
+    /// Non-mixed calls are untouched: a pure-effect callee keeps its effect
+    /// island, and a pure-primitive callee already lowers to a host call. The
+    /// spliced graph preserves each node's authored span (attribution) and type
+    /// (ABI); structural recipe identity remains derived from the resulting
+    /// authored graph, so distinct arguments keep distinct identities and equal
+    /// spellings still collapse.
+    fn inline_mixed_primitive_calls(
+        &self,
+        function: &Function,
+    ) -> Result<(Function, Option<BTreeMap<NodeId, NodeId>>), Diagnostics> {
+        let mut result = function.clone();
+        let mut spliced_any = false;
+        loop {
+            let target = result.nodes.iter().find_map(|node| {
+                let Op::Call(callee) = node.op else {
+                    return None;
+                };
+                let mixed = self.function_contains_effect(callee, &mut BTreeSet::new())
+                    && self.function_contains_primitive(callee, &mut BTreeSet::new());
+                mixed.then_some((node.id, node.span, callee))
+            });
+            let Some((call_id, call_span, callee_id)) = target else {
+                break;
+            };
+            if self.function_reaches(callee_id, callee_id, &mut BTreeSet::new()) {
+                return Err(Diagnostics::one(Diagnostic::unsupported(
+                    call_span,
+                    "a recursive helper that mixes effect reads and a registered \
+                     primitive cannot be call-site specialized in this milestone",
+                )));
+            }
+            if node_within_control_region(&result, call_id) {
+                return Err(Diagnostics::one(Diagnostic::unsupported(
+                    call_span,
+                    "a registered primitive reached through effect reads inside a \
+                     conditional helper is not yet call-site specialized",
+                )));
+            }
+            self.splice_call_site(&mut result, call_id, callee_id);
+            spliced_any = true;
+        }
+        if !spliced_any {
+            return Ok((result, None));
+        }
+        let map = renumber_dense(&mut result);
+        Ok((result, Some(map)))
+    }
+
+    fn splice_call_site(&self, result: &mut Function, call_id: NodeId, callee_id: FunctionId) {
+        let callee = &self.functions[callee_id.0 as usize];
+        let position = result
+            .nodes
+            .iter()
+            .position(|node| node.id == call_id)
+            .expect("spliced call node is present");
+        let args: Vec<NodeId> = result.nodes[position].inputs.clone();
+        let mut next_id = result
+            .nodes
+            .iter()
+            .map(|node| node.id.0)
+            .max()
+            .expect("caller has nodes")
+            + 1;
+        let param_nodes: BTreeSet<NodeId> =
+            callee.parameters.iter().map(|param| param.node).collect();
+        // Callee node -> caller node. Parameters resolve to the call arguments;
+        // every other callee node gets a fresh, non-colliding caller identity so
+        // two call sites of one helper never collide. Final identities are
+        // assigned by `renumber_dense` once all splicing settles.
+        let mut map: BTreeMap<NodeId, NodeId> = BTreeMap::new();
+        for (index, param) in callee.parameters.iter().enumerate() {
+            map.insert(param.node, args[index]);
+        }
+        for node in &callee.nodes {
+            if param_nodes.contains(&node.id) {
+                continue;
+            }
+            map.insert(node.id, NodeId(next_id));
+            next_id += 1;
+        }
+        // The callee body in authored (dependency) order, parameter nodes elided.
+        let mut spliced = Vec::new();
+        for node in &callee.nodes {
+            if param_nodes.contains(&node.id) {
+                continue;
+            }
+            let mut cloned = node.clone();
+            cloned.id = map[&node.id];
+            remap_node_refs(&mut cloned, &map);
+            spliced.push(cloned);
+        }
+        let callee_output = callee.output.expect("mixed callee publishes an output");
+        let spliced_output = map[&callee_output];
+        // Every reference to the call result now names the spliced output. The
+        // spliced body takes the call's position, so its published effect roots,
+        // primitive invocation, and continuation stay in dependency order.
+        let redirect = BTreeMap::from([(call_id, spliced_output)]);
+        result.nodes.splice(position..=position, spliced);
+        for node in &mut result.nodes {
+            remap_node_refs(node, &redirect);
+        }
+        if result.output == Some(call_id) {
+            result.output = Some(spliced_output);
+        }
+        for check in &mut result.yielded_checks {
+            if *check == call_id {
+                *check = spliced_output;
+            }
+        }
     }
 
     /// The canonical structural preimage of the subtree rooted at `node` in
@@ -2940,6 +3128,170 @@ fn wire_param_indices(callee: &Function) -> Vec<usize> {
 /// untaken arm never parks and never demands. `new_id` is the specialized frame's
 /// island-local identity; different call sites get different `await_map`s, so a
 /// shared source callee cannot hardcode the wrong task input across call sites.
+/// Rewrite every `NodeId` a node *references* — its inputs and the node lists of
+/// any control regions it carries — through `map`. The node's own id is never
+/// rewritten here; callers assign it. Missing keys are left unchanged.
+fn remap_node_refs(node: &mut Node, map: &BTreeMap<NodeId, NodeId>) {
+    for input in &mut node.inputs {
+        if let Some(&target) = map.get(input) {
+            *input = target;
+        }
+    }
+    match &mut node.op {
+        Op::If {
+            consequent,
+            alternative,
+        } => {
+            remap_region(consequent, map);
+            remap_region(alternative, map);
+        }
+        Op::Match { arms } => {
+            for arm in arms {
+                for id in &mut arm.nodes {
+                    if let Some(&target) = map.get(id) {
+                        *id = target;
+                    }
+                }
+                if let Some(&target) = map.get(&arm.output) {
+                    arm.output = target;
+                }
+            }
+        }
+        Op::OrderedMatch { arms, fallback } => {
+            for arm in arms {
+                remap_region(&mut arm.condition, map);
+                remap_region(&mut arm.body, map);
+            }
+            remap_region(fallback, map);
+        }
+        _ => {}
+    }
+}
+
+/// Reassign every node a dense identity equal to its position, remapping all
+/// references (inputs, control regions, parameters, output, yielded checks). VIR
+/// consumers index `function.nodes[id.0]` positionally and assume dependency
+/// order; call-site splicing preserves order but leaves a sparse id space, so
+/// this restores the invariant. A no-op when ids already equal positions.
+fn renumber_dense(function: &mut Function) -> BTreeMap<NodeId, NodeId> {
+    let map: BTreeMap<NodeId, NodeId> = function
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(index, node)| {
+            (
+                node.id,
+                NodeId(u32::try_from(index).expect("node count fits u32")),
+            )
+        })
+        .collect();
+    for node in &mut function.nodes {
+        node.id = map[&node.id];
+        remap_node_refs(node, &map);
+    }
+    for parameter in &mut function.parameters {
+        parameter.node = map[&parameter.node];
+    }
+    if let Some(output) = &mut function.output {
+        *output = map[output];
+    }
+    for check in &mut function.yielded_checks {
+        *check = map[check];
+    }
+    map
+}
+
+/// Rewrite the node references a test's generator holds into the enclosing
+/// function's node list — yield-site check roots, real-control scrutinees and
+/// conditions, arm bindings, and binding-selector wires — through `map`. A test
+/// and its function share one node-id space; call-site splicing renumbers the
+/// function, so the test must move with it. Ids absent from `map` (e.g. a
+/// scalar-selector wire naming no node) are left unchanged.
+fn remap_test_nodes(test: &Test, map: &BTreeMap<NodeId, NodeId>) -> Test {
+    let remap = |id: NodeId| map.get(&id).copied().unwrap_or(id);
+    fn remap_body(body: &mut GeneratorBody, remap: &impl Fn(NodeId) -> NodeId) {
+        for step in &mut body.steps {
+            match step {
+                GeneratorStep::Yield(site) => match &mut site.recipe {
+                    CheckRecipe::Value { check } => *check = remap(*check),
+                    CheckRecipe::Snapshot { value, .. } => *value = remap(*value),
+                    CheckRecipe::Trace(trace) => remap_trace(trace, remap),
+                },
+                GeneratorStep::Match { scrutinee, arms } => {
+                    *scrutinee = remap(*scrutinee);
+                    for arm in arms {
+                        arm.condition = remap(arm.condition);
+                        for binding in &mut arm.bindings {
+                            *binding = remap(*binding);
+                        }
+                        remap_body(&mut arm.body, remap);
+                    }
+                }
+                GeneratorStep::If {
+                    condition,
+                    consequent,
+                    alternative,
+                } => {
+                    *condition = remap(*condition);
+                    remap_body(consequent, remap);
+                    remap_body(alternative, remap);
+                }
+            }
+        }
+    }
+    let mut test = test.clone();
+    remap_body(&mut test.generator, &remap);
+    test
+}
+
+fn remap_trace(trace: &mut TraceCheck, remap: &impl Fn(NodeId) -> NodeId) {
+    for wire in [match trace {
+        TraceCheck::Demanded { wire }
+        | TraceCheck::NeverDemanded { wire }
+        | TraceCheck::DemandedOnce { wire } => Some(wire),
+        _ => None,
+    }]
+    .into_iter()
+    .flatten()
+    {
+        if let WireSelector::Binding(node) = &mut wire.selector {
+            *node = remap(*node);
+        }
+    }
+}
+
+fn remap_region(region: &mut ControlRegion, map: &BTreeMap<NodeId, NodeId>) {
+    for id in &mut region.nodes {
+        if let Some(&target) = map.get(id) {
+            *id = target;
+        }
+    }
+    if let Some(&target) = map.get(&region.output) {
+        region.output = target;
+    }
+}
+
+/// Whether `node` is nested inside a control region (an `If`/`Match`/
+/// `OrderedMatch` arm) rather than published at the function's top level.
+/// Call-site splicing lifts a callee body to the top level, so a mixed call
+/// nested under a conditional is refused with a typed diagnostic instead.
+fn node_within_control_region(function: &Function, node: NodeId) -> bool {
+    function.nodes.iter().any(|other| match &other.op {
+        Op::If {
+            consequent,
+            alternative,
+        } => consequent.nodes.contains(&node) || alternative.nodes.contains(&node),
+        Op::Match { arms } => arms.iter().any(|arm| arm.nodes.contains(&node)),
+        Op::OrderedMatch { arms, fallback } => {
+            fallback.nodes.contains(&node)
+                || arms.iter().any(|arm| {
+                    arm.condition.nodes.contains(&node) || arm.body.nodes.contains(&node)
+                })
+        }
+        _ => false,
+    })
+}
+
 fn specialize_lazy_callee(
     callee: &Function,
     await_map: &BTreeMap<NodeId, u32>,

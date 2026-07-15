@@ -58,10 +58,7 @@ fn primitives_inside_effect_islands(partitioned: &PartitionedTest) -> Vec<String
 
 fn partition(src: &str) -> PartitionedTest {
     let module = Compiler::new().compile(src).expect("source compiles");
-    let test = module
-        .tests
-        .first()
-        .expect("source declares one #[test]");
+    let test = module.tests.first().expect("source declares one #[test]");
     module.partition_test(test)
 }
 
