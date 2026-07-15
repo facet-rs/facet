@@ -11,7 +11,9 @@ use weavy::task::{FnId, TaskEvent as WeavyTaskEvent, TaskStep};
 use crate::lowering::{LoweringArtifact, LoweringAttribution, ValueInputBinding};
 use crate::vir::{FunctionId, IslandId, Type, VariantPayload};
 
-use super::identity::{DemandKey, DemandPreimage, Location, LocationId, SchemaId, ValueId};
+use super::identity::{
+    DemandKey, DemandPreimage, Location, LocationId, SchemaId, ValueId, semantic_schema_id,
+};
 use super::identity::{FramedField, FramedNode, FramedValue};
 use super::model::{
     DemandRecord, DemandState, FailureContext, FailureValue, MemoVerdict, Receipt, TaskId,
@@ -2756,10 +2758,6 @@ fn read_payload_word(bytes: &[u8], offset: usize) -> Option<i64> {
     Some(i64::from_le_bytes(
         bytes.get(offset..offset.checked_add(8)?)?.try_into().ok()?,
     ))
-}
-
-fn semantic_schema_id(ty: &Type) -> SchemaId {
-    SchemaId::named(&format!("vix.semantic.v1:{}", ty.name()))
 }
 
 fn invalid_realized_result(lowered: &LoweringArtifact, size: usize) -> TaskFault {

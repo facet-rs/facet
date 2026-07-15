@@ -5,6 +5,7 @@ mod error;
 mod identity;
 mod model;
 mod observe;
+pub mod primitive;
 mod scheduler;
 mod store;
 

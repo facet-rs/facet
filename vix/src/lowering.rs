@@ -26,7 +26,7 @@ use weavy::{
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics};
 use crate::runtime::{
     DemandKey, DemandPreimage, FrameRegion, FrameSlot, FrameWords, MachineAttribution,
-    MachineError, MachineOperation, RecipeId, SchemaId,
+    MachineError, MachineOperation, RecipeId, SchemaId, semantic_schema_id,
 };
 use crate::support::Span;
 use crate::vir::{
@@ -650,10 +650,6 @@ fn publication_capability_registered(ty: &Type) -> bool {
         }
         Type::Function { .. } | Type::StreamCheck | Type::Stream { .. } | Type::Order(_) => false,
     }
-}
-
-fn semantic_schema_id(ty: &Type) -> SchemaId {
-    SchemaId::named(&format!("vix.semantic.v1:{}", ty.name()))
 }
 
 fn bind_value_inputs(

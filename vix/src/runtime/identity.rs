@@ -521,3 +521,10 @@ impl FramedNode {
         }
     }
 }
+
+/// The runtime store schema for a vir type: blake3 of the type's canonical
+/// name under the semantic domain. One definition — scheduler, lowering, and
+/// primitive registration must agree byte-for-byte.
+pub(crate) fn semantic_schema_id(ty: &crate::vir::Type) -> SchemaId {
+    SchemaId::named(&format!("vix.semantic.v1:{}", ty.name()))
+}
