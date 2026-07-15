@@ -32,6 +32,15 @@ fn pinned_fetch_provider_hit_precedes_origin() -> Stream<Check> {
 }
 "#;
 
+const FETCH_ONE_FROM_ORIGIN: &str = r#"
+#[test]
+fn pinned_fetch_falls_through_to_verified_origin() -> Stream<Check> {
+    let blob = fetch(fixture_registry().url("case.crate"));
+    yield expect_eq(blob.len(), 4096);
+    yield fetched(1);
+}
+"#;
+
 const FETCH_STORE_THEN_REDEMAND: &str = r#"
 #[test]
 fn pinned_fetch_local_store_hit_never_contacts_provider_or_origin() -> Stream<Check> {
@@ -226,6 +235,27 @@ impl ValuePersistence for RecordingMissPersistence {
 
     fn put(&self, _value: &ValueId, _bytes: &[u8]) -> Result<(), PrimitiveMachineError> {
         self.puts.fetch_add(1, Ordering::AcqRel);
+        Ok(())
+    }
+}
+
+struct CorruptThenRecordingPersistence {
+    candidate: ValueBodyCandidate,
+    gets: AtomicUsize,
+    admitted: Mutex<Vec<(ValueId, Vec<u8>)>>,
+}
+
+impl ValuePersistence for CorruptThenRecordingPersistence {
+    fn get(&self, _value: &ValueId) -> Result<Option<ValueBodyCandidate>, PrimitiveMachineError> {
+        self.gets.fetch_add(1, Ordering::AcqRel);
+        Ok(Some(self.candidate.clone()))
+    }
+
+    fn put(&self, value: &ValueId, bytes: &[u8]) -> Result<(), PrimitiveMachineError> {
+        self.admitted
+            .lock()
+            .expect("corrupt persistence admission mutex poisoned")
+            .push((value.clone(), bytes.to_vec()));
         Ok(())
     }
 }
@@ -449,4 +479,51 @@ fn pinned_fetch_rejects_upstream_digest_mismatch_at_every_tier() {
         PrimitiveMachineError::PolicyRejected { .. }
     ));
     assert_eq!(origin_server.requests(), 1);
+}
+
+#[test]
+fn pinned_fetch_rejects_corrupt_provider_then_admits_verified_origin() {
+    let bytes = archive_bytes();
+    let identity = blob_identity(&bytes);
+    let upstream = vix::fetch::sha256_hex(&bytes);
+    let provider = Arc::new(CorruptThenRecordingPersistence {
+        candidate: ValueBodyCandidate {
+            claimed: identity.clone(),
+            bytes: b"corrupt provider body".to_vec(),
+        },
+        gets: AtomicUsize::new(0),
+        admitted: Mutex::new(Vec::new()),
+    });
+    let server = BlobServer::start(bytes.clone());
+    let fixtures = TempDir::new().expect("create corrupt-provider fixture root");
+    let services = PrimitiveServices::default()
+        .with_fixture_store(fixture_store(
+            &fixtures,
+            &server.url(),
+            &identity,
+            &upstream,
+        ))
+        .with_value_persistence(provider.clone())
+        .with_origin_adapter(Arc::new(HttpBlobOriginAdapter));
+
+    let report = prepare_source(FETCH_ONE_FROM_ORIGIN)
+        .expect("prepare corrupt-provider source")
+        .execute_with_primitive_services(services)
+        .expect("corrupt provider must fall through to verified origin");
+
+    assert!(report.passed(), "corrupt-provider report: {report:#?}");
+    assert_eq!(provider.gets.load(Ordering::Acquire), 2);
+    assert_eq!(server.requests(), 2);
+    assert_eq!(server.transfers(), 2);
+    assert_eq!(
+        *provider
+            .admitted
+            .lock()
+            .expect("corrupt persistence admission mutex poisoned"),
+        [(identity.clone(), bytes.clone()), (identity, bytes),]
+    );
+    for run in [&report.plain, &report.chaos] {
+        assert_eq!(run.counters.primitive_invocations, 1, "{run:#?}");
+        assert_eq!(run.counters.fetches_performed, 1, "{run:#?}");
+    }
 }
