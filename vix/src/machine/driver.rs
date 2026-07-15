@@ -7825,7 +7825,9 @@ impl Driver {
                     projected_path: existing_projected_path,
                 } => {
                     let forced_existing = self.force_tree_handle(*existing_tree)?;
-                    if forced_existing == forced && existing_projected_path.as_deref() == projected_path {
+                    if forced_existing == forced
+                        && existing_projected_path.as_deref() == projected_path
+                    {
                         return Ok(at.clone());
                     }
                 }

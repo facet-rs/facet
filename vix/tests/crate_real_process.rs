@@ -35,7 +35,8 @@ const AUTOCFG_SPARSE_INDEX: &str =
     include_str!("fixtures/sparse-index/snapshot-2025-03-04/au/to/autocfg");
 const CONST_FNV1A_HASH_SPARSE_INDEX: &str =
     include_str!("fixtures/sparse-index/snapshot-2025-03-04/co/ns/const-fnv1a-hash");
-const IMPLS_SPARSE_INDEX: &str = include_str!("fixtures/sparse-index/snapshot-2025-03-04/im/pl/impls");
+const IMPLS_SPARSE_INDEX: &str =
+    include_str!("fixtures/sparse-index/snapshot-2025-03-04/im/pl/impls");
 const SHLEX_SPARSE_INDEX: &str =
     include_str!("fixtures/sparse-index/snapshot-2025-03-04/sh/le/shlex");
 const APP_MANIFEST: &str = include_str!(
@@ -1805,7 +1806,11 @@ fn taxon_native_fetch_backend() -> Result<FakeFetchBackend, String> {
 
 fn facet_core_native_fetch_backend() -> Result<FakeFetchBackend, String> {
     let mut backend = FakeFetchBackend::new();
-    for (name, version) in [("autocfg", "1.5.1"), ("impls", "1.0.3"), ("const-fnv1a-hash", "1.1.0")] {
+    for (name, version) in [
+        ("autocfg", "1.5.1"),
+        ("impls", "1.0.3"),
+        ("const-fnv1a-hash", "1.1.0"),
+    ] {
         let bytes = facet_core_native_archive_bytes(name, version)?;
         let file = format!("{name}-{version}.crate");
         backend.insert_archive(
@@ -1882,11 +1887,12 @@ fn taxon_native_args(machine: &mut Machine) -> Result<Vec<i64>, String> {
 }
 
 fn facet_core_native_args(machine: &mut Machine, workspace: Tree) -> Result<Vec<i64>, String> {
-    let workspace_arg = machine
-        .intern_arg("Tree", MachineArg::Tree(workspace))?
-        .0;
+    let workspace_arg = machine.intern_arg("Tree", MachineArg::Tree(workspace))?.0;
     let sparse = machine
-        .intern_arg("String", MachineArg::String(facet_core_native_sparse_jsonl()?))?
+        .intern_arg(
+            "String",
+            MachineArg::String(facet_core_native_sparse_jsonl()?),
+        )?
         .0;
     let target_name = machine
         .intern_arg("String", MachineArg::String(host_triple()?))?
@@ -2546,7 +2552,10 @@ fn taxon_ladder_builds_taxon_with_real_process_and_hashes_artifacts() -> Result<
     let selected_ids = machine.demand_i64("taxon_selected_package_ids", args.clone())?;
     write_tier_a_artifact(
         "taxon-selected-package-ids.txt",
-        &format!("{:?}", machine.render_result("taxon_selected_package_ids", selected_ids)?),
+        &format!(
+            "{:?}",
+            machine.render_result("taxon_selected_package_ids", selected_ids)?
+        ),
     )?;
     let source_names = machine
         .demand_i64("taxon_selected_package_names_text", args.clone())
@@ -2763,7 +2772,8 @@ fn facet_core_ladder_builds_facet_core_with_real_process_and_hashes_artifacts() 
         &rendered_result_string(&machine, "facet_core_root_deps_text", selected_root_deps)?,
     )?;
     let selected = machine.demand_i64("facet_core_root_selected_names", args.clone())?;
-    let selected_rendered = rendered_result_string(&machine, "facet_core_root_selected_names", selected)?;
+    let selected_rendered =
+        rendered_result_string(&machine, "facet_core_root_selected_names", selected)?;
     let mut missing = Vec::new();
     for entry in selected_rendered.lines() {
         if let Some((name, version)) = entry.split_once(' ') {
@@ -2780,7 +2790,9 @@ fn facet_core_ladder_builds_facet_core_with_real_process_and_hashes_artifacts() 
     }
     write_tier_a_artifact("facet-core-selected-row-exists.txt", &missing.join("\n"))?;
     if !missing.is_empty() {
-        return Err(format!("facet-core selected rows missing from sparse index: {missing:?}"));
+        return Err(format!(
+            "facet-core selected rows missing from sparse index: {missing:?}"
+        ));
     }
     let mut source_identities = Vec::new();
     for entry in selected_rendered.lines() {
@@ -2842,34 +2854,33 @@ fn facet_core_ladder_builds_facet_core_with_real_process_and_hashes_artifacts() 
         leaf_artifacts.push(format!("{name}\t{:?}", entries.keys().collect::<Vec<_>>()));
     }
     write_tier_a_artifact("facet-core-leaf-artifacts.txt", &leaf_artifacts.join("\n"))?;
-    let build_script_deps = machine.demand_i64(
-        "facet_core_build_script_dependency_unit_ids",
-        args.clone(),
-    )?;
+    let build_script_deps =
+        machine.demand_i64("facet_core_build_script_dependency_unit_ids", args.clone())?;
     write_tier_a_artifact(
         "facet-core-build-script-dependency-unit-ids.txt",
         &format!(
             "{:?}",
-            machine.render_result("facet_core_build_script_dependency_unit_ids", build_script_deps)?
+            machine.render_result(
+                "facet_core_build_script_dependency_unit_ids",
+                build_script_deps
+            )?
         ),
     )?;
     write_tier_a_artifact(
         "facet-core-root-pkg-id.txt",
         &format!("facet-core-root-pkg-id={root_pkg_id}"),
     )?;
-    write_tier_a_artifact(
-        "facet-core-root-selected.txt",
-        &selected_rendered,
-    )?;
-    let build_script_binary = match machine.demand_i64("facet_core_build_script_binary", args.clone()) {
-        Ok(binary) => Some(binary),
-        Err(err) => {
-            return Err(format!(
-                "facet_core_build_script_binary failed: {err}\nrustc argv trace:\n{}",
-                rustc_argv_trace(&machine)
-            ));
-        }
-    };
+    write_tier_a_artifact("facet-core-root-selected.txt", &selected_rendered)?;
+    let build_script_binary =
+        match machine.demand_i64("facet_core_build_script_binary", args.clone()) {
+            Ok(binary) => Some(binary),
+            Err(err) => {
+                return Err(format!(
+                    "facet_core_build_script_binary failed: {err}\nrustc argv trace:\n{}",
+                    rustc_argv_trace(&machine)
+                ));
+            }
+        };
     match build_script_binary {
         Some(build_script_binary) => {
             write_tier_a_artifact(
@@ -2884,16 +2895,17 @@ fn facet_core_ladder_builds_facet_core_with_real_process_and_hashes_artifacts() 
             )?;
         }
     }
-    let build_script_run = match demand_with_rustc_trace(&mut machine, "facet_core_build_script_run", args.clone()) {
-        Ok(run) => run,
-        Err(err) => {
-            write_tier_a_artifact(
-                "facet-core-build-script-run-error.txt",
-                &format!("{err}\nrustc argv trace:\n{}", rustc_argv_trace(&machine)),
-            )?;
-            0
-        }
-    };
+    let build_script_run =
+        match demand_with_rustc_trace(&mut machine, "facet_core_build_script_run", args.clone()) {
+            Ok(run) => run,
+            Err(err) => {
+                write_tier_a_artifact(
+                    "facet-core-build-script-run-error.txt",
+                    &format!("{err}\nrustc argv trace:\n{}", rustc_argv_trace(&machine)),
+                )?;
+                0
+            }
+        };
     if build_script_binary.is_some() && build_script_run != 0 {
         let build_script_stdout = tree_file_bytes(&mut machine, build_script_run, "build.stdout")?;
         write_tier_a_artifact(
@@ -2910,13 +2922,19 @@ fn facet_core_ladder_builds_facet_core_with_real_process_and_hashes_artifacts() 
             "facet-core-build-stdout-final.txt",
             "facet-core build script unavailable\n",
         )?;
-        write_tier_a_artifact("facet-core-build-cfgs.txt", "facet-core build script unavailable\n")?;
+        write_tier_a_artifact(
+            "facet-core-build-cfgs.txt",
+            "facet-core build script unavailable\n",
+        )?;
     } else {
         write_tier_a_artifact(
             "facet-core-build-stdout-final.txt",
             "facet-core build-script execution failed\n",
         )?;
-        write_tier_a_artifact("facet-core-build-cfgs.txt", "facet-core build-script execution failed\n")?;
+        write_tier_a_artifact(
+            "facet-core-build-cfgs.txt",
+            "facet-core build-script execution failed\n",
+        )?;
     }
     let root_deps = machine.demand_i64("facet_core_root_deps_text", args.clone())?;
     write_tier_a_artifact(
@@ -2925,15 +2943,15 @@ fn facet_core_ladder_builds_facet_core_with_real_process_and_hashes_artifacts() 
     )?;
 
     let built = match demand_with_rustc_trace(&mut machine, "facet_core_root_link", args.clone()) {
-            Ok(built) => built,
-            Err(err) => {
-                write_tier_a_artifact(
-                    "facet-core-final-rustc-trace.txt",
-                    &rustc_argv_trace(&machine),
-                )?;
-                return Err(err);
-            }
-        };
+        Ok(built) => built,
+        Err(err) => {
+            write_tier_a_artifact(
+                "facet-core-final-rustc-trace.txt",
+                &rustc_argv_trace(&machine),
+            )?;
+            return Err(err);
+        }
+    };
     assert_rustc_requests_include_crates(
         &machine,
         &[
@@ -3024,15 +3042,11 @@ fn facet_core_ladder_changed_facet_core_build_script_fails_build() -> Result<(),
     let err = machine
         .demand_i64("facet_core_root_link", args)
         .expect_err("invalid facet-core build.rs should fail rustc");
-    let err = format!(
-        "{err}\nrustc argv trace:\n{}",
-        rustc_argv_trace(&machine)
-    );
-    if !err.contains("could not compile")
-        && !err.contains("expected")
-        && !err.contains("error:")
-    {
-        return Err(format!("unexpected facet-core build-script failure mode:\n{err}"));
+    let err = format!("{err}\nrustc argv trace:\n{}", rustc_argv_trace(&machine));
+    if !err.contains("could not compile") && !err.contains("expected") && !err.contains("error:") {
+        return Err(format!(
+            "unexpected facet-core build-script failure mode:\n{err}"
+        ));
     }
     Ok(())
 }
@@ -3064,7 +3078,9 @@ fn facet_core_ladder_reuses_projection_for_irrelevant_file_change() -> Result<()
 
     machine.clear_trace();
     let irrelevant_key = "irrelevant.txt".to_string();
-    workspace.entries.insert(irrelevant_key, "no-op-content".to_string());
+    workspace
+        .entries
+        .insert(irrelevant_key, "no-op-content".to_string());
     let args = facet_core_native_args(&mut machine, workspace)?;
     let repeated = demand_with_rustc_trace(&mut machine, "facet_core_root_link", args)?;
     let repeated_receipts = artifact_receipt_table(
@@ -3092,7 +3108,9 @@ fn facet_core_ladder_reuses_projection_for_irrelevant_file_change() -> Result<()
         .filter(|event| matches!(event, DriveEvent::RunRequested { .. }))
         .count();
     if run_requested != 0 {
-        return Err(format!("irrelevant-file change expected projection reuse but saw {run_requested} run requests"));
+        return Err(format!(
+            "irrelevant-file change expected projection reuse but saw {run_requested} run requests"
+        ));
     }
 
     Ok(())
