@@ -35,8 +35,8 @@ use super::store::{
 };
 use super::{
     DecodePrimitive, EffectCtx, PinnedFetchPrimitive, PrimitiveCompletion, PrimitiveDispatcher,
-    PrimitiveField, PrimitiveFieldValue, PrimitiveRegistry, PrimitiveValue, PrimitiveValueBody,
-    StagedEffectAuthority, blob_id_type, origin_hint_type,
+    PrimitiveField, PrimitiveFieldValue, PrimitiveMachineError, PrimitiveRegistry, PrimitiveValue,
+    PrimitiveValueBody, StagedEffectAuthority, blob_id_type, origin_hint_type,
 };
 use super::{MachineAttribution, MachineError, MachineOperation, RuntimeFault};
 
@@ -102,6 +102,24 @@ struct PrimitiveHostRequest {
 struct PrimitiveHostQueue {
     requests: Vec<PrimitiveHostRequest>,
     fault: Option<String>,
+}
+
+enum PrimitiveHostFailure {
+    Abi(String),
+    Machine(PrimitiveMachineError),
+}
+
+impl From<String> for PrimitiveHostFailure {
+    fn from(detail: String) -> Self {
+        Self::Abi(detail)
+    }
+}
+
+fn primitive_runtime_fault(failure: PrimitiveHostFailure) -> RuntimeFault {
+    match failure {
+        PrimitiveHostFailure::Abi(detail) => RuntimeFault::PrimitiveHost { detail },
+        PrimitiveHostFailure::Machine(error) => RuntimeFault::PrimitiveMachine { error },
+    }
 }
 
 impl PrimitiveHostQueue {
@@ -1311,23 +1329,23 @@ impl<S: EventSink> Runtime<S> {
                     TaskStep::Yielded => {
                         let result =
                             match (primitive_host.fault, primitive_host.requests.as_slice()) {
-                                (Some(detail), _) => Err(detail),
+                                (Some(detail), _) => Err(PrimitiveHostFailure::Abi(detail)),
                                 (None, [request]) => self.complete_primitive_host_call(
                                     &mut task,
                                     lowered,
                                     request.clone(),
                                 ),
-                                (None, requests) => Err(format!(
+                                (None, requests) => Err(PrimitiveHostFailure::Abi(format!(
                                     "primitive yield recorded {} host requests",
                                     requests.len()
-                                )),
+                                ))),
                             };
                         match result {
                             Ok(reads) => primitive_reads.extend(reads),
-                            Err(detail) => {
+                            Err(failure) => {
                                 let error = MachineError::runtime(
                                     MachineOperation::Drive,
-                                    RuntimeFault::PrimitiveHost { detail },
+                                    primitive_runtime_fault(failure),
                                     None,
                                     Some(lowered.demand_key),
                                 );
@@ -2625,7 +2643,7 @@ impl<S: EventSink> Runtime<S> {
         task: &mut weavy::exec::ExecTask<'_>,
         lowered: &DemandExecution<'_>,
         request: PrimitiveHostRequest,
-    ) -> Result<Vec<ReadWitness>, String> {
+    ) -> Result<Vec<ReadWitness>, PrimitiveHostFailure> {
         let plan = lowered
             .primitive_calls
             .get(request.plan)
@@ -2694,12 +2712,12 @@ impl<S: EventSink> Runtime<S> {
         let identity = match publication.completion {
             PrimitiveCompletion::Ok(identity) => identity,
             PrimitiveCompletion::Failed(identity) => {
-                return Err(format!(
-                    "registered primitive returned semantic failure {identity:?}"
-                ));
+                return Err(
+                    format!("registered primitive returned semantic failure {identity:?}").into(),
+                );
             }
             PrimitiveCompletion::MachineError(error) => {
-                return Err(format!("registered primitive machine error: {error:?}"));
+                return Err(PrimitiveHostFailure::Machine(error));
             }
         };
         let value = authority
@@ -2710,7 +2728,8 @@ impl<S: EventSink> Runtime<S> {
                 "primitive result schema {} disagrees with response schema {}",
                 value.schema,
                 plan.response.schema_ref()
-            ));
+            )
+            .into());
         }
         for index in 0..plan.output.words().as_usize() {
             let slot = plan
@@ -3010,23 +3029,23 @@ impl<S: EventSink> Runtime<S> {
                     TaskStep::Yielded => {
                         let result =
                             match (primitive_host.fault, primitive_host.requests.as_slice()) {
-                                (Some(detail), _) => Err(detail),
+                                (Some(detail), _) => Err(PrimitiveHostFailure::Abi(detail)),
                                 (None, [request]) => self.complete_primitive_host_call(
                                     &mut task,
                                     lowered,
                                     request.clone(),
                                 ),
-                                (None, requests) => Err(format!(
+                                (None, requests) => Err(PrimitiveHostFailure::Abi(format!(
                                     "primitive yield recorded {} host requests",
                                     requests.len()
-                                )),
+                                ))),
                             };
                         match result {
                             Ok(reads) => primitive_reads.extend(reads),
-                            Err(detail) => {
+                            Err(failure) => {
                                 let error = MachineError::runtime(
                                     MachineOperation::Drive,
-                                    RuntimeFault::PrimitiveHost { detail },
+                                    primitive_runtime_fault(failure),
                                     None,
                                     Some(lowered.demand_key),
                                 );

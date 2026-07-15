@@ -5,7 +5,7 @@ use weavy::task::FnId;
 use crate::support::Span;
 use crate::vir::{FunctionId, NodeId};
 
-use super::{DemandKey, ValueId};
+use super::{DemandKey, PrimitiveMachineError, ValueId};
 
 /// The production machine failure plane. Language diagnostics and Vix Failure
 /// values remain separate from this error.
@@ -62,6 +62,11 @@ pub enum RuntimeFault {
     /// materialization violated the machine ABI.
     PrimitiveHost {
         detail: String,
+    },
+    /// A registered primitive completed with a typed transient machine error.
+    /// This outcome is never a language failure and is not memoized.
+    PrimitiveMachine {
+        error: PrimitiveMachineError,
     },
     PureIslandParked {
         input: u32,

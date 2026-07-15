@@ -5,10 +5,10 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use tempfile::TempDir;
-use vix::ratchet::prepare_source;
+use vix::ratchet::{RunError, prepare_source};
 use vix::runtime::{
-    CanonicalBlobPersistence, FixtureStore, FramedNode, PrimitiveMachineError, PrimitiveServices,
-    ValueBodyCandidate, ValueId, ValuePersistence,
+    CanonicalBlobPersistence, FixtureStore, FramedNode, MachineCause, PrimitiveMachineError,
+    PrimitiveServices, RuntimeFault, ValueBodyCandidate, ValueId, ValuePersistence,
 };
 use vix::vir::{ExternKind, Type};
 use vix_fetch::HttpBlobOriginAdapter;
@@ -40,6 +40,24 @@ fn pinned_fetch_local_store_hit_never_contacts_provider_or_origin() -> Stream<Ch
     let second = fetch(fixture_registry().url("second.crate"));
     yield expect_eq(second.len(), 4096);
     yield fetched(1);
+}
+"#;
+
+const FETCH_MUST_FAIL: &str = r#"
+#[test]
+fn pinned_fetch_must_fail_before_publishing() -> Stream<Check> {
+    let blob = fetch(fixture_registry().url("case.crate"));
+    yield expect_eq(blob.len(), 4096);
+}
+"#;
+
+const FETCH_STORE_THEN_UPSTREAM_CONTRADICTION: &str = r#"
+#[test]
+fn pinned_fetch_store_checks_upstream_digest() -> Stream<Check> {
+    let first = fetch(fixture_registry().url("first.crate"));
+    yield expect_eq(first.len(), 4096);
+    let second = fetch(fixture_registry().url("second.crate"));
+    yield expect_eq(second.len(), 4096);
 }
 "#;
 
@@ -177,6 +195,16 @@ fn fixture_store_with_manifest(temp: &TempDir, manifest: &str) -> FixtureStore {
 
 fn blob_identity(bytes: &[u8]) -> vix::runtime::ValueId {
     FramedNode::leaf(Type::Extern(ExternKind::Blob).schema_ref(), bytes.to_vec()).identity()
+}
+
+fn primitive_machine_error(error: RunError) -> PrimitiveMachineError {
+    let RunError::Machine(error) = error else {
+        panic!("expected machine error, got {error:#?}");
+    };
+    let MachineCause::Runtime(RuntimeFault::PrimitiveMachine { error }) = error.cause else {
+        panic!("expected typed primitive machine error, got {error:#?}");
+    };
+    error
 }
 
 #[derive(Default)]
@@ -319,4 +347,106 @@ fn pinned_fetch_local_store_hit_never_contacts_provider_or_origin() {
         assert_eq!(run.counters.primitive_invocations, 2, "{run:#?}");
         assert_eq!(run.counters.fetches_performed, 1, "{run:#?}");
     }
+}
+
+#[test]
+fn pinned_fetch_rejects_vix_identity_mismatch() {
+    let bytes = archive_bytes();
+    let observed = blob_identity(&bytes);
+    let claimed = blob_identity(b"different Blob body");
+    let upstream = vix::fetch::sha256_hex(&bytes);
+    let server = BlobServer::start(bytes);
+    let fixtures = TempDir::new().expect("create fixture root");
+    let services = PrimitiveServices::default()
+        .with_fixture_store(fixture_store(&fixtures, &server.url(), &claimed, &upstream))
+        .with_origin_adapter(Arc::new(HttpBlobOriginAdapter));
+
+    let error = prepare_source(FETCH_MUST_FAIL)
+        .expect("prepare Vix identity-mismatch source")
+        .execute_with_primitive_services(services)
+        .expect_err("Vix identity mismatch must fail");
+
+    assert_eq!(
+        primitive_machine_error(error),
+        PrimitiveMachineError::CorruptCandidate { source: observed }
+    );
+    assert_eq!(server.requests(), 1);
+}
+
+#[test]
+fn pinned_fetch_rejects_upstream_digest_mismatch_at_every_tier() {
+    let bytes = archive_bytes();
+    let identity = blob_identity(&bytes);
+    let wrong_upstream = "00".repeat(32);
+
+    let store_server = BlobServer::start(bytes.clone());
+    let store_fixtures = TempDir::new().expect("create Store-tier fixture root");
+    let store_manifest = format!(
+        "first.crate {} {}\nsecond.crate {} {} {wrong_upstream}\n",
+        store_server.url_for("/first"),
+        identity.content.hex(),
+        store_server.url_for("/must-not-be-contacted"),
+        identity.content.hex(),
+    );
+    let store_services = PrimitiveServices::default()
+        .with_fixture_store(fixture_store_with_manifest(
+            &store_fixtures,
+            &store_manifest,
+        ))
+        .with_origin_adapter(Arc::new(HttpBlobOriginAdapter));
+    let store_error = prepare_source(FETCH_STORE_THEN_UPSTREAM_CONTRADICTION)
+        .expect("prepare Store-tier upstream source")
+        .execute_with_primitive_services(store_services)
+        .expect_err("Store-tier upstream mismatch must fail");
+    assert!(matches!(
+        primitive_machine_error(store_error),
+        PrimitiveMachineError::PolicyRejected { .. }
+    ));
+    assert_eq!(store_server.targets(), ["/first"]);
+
+    let provider_server = BlobServer::start(bytes.clone());
+    let provider_fixtures = TempDir::new().expect("create provider-tier fixture root");
+    let provider_root = TempDir::new().expect("create provider-tier persistence root");
+    let provider = Arc::new(CanonicalBlobPersistence::new(provider_root.path()));
+    provider
+        .put(&identity, &bytes)
+        .expect("prepopulate provider-tier Blob");
+    let provider_services = PrimitiveServices::default()
+        .with_fixture_store(fixture_store(
+            &provider_fixtures,
+            &provider_server.url(),
+            &identity,
+            &wrong_upstream,
+        ))
+        .with_value_persistence(provider)
+        .with_origin_adapter(Arc::new(HttpBlobOriginAdapter));
+    let provider_error = prepare_source(FETCH_MUST_FAIL)
+        .expect("prepare provider-tier upstream source")
+        .execute_with_primitive_services(provider_services)
+        .expect_err("provider-tier upstream mismatch must fail");
+    assert!(matches!(
+        primitive_machine_error(provider_error),
+        PrimitiveMachineError::PolicyRejected { .. }
+    ));
+    assert_eq!(provider_server.requests(), 0);
+
+    let origin_server = BlobServer::start(bytes);
+    let origin_fixtures = TempDir::new().expect("create origin-tier fixture root");
+    let origin_services = PrimitiveServices::default()
+        .with_fixture_store(fixture_store(
+            &origin_fixtures,
+            &origin_server.url(),
+            &identity,
+            &wrong_upstream,
+        ))
+        .with_origin_adapter(Arc::new(HttpBlobOriginAdapter));
+    let origin_error = prepare_source(FETCH_MUST_FAIL)
+        .expect("prepare origin-tier upstream source")
+        .execute_with_primitive_services(origin_services)
+        .expect_err("origin-tier upstream mismatch must fail");
+    assert!(matches!(
+        primitive_machine_error(origin_error),
+        PrimitiveMachineError::PolicyRejected { .. }
+    ));
+    assert_eq!(origin_server.requests(), 1);
 }
