@@ -568,8 +568,14 @@ fn real_workspace_metadata_baseline_is_counted() -> Result<(), String> {
     //
     // vox-iroh adds ten direct normal and development dependency edges for its
     // authenticated Iroh transport and production-path certificates.
-    assert_eq!(total_oracle_deps, 1147);
-    assert_eq!(before_workspace_allowlist_failures, 776);
+    //
+    // The preserved Dibs application-mode commit removes `notify` and adds
+    // `my-app-db`, `tempfile`, `tracing`, and `tracing-subscriber`, for a net
+    // increase of three direct workspace-member dependency edges. The latter
+    // three additions are workspace-inherited, so they also add three to the
+    // legacy workspace-allowlist baseline.
+    assert_eq!(total_oracle_deps, 1150);
+    assert_eq!(before_workspace_allowlist_failures, 779);
     assert_eq!(target_cfg_represented, 55);
 
     Ok(())
