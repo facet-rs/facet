@@ -38,8 +38,32 @@ fn taxon_workspace_root() -> Path {
     p"phon"
 }
 
+fn facet_core_members() -> [String] {
+    ["facet-core"]
+}
+
+fn facet_core_workspace_root() -> Path {
+    p""
+}
+
 fn taxon_state(workspace: Tree, sparse_jsonl: String) -> WorkspaceIndexState {
     workspace_index_state_with_transitive_sparse_rows_for_members(workspace, taxon_workspace_root(), sparse_jsonl, taxon_members())
+}
+
+fn member_names(workspace: Tree, workspace_root: Path, members: [String]) -> [String] {
+    member_names_impl(workspace, workspace_root, members, [])
+}
+
+fn member_names_impl(workspace: Tree, workspace_root: Path, members: [String], out: [String]) -> [String] {
+    match members.len() == 0 {
+        true => out,
+        false => member_names_impl_step(workspace, workspace_root, members.pop(), out),
+    }
+}
+
+fn member_names_impl_step(workspace: Tree, workspace_root: Path, popped: (String, [String]), out: [String]) -> [String] {
+    let manifest = member_manifest(workspace, workspace_root, popped.0);
+    member_names_impl(workspace, workspace_root, popped.1, out.push(package_name(manifest)))
 }
 
 fn taxon_root_pkg(state: WorkspaceIndexState) -> Int {
@@ -80,13 +104,77 @@ fn taxon_result(workspace: Tree, state: WorkspaceIndexState, target_name: String
     solve(taxon_index(state), taxon_problem(workspace, state), target_name)
 }
 
+fn facet_core_state(workspace: Tree, sparse_jsonl: String) -> WorkspaceIndexState {
+    workspace_index_state_with_transitive_sparse_rows_for_members(
+        workspace,
+        facet_core_workspace_root(),
+        sparse_jsonl,
+        facet_core_members(),
+    )
+}
+
+fn facet_core_root_pkg(state: WorkspaceIndexState) -> Int {
+    state.package_ids.get("facet-core").unwrap()
+}
+
+fn facet_core_index(state: WorkspaceIndexState) -> Index {
+    workspace_index_from_state(state)
+}
+
+fn facet_core_root_version(workspace: Tree) -> String {
+    package_version_in_workspace(
+        member_manifest(workspace, facet_core_workspace_root(), "facet-core"),
+        workspace,
+    )
+}
+
+fn facet_core_problem(workspace: Tree, state: WorkspaceIndexState) -> Problem {
+    Problem {
+        root_pkg: facet_core_root_pkg(state),
+        root_req: VersionSet::from_req("=" + facet_core_root_version(workspace)),
+        root_features: [],
+        root_default_feature: 0,
+        root_default_features: false,
+    }
+}
+
+fn facet_core_result(workspace: Tree, state: WorkspaceIndexState, target_name: String) -> SolveResult {
+    solve(facet_core_index(state), facet_core_problem(workspace, state), target_name)
+}
+
 fn selected_version(state: WorkspaceIndexState, result: SolveResult, name: String) -> String {
     selected_version_text(state, result, name)
 }
 
 fn selected_row(rows: [SparseIndexRow], state: WorkspaceIndexState, result: SolveResult, name: String) -> SparseIndexRow {
-    let found = selected_sparse_row(rows, name, selected_version(state, result, name));
-    found.unwrap()
+    let package = state.package_ids.get(name).unwrap();
+    let package_name = state.names.get(package).unwrap();
+    let fallback = selected_row_by_name(rows, package_name);
+    match selected_sparse_row(rows, package_name, selected_version(state, result, package_name)) {
+        Some(row) => row,
+        None => fallback,
+    }
+}
+
+fn selected_row_by_name(rows: [SparseIndexRow], name: String) -> SparseIndexRow {
+    selected_row_by_name_option(rows, name).unwrap()
+}
+
+fn selected_row_by_name_option(rows: [SparseIndexRow], name: String) -> Option<SparseIndexRow> {
+    match rows.len() == 0 {
+        true => None,
+        false => selected_row_by_name_option_next(rows.pop(), name),
+    }
+}
+
+fn selected_row_by_name_option_next(popped: (SparseIndexRow, [SparseIndexRow]), name: String) -> Option<SparseIndexRow> {
+    match popped.0.name == name {
+        true => Some(popped.0),
+        false => match crate_name(popped.0.name) == name {
+            true => Some(popped.0),
+            false => selected_row_by_name_option(popped.1, name),
+        },
+    }
 }
 
 fn crate_url(row: SparseIndexRow) -> String {
@@ -182,6 +270,10 @@ fn taxon_rows(sparse_jsonl: String) -> [SparseIndexRow] {
     parse_sparse_jsonl(sparse_jsonl)
 }
 
+fn facet_core_rows(sparse_jsonl: String) -> [SparseIndexRow] {
+    parse_sparse_jsonl(sparse_jsonl)
+}
+
 struct CargoUnitSource {
     manifest: Tree,
     edition_source: Tree,
@@ -205,6 +297,9 @@ struct CargoResolvedGraph {
     root: Int,
     target_name: String,
     workspace: Tree,
+    member_names: [String],
+    member_paths: [String],
+    workspace_root: Path,
     rows: [SparseIndexRow],
     state: WorkspaceIndexState,
     index: Index,
@@ -314,14 +409,57 @@ fn build_dependency_closure_new(index: Index, result: SolveResult, target_name: 
     build_dependency_closure(index, result, target_name, append_unique_ints(popped.1, normal), out)
 }
 
-fn resolved_source_for_package(workspace: Tree, rows: [SparseIndexRow], state: WorkspaceIndexState, result: SolveResult, package: Int) -> CargoUnitSource {
-    match package == taxon_root_pkg(state) {
-        true => CargoUnitSource {
-            manifest: member_manifest(workspace, taxon_workspace_root(), "rust/taxon"),
-            edition_source: workspace,
-        },
-        false => resolved_registry_source(rows, state, result, package),
+fn resolved_source_for_package(
+    workspace: Tree,
+    rows: [SparseIndexRow],
+    state: WorkspaceIndexState,
+    result: SolveResult,
+    member_names: [String],
+    member_paths: [String],
+    workspace_root: Path,
+    package: Int,
+) -> CargoUnitSource {
+    let package_name = state.names.get(package).unwrap();
+    let member_path = member_path_for_package(member_names, member_paths, package_name);
+    match member_path == "" {
+        true => resolved_registry_source(rows, state, result, package),
+        false => resolved_workspace_source_for_package(workspace, workspace_root, member_path),
     }
+}
+
+fn member_path_for_package(member_names: [String], member_paths: [String], package_name: String) -> String {
+    match member_names.len() == 0 {
+        true => "",
+        false => member_path_for_package_step(member_names.pop(), member_paths.pop(), package_name),
+    }
+}
+
+fn member_path_for_package_step(names: (String, [String]), paths: (String, [String]), package_name: String) -> String {
+    match names.0 == package_name {
+        true => paths.0,
+        false => member_path_for_package(names.1, paths.1, package_name),
+    }
+}
+
+fn resolved_workspace_source_for_package(workspace: Tree, workspace_root: Path, member_path: String) -> CargoUnitSource {
+    let manifest = member_manifest(workspace, workspace_root, member_path);
+    CargoUnitSource {
+        manifest: manifest,
+        edition_source: manifest,
+    }
+}
+
+fn resolved_source_for_package_for_graph(graph: CargoResolvedGraph, package: Int) -> CargoUnitSource {
+    resolved_source_for_package(
+        graph.workspace,
+        graph.rows,
+        graph.state,
+        graph.result,
+        graph.member_names,
+        graph.member_paths,
+        graph.workspace_root,
+        package,
+    )
 }
 
 fn resolved_registry_source(rows: [SparseIndexRow], state: WorkspaceIndexState, result: SolveResult, package: Int) -> CargoUnitSource {
@@ -390,18 +528,66 @@ fn resolved_build_script_unit(index: Index, result: SolveResult, target_name: St
     }
 }
 
+fn resolved_lib_unit_for_graph(graph: CargoResolvedGraph, package: Int) -> CargoBuildUnit {
+    let source = resolved_source_for_package_for_graph(graph, package);
+    resolved_lib_unit(
+        graph.index,
+        graph.result,
+        graph.target_name,
+        source,
+        package,
+        graph.build_packages,
+    )
+}
+
+fn resolved_build_script_unit_for_graph(graph: CargoResolvedGraph, package: Int) -> CargoBuildUnit {
+    let source = resolved_source_for_package_for_graph(graph, package);
+    match has_build_script(source.manifest) {
+        true => resolved_build_script_unit(graph.index, graph.result, graph.target_name, source, package),
+        false => missing_resolved_unit(graph, build_script_unit_id(package)),
+    }
+}
+
 fn taxon_resolved_graph(workspace: Tree, sparse_jsonl: String, target_name: String) -> CargoResolvedGraph {
     let state = taxon_state(workspace, sparse_jsonl);
     let index = taxon_index(state);
     let result = taxon_result(workspace, state, target_name);
+    let root_pkg = taxon_root_pkg(state);
     let packages = selected_package_ids(state, result);
     let build_roots = direct_build_dependency_packages(index, result, target_name, packages, []);
     let build_packages = build_dependency_closure(index, result, target_name, build_roots, []);
     CargoResolvedGraph {
-        root: lib_unit_id(taxon_root_pkg(state)),
+        root: lib_unit_id(root_pkg),
         target_name: target_name,
         workspace: workspace,
+        member_names: member_names(workspace, taxon_workspace_root(), taxon_members()),
+        member_paths: taxon_members(),
+        workspace_root: taxon_workspace_root(),
         rows: taxon_rows(sparse_jsonl),
+        state: state,
+        index: index,
+        result: result,
+        packages: packages,
+        build_packages: build_packages,
+    }
+}
+
+fn facet_core_resolved_graph(workspace: Tree, sparse_jsonl: String, target_name: String) -> CargoResolvedGraph {
+    let state = facet_core_state(workspace, sparse_jsonl);
+    let index = facet_core_index(state);
+    let result = solve(index, facet_core_problem(workspace, state), target_name);
+    let root_pkg = facet_core_root_pkg(state);
+    let packages = selected_package_ids(state, result);
+    let build_roots = direct_build_dependency_packages(index, result, target_name, packages, []);
+    let build_packages = build_dependency_closure(index, result, target_name, build_roots, []);
+    CargoResolvedGraph {
+        root: lib_unit_id(root_pkg),
+        target_name: target_name,
+        workspace: workspace,
+        member_names: member_names(workspace, facet_core_workspace_root(), facet_core_members()),
+        member_paths: facet_core_members(),
+        workspace_root: facet_core_workspace_root(),
+        rows: facet_core_rows(sparse_jsonl),
         state: state,
         index: index,
         result: result,
@@ -428,19 +614,6 @@ fn resolved_unit_from_packages_tuple(graph: CargoResolvedGraph, unit: Int, poppe
             true => resolved_build_script_unit_for_graph(graph, popped.0),
             false => resolved_unit_from_packages(graph, unit, popped.1),
         },
-    }
-}
-
-fn resolved_lib_unit_for_graph(graph: CargoResolvedGraph, package: Int) -> CargoBuildUnit {
-    let source = resolved_source_for_package(graph.workspace, graph.rows, graph.state, graph.result, package);
-    resolved_lib_unit(graph.index, graph.result, graph.target_name, source, package, graph.build_packages)
-}
-
-fn resolved_build_script_unit_for_graph(graph: CargoResolvedGraph, package: Int) -> CargoBuildUnit {
-    let source = resolved_source_for_package(graph.workspace, graph.rows, graph.state, graph.result, package);
-    match has_build_script(source.manifest) {
-        true => resolved_build_script_unit(graph.index, graph.result, graph.target_name, source, package),
-        false => missing_resolved_unit(graph, build_script_unit_id(package)),
     }
 }
 
@@ -700,6 +873,162 @@ pub fn taxon_root_deps_text(workspace: Tree, sparse_jsonl: String, target_name: 
     let index = taxon_index(state);
     let result = taxon_result(workspace, state, target_name);
     solution_dep_names_text(state, index, result, taxon_root_pkg(state), target_name)
+}
+
+pub fn facet_core_selected_versions(workspace: Tree, sparse_jsonl: String, target_name: String) -> String {
+    let state = facet_core_state(workspace, sparse_jsonl);
+    solve_selected_versions_text(facet_core_index(state), facet_core_problem(workspace, state), target_name)
+}
+
+pub fn facet_core_root_selected_names(workspace: Tree, sparse_jsonl: String, target_name: String) -> String {
+    let state = facet_core_state(workspace, sparse_jsonl);
+    solve_selected_versions_text(facet_core_index(state), facet_core_problem(workspace, state), target_name)
+}
+
+pub fn facet_core_root_pkg_id(workspace: Tree, sparse_jsonl: String, target_name: String) -> Int {
+    facet_core_root_pkg(facet_core_state(workspace, sparse_jsonl))
+}
+
+pub fn facet_core_root_candidate_count(workspace: Tree, sparse_jsonl: String, target_name: String) -> Int {
+    let state = facet_core_state(workspace, sparse_jsonl);
+    root_candidate_count(facet_core_index(state), facet_core_problem(workspace, state))
+}
+
+pub fn facet_core_root_version_count(workspace: Tree, sparse_jsonl: String, target_name: String) -> Int {
+    let state = facet_core_state(workspace, sparse_jsonl);
+    root_version_count(facet_core_index(state), facet_core_problem(workspace, state))
+}
+
+pub fn facet_core_index_packages_text(workspace: Tree, sparse_jsonl: String, target_name: String) -> String {
+    workspace_index_package_names_text(facet_core_state(workspace, sparse_jsonl))
+}
+
+pub fn facet_core_index_package_count(workspace: Tree, sparse_jsonl: String, target_name: String) -> Int {
+    facet_core_state(workspace, sparse_jsonl).packages.len()
+}
+
+pub fn facet_core_root_deps_text(workspace: Tree, sparse_jsonl: String, target_name: String) -> String {
+    let state = facet_core_state(workspace, sparse_jsonl);
+    let index = facet_core_index(state);
+    let result = facet_core_result(workspace, state, target_name);
+    solution_dep_names_text(state, index, result, facet_core_root_pkg(state), target_name)
+}
+
+pub fn facet_core_build_script_binary(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {
+    let state = facet_core_state(workspace, sparse_jsonl);
+    let package = state.package_ids.get("facet-core").unwrap();
+    resolved_build_script_binary(
+        Target::host(),
+        facet_core_resolved_graph(workspace, sparse_jsonl, target_name),
+        build_script_unit_id(package),
+    )
+}
+
+pub fn facet_core_build_script_run(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {
+    let state = facet_core_state(workspace, sparse_jsonl);
+    resolved_build_script_run(
+        Target::host(),
+        facet_core_resolved_graph(workspace, sparse_jsonl, target_name),
+        build_script_unit_id(state.package_ids.get("facet-core").unwrap()),
+        target_name,
+    )
+}
+
+pub fn facet_core_build_script_cfgs(workspace: Tree, sparse_jsonl: String, target_name: String) -> String {
+    let run = facet_core_build_script_run(workspace, sparse_jsonl, target_name);
+    build_script_rustc_cfgs(run).join("\n")
+}
+
+pub fn facet_core_build_script_run_without_declared_cc(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {
+    let state = facet_core_state(workspace, sparse_jsonl);
+    let graph = facet_core_resolved_graph(workspace, sparse_jsonl, target_name);
+    let unit_id = build_script_unit_id(state.package_ids.get("facet-core").unwrap());
+    let unit = resolved_unit(graph, unit_id);
+    let binary = facet_core_build_script_binary(workspace, sparse_jsonl, target_name);
+    let build_script = "build-script-runner";
+    let major = version_major(unit.version);
+    let minor = version_minor(unit.version);
+    let patch = version_patch(unit.version);
+    let pre = version_pre(unit.version);
+    let arch = target_arch_env(target_name);
+    let vendor = target_vendor_env(target_name);
+    let os = target_os_env(target_name);
+    let target_env = target_env_env(target_name);
+
+    build_script! {
+        --executable {binary / unit.link}
+        --stdout {p"build.stdout"}
+        --out-dir {p"out"}
+        --env OUT_DIR={p"out"}
+        --env CARGO_MANIFEST_DIR={unit.manifest}
+        --env CARGO_PKG_NAME={unit.package_name}
+        --env CARGO_PKG_VERSION={unit.version}
+        --env CARGO_PKG_VERSION_MAJOR={major}
+        --env CARGO_PKG_VERSION_MINOR={minor}
+        --env CARGO_PKG_VERSION_PATCH={patch}
+        --env CARGO_PKG_VERSION_PRE={pre}
+        --env TARGET={target_name}
+        --env HOST={target_name}
+        --env RUSTC=rustc
+        --env OPT_LEVEL=0
+        --env PROFILE=debug
+        --env CARGO_CFG_TARGET_ARCH={arch}
+        --env CARGO_CFG_TARGET_VENDOR={vendor}
+        --env CARGO_CFG_TARGET_OS={os}
+        --env CARGO_CFG_TARGET_ENV={target_env}
+        --env CARGO_CFG_TARGET_ENDIAN=little
+    }
+}
+
+pub fn facet_core_build_script_run_with_wrong_toolchain(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {
+    let state = facet_core_state(workspace, sparse_jsonl);
+    let graph = facet_core_resolved_graph(workspace, sparse_jsonl, target_name);
+    let unit_id = build_script_unit_id(state.package_ids.get("facet-core").unwrap());
+    let unit = resolved_unit(graph, unit_id);
+    let binary = facet_core_build_script_binary(workspace, sparse_jsonl, target_name);
+    let build_script = "build-script-runner";
+    let major = version_major(unit.version);
+    let minor = version_minor(unit.version);
+    let patch = version_patch(unit.version);
+    let pre = version_pre(unit.version);
+    let arch = target_arch_env(target_name);
+    let vendor = target_vendor_env(target_name);
+    let os = target_os_env(target_name);
+    let target_env = target_env_env(target_name);
+
+    build_script! {
+        --requires-toolchain=zigcc
+        --executable {binary / unit.link}
+        --stdout {p"build.stdout"}
+        --out-dir {p"out"}
+        --env OUT_DIR={p"out"}
+        --env CARGO_MANIFEST_DIR={unit.manifest}
+        --env CARGO_PKG_NAME={unit.package_name}
+        --env CARGO_PKG_VERSION={unit.version}
+        --env CARGO_PKG_VERSION_MAJOR={major}
+        --env CARGO_PKG_VERSION_MINOR={minor}
+        --env CARGO_PKG_VERSION_PATCH={patch}
+        --env CARGO_PKG_VERSION_PRE={pre}
+        --env TARGET={target_name}
+        --env HOST={target_name}
+        --env RUSTC=rustc
+        --env OPT_LEVEL=0
+        --env PROFILE=debug
+        --env CARGO_CFG_TARGET_ARCH={arch}
+        --env CARGO_CFG_TARGET_VENDOR={vendor}
+        --env CARGO_CFG_TARGET_OS={os}
+        --env CARGO_CFG_TARGET_ENV={target_env}
+        --env CARGO_CFG_TARGET_ENDIAN=little
+    }
+}
+
+pub fn facet_core_root_link(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {
+    let state = facet_core_state(workspace, sparse_jsonl);
+    resolved_unit_built(
+        Target::host(),
+        facet_core_resolved_graph(workspace, sparse_jsonl, target_name),
+        lib_unit_id(state.package_ids.get("facet-core").unwrap()),
+    )
 }
 
 pub fn taxon_source_package_names_text(workspace: Tree, sparse_jsonl: String, target_name: String) -> String {
