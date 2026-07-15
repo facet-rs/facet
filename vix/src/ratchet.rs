@@ -685,6 +685,14 @@ fn prepare_source_with_cache(
         for wire in &partitioned.wire_islands {
             cache.get_or_lower(&wire.island)?;
         }
+        // Effect request islands are pre-lowered on the same seam so the phase-05
+        // scheduler resolves each effect from a warm cache. Phase 04 only carries
+        // and warms them — never demands or resolves them here
+        // (r[machine.execution.facts-precomputed]). Empty (a no-op) until a
+        // primitive manifest is threaded into the runner in a later phase.
+        for effect in &partitioned.effect_islands {
+            cache.get_or_lower(&effect.island)?;
+        }
         if let Some(generator) = &partitioned.generator {
             cache.get_or_lower(generator)?;
         }
