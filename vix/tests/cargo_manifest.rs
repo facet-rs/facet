@@ -574,8 +574,14 @@ fn real_workspace_metadata_baseline_is_counted() -> Result<(), String> {
     // increase of three direct workspace-member dependency edges. The latter
     // three additions are workspace-inherited, so they also add three to the
     // legacy workspace-allowlist baseline.
-    assert_eq!(total_oracle_deps, 1150);
-    assert_eq!(before_workspace_allowlist_failures, 779);
+    //
+    // FV-D1's vix-fetch production-path fetch certificates add a
+    // workspace-inherited `tempfile` dev-dependency (the fixture roots the
+    // pinned-fetch observers write into). It contributes one direct
+    // workspace-member dependency edge, and being workspace-inherited it also
+    // adds one to the legacy workspace-allowlist baseline.
+    assert_eq!(total_oracle_deps, 1151);
+    assert_eq!(before_workspace_allowlist_failures, 780);
     assert_eq!(target_cfg_represented, 55);
 
     Ok(())
