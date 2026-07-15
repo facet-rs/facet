@@ -3,4 +3,4 @@
 # The ContentHash is the framed Blob value identity (machine.identity.blake3,
 # one hash definition) computed at lock time; the URL is a provenance
 # coordinate resolved against the fixture store, never the network.
-tokio-1.52.3.crate fixture://registry/tokio-1.52.3.crate 9cb1846de408a1375d33ac82a2e16aa9968ec33a68c4fd292abb231295521b96
+tokio-1.52.3.crate fixture://registry/tokio-1.52.3.crate 01a321713d1aee2ff294bd98772239c0855084fb09a6184c10adfc5c6a8c5596

@@ -83,19 +83,26 @@ impl SchemaRef {
     /// content-derived `SchemaId` remains authoritative.
     #[must_use]
     pub fn canonical_bytes(&self) -> Vec<u8> {
-        fn write(reference: &SchemaRef, out: &mut Vec<u8>) {
-            out.extend_from_slice(&reference.id.0.to_le_bytes());
-            out.extend_from_slice(&(reference.args.len() as u64).to_le_bytes());
-            for argument in &reference.args {
-                let encoded = argument.canonical_bytes();
-                out.extend_from_slice(&(encoded.len() as u64).to_le_bytes());
-                out.extend_from_slice(&encoded);
-            }
-        }
-
-        let mut out = Vec::new();
-        write(self, &mut out);
+        let mut out = Vec::with_capacity(self.canonical_len() as usize);
+        self.write_canonical(&mut |bytes| out.extend_from_slice(bytes));
         out
+    }
+
+    pub(crate) fn canonical_len(&self) -> u64 {
+        16 + self
+            .args
+            .iter()
+            .map(|argument| 8 + argument.canonical_len())
+            .sum::<u64>()
+    }
+
+    pub(crate) fn write_canonical(&self, write: &mut impl FnMut(&[u8])) {
+        write(&self.id.0.to_le_bytes());
+        write(&(self.args.len() as u64).to_le_bytes());
+        for argument in &self.args {
+            write(&argument.canonical_len().to_le_bytes());
+            argument.write_canonical(write);
+        }
     }
 
     /// Resolve one closed structural schema through Taxon's identity algorithm.

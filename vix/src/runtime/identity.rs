@@ -265,7 +265,8 @@ impl FramedHasher {
     ///
     /// r[impl machine.identity.schema-ref]
     fn schema_ref(&mut self, schema: &SchemaRef) {
-        self.framed(&schema.canonical_bytes());
+        self.word(schema.canonical_len());
+        schema.write_canonical(&mut |bytes| self.raw(bytes));
     }
 
     /// Open a value: role, its stable schema identity, and its arity.
