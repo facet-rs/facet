@@ -6,6 +6,7 @@ mod fixture;
 mod identity;
 mod model;
 mod observe;
+mod primitive;
 mod scheduler;
 mod store;
 
@@ -15,5 +16,6 @@ pub use fixture::*;
 pub use identity::*;
 pub use model::*;
 pub use observe::*;
+pub use primitive::*;
 pub use scheduler::*;
 pub use store::*;
