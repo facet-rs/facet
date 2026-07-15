@@ -4759,7 +4759,7 @@ fn decode_format(name: &str) -> Option<DecodeFormat> {
 fn effect_intrinsic(name: &str) -> bool {
     matches!(
         name,
-        "fixture_tree" | "fixture_registry" | "fetch" | "observe" | "untar"
+        "fixture_tree" | "fixture_registry" | "fetch" | "observe" | "refresh" | "untar"
     )
 }
 
@@ -4803,17 +4803,26 @@ fn lower_effect_intrinsic(
             ty,
         });
     }
-    if call.callee.value == "observe" {
+    if call.callee.value == "observe" || call.callee.value == "refresh" {
         check_arity(call, 1)?;
+        let refresh = call.callee.value == "refresh";
         let origin = lower_value(nodes, bindings, context, &call.args.args[0])?;
         require_type(&origin, &origin_hint_type(), expr_span(&call.args.args[0]))?;
+        let flag = push_node(
+            nodes,
+            call.span,
+            Type::Bool,
+            EffectFacts::PURE,
+            Vec::new(),
+            Op::Bool(refresh),
+        );
         let request_ty = observe_request_type();
         let request = push_node(
             nodes,
             call.span,
             request_ty,
             EffectFacts::PURE,
-            vec![origin.node],
+            vec![origin.node, flag],
             Op::Record,
         );
         let ty = Type::Extern(ExternKind::Blob);
@@ -4851,7 +4860,7 @@ fn lower_effect_intrinsic(
             )
         }
         "fetch" => unreachable!("registered fetch returned above"),
-        "observe" => unreachable!("registered observe returned above"),
+        "observe" | "refresh" => unreachable!("registered observe returned above"),
         "untar" => {
             check_arity(call, 1)?;
             let blob = lower_value(nodes, bindings, context, &call.args.args[0])?;

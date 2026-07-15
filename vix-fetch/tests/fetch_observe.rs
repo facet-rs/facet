@@ -8,8 +8,8 @@ use tempfile::TempDir;
 use vix::ratchet::{RunError, prepare_source};
 use vix::runtime::{
     CanonicalBlobPersistence, ClaimHistory, FixtureStore, FramedNode, MachineCause,
-    ObserveCoordinate, ObservedClaim, PrimitiveMachineError, PrimitiveServices, RuntimeFault,
-    ValueBodyCandidate, ValueId, ValuePersistence,
+    ObserveCoordinate, ObservedClaim, OriginAdapter, PrimitiveMachineError, PrimitiveServices,
+    RuntimeFault, ValueBodyCandidate, ValueId, ValuePersistence,
 };
 use vix::vir::{ExternKind, Type};
 use vix_fetch::HttpBlobOriginAdapter;
@@ -667,4 +667,224 @@ fn observe_records_appends_and_persists_the_verified_observation() {
         assert_eq!(run.counters.primitive_invocations, 1, "{run:#?}");
         assert_eq!(run.counters.fetches_performed, 1, "{run:#?}");
     }
+}
+
+const OBSERVE_THEN_REFRESH: &str = r#"
+#[test]
+fn refresh_forces_a_fresh_observation_past_the_memo() -> Stream<Check> {
+    let first = observe(fixture_registry().coordinate("case.crate"));
+    yield expect_eq(first.len(), 4096);
+    let second = observe(fixture_registry().coordinate("case.crate"));
+    yield expect_eq(second.len(), 4096);
+    let refreshed = refresh(fixture_registry().coordinate("case.crate"));
+    yield expect_eq(refreshed.len(), 4096);
+    yield fetched(2);
+}
+"#;
+
+#[test]
+fn refresh_reobserves_past_the_memo_and_appends_a_new_head() {
+    let bytes = archive_bytes();
+    let identity = blob_identity(&bytes);
+    let upstream = vix::fetch::sha256_hex(&bytes);
+    let server = BlobServer::start(bytes.clone());
+    let fixtures = TempDir::new().expect("create refresh fixture root");
+    let claims = Arc::new(RecordingClaimHistory::default());
+    let persistence = Arc::new(RecordingCasPersistence::default());
+    let services = PrimitiveServices::default()
+        .with_fixture_store(fixture_store(
+            &fixtures,
+            &server.url(),
+            &identity,
+            &upstream,
+        ))
+        .with_value_persistence(persistence.clone())
+        .with_claim_history(claims.clone())
+        .with_origin_adapter(Arc::new(HttpBlobOriginAdapter));
+
+    let report = prepare_source(OBSERVE_THEN_REFRESH)
+        .expect("prepare refresh source")
+        .execute_with_primitive_services(services)
+        .expect("refresh re-observes the coordinate");
+
+    assert!(report.passed(), "refresh report: {report:#?}");
+    // Per lane: the two identical observes collapse to one demand, but refresh is
+    // a distinct demand that reads the origin again (2 reads per lane).
+    assert_eq!(server.requests(), 4);
+    assert_eq!(server.transfers(), 4);
+
+    // Every observation appends its own head; the same identity observed twice is
+    // appended twice, never deduped away (append-only claim log).
+    let appended = claims.appended();
+    assert_eq!(appended.len(), 4);
+    for claim in &appended {
+        assert_eq!(claim.observed, identity);
+        assert_eq!(claim.coordinate.coordinate, server.url());
+    }
+
+    for run in [&report.plain, &report.chaos] {
+        // One observe demand plus one refresh demand.
+        assert_eq!(run.counters.primitive_invocations, 2, "{run:#?}");
+        assert_eq!(run.counters.fetches_performed, 2, "{run:#?}");
+    }
+}
+
+/// A claim history whose head advances underneath a reader: it returns `None`
+/// on even-numbered `head` calls and a fixed seeded claim on odd-numbered calls.
+/// A refresh samples the head twice (before and after reading the origin), so
+/// this deterministically simulates a concurrent observer that advanced the head
+/// mid-flight, driving the optimistic-concurrency `RefreshConflict` path.
+struct ConcurrentlyAdvancingClaimHistory {
+    seeded: ObservedClaim,
+    calls: AtomicUsize,
+    appended: Mutex<Vec<ObservedClaim>>,
+}
+
+impl ClaimHistory for ConcurrentlyAdvancingClaimHistory {
+    fn head(
+        &self,
+        _coordinate: &ObserveCoordinate,
+    ) -> Result<Option<ObservedClaim>, PrimitiveMachineError> {
+        let call = self.calls.fetch_add(1, Ordering::AcqRel);
+        Ok((call % 2 == 1).then(|| self.seeded.clone()))
+    }
+
+    fn append(&self, claim: &ObservedClaim) -> Result<(), PrimitiveMachineError> {
+        self.appended
+            .lock()
+            .expect("claim history mutex poisoned")
+            .push(claim.clone());
+        Ok(())
+    }
+
+    fn history(
+        &self,
+        _coordinate: &ObserveCoordinate,
+    ) -> Result<Vec<ObservedClaim>, PrimitiveMachineError> {
+        Ok(self
+            .appended
+            .lock()
+            .expect("claim history mutex poisoned")
+            .clone())
+    }
+}
+
+const REFRESH_ONLY: &str = r#"
+#[test]
+fn refresh_conflict_aborts_before_publishing() -> Stream<Check> {
+    let blob = refresh(fixture_registry().coordinate("case.crate"));
+    yield expect_eq(blob.len(), 4096);
+}
+"#;
+
+#[test]
+fn refresh_rejects_a_head_advanced_underneath_it() {
+    let bytes = archive_bytes();
+    let identity = blob_identity(&bytes);
+    let upstream = vix::fetch::sha256_hex(&bytes);
+    let advanced = blob_identity(b"a newer observation from a concurrent observer");
+    let server = BlobServer::start(bytes.clone());
+    let fixtures = TempDir::new().expect("create refresh-conflict fixture root");
+    let claims = Arc::new(ConcurrentlyAdvancingClaimHistory {
+        seeded: ObservedClaim {
+            coordinate: ObserveCoordinate {
+                capability: identity.clone(),
+                coordinate: server.url(),
+            },
+            observed: advanced.clone(),
+        },
+        calls: AtomicUsize::new(0),
+        appended: Mutex::new(Vec::new()),
+    });
+    let services = PrimitiveServices::default()
+        .with_fixture_store(fixture_store(
+            &fixtures,
+            &server.url(),
+            &identity,
+            &upstream,
+        ))
+        .with_claim_history(claims.clone())
+        .with_origin_adapter(Arc::new(HttpBlobOriginAdapter));
+
+    let error = prepare_source(REFRESH_ONLY)
+        .expect("prepare refresh-conflict source")
+        .execute_with_primitive_services(services)
+        .expect_err("refresh must reject a concurrently advanced head");
+
+    // The refresh observed a fresh body, but the head moved underneath it before
+    // the append, so the append is rejected and the current head is surfaced.
+    assert_eq!(
+        primitive_machine_error(error),
+        PrimitiveMachineError::RefreshConflict { current: advanced }
+    );
+    // The conflict is detected only after the origin read (the body is valid CAS);
+    // it is the append that is refused, so nothing is appended.
+    assert_eq!(server.requests(), 1);
+    assert!(
+        claims
+            .appended
+            .lock()
+            .expect("claim history mutex poisoned")
+            .is_empty()
+    );
+}
+
+/// An origin that is transiently unreachable: every read fails with a typed
+/// retryable machine error rather than a body.
+struct TransientOriginAdapter;
+
+impl OriginAdapter for TransientOriginAdapter {
+    fn read(
+        &self,
+        _capability: &ValueId,
+        _coordinate: &str,
+    ) -> Result<Vec<u8>, PrimitiveMachineError> {
+        Err(PrimitiveMachineError::Unavailable {
+            detail: "origin is temporarily unreachable".to_owned(),
+        })
+    }
+}
+
+#[test]
+fn observe_surfaces_a_transient_origin_failure_as_a_typed_error() {
+    let bytes = archive_bytes();
+    let identity = blob_identity(&bytes);
+    let upstream = vix::fetch::sha256_hex(&bytes);
+    let fixtures = TempDir::new().expect("create transient-origin fixture root");
+    let claims = Arc::new(RecordingClaimHistory::default());
+    let persistence = Arc::new(RecordingCasPersistence::default());
+    let services = PrimitiveServices::default()
+        .with_fixture_store(fixture_store(
+            &fixtures,
+            "http://127.0.0.1:1/blob",
+            &identity,
+            &upstream,
+        ))
+        .with_value_persistence(persistence.clone())
+        .with_claim_history(claims.clone())
+        .with_origin_adapter(Arc::new(TransientOriginAdapter));
+
+    let error = prepare_source(OBSERVE_ONCE)
+        .expect("prepare transient-origin source")
+        .execute_with_primitive_services(services)
+        .expect_err("a transient origin failure must surface, not be swallowed");
+
+    // The transient failure is preserved as a typed machine error, never
+    // collapsed to a formatted string or silently retried away.
+    assert_eq!(
+        primitive_machine_error(error),
+        PrimitiveMachineError::Unavailable {
+            detail: "origin is temporarily unreachable".to_owned(),
+        }
+    );
+    // A failed observation names no value: nothing is admitted, persisted, or
+    // appended to the claim log.
+    assert!(claims.appended().is_empty());
+    assert!(
+        persistence
+            .puts
+            .lock()
+            .expect("cas persistence mutex poisoned")
+            .is_empty()
+    );
 }
