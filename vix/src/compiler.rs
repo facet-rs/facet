@@ -9,7 +9,8 @@ use crate::support::{Span, Spanned};
 use crate::surface::{SurfaceParser, ast};
 use crate::vir::DescribedWire;
 use crate::vir::{
-    ArrayMapGrain, ArrayMapGrainKey, Budget, CheckRecipe, ControlRegion, EffectFacts, EnumType,
+    ArrayMapGrain, ArrayMapGrainKey, Budget, CheckRecipe, ControlRegion, EffectFacts, EffectKind,
+    EnumType,
     EnumVariant, Function, FunctionId, GeneratorArm, GeneratorBody, GeneratorStep,
     MatchArm as VirMatchArm, Module, Node, NodeId, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT,
     ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, OrderedMatchArm, Parameter, ParameterId,
@@ -6931,9 +6932,68 @@ fn lower_where_call(
     context: &ModuleContext<'_>,
     call: &ast::WhereCall,
 ) -> Result<LoweredValue, Diagnostics> {
-    if call.callee.value != "range" {
-        return Err(unknown_name(call.callee.span, &call.callee.value));
+    if call.callee.value == "range" {
+        return lower_range_where(nodes, bindings, context, call);
     }
+    // A registered effect primitive: `name where { field: value, ... }` type-checks
+    // its named fields as the Request record and lowers to one Op::EffectRequest
+    // typed as the Response (r[machine.primitive.registered]). No local-binding or
+    // module-signature lookup here — reserved names keep a registered name from
+    // colliding with any builtin, and where-calls never bind.
+    let signature = context
+        .primitives
+        .get(&call.callee.value)
+        .ok_or_else(|| unknown_name(call.callee.span, &call.callee.value))?
+        .clone();
+    let Type::Record(request_record) = &signature.request else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            call.callee.span,
+            "primitive request type is not a record",
+        )));
+    };
+    let inputs = lower_where_record_values(
+        nodes,
+        bindings,
+        context,
+        &request_record.name,
+        &request_record.fields,
+        &call.named_args,
+    )?;
+    let request_node = push_node(
+        nodes,
+        call.span,
+        signature.request.clone(),
+        EffectFacts::PURE,
+        inputs,
+        Op::Record,
+    );
+    let response_ty = signature.response.clone();
+    let node = push_node(
+        nodes,
+        call.span,
+        response_ty.clone(),
+        EffectFacts {
+            kind: EffectKind::Effect,
+            fallible: true,
+            placed: false,
+        },
+        vec![request_node],
+        Op::EffectRequest {
+            primitive: signature.effect,
+        },
+    );
+    Ok(LoweredValue {
+        node,
+        ty: response_ty,
+    })
+}
+
+fn lower_range_where(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    call: &ast::WhereCall,
+) -> Result<LoweredValue, Diagnostics> {
     let from = named_field_value(&call.named_args, "from")?;
     let to = named_field_value(&call.named_args, "to")?;
     if call.named_args.fields.len() != 2 {
@@ -6965,6 +7025,53 @@ fn lower_where_call(
         ),
         ty,
     })
+}
+
+/// Type-check `where { ... }` named fields against a declared record's fields,
+/// returning the field value nodes in declared order. Mirrors
+/// `lower_named_record_values` for the `ast::WhereArgs` shape (no spread; field
+/// punning `{ name }` resolves the in-scope binding).
+fn lower_where_record_values(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    owner: &str,
+    declared_fields: &[RecordField],
+    supplied: &ast::WhereArgs,
+) -> Result<Vec<NodeId>, Diagnostics> {
+    let mut provided = BTreeMap::new();
+    for field in &supplied.fields {
+        if provided.insert(field.name.value.clone(), field).is_some() {
+            return Err(field_diagnostic(
+                DiagnosticCode::DuplicateField,
+                field.name.span,
+                owner,
+                &field.name.value,
+            ));
+        }
+    }
+    let mut inputs = Vec::with_capacity(declared_fields.len());
+    for declared in declared_fields {
+        let field = provided.remove(&declared.name).ok_or_else(|| {
+            field_diagnostic(DiagnosticCode::MissingField, supplied.span, owner, &declared.name)
+        })?;
+        let value = if let Some(expression) = &field.value {
+            lower_value_expected(nodes, bindings, context, expression, Some(&declared.ty))?
+        } else {
+            lookup_binding(bindings, &field.name.value, field.name.span)?
+        };
+        require_type(&value, &declared.ty, field.span)?;
+        inputs.push(value.node);
+    }
+    if let Some((name, field)) = provided.into_iter().next() {
+        return Err(field_diagnostic(
+            DiagnosticCode::UnknownField,
+            field.name.span,
+            owner,
+            &name,
+        ));
+    }
+    Ok(inputs)
 }
 
 /// The value expression of one named argument, resolving field punning
