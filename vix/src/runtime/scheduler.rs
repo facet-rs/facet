@@ -350,6 +350,22 @@ enum DriveOutcome {
     Completed(Box<Evaluation>),
 }
 
+/// One island demand submission: everything needed to resolve it from memo,
+/// join an in-flight demand, or spawn a fresh runnable task. Bundled so the
+/// submission and spawn seams take a single typed request rather than a long
+/// positional argument list.
+struct SubmitRequest {
+    island: IslandId,
+    location: Location,
+    lowered: Rc<LoweringArtifact>,
+    attribution: Rc<LoweringAttribution>,
+    arguments: Vec<Evaluation>,
+    wires: Vec<WireDemand>,
+    chaos: ChaosPolicy,
+    /// Root-to-parent demand chain of the submitting task (empty for the root).
+    ancestry: Vec<DemandKey>,
+}
+
 /// The outcome of submitting a demand (a root evaluation or a forced wire).
 enum SubmitOutcome {
     /// Resolved without a task: a memo hit or an argument-failure cascade.
@@ -1064,16 +1080,16 @@ impl<S: EventSink> Runtime<S> {
     ) -> Result<Evaluation, Box<MachineError>> {
         let IslandInputs { arguments, wires } = inputs;
         let attribution = Rc::new(attribution.clone());
-        let outcome = self.submit_demand(
+        let outcome = self.submit_demand(SubmitRequest {
             island,
-            location.clone(),
+            location: location.clone(),
             lowered,
             attribution,
             arguments,
             wires,
             chaos,
-            Vec::new(),
-        )?;
+            ancestry: Vec::new(),
+        })?;
         let evaluation = match outcome {
             SubmitOutcome::Ready(evaluation) => evaluation,
             SubmitOutcome::Spawned(root) | SubmitOutcome::Joined(root) => {
@@ -1113,18 +1129,20 @@ impl<S: EventSink> Runtime<S> {
     /// (empty for the root). A wire that forces a `Running`/`Queued` ancestor is
     /// a re-entrant demand fault; a `Running`/`Queued` non-ancestor joins its
     /// in-flight completion instead of starting a second backend run.
-    #[allow(clippy::too_many_arguments)]
     fn submit_demand(
         &mut self,
-        island: IslandId,
-        location: Location,
-        lowered: Rc<LoweringArtifact>,
-        attribution: Rc<LoweringAttribution>,
-        arguments: Vec<Evaluation>,
-        wires: Vec<WireDemand>,
-        chaos: ChaosPolicy,
-        ancestry: Vec<DemandKey>,
+        request: SubmitRequest,
     ) -> Result<SubmitOutcome, Box<MachineError>> {
+        let SubmitRequest {
+            island,
+            location,
+            lowered,
+            attribution,
+            arguments,
+            wires,
+            chaos,
+            ancestry,
+        } = request;
         let demand_preimage = DemandPreimage {
             closure: lowered.recipe,
             arguments: arguments
@@ -1236,14 +1254,16 @@ impl<S: EventSink> Runtime<S> {
         }
 
         self.spawn_context(
-            island,
-            location,
-            lowered,
-            attribution,
-            arguments,
-            wires,
-            chaos,
-            ancestry,
+            SubmitRequest {
+                island,
+                location,
+                lowered,
+                attribution,
+                arguments,
+                wires,
+                chaos,
+                ancestry,
+            },
             demand_key,
             demand_preimage,
         )?;
@@ -1370,20 +1390,22 @@ impl<S: EventSink> Runtime<S> {
     /// Spawn a fresh runnable task for a missed demand: materialize its
     /// constants, honour the chaos discard, spawn and bind the Weavy task, and
     /// push the owned [`TaskContext`] onto the runnable stack. Never drives.
-    #[allow(clippy::too_many_arguments)]
     fn spawn_context(
         &mut self,
-        island: IslandId,
-        location: Location,
-        lowered: Rc<LoweringArtifact>,
-        attribution: Rc<LoweringAttribution>,
-        arguments: Vec<Evaluation>,
-        wires: Vec<WireDemand>,
-        chaos: ChaosPolicy,
-        ancestry: Vec<DemandKey>,
+        request: SubmitRequest,
         demand_key: DemandKey,
         demand_preimage: DemandPreimage,
     ) -> Result<(), Box<MachineError>> {
+        let SubmitRequest {
+            island,
+            location,
+            lowered,
+            attribution,
+            arguments,
+            wires,
+            chaos,
+            ancestry,
+        } = request;
         let invocation = DemandExecution::new(lowered.as_ref(), demand_preimage.arguments.clone());
         let lowered_ex = &invocation;
         let attribution_ref = attribution.as_ref();
@@ -1745,16 +1767,16 @@ impl<S: EventSink> Runtime<S> {
         let wire = wire.clone();
         let mut child_ancestry = ctx.ancestry.clone();
         child_ancestry.push(ctx.demand_key);
-        let outcome = self.submit_demand(
-            wire.island,
-            wire.location,
-            wire.lowered,
-            wire.attribution,
-            wire.arguments,
-            wire.wires,
-            ChaosPolicy::default(),
-            child_ancestry,
-        )?;
+        let outcome = self.submit_demand(SubmitRequest {
+            island: wire.island,
+            location: wire.location,
+            lowered: wire.lowered,
+            attribution: wire.attribution,
+            arguments: wire.arguments,
+            wires: wire.wires,
+            chaos: ChaosPolicy::default(),
+            ancestry: child_ancestry,
+        })?;
         match outcome {
             SubmitOutcome::Ready(resolved) => {
                 self.resume_parent(results, ctx, index, resolved)?;
