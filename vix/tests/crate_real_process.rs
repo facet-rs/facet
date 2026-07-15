@@ -2782,7 +2782,77 @@ fn facet_core_ladder_builds_facet_core_with_real_process_and_hashes_artifacts() 
     if !missing.is_empty() {
         return Err(format!("facet-core selected rows missing from sparse index: {missing:?}"));
     }
+    let mut source_identities = Vec::new();
+    for entry in selected_rendered.lines() {
+        let name = entry
+            .split_once(' ')
+            .map(|(name, _)| name)
+            .ok_or_else(|| format!("facet-core selected package had no version: {entry}"))?;
+        let name_arg = intern_string(&mut machine, name)?;
+        let identity = machine
+            .demand_i64(
+                "facet_core_resolved_package_identity",
+                vec![args[0], args[1], args[2], name_arg],
+            )
+            .map_err(|err| {
+                format!(
+                    "facet_core_resolved_package_identity({name}) failed: {err}\nrustc argv trace:\n{}",
+                    rustc_argv_trace(&machine)
+                )
+            })?;
+        source_identities.push(rendered_result_string(
+            &machine,
+            "facet_core_resolved_package_identity",
+            identity,
+        )?);
+    }
+    write_tier_a_artifact(
+        "facet-core-resolved-package-identities.txt",
+        &source_identities.join("\n"),
+    )?;
     let root_pkg_id = machine.demand_i64("facet_core_root_pkg_id", args.clone())?;
+    let mut leaf_artifacts = Vec::new();
+    for entry in selected_rendered.lines() {
+        let name = entry
+            .split_once(' ')
+            .map(|(name, _)| name)
+            .ok_or_else(|| format!("facet-core selected package had no version: {entry}"))?;
+        let name_arg = intern_string(&mut machine, name)?;
+        let package_id = machine.demand_i64(
+            "facet_core_package_id",
+            vec![args[0], args[1], args[2], name_arg],
+        )?;
+        if package_id == root_pkg_id {
+            continue;
+        }
+        let link = machine
+            .demand_i64(
+                "facet_core_resolved_package_link",
+                vec![args[0], args[1], args[2], name_arg],
+            )
+            .map_err(|err| {
+                format!(
+                    "facet_core_resolved_package_link({name}) failed: {err}\nrustc argv trace:\n{}",
+                    rustc_argv_trace(&machine)
+                )
+            })?;
+        let entries = machine
+            .tree_entries(link)
+            .map_err(|err| format!("facet-core package {name} artifact tree failed: {err}"))?;
+        leaf_artifacts.push(format!("{name}\t{:?}", entries.keys().collect::<Vec<_>>()));
+    }
+    write_tier_a_artifact("facet-core-leaf-artifacts.txt", &leaf_artifacts.join("\n"))?;
+    let build_script_deps = machine.demand_i64(
+        "facet_core_build_script_dependency_unit_ids",
+        args.clone(),
+    )?;
+    write_tier_a_artifact(
+        "facet-core-build-script-dependency-unit-ids.txt",
+        &format!(
+            "{:?}",
+            machine.render_result("facet_core_build_script_dependency_unit_ids", build_script_deps)?
+        ),
+    )?;
     write_tier_a_artifact(
         "facet-core-root-pkg-id.txt",
         &format!("facet-core-root-pkg-id={root_pkg_id}"),
@@ -2790,6 +2860,18 @@ fn facet_core_ladder_builds_facet_core_with_real_process_and_hashes_artifacts() 
     write_tier_a_artifact(
         "facet-core-root-selected.txt",
         &selected_rendered,
+    )?;
+    let diag_bs_deps = machine.demand_i64("facet_core_diag_build_script_deps", args.clone())?;
+    let diag_selected = machine.demand_i64("facet_core_diag_selected_ids", args.clone())?;
+    let diag_build_pkgs = machine.demand_i64("facet_core_diag_build_packages", args.clone())?;
+    write_tier_a_artifact(
+        "facet-core-diag-ids.txt",
+        &format!(
+            "build_script_deps={:?}\nselected_ids={:?}\nbuild_packages={:?}",
+            machine.render_result("facet_core_diag_build_script_deps", diag_bs_deps)?,
+            machine.render_result("facet_core_diag_selected_ids", diag_selected)?,
+            machine.render_result("facet_core_diag_build_packages", diag_build_pkgs)?,
+        ),
     )?;
     let build_script_binary = match machine.demand_i64("facet_core_build_script_binary", args.clone()) {
         Ok(binary) => Some(binary),

@@ -969,6 +969,31 @@ pub fn facet_core_source_package_names_text(workspace: Tree, sparse_jsonl: Strin
     )
 }
 
+pub fn facet_core_resolved_package_identity(workspace: Tree, sparse_jsonl: String, target_name: String, package_name: String) -> String {
+    let state = facet_core_state(workspace, sparse_jsonl);
+    let graph = facet_core_resolved_graph(workspace, sparse_jsonl, target_name);
+    let package = package_id_for_name(state, package_name);
+    let unit = resolved_unit(graph, lib_unit_id(package));
+    unit.package_name + " " + unit.version
+}
+
+pub fn facet_core_package_id(workspace: Tree, sparse_jsonl: String, target_name: String, package_name: String) -> Int {
+    package_id_for_name(facet_core_state(workspace, sparse_jsonl), package_name)
+}
+
+pub fn facet_core_resolved_package_link(workspace: Tree, sparse_jsonl: String, target_name: String, package_name: String) -> Tree {
+    let state = facet_core_state(workspace, sparse_jsonl);
+    let graph = facet_core_resolved_graph(workspace, sparse_jsonl, target_name);
+    let package = package_id_for_name(state, package_name);
+    resolved_unit_built(Target::host(), graph, lib_unit_id(package))
+}
+
+pub fn facet_core_build_script_dependency_unit_ids(workspace: Tree, sparse_jsonl: String, target_name: String) -> [Int] {
+    let state = facet_core_state(workspace, sparse_jsonl);
+    let graph = facet_core_resolved_graph(workspace, sparse_jsonl, target_name);
+    resolved_unit(graph, build_script_unit_id(facet_core_root_pkg(state))).deps
+}
+
 pub fn facet_core_sparse_rows_text(sparse_jsonl: String) -> String {
     facet_core_sparse_rows_text_tuple(parse_sparse_jsonl(sparse_jsonl), [])
 }
@@ -994,6 +1019,22 @@ pub fn facet_core_sparse_row_exists(sparse_jsonl: String, name: String, version:
         Some(_) => 1,
         None => 0,
     }
+}
+
+pub fn facet_core_diag_build_script_deps(workspace: Tree, sparse_jsonl: String, target_name: String) -> [Int] {
+    let state = facet_core_state(workspace, sparse_jsonl);
+    let package = state.package_ids.get("facet-core").unwrap();
+    resolved_unit(facet_core_resolved_graph(workspace, sparse_jsonl, target_name), build_script_unit_id(package)).deps
+}
+
+pub fn facet_core_diag_selected_ids(workspace: Tree, sparse_jsonl: String, target_name: String) -> [Int] {
+    let state = facet_core_state(workspace, sparse_jsonl);
+    let result = facet_core_result(workspace, state, target_name);
+    selected_package_ids(state, result)
+}
+
+pub fn facet_core_diag_build_packages(workspace: Tree, sparse_jsonl: String, target_name: String) -> [Int] {
+    facet_core_resolved_graph(workspace, sparse_jsonl, target_name).build_packages
 }
 
 pub fn facet_core_build_script_binary(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {
