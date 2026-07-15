@@ -5872,6 +5872,16 @@ fn lower_node(
                 "PublishSite is lowered by the generator-task control dispatch, not the value path",
             ));
         }
+        Op::EffectRequest { .. } => {
+            // The compiler emits Op::EffectRequest (phase 03); the scheduler
+            // resolves it at the demand layer in phase 04/05. Until that lands,
+            // lowering a module that contains one is a typed not-yet-supported
+            // error rather than a silent miscompile.
+            return Err(lowering_diagnostic(
+                node.span,
+                "effect-primitive lowering is not wired yet (phase 04)",
+            ));
+        }
         Op::Bool(value) => {
             require_input_count(node, 0)?;
             require_node_type(node, Type::Bool)?;

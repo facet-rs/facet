@@ -733,11 +733,20 @@ impl Type {
     }
 }
 
+/// A registered primitive's identity as embedded in VIR: the 32 content bytes of
+/// a `runtime::primitive::PrimitiveId`. VIR-local on purpose so `vir` keeps zero
+/// dependency on `runtime` (r[machine.ir.vix-level]); the runtime converts at the
+/// compile/schedule boundary via `PrimitiveId::effect_id`.
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct EffectId(pub [u8; 32]);
+
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum EffectKind {
     Pure,
     Codata,
+    /// A registered effect primitive request (r[machine.primitive.registered]).
+    Effect,
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
@@ -786,6 +795,14 @@ pub enum Op {
     /// where it is consumed, so an unconsumed wire issues no demand.
     AwaitWire {
         input: u32,
+    },
+    /// Request a registered effect primitive. Consumes one input — the request
+    /// record node — and is typed as the primitive's Response. The scheduler
+    /// resolves it at the demand layer (phases 04/05); phase 03 only emits it.
+    ///
+    /// r[machine.primitive.registered]
+    EffectRequest {
+        primitive: EffectId,
     },
     Tuple,
     Record,
@@ -2787,6 +2804,7 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
             match node.effect.kind {
                 EffectKind::Pure => 0,
                 EffectKind::Codata => 1,
+                EffectKind::Effect => 2,
             },
             u8::from(node.effect.fallible),
             u8::from(node.effect.placed),
@@ -2952,6 +2970,10 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::PathToString => op.push(82),
         Op::IntToString => op.push(84),
         Op::Range => op.push(83),
+        Op::EffectRequest { primitive } => {
+            op.push(85);
+            op.extend_from_slice(&primitive.0);
+        }
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());
@@ -3148,4 +3170,54 @@ pub(crate) fn canonical_type(ty: &Type) -> Vec<u8> {
 fn frame(out: &mut Vec<u8>, bytes: &[u8]) {
     out.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
     out.extend_from_slice(bytes);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn effect_request_canonical_form_tracks_the_primitive_id() {
+        let make = |primitive: EffectId| Node {
+            id: NodeId(0),
+            span: crate::support::Span { start: 0, end: 0 },
+            ty: Type::Int,
+            effect: EffectFacts {
+                kind: EffectKind::Effect,
+                fallible: true,
+                placed: false,
+            },
+            inputs: vec![NodeId(1)],
+            op: Op::EffectRequest { primitive },
+        };
+        let ids = std::collections::BTreeMap::new();
+        let a = canonical_node(&make(EffectId([1u8; 32])), &ids);
+        let b = canonical_node(&make(EffectId([2u8; 32])), &ids);
+        assert_ne!(a, b, "different primitive ids must canonicalize differently");
+        assert_eq!(
+            a,
+            canonical_node(&make(EffectId([1u8; 32])), &ids),
+            "canonical form is stable"
+        );
+    }
+
+    #[test]
+    fn effect_kind_effect_canonicalizes_distinctly() {
+        let base = Node {
+            id: NodeId(0),
+            span: crate::support::Span { start: 0, end: 0 },
+            ty: Type::Int,
+            effect: EffectFacts::PURE,
+            inputs: Vec::new(),
+            op: Op::Int(0),
+        };
+        let mut effectful = base.clone();
+        effectful.effect = EffectFacts {
+            kind: EffectKind::Effect,
+            fallible: false,
+            placed: false,
+        };
+        let ids = std::collections::BTreeMap::new();
+        assert_ne!(canonical_node(&base, &ids), canonical_node(&effectful, &ids));
+    }
 }
