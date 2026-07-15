@@ -206,6 +206,14 @@ impl Store {
         self.entries.get(handle.index())
     }
 
+    /// The frozen replay tree attached to a handle, if any. Primitive
+    /// registration interns a response and reads its frozen tree back through
+    /// this accessor. Consumed by the scheduler wiring in phase 05.
+    #[allow(dead_code)]
+    pub(crate) fn frozen_for(&self, handle: Handle) -> Option<&FrozenValue> {
+        self.entries.get(handle.0 as usize)?.frozen()
+    }
+
     /// Convert only a live store-owned handle to Weavy's opaque entry handle.
     pub(crate) fn weavy_handle(&self, handle: Handle) -> Option<StoreHandle> {
         self.entry(handle)?;
