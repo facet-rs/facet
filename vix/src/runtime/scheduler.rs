@@ -123,26 +123,45 @@ fn primitive_runtime_fault(failure: PrimitiveHostFailure) -> RuntimeFault {
     }
 }
 
-/// One registered-primitive completion delivered to the scheduler-owned inbox by
-/// a demand-owned ticket waiter. The completion crosses the thread boundary from
-/// the primitive runtime; only the scheduler thread drains the inbox and
-/// materializes the result into a retained frame.
-struct DeliveredCompletion {
-    demand: DemandKey,
-    publication: super::PrimitivePublication,
+/// One completion delivered to the scheduler-owned inbox from an isolated
+/// backend/worker boundary. The completion crosses the thread boundary; only the
+/// scheduler thread drains the inbox and materializes the result into a retained
+/// frame. Both registered-primitive tickets and the exec process boundary deliver
+/// here, so the scheduler blocks on exactly one unified completion event source
+/// (`machine.scheduler.block-on-event`, `machine.scheduler.no-shadow-scheduler`).
+enum DeliveredCompletion {
+    /// A registered-primitive ticket completed (decode/fetch/observe/...).
+    Primitive {
+        demand: DemandKey,
+        publication: super::PrimitivePublication,
+    },
+    /// An exec process terminated at its isolated worker boundary. The raw
+    /// termination is interned by the scheduler thread, never by the worker.
+    Exec {
+        demand: DemandKey,
+        output: Result<std::process::Output, String>,
+    },
+}
+
+impl DeliveredCompletion {
+    fn demand(&self) -> DemandKey {
+        match self {
+            Self::Primitive { demand, .. } | Self::Exec { demand, .. } => *demand,
+        }
+    }
 }
 
 /// The scheduler's single typed completion mailbox (`machine.scheduler.block-on-event`).
-/// Every registered-primitive ticket delivers here through a `Send` sender clone;
-/// the scheduler drains it, buffering completions for demands other than the one
-/// it is currently resuming so independent effects may complete in any order.
-struct PrimitiveInbox {
+/// Every ticket/worker delivers here through a `Send` sender clone; the scheduler
+/// drains it, buffering completions for demands other than the one it is currently
+/// resuming so independent effects may complete in any order.
+struct CompletionInbox {
     sender: std::sync::mpsc::Sender<DeliveredCompletion>,
     receiver: std::sync::mpsc::Receiver<DeliveredCompletion>,
-    pending: BTreeMap<DemandKey, super::PrimitivePublication>,
+    pending: BTreeMap<DemandKey, DeliveredCompletion>,
 }
 
-impl Default for PrimitiveInbox {
+impl Default for CompletionInbox {
     fn default() -> Self {
         let (sender, receiver) = std::sync::mpsc::channel();
         Self {
@@ -153,39 +172,70 @@ impl Default for PrimitiveInbox {
     }
 }
 
-impl PrimitiveInbox {
-    /// A `Send + 'static` ticket waiter that forwards a completion for `demand`
-    /// into this inbox. The primitive runtime calls it (possibly on another
-    /// thread); the scheduler alone consumes the delivered completion.
-    fn waiter(
+impl CompletionInbox {
+    /// A `Send + 'static` ticket waiter that forwards a registered-primitive
+    /// completion for `demand` into this inbox. The primitive runtime calls it
+    /// (possibly on another thread); the scheduler alone consumes it.
+    fn primitive_waiter(
         &self,
         demand: DemandKey,
     ) -> impl FnOnce(super::PrimitivePublication) + Send + 'static {
         let sender = self.sender.clone();
         move |publication| {
-            let _ = sender.send(DeliveredCompletion {
+            let _ = sender.send(DeliveredCompletion::Primitive {
                 demand,
                 publication,
             });
         }
     }
 
+    /// A `Send + 'static` sender clone the exec worker uses to deliver a process
+    /// termination for `demand` through the same unified event source.
+    fn exec_sender(&self) -> std::sync::mpsc::Sender<DeliveredCompletion> {
+        self.sender.clone()
+    }
+
     /// Take the completion for `demand`, blocking on the inbox only when it is
     /// not already delivered and buffering any completion for another demand.
-    fn take(&mut self, demand: DemandKey) -> Result<super::PrimitivePublication, String> {
-        if let Some(publication) = self.pending.remove(&demand) {
-            return Ok(publication);
+    fn take(&mut self, demand: DemandKey) -> Result<DeliveredCompletion, String> {
+        if let Some(completion) = self.pending.remove(&demand) {
+            return Ok(completion);
         }
         loop {
             let completion = self
                 .receiver
                 .recv()
-                .map_err(|_| "primitive completion inbox closed without delivery".to_owned())?;
-            if completion.demand == demand {
-                return Ok(completion.publication);
+                .map_err(|_| "completion inbox closed without delivery".to_owned())?;
+            if completion.demand() == demand {
+                return Ok(completion);
             }
-            self.pending
-                .insert(completion.demand, completion.publication);
+            self.pending.insert(completion.demand(), completion);
+        }
+    }
+
+    /// Take a registered-primitive completion, rejecting a class mismatch.
+    fn take_primitive(
+        &mut self,
+        demand: DemandKey,
+    ) -> Result<super::PrimitivePublication, String> {
+        match self.take(demand)? {
+            DeliveredCompletion::Primitive { publication, .. } => Ok(publication),
+            DeliveredCompletion::Exec { .. } => {
+                Err("primitive demand resolved to an exec completion".to_owned())
+            }
+        }
+    }
+
+    /// Take an exec process termination, rejecting a class mismatch.
+    fn take_exec(
+        &mut self,
+        demand: DemandKey,
+    ) -> Result<Result<std::process::Output, String>, String> {
+        match self.take(demand)? {
+            DeliveredCompletion::Exec { output, .. } => Ok(output),
+            DeliveredCompletion::Primitive { .. } => {
+                Err("exec demand resolved to a primitive completion".to_owned())
+            }
         }
     }
 }
@@ -318,7 +368,7 @@ pub struct Runtime<S> {
     primitive_dispatcher: PrimitiveDispatcher,
     primitive_services: super::PrimitiveServices,
     /// The scheduler-owned typed completion mailbox for registered primitives.
-    primitive_inbox: PrimitiveInbox,
+    completion_inbox: CompletionInbox,
     authoritative_rerun_audit: bool,
 }
 
@@ -470,7 +520,7 @@ impl<S: EventSink> Runtime<S> {
             fixture_store: FixtureStore::default(),
             primitive_dispatcher: default_primitive_dispatcher(),
             primitive_services: super::PrimitiveServices::default(),
-            primitive_inbox: PrimitiveInbox::default(),
+            completion_inbox: CompletionInbox::default(),
             authoritative_rerun_audit: false,
         }
     }
@@ -500,7 +550,7 @@ impl<S: EventSink> Runtime<S> {
             fixture_store: FixtureStore::default(),
             primitive_dispatcher: default_primitive_dispatcher(),
             primitive_services: super::PrimitiveServices::default(),
-            primitive_inbox: PrimitiveInbox::default(),
+            completion_inbox: CompletionInbox::default(),
             authoritative_rerun_audit: false,
         }
     }
@@ -540,7 +590,7 @@ impl<S: EventSink> Runtime<S> {
                 fixture_store: FixtureStore::default(),
                 primitive_dispatcher: default_primitive_dispatcher(),
                 primitive_services: super::PrimitiveServices::default(),
-                primitive_inbox: PrimitiveInbox::default(),
+                completion_inbox: CompletionInbox::default(),
                 authoritative_rerun_audit: false,
             },
             PersistentRuntimeJournalLoadReport {
@@ -2817,8 +2867,8 @@ impl<S: EventSink> Runtime<S> {
         // inbox. `join` fires the waiter immediately for an already-complete
         // ticket, so the completion is always delivered exactly once through the
         // one mailbox rather than a per-call channel.
-        let subscription = ticket.join(self.primitive_inbox.waiter(primitive_demand));
-        let publication = self.primitive_inbox.take(primitive_demand)?;
+        let subscription = ticket.join(self.completion_inbox.primitive_waiter(primitive_demand));
+        let publication = self.completion_inbox.take_primitive(primitive_demand)?;
         drop(subscription);
         self.primitive_dispatcher.retire(primitive_demand);
         self.counters.primitive_invocations += 1;
@@ -3923,9 +3973,28 @@ impl<S: EventSink> Runtime<S> {
                 .spawn()
                 .map_err(|error| host_fault(format!("spawn `{program}`: {error}")))?;
             self.transition_task(task_id, TaskState::Parked)?;
-            let output = child
-                .wait_with_output()
-                .map_err(|error| host_fault(format!("wait `{program}`: {error}")))?;
+            // The blocking process wait runs on an isolated worker thread that
+            // owns the process boundary and delivers the raw termination through
+            // the scheduler's single completion event source. The scheduler
+            // thread performs no wait_with_output/wait/block_on drain
+            // (machine.scheduler.no-shadow-scheduler, block-on-event); the parked
+            // exec task resumes only when the scheduler drains this completion.
+            let exec_sender = self.completion_inbox.exec_sender();
+            let worker_program = program.clone();
+            std::thread::spawn(move || {
+                let output = child
+                    .wait_with_output()
+                    .map_err(|error| format!("wait `{worker_program}`: {error}"));
+                let _ = exec_sender.send(DeliveredCompletion::Exec {
+                    demand: demand_key,
+                    output,
+                });
+            });
+            let output = self
+                .completion_inbox
+                .take_exec(demand_key)
+                .map_err(&host_fault)?
+                .map_err(&host_fault)?;
             self.transition_task(task_id, TaskState::Running)?;
 
             // The v1 ratchet capability packages' termination grammar: exit
