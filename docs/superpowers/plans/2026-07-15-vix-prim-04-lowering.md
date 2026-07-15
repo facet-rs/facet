@@ -49,11 +49,11 @@
 - `PartitionedTest.effect_islands: Vec<PartitionedValue>` — new field, after `wire_islands`; each `PartitionedValue { id: request island id, island, wire: None }`.
 - `IslandBoundary.effects: &'a BTreeMap<NodeId, EffectEdge>` — new boundary field.
 
-- [ ] **Step 1: Failing tests.**
+- [x] **Step 1: Failing tests.**
   - Inline `vir.rs`: an effect node in a value expression partitions so that (a) `PartitionedTest.effect_islands` has one island whose output is the request record, (b) the consuming check island's `effect_inputs` carries one `EffectEdge` with the expected `EffectId` and a `request` `ValueIslandId` equal to the request island's id, (c) the effect node in the check island is `Op::Parameter` (not `Op::EffectRequest`), (d) an effect-free test produces empty `effect_inputs`/`effect_islands`.
   - Integration `primitive_lowering.rs`: same, driven through a `PrimitiveManifest` + compiled source (aggregate/String response) — mirrors `primitive_compiler.rs`.
-- [ ] **Step 2: Verify fail** — `nix shell nixpkgs#cargo-nextest --command cargo nextest run -p vix effect` → compile error (`EffectEdge`, `effect_inputs`, `effect_islands` missing).
-- [ ] **Step 3: Implement.**
+- [x] **Step 2: Verify fail** — `nix shell nixpkgs#cargo-nextest --command cargo nextest run -p vix effect` → compile error (`EffectEdge`, `effect_inputs`, `effect_islands` missing).
+- [x] **Step 3: Implement.**
   - Add `EffectEdge` near `Island`.
   - Add `effect_inputs: Vec<EffectEdge>` to `Island` (after `wire_inputs`).
   - Add `effect_islands: Vec<PartitionedValue>` to `PartitionedTest` (after `wire_islands`).
@@ -62,8 +62,8 @@
   - In `partition_function_output_with_shared`: destructure `effects`; add `effects.keys()` to `stop`; after the shared/wire loop add a loop that, for each node still `Op::EffectRequest` whose id is in `effects`, rewrites `node.op = Op::Parameter(ParameterId(parameters.len()))`, clears inputs, pushes a `Parameter { … name: "$effect_…", ty: node.ty }` and pushes the `EffectEdge` to `effect_inputs`; return `effect_inputs` in the `Island` literal.
   - Add `effect_inputs: Vec::new()` to the generator `Island` literal (`vir.rs:1828`).
   - Update the two `canonical_node`-adjacent inline test module and any other `Island {`/`IslandBoundary {`/`PartitionedTest {` literals.
-- [ ] **Step 4: Run** `nix shell nixpkgs#cargo-nextest --command cargo nextest run -p vix` → PASS (effect-free tests unchanged; new effect tests green).
-- [ ] **Step 5: Commit** — `git add -A && git commit --no-verify -m "vix: partition cuts at Op::EffectRequest into request islands + effect edges"`
+- [x] **Step 4: Run** `nix shell nixpkgs#cargo-nextest --command cargo nextest run -p vix` → PASS (effect-free tests unchanged; new effect tests green).
+- [x] **Step 5: Commit** — `git add -A && git commit --no-verify -m "vix: partition cuts at Op::EffectRequest into request islands + effect edges"`
 
 ---
 
@@ -78,17 +78,17 @@
 - `LoweringArtifact.effect_inputs: Vec<EffectInputBinding>` — new field.
 - `fn bind_effect_inputs(island, contract, schemas) -> Result<Vec<EffectInputBinding>, Diagnostics>`.
 
-- [ ] **Step 1: Failing test** — lower the consumer island (`LoweringCache::default().get_or_lower`): assert `artifact.effect_inputs.len() == 1`, its `primitive`/`request` match the manifest, and (for an aggregate/String response) `binding.schema.is_some()` — i.e. the response binds as a `RealizedHandle` store-handle entry.
-- [ ] **Step 2: Verify fail** — compile error (`effect_inputs` / `EffectInputBinding` / `bind_effect_inputs` missing).
-- [ ] **Step 3: Implement.**
+- [x] **Step 1: Failing test** — lower the consumer island (`LoweringCache::default().get_or_lower`): assert `artifact.effect_inputs.len() == 1`, its `primitive`/`request` match the manifest, and (for an aggregate/String response) `binding.schema.is_some()` — i.e. the response binds as a `RealizedHandle` store-handle entry.
+- [x] **Step 2: Verify fail** — compile error (`effect_inputs` / `EffectInputBinding` / `bind_effect_inputs` missing).
+- [x] **Step 3: Implement.**
   - `EffectInputBinding` next to `ValueInputBinding` (`lowering.rs:92`). Import `EffectId` in the `crate::vir` use.
   - `LoweringArtifact.effect_inputs` field (`lowering.rs:201`).
   - `bind_effect_inputs`: iterate `island.effect_inputs` with `entry = island.value_inputs.len() + k`, read `island.parameters[entry]` and `root.entries.get(entry)` region, compute `schema`/`store_schema`/`payload_element_schema`/`publication_schemas` exactly as `bind_value_inputs` does, carry `primitive`/`request` from the edge.
   - `lower_island`: `let effect_inputs = bind_effect_inputs(island, &contract, &schemas)?;` and set it on the `LoweringArtifact` literal.
   - `with_test_verified_executable`: `effect_inputs: self.effect_inputs.clone()`.
   - Refine the `Op::EffectRequest` guard message in `lower_node` (still a typed diagnostic; effect embedded outside a partitioned test-body value position is not wired in v1).
-- [ ] **Step 4: Run** `nix shell nixpkgs#cargo-nextest --command cargo nextest run -p vix` → PASS.
-- [ ] **Step 5: Commit** — `git add -A && git commit --no-verify -m "vix: bind the effect response as a realized value input on the artifact"`
+- [x] **Step 4: Run** `nix shell nixpkgs#cargo-nextest --command cargo nextest run -p vix` → PASS.
+- [x] **Step 5: Commit** — `git add -A && git commit --no-verify -m "vix: bind the effect response as a realized value input on the artifact"`
 
 ---
 
@@ -100,20 +100,20 @@
 
 **Interfaces:** no new public API; the request islands (`partitioned.effect_islands`) are lowered up front so phase 05 finds them warm, mirroring `wire_islands` (`ratchet.rs:685`). Phase 04 does NOT drive them at evaluate time.
 
-- [ ] **Step 1: Failing test** — a prepared run (lowering only, no `execute`) of an effect-bearing source lowers the request island: assert the cache contains the request island's artifact (`cache.lowered(&effect.island).is_some()`), or that `prepare` succeeds and `partitioned.effect_islands` is non-empty and each lowers.
-- [ ] **Step 2: Verify fail** (if the assertion targets the new up-front lowering path).
-- [ ] **Step 3: Implement** — in `prepare_run` (`ratchet.rs:679`), after the `wire_islands` loop, add `for effect in &partitioned.effect_islands { cache.get_or_lower(&effect.island)?; }`. (Do NOT add an evaluate-time `effect_lookup`/resolution — that is phase 05.)
-- [ ] **Step 4: Run** `nix shell nixpkgs#cargo-nextest --command cargo nextest run -p vix` → PASS (effect-free tests: `effect_islands` empty, loop is a no-op).
-- [ ] **Step 5: Commit** — `git add -A && git commit --no-verify -m "vix: lower effect request islands up front so phase 05 finds them warm"`
+- [x] **Step 1: Failing test** — a prepared run (lowering only, no `execute`) of an effect-bearing source lowers the request island: assert the cache contains the request island's artifact (`cache.lowered(&effect.island).is_some()`), or that `prepare` succeeds and `partitioned.effect_islands` is non-empty and each lowers.
+- [x] **Step 2: Verify fail** (if the assertion targets the new up-front lowering path).
+- [x] **Step 3: Implement** — in `prepare_run` (`ratchet.rs:679`), after the `wire_islands` loop, add `for effect in &partitioned.effect_islands { cache.get_or_lower(&effect.island)?; }`. (Do NOT add an evaluate-time `effect_lookup`/resolution — that is phase 05.)
+- [x] **Step 4: Run** `nix shell nixpkgs#cargo-nextest --command cargo nextest run -p vix` → PASS (effect-free tests: `effect_islands` empty, loop is a no-op).
+- [x] **Step 5: Commit** — `git add -A && git commit --no-verify -m "vix: lower effect request islands up front so phase 05 finds them warm"`
 
 ---
 
 ### Task 4: Phase gate
 
-- [ ] Full suite: `nix shell nixpkgs#cargo-nextest --command cargo nextest run -p vix` → all green.
-- [ ] Clippy: `nix shell nixpkgs#clippy nixpkgs#cargo-nextest --command cargo clippy -p vix --all-targets -- -D warnings` → clean.
-- [ ] Re-read the diff vs the Global Constraints: `vir` imports no `runtime`; exactly one `EffectEdge` / one `Island.effect_inputs` / one `LoweringArtifact.effect_inputs`; the effect path is a distinct loop/field from wires; no scheduler resolution added; no new `DiagnosticCode`; effect-free islands unchanged.
-- [ ] Update checkboxes to `[x]`, append landing notes (deviations, the exact effect-edge shape on the artifact, how ratchet carries the request islands, and the precise API phase 05 calls), commit `git add -A && git commit --no-verify -m "vix: mark phase 04 lowering plan complete + landing notes"`, then stop.
+- [x] Full suite: `nix shell nixpkgs#cargo-nextest --command cargo nextest run -p vix` → all green.
+- [x] Clippy: `nix shell nixpkgs#clippy nixpkgs#cargo-nextest --command cargo clippy -p vix --all-targets -- -D warnings` → clean.
+- [x] Re-read the diff vs the Global Constraints: `vir` imports no `runtime`; exactly one `EffectEdge` / one `Island.effect_inputs` / one `LoweringArtifact.effect_inputs`; the effect path is a distinct loop/field from wires; no scheduler resolution added; no new `DiagnosticCode`; effect-free islands unchanged.
+- [x] Update checkboxes to `[x]`, append landing notes (deviations, the exact effect-edge shape on the artifact, how ratchet carries the request islands, and the precise API phase 05 calls), commit `git add -A && git commit --no-verify -m "vix: mark phase 04 lowering plan complete + landing notes"`, then stop.
 
 ## Self-review notes (already applied)
 
@@ -121,3 +121,71 @@
 - **Parameter ordering:** value params occupy `parameters[0..V]`, effect params `parameters[V..V+E]`, so the existing `bind_value_inputs` positional zip is byte-for-byte unchanged and `bind_effect_inputs` binds at `entry = V + k`. The effect cut is a second loop after the shared/wire loop precisely to preserve this.
 - **`lower_node` guard stays:** after partitioning, a properly-cut effect node is an `Op::Parameter`; the guard only fires for an effect in an un-partitioned position (a callee), which is out of scope for v1. It is a typed diagnostic, not silent miscompile.
 - **No scheduler resolution:** the request islands are carried and warmed but never demanded/resolved in phase 04 (`machine.execution.facts-precomputed`); phase 05 reads `LoweringArtifact.effect_inputs` + `PartitionedTest.effect_islands` to resolve at the demand layer.
+
+## Landing notes (phase 04 as landed)
+
+Implemented by an opus subagent; reviewed + gated + landed by the orchestrator.
+All four hard constraints held; no deviations on constraints 1–4.
+
+- **What landed, where:**
+  - `vir::EffectEdge { primitive: EffectId, request: ValueIslandId }` (vir-local,
+    `Copy`) + `Island.effect_inputs: Vec<EffectEdge>` (`vir.rs`, next to
+    `wire_inputs`). Partition cut at `Op::EffectRequest` in `Module`'s island
+    builder: effect nodes held out of `shared`; each request node becomes its own
+    `IslandPurpose::Value` island collected into the new
+    `PartitionedTest.effect_islands: Vec<PartitionedValue>`; the consumer node is
+    rewritten in place to `Op::Parameter(id)` with the param allocated at
+    `parameters[value_inputs.len() + k]`.
+  - `lowering::EffectInputBinding { primitive: EffectId, request: ValueIslandId,
+    entry, schema, store_schema, payload_element_schema, ty, publication_schemas }`
+    + `LoweringArtifact.effect_inputs: Vec<EffectInputBinding>`, produced by
+    `bind_effect_inputs` (mirror of `bind_value_inputs`, binds at
+    `entry = value_inputs.len() + k`). `lower_node`'s `Op::EffectRequest` guard is
+    now an honest v1 limitation, not a not-wired stub.
+  - `ratchet.rs`: after the `wire_islands` pre-lower loop, request islands are
+    warmed (`for effect in &partitioned.effect_islands { cache.get_or_lower(...) }`).
+    No evaluate-time resolution (that is phase 05).
+
+- **Layering (constraint 1) held:** every effect id in `vir`/`compiler`/`lowering`
+  is the `vir`-local `EffectId([u8;32])`. `vir` still imports no `runtime`. The
+  phase-05 scheduler must convert `EffectId -> runtime::PrimitiveId` at resolution
+  (via the manifest / `PrimitiveId::effect_id` inverse).
+
+- **RealizedHandle nuance for phase 05:** the design's "binds as RealizedHandle"
+  is the *realized value-input channel* (vs the scalar wire channel). For an
+  aggregate/String response that is literally `ValueRepresentation::RealizedHandle`
+  (the `String` test asserts `binding.schema.is_some()` — a single `Handle`
+  frame word); a *record* response would bind as `InlineComposite`. Phase 05 must
+  drive the interned response through the same type-driven value-input path, not
+  assume a store handle for every primitive.
+
+- **v1 call-position limitation:** a primitive is callable only from a test-body
+  value expression (where partition_test rewrites the node). An `Op::EffectRequest`
+  reaching `lower_node` means it sits in an un-partitioned position (e.g. inside a
+  callee) — a typed "not supported in v1" diagnostic, not a miscompile. Phase 06's
+  first real primitive uses the supported position; broadening is later work.
+
+- **Exact API phase 05 consumes:**
+  1. `PartitionedTest.effect_islands: Vec<PartitionedValue>` — the request islands
+     (pure), already lowered/warm in the ratchet cache; evaluate one as an ordinary
+     demand to get the request `ValueId`.
+  2. `LoweringArtifact.effect_inputs: Vec<EffectInputBinding>` on the *consumer*
+     island — one per effect edge, carrying `primitive: EffectId`, `request:
+     ValueIslandId` (names the effect_islands entry), and `entry` (the value-input
+     slot to bind the interned response into, `= value_inputs.len() + k`).
+  3. Resolve at the demand layer, intern the response, bind it at `entry`, spawn.
+
+- **Gate note (operational, for phase 05/06):** the full `nextest run -p vix`
+  reported `cross_lane_differential::accepted_corpus_agrees_across_native_and_interpreter_lanes`
+  as failed — this was a **nextest slow-timeout kill under load (~11)**, not a
+  regression. That test genuinely runs ~435s (verified PASS in isolation via
+  `cargo test -p vix --test cross_lane_differential`); nextest's configured 300s
+  slow window (`.config/nextest.toml`) reaps it when the box is busy. It touches
+  the accepted corpus only (no primitives), where phase-04 code is inert
+  (`effect_inputs` empty). When gating this stack, run heavy differential/ratchet
+  tests on a quiet box or in isolation.
+
+- **Commits (over `vix-prim-03-compiler`):** plan; `partition cuts at
+  Op::EffectRequest into request islands + effect edges`; `bind the effect
+  response as a realized value input on the artifact`; `pre-lower effect request
+  islands on the ratchet seam`; this notes commit.
