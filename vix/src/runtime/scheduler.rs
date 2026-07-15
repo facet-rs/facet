@@ -123,6 +123,73 @@ fn primitive_runtime_fault(failure: PrimitiveHostFailure) -> RuntimeFault {
     }
 }
 
+/// One registered-primitive completion delivered to the scheduler-owned inbox by
+/// a demand-owned ticket waiter. The completion crosses the thread boundary from
+/// the primitive runtime; only the scheduler thread drains the inbox and
+/// materializes the result into a retained frame.
+struct DeliveredCompletion {
+    demand: DemandKey,
+    publication: super::PrimitivePublication,
+}
+
+/// The scheduler's single typed completion mailbox (`machine.scheduler.block-on-event`).
+/// Every registered-primitive ticket delivers here through a `Send` sender clone;
+/// the scheduler drains it, buffering completions for demands other than the one
+/// it is currently resuming so independent effects may complete in any order.
+struct PrimitiveInbox {
+    sender: std::sync::mpsc::Sender<DeliveredCompletion>,
+    receiver: std::sync::mpsc::Receiver<DeliveredCompletion>,
+    pending: BTreeMap<DemandKey, super::PrimitivePublication>,
+}
+
+impl Default for PrimitiveInbox {
+    fn default() -> Self {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        Self {
+            sender,
+            receiver,
+            pending: BTreeMap::new(),
+        }
+    }
+}
+
+impl PrimitiveInbox {
+    /// A `Send + 'static` ticket waiter that forwards a completion for `demand`
+    /// into this inbox. The primitive runtime calls it (possibly on another
+    /// thread); the scheduler alone consumes the delivered completion.
+    fn waiter(
+        &self,
+        demand: DemandKey,
+    ) -> impl FnOnce(super::PrimitivePublication) + Send + 'static {
+        let sender = self.sender.clone();
+        move |publication| {
+            let _ = sender.send(DeliveredCompletion {
+                demand,
+                publication,
+            });
+        }
+    }
+
+    /// Take the completion for `demand`, blocking on the inbox only when it is
+    /// not already delivered and buffering any completion for another demand.
+    fn take(&mut self, demand: DemandKey) -> Result<super::PrimitivePublication, String> {
+        if let Some(publication) = self.pending.remove(&demand) {
+            return Ok(publication);
+        }
+        loop {
+            let completion = self
+                .receiver
+                .recv()
+                .map_err(|_| "primitive completion inbox closed without delivery".to_owned())?;
+            if completion.demand == demand {
+                return Ok(completion.publication);
+            }
+            self.pending
+                .insert(completion.demand, completion.publication);
+        }
+    }
+}
+
 impl PrimitiveHostQueue {
     fn call(&mut self, frame: &mut [u8]) {
         let plan = frame
@@ -250,6 +317,8 @@ pub struct Runtime<S> {
     fixture_store: FixtureStore,
     primitive_dispatcher: PrimitiveDispatcher,
     primitive_services: super::PrimitiveServices,
+    /// The scheduler-owned typed completion mailbox for registered primitives.
+    primitive_inbox: PrimitiveInbox,
     authoritative_rerun_audit: bool,
 }
 
@@ -401,6 +470,7 @@ impl<S: EventSink> Runtime<S> {
             fixture_store: FixtureStore::default(),
             primitive_dispatcher: default_primitive_dispatcher(),
             primitive_services: super::PrimitiveServices::default(),
+            primitive_inbox: PrimitiveInbox::default(),
             authoritative_rerun_audit: false,
         }
     }
@@ -430,6 +500,7 @@ impl<S: EventSink> Runtime<S> {
             fixture_store: FixtureStore::default(),
             primitive_dispatcher: default_primitive_dispatcher(),
             primitive_services: super::PrimitiveServices::default(),
+            primitive_inbox: PrimitiveInbox::default(),
             authoritative_rerun_audit: false,
         }
     }
@@ -469,6 +540,7 @@ impl<S: EventSink> Runtime<S> {
                 fixture_store: FixtureStore::default(),
                 primitive_dispatcher: default_primitive_dispatcher(),
                 primitive_services: super::PrimitiveServices::default(),
+                primitive_inbox: PrimitiveInbox::default(),
                 authoritative_rerun_audit: false,
             },
             PersistentRuntimeJournalLoadReport {
@@ -2740,16 +2812,13 @@ impl<S: EventSink> Runtime<S> {
                 EffectCtx::new(primitive_demand, authority.clone()),
             )
             .map_err(|error| format!("registered primitive dispatch failed: {error:?}"))?;
-        let (completion_tx, completion_rx) = std::sync::mpsc::sync_channel(1);
-        let subscription = ticket.join(move |publication| {
-            let _ = completion_tx.send(publication);
-        });
-        let publication = match ticket.outcome() {
-            Some(publication) => publication,
-            None => completion_rx.recv().map_err(|_| {
-                "primitive completion registration closed without delivery".to_owned()
-            })?,
-        };
+        // Register a demand-owned ticket waiter that delivers into the
+        // scheduler-owned inbox, then take this demand's completion from the
+        // inbox. `join` fires the waiter immediately for an already-complete
+        // ticket, so the completion is always delivered exactly once through the
+        // one mailbox rather than a per-call channel.
+        let subscription = ticket.join(self.primitive_inbox.waiter(primitive_demand));
+        let publication = self.primitive_inbox.take(primitive_demand)?;
         drop(subscription);
         self.primitive_dispatcher.retire(primitive_demand);
         self.counters.primitive_invocations += 1;
