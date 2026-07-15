@@ -172,7 +172,7 @@ fn request_schema_is_checked_before_primitive_code_runs() {
             wrong,
             EffectCtx::new(demand, authority),
         ),
-        Err(PrimitiveDispatchError::RequestSchema { .. })
+        Err(error) if matches!(*error, PrimitiveDispatchError::RequestSchema { .. })
     ));
 }
 

@@ -818,7 +818,7 @@ impl PrimitiveDispatcher {
         id: &PrimitiveId,
         request: ValueId,
         ctx: EffectCtx,
-    ) -> Result<EffectTicket, PrimitiveDispatchError> {
+    ) -> Result<EffectTicket, Box<PrimitiveDispatchError>> {
         let demand = ctx.demand();
         let mut in_flight = self.in_flight.lock().expect("dispatcher mutex poisoned");
         if let Some(ticket) = in_flight.get(&demand) {
@@ -874,21 +874,21 @@ impl PrimitiveRegistry {
         id: &PrimitiveId,
         request: ValueId,
         ctx: EffectCtx,
-    ) -> Result<EffectTicket, PrimitiveDispatchError> {
+    ) -> Result<EffectTicket, Box<PrimitiveDispatchError>> {
         let primitive = self
             .primitives
             .get(id)
-            .ok_or_else(|| PrimitiveDispatchError::Unregistered(id.clone()))?;
+            .ok_or_else(|| Box::new(PrimitiveDispatchError::Unregistered(id.clone())))?;
         if !primitive
             .descriptor()
             .request_schema
             .matches(&request.schema)
         {
-            return Err(PrimitiveDispatchError::RequestSchema {
+            return Err(Box::new(PrimitiveDispatchError::RequestSchema {
                 primitive: id.clone(),
                 expected: primitive.descriptor().request_schema.clone(),
                 found: request.schema,
-            });
+            }));
         }
         Ok(primitive.begin(request, ctx))
     }

@@ -1938,7 +1938,6 @@ impl<S: EventSink> Runtime<S> {
                 effect.output,
                 &arguments,
                 &mut reads,
-                key,
             )?;
             let EffectTerm::Value(value) = value else {
                 return Err(Box::new(self.terminate_machine_fault(
@@ -2077,7 +2076,6 @@ impl<S: EventSink> Runtime<S> {
         node: NodeId,
         arguments: &[EffectValue],
         reads: &mut Vec<super::model::ReadWitness>,
-        demand: DemandKey,
     ) -> Result<EffectTerm, Box<MachineError>> {
         let (_, nodes, _) = Self::effect_function(island, function).ok_or_else(|| {
             Box::new(MachineError::runtime(
@@ -2113,7 +2111,7 @@ impl<S: EventSink> Runtime<S> {
                     None,
                 ))
             })?;
-            this.evaluate_effect_node(island, function, id, arguments, reads, demand)
+            this.evaluate_effect_node(island, function, id, arguments, reads)
         };
         match &node.op {
             Op::Parameter(id) => {
@@ -2165,7 +2163,7 @@ impl<S: EventSink> Runtime<S> {
                     };
                     callee_arguments.push(value);
                 }
-                self.evaluate_effect_node(island, *callee, output, &callee_arguments, reads, demand)
+                self.evaluate_effect_node(island, *callee, output, &callee_arguments, reads)
             }
             Op::PathJoin => {
                 let EffectTerm::Value(left) = input(0, self)? else {
