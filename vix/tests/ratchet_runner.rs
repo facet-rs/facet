@@ -550,9 +550,8 @@ fn direct_string_call() -> Stream<Check> {
         let root = &lowered.contract().functions[0];
         let callee = &lowered.contract().functions[1];
         // One reserved word: the scheduler-owned primitive host plan slot.
-        let scheduler_header_bytes: u32 =
-            u32::try_from(region_byte_len(&callee.frame.regions[0]))
-                .expect("header region fits u32");
+        let scheduler_header_bytes: u32 = u32::try_from(region_byte_len(&callee.frame.regions[0]))
+            .expect("header region fits u32");
         assert_eq!(scheduler_header_bytes, 8);
         assert_eq!(lowered.constants.len(), 2, "one publication per NodeRef");
         let root_function = lowered.constants[0].root.function;

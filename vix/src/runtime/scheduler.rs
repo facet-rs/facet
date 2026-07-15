@@ -214,10 +214,7 @@ impl CompletionInbox {
     }
 
     /// Take a registered-primitive completion, rejecting a class mismatch.
-    fn take_primitive(
-        &mut self,
-        demand: DemandKey,
-    ) -> Result<super::PrimitivePublication, String> {
+    fn take_primitive(&mut self, demand: DemandKey) -> Result<super::PrimitivePublication, String> {
         match self.take(demand)? {
             DeliveredCompletion::Primitive { publication, .. } => Ok(publication),
             DeliveredCompletion::Exec { .. } => {
