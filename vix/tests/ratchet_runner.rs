@@ -6067,9 +6067,39 @@ fn t() -> Stream<Check> {
         assert!(report.passed() && report.agrees());
         for lane in [&report.plain, &report.chaos] {
             assert_eq!(lane.counters.primitive_invocations, expected_documents);
+            assert!(
+                lane.counters.peak_primitive_parked_frames >= expected_documents,
+                "every yielded primitive frame is retained off-stack: {lane:#?}",
+            );
+            assert_eq!(
+                lane.counters.completion_inbox_receipts, expected_documents,
+                "every primitive completion crosses the unified inbox",
+            );
             assert_eq!(lane.counters.document_parse_host_calls, 0);
             assert_eq!(lane.counters.pure_host_calls, 0);
             assert_eq!(lane.receipt_count, expected_documents);
+
+            let parked = lane
+                .events
+                .iter()
+                .filter_map(|event| match &event.kind {
+                    EventKind::PrimitiveParked { task, key, site } => Some((*task, *key, *site)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let resumed = lane
+                .events
+                .iter()
+                .filter_map(|event| match &event.kind {
+                    EventKind::PrimitiveResumed { task, key, site } => Some((*task, *key, *site)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(parked.len() as u64, expected_documents);
+            assert_eq!(
+                resumed, parked,
+                "the inbox resumes the exact retained task and verified frame/PC",
+            );
         }
     }
 }

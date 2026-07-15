@@ -45,6 +45,18 @@ pub struct Counters {
     /// wire-parked frame was retained in Runtime scheduler state — not on the
     /// recursive Rust stack — while its wire's argument demand ran.
     pub peak_parked_frames: u64,
+    /// The peak number of tasks simultaneously parked on registered-primitive
+    /// completions in demand-owned pending state. A non-zero peak witnesses that
+    /// a yielded primitive frame survived off the recursive Rust stack while its
+    /// completion was outstanding.
+    pub peak_primitive_parked_frames: u64,
+    /// Completions drained from the unified completion inbox. Every registered
+    /// primitive and exec completion crosses this one receive authority.
+    pub completion_inbox_receipts: u64,
+    /// Completions delivered for a demand with no live pending waiter — a late,
+    /// duplicate, or legitimate post-cancel delivery. Observed as a typed fact,
+    /// never applied as a publication.
+    pub stale_completions_ignored: u64,
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
@@ -75,6 +87,18 @@ pub struct ExecutionFacts {
     pub native_available: bool,
     pub native_compiled: bool,
     pub fallback: Option<ExecutionFallbackFact>,
+}
+
+/// The verified Weavy instruction that yielded a registered primitive. The
+/// source node and lowered frame/PC are carried together so a park/resume pair
+/// can prove that the scheduler retained and re-entered the exact suspension
+/// site on either execution lane.
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PrimitiveSuspensionSite {
+    pub function: FunctionId,
+    pub node: NodeId,
+    pub weavy_function: u32,
+    pub weavy_pc: u32,
 }
 
 /// Stable causal event vocabulary. Event ordering is local to this runtime;
@@ -142,6 +166,20 @@ pub enum EventKind {
     EffectSpawned {
         task: TaskId,
         key: DemandKey,
+    },
+    /// A registered-primitive frame returned control to the scheduler and now
+    /// resides in demand-owned pending state, off the drive stack.
+    PrimitiveParked {
+        task: TaskId,
+        key: DemandKey,
+        site: PrimitiveSuspensionSite,
+    },
+    /// The unified completion inbox resumed the exact retained task and
+    /// verified suspension site named by the corresponding park event.
+    PrimitiveResumed {
+        task: TaskId,
+        key: DemandKey,
+        site: PrimitiveSuspensionSite,
     },
     WeavyParked {
         task: TaskId,

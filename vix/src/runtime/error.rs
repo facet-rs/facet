@@ -83,6 +83,11 @@ pub enum RuntimeFault {
     QuiescentUnresolvedDemand {
         key: DemandKey,
     },
+    /// The unified completion inbox was closed while a primitive or exec demand
+    /// was still outstanding. A completion sender's death is a loud typed fault
+    /// (`machine.scheduler.completion-resumes-direct`), never a swallowed
+    /// disconnect error at a per-demand drain site.
+    LostCompletion,
     MissingFrameAttribution {
         function: FnId,
     },

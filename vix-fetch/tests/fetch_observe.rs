@@ -291,6 +291,60 @@ fn pinned_fetch_origin_returns_blob_and_separate_extraction() {
     }
 }
 
+/// L2.2c production-path certificate: a registered-primitive (pinned fetch)
+/// `HostCallYield` parks its frame off the recursive Rust stack in demand-owned
+/// pending state, its completion crosses the one unified inbox, and the resumed
+/// frame materializes the admitted Blob at its exact frame/PC state. The check
+/// passes only when the fetched Blob is realized correctly on resume, so a wrong
+/// frame/PC restore is caught by `report.passed()`. The observability counters
+/// witness the off-stack park and the single inbox receive authority.
+#[test]
+fn pinned_fetch_yielded_frame_survives_off_stack_and_crosses_the_inbox() {
+    let bytes = archive_bytes();
+    let identity = blob_identity(&bytes);
+    let upstream = vix::fetch::sha256_hex(&bytes);
+    let server = BlobServer::start(bytes);
+    let fixtures = TempDir::new().expect("create fixture root");
+    let services = PrimitiveServices::default()
+        .with_fixture_store(fixture_store(
+            &fixtures,
+            &server.url(),
+            &identity,
+            &upstream,
+        ))
+        .with_origin_adapter(Arc::new(HttpBlobOriginAdapter));
+
+    // A fresh origin fetch: the primitive actually runs (one transfer), so its
+    // frame genuinely yields, parks off-stack, and resumes through the inbox.
+    let report = prepare_source(FETCH_ONE_FROM_ORIGIN)
+        .expect("prepare Vix fetch source")
+        .execute_with_primitive_services(services)
+        .expect("execute Vix fetch source");
+
+    // The resumed frame produced the correct realized Blob: exact frame/PC state.
+    assert!(report.passed(), "fetch report: {report:#?}");
+    // The plain run performs the fetch fresh, so its primitive frame yielded,
+    // parked off the recursive Rust stack in demand-owned pending state, and
+    // resumed only after its completion crossed the one unified inbox.
+    let plain = &report.plain;
+    assert_eq!(
+        plain.counters.primitive_invocations, 1,
+        "the fetch began exactly one registered-primitive demand: {plain:#?}"
+    );
+    assert!(
+        plain.counters.peak_primitive_parked_frames >= 1,
+        "a yielded primitive frame survived off the recursive stack in pending state: {plain:#?}"
+    );
+    assert!(
+        plain.counters.completion_inbox_receipts >= 1,
+        "the primitive completion crossed the unified completion inbox: {plain:#?}"
+    );
+    assert_eq!(
+        plain.counters.stale_completions_ignored, 0,
+        "a live single-waiter fetch has no late or duplicate completion: {plain:#?}"
+    );
+}
+
 #[test]
 fn pinned_fetch_provider_hit_precedes_origin() {
     let bytes = archive_bytes();

@@ -103,6 +103,7 @@ pub struct ValueInputBinding {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PrimitiveCall {
+    pub(crate) node: NodeRef,
     pub(crate) primitive: crate::runtime::PrimitiveId,
     pub(crate) request: Type,
     pub(crate) response: Type,
@@ -6232,6 +6233,10 @@ fn lower_node(
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             lowering.primitive_calls.push(PrimitiveCall {
+                node: NodeRef {
+                    function: lowering.function.id,
+                    node: node.id,
+                },
                 primitive: primitive.clone(),
                 request: request.ty.clone(),
                 response: node.ty.clone(),

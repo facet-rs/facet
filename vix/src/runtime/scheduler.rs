@@ -12,6 +12,7 @@ use weavy::task::{FnId, HostFn, TaskEvent as WeavyTaskEvent, TaskStep};
 
 use crate::lowering::{LoweringArtifact, LoweringAttribution, ValueInputBinding};
 use crate::schema::SchemaRef;
+use crate::support::Span;
 use crate::vir::{
     ExternKind, Function, FunctionId, Island, IslandId, MiniSolveRequirements, NodeId,
     OPTION_NONE_VARIANT, OPTION_SOME_VARIANT, Op, Type, VariantPayload,
@@ -28,7 +29,7 @@ use super::model::{
 };
 use super::observe::{
     Counters, Event, EventKind, EventSink, ExecutionFacts, ExecutionFallbackFact,
-    ExecutionLaneFact, SafePointClass,
+    ExecutionLaneFact, PrimitiveSuspensionSite, SafePointClass,
 };
 use super::store::{
     FrozenValue, Handle, Interned, Store, StoreEntry, StoreJournal, StoreJournalError,
@@ -37,8 +38,8 @@ use super::store::{
 use super::{
     DecodePrimitive, EffectCtx, ObservePrimitive, PinnedFetchPrimitive, PrimitiveCompletion,
     PrimitiveDispatcher, PrimitiveField, PrimitiveFieldValue, PrimitiveMachineError,
-    PrimitiveRegistry, PrimitiveValue, PrimitiveValueBody, StagedEffectAuthority, blob_id_type,
-    origin_hint_type,
+    PrimitiveRegistry, PrimitiveValue, PrimitiveValueBody, StagedEffectAuthority,
+    TicketSubscription, blob_id_type, origin_hint_type,
 };
 use super::{MachineAttribution, MachineError, MachineOperation, RuntimeFault};
 
@@ -144,32 +145,25 @@ enum DeliveredCompletion {
     },
 }
 
-impl DeliveredCompletion {
-    fn demand(&self) -> DemandKey {
-        match self {
-            Self::Primitive { demand, .. } | Self::Exec { demand, .. } => *demand,
-        }
-    }
-}
+/// The unified inbox was closed — every completion sender dropped — while work
+/// was still outstanding. A lost completion is a loud typed scheduler fault
+/// (`machine.scheduler.completion-resumes-direct`), never a swallowed disconnect.
+struct LostCompletion;
 
 /// The scheduler's single typed completion mailbox (`machine.scheduler.block-on-event`).
 /// Every ticket/worker delivers here through a `Send` sender clone; the scheduler
-/// drains it, buffering completions for demands other than the one it is currently
-/// resuming so independent effects may complete in any order.
+/// blocks on exactly one `recv` when no task is runnable and routes whatever
+/// arrives through the shared `apply_completion` path. There is no per-demand
+/// take and no synchronous drain of a specific effect.
 struct CompletionInbox {
     sender: std::sync::mpsc::Sender<DeliveredCompletion>,
     receiver: std::sync::mpsc::Receiver<DeliveredCompletion>,
-    pending: BTreeMap<DemandKey, DeliveredCompletion>,
 }
 
 impl Default for CompletionInbox {
     fn default() -> Self {
         let (sender, receiver) = std::sync::mpsc::channel();
-        Self {
-            sender,
-            receiver,
-            pending: BTreeMap::new(),
-        }
+        Self { sender, receiver }
     }
 }
 
@@ -196,45 +190,14 @@ impl CompletionInbox {
         self.sender.clone()
     }
 
-    /// Take the completion for `demand`, blocking on the inbox only when it is
-    /// not already delivered and buffering any completion for another demand.
-    fn take(&mut self, demand: DemandKey) -> Result<DeliveredCompletion, String> {
-        if let Some(completion) = self.pending.remove(&demand) {
-            return Ok(completion);
-        }
-        loop {
-            let completion = self
-                .receiver
-                .recv()
-                .map_err(|_| "completion inbox closed without delivery".to_owned())?;
-            if completion.demand() == demand {
-                return Ok(completion);
-            }
-            self.pending.insert(completion.demand(), completion);
-        }
-    }
-
-    /// Take a registered-primitive completion, rejecting a class mismatch.
-    fn take_primitive(&mut self, demand: DemandKey) -> Result<super::PrimitivePublication, String> {
-        match self.take(demand)? {
-            DeliveredCompletion::Primitive { publication, .. } => Ok(publication),
-            DeliveredCompletion::Exec { .. } => {
-                Err("primitive demand resolved to an exec completion".to_owned())
-            }
-        }
-    }
-
-    /// Take an exec process termination, rejecting a class mismatch.
-    fn take_exec(
-        &mut self,
-        demand: DemandKey,
-    ) -> Result<Result<std::process::Output, String>, String> {
-        match self.take(demand)? {
-            DeliveredCompletion::Exec { output, .. } => Ok(output),
-            DeliveredCompletion::Primitive { .. } => {
-                Err("exec demand resolved to a primitive completion".to_owned())
-            }
-        }
+    /// Block on the one inbox for exactly one delivered completion, whichever
+    /// demand it belongs to. The scheduler drains this only when no task is
+    /// runnable and routes the result through the shared `apply_completion`
+    /// path; there is no per-demand take. A closed inbox (every sender dropped)
+    /// with work still outstanding is a typed lost-completion fault, never a
+    /// stringly disconnect error swallowed at a call site.
+    fn recv(&self) -> Result<DeliveredCompletion, LostCompletion> {
+        self.receiver.recv().map_err(|_| LostCompletion)
     }
 }
 
@@ -345,9 +308,53 @@ enum DriveOutcome {
     /// The task returned control to the scheduler at an `AwaitWire` on this
     /// input index, its frame retained as owned suspended state.
     Parked(u32),
+    /// The task reached a registered-primitive `HostCallYield`. Control returns
+    /// to the loop so the frame can park in demand-owned pending state and its
+    /// completion can cross the unified inbox.
+    YieldedPrimitive(PrimitiveHostRequest),
     /// The task ran to `Done`; its realized (or language-failed) result is
     /// published to waiters. Boxed so the common `Parked` step stays small.
     Completed(Box<Evaluation>),
+}
+
+/// A registered-primitive demand in flight. Owned by the DEMAND, not the
+/// requesting task (`machine.scheduler.tickets-outlive-tasks`): killing a
+/// waiting task leaves the ticket alive. The first caller installs the single
+/// authority and ticket subscription; every waiter (the first plus any joiner)
+/// is a task parked mid-drive, resumed by materializing the one admitted value
+/// through its own ABI plan when the completion crosses the inbox.
+struct PrimitivePending {
+    /// The first caller's staged authority; joiners never construct another.
+    authority: Arc<StagedEffectAuthority>,
+    /// The single ticket subscription that delivers this demand's completion
+    /// into the unified inbox.
+    subscription: TicketSubscription,
+    /// FIFO of parked tasks awaiting this completion, each with its own ABI
+    /// plan describing the output frame region it materializes into.
+    waiters: Vec<PrimitiveWaiter>,
+}
+
+/// One task parked on a registered-primitive completion, plus the ABI plan the
+/// admitted value is materialized through into its retained frame.
+struct PrimitiveWaiter {
+    ctx: TaskContext,
+    plan: crate::lowering::PrimitiveCall,
+    site: PrimitiveSuspensionSite,
+}
+
+/// An exec demand in flight at its isolated worker-thread process boundary. The
+/// scheduler holds only the memoization context; the raw termination crosses
+/// the unified inbox and is interned and memoized solely by `apply_completion`.
+struct ExecPending {
+    task_id: TaskId,
+    location: Location,
+    demand_preimage: DemandPreimage,
+    receipt: Receipt,
+    result_ty: Type,
+    plan_recipe: RecipeId,
+    function: FunctionId,
+    node: NodeId,
+    span: Span,
 }
 
 /// One island demand submission: everything needed to resolve it from memo,
@@ -455,6 +462,17 @@ pub struct Runtime<S> {
     runnable: Vec<TaskContext>,
     parked: BTreeMap<TaskId, TaskContext>,
     wire_waiters: BTreeMap<DemandKey, Vec<WireWaiter>>,
+    /// Completed demand results, keyed by demand. A resolved root is read from
+    /// here; every wire/primitive/exec completion publishes into it. Transient:
+    /// cleared once a root resolves, never extracted into persistent state.
+    root_results: BTreeMap<DemandKey, Evaluation>,
+    /// Registered-primitive demands in flight, keyed by the primitive demand.
+    /// A yielded frame parks here off the recursive Rust stack until its
+    /// completion crosses the unified inbox.
+    primitive_pending: BTreeMap<DemandKey, PrimitivePending>,
+    /// Exec demands in flight at the isolated worker-thread boundary, keyed by
+    /// the exec demand. The scheduler thread performs no synchronous wait.
+    exec_pending: BTreeMap<DemandKey, ExecPending>,
 }
 
 #[derive(Clone, Default)]
@@ -610,6 +628,9 @@ impl<S: EventSink> Runtime<S> {
             runnable: Vec::new(),
             parked: BTreeMap::new(),
             wire_waiters: BTreeMap::new(),
+            root_results: BTreeMap::new(),
+            primitive_pending: BTreeMap::new(),
+            exec_pending: BTreeMap::new(),
         }
     }
 
@@ -643,6 +664,9 @@ impl<S: EventSink> Runtime<S> {
             runnable: Vec::new(),
             parked: BTreeMap::new(),
             wire_waiters: BTreeMap::new(),
+            root_results: BTreeMap::new(),
+            primitive_pending: BTreeMap::new(),
+            exec_pending: BTreeMap::new(),
         }
     }
 
@@ -686,6 +710,9 @@ impl<S: EventSink> Runtime<S> {
                 runnable: Vec::new(),
                 parked: BTreeMap::new(),
                 wire_waiters: BTreeMap::new(),
+                root_results: BTreeMap::new(),
+                primitive_pending: BTreeMap::new(),
+                exec_pending: BTreeMap::new(),
             },
             PersistentRuntimeJournalLoadReport {
                 store: store_report,
@@ -750,10 +777,37 @@ impl<S: EventSink> Runtime<S> {
 
     #[must_use]
     pub fn into_persistent_state(self) -> PersistentRuntimeState {
+        self.assert_scheduler_quiescent();
         PersistentRuntimeState {
             store: self.store,
             memo: self.memo,
         }
+    }
+
+    /// Assert every transient scheduler map is empty before persistent-state
+    /// extraction. This runs always (not `debug_assert`): a non-empty runnable,
+    /// parked, waiter, result, or pending map at this boundary would mean live
+    /// scheduler state was about to be confused with persistent value/claim
+    /// state. `PersistentRuntimeState` carries only `store` + `memo`; scheduler
+    /// state never enters it.
+    fn assert_scheduler_quiescent(&self) {
+        assert!(
+            self.runnable.is_empty()
+                && self.parked.is_empty()
+                && self.wire_waiters.is_empty()
+                && self.root_results.is_empty()
+                && self.primitive_pending.is_empty()
+                && self.exec_pending.is_empty(),
+            "scheduler is not quiescent at persistent-state extraction: \
+             runnable={}, parked={}, wire_waiters={}, root_results={}, \
+             primitive_pending={}, exec_pending={}",
+            self.runnable.len(),
+            self.parked.len(),
+            self.wire_waiters.len(),
+            self.root_results.len(),
+            self.primitive_pending.len(),
+            self.exec_pending.len(),
+        );
     }
 
     /// The frozen log of realized wire demands: each callee invocation the memo
@@ -1097,8 +1151,12 @@ impl<S: EventSink> Runtime<S> {
             }
         };
         // Successful teardown: a resolved root leaves no runnable task, no
-        // parked frame, and no waiter. These transient scheduler maps are never
-        // extracted into PersistentRuntimeState.
+        // parked frame, no waiter, and no in-flight primitive/exec pending. The
+        // root result was taken by `run_until_root`; the remaining published
+        // wire-child results are transient scratch (their identities are already
+        // memoized) and are cleared here. None of these transient scheduler maps
+        // is ever extracted into PersistentRuntimeState.
+        self.root_results.clear();
         debug_assert!(
             self.runnable.is_empty(),
             "runnable tasks survived a resolved root"
@@ -1110,6 +1168,14 @@ impl<S: EventSink> Runtime<S> {
         debug_assert!(
             self.wire_waiters.is_empty(),
             "wire waiters survived a resolved root"
+        );
+        debug_assert!(
+            self.primitive_pending.is_empty(),
+            "primitive pending survived a resolved root"
+        );
+        debug_assert!(
+            self.exec_pending.is_empty(),
+            "exec pending survived a resolved root"
         );
         Ok(evaluation)
     }
@@ -1620,25 +1686,91 @@ impl<S: EventSink> Runtime<S> {
     /// r[impl machine.scheduler.block-on-event]
     /// r[impl machine.scheduler.completion-resumes-direct]
     fn run_until_root(&mut self, root: DemandKey) -> Result<Evaluation, Box<MachineError>> {
-        let mut results: BTreeMap<DemandKey, Evaluation> = BTreeMap::new();
-        while let Some(mut ctx) = self.runnable.pop() {
-            match self.drive_context(&mut ctx)? {
-                DriveOutcome::Completed(evaluation) => {
-                    self.publish(&mut results, ctx.demand_key, *evaluation)?;
+        let result = self.pump_until(|runtime| runtime.root_results.contains_key(&root));
+        match result {
+            Ok(()) => match self.root_results.remove(&root) {
+                Some(evaluation) => Ok(evaluation),
+                None => {
+                    let error = Box::new(MachineError::runtime(
+                        MachineOperation::Drive,
+                        RuntimeFault::QuiescentUnresolvedDemand { key: root },
+                        None,
+                        Some(root),
+                    ));
+                    self.clear_transient_scheduler_state();
+                    Err(error)
                 }
-                DriveOutcome::Parked(input) => {
-                    self.handle_park(ctx, input, &mut results)?;
-                }
+            },
+            Err(error) => {
+                // A machine fault abandons the run; clear every transient
+                // scheduler map so a reused runtime never drives stale frames
+                // and no leftover state can reach persistent extraction.
+                self.clear_transient_scheduler_state();
+                Err(error)
             }
         }
-        results.remove(&root).ok_or_else(|| {
+    }
+
+    /// Drive the scheduler's runnable/parked/pending graph until `done` holds.
+    /// Each round takes one runnable task and drives it a `take-run-put`
+    /// segment; only when no task is runnable does the scheduler block on the
+    /// unified completion inbox for one event and apply it. A quiescent graph —
+    /// nothing runnable and nothing pending — that has not satisfied `done` is a
+    /// typed machine fault raised by the caller.
+    ///
+    /// r[impl machine.scheduler.block-on-event]
+    /// r[impl machine.scheduler.effect-overlap]
+    fn pump_until(&mut self, done: impl Fn(&Self) -> bool) -> Result<(), Box<MachineError>> {
+        while !done(self) {
+            if let Some(mut ctx) = self.runnable.pop() {
+                match self.drive_context(&mut ctx)? {
+                    DriveOutcome::Completed(evaluation) => {
+                        self.publish(ctx.demand_key, *evaluation)?;
+                    }
+                    DriveOutcome::Parked(input) => {
+                        self.handle_park(ctx, input)?;
+                    }
+                    DriveOutcome::YieldedPrimitive(request) => {
+                        self.begin_primitive(ctx, request)?;
+                    }
+                }
+            } else if !self.primitive_pending.is_empty() || !self.exec_pending.is_empty() {
+                self.drain_one_completion()?;
+            } else {
+                // Quiescent: nothing runnable, nothing pending, `done` unmet.
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// Block on the unified inbox for exactly one completion and apply it. The
+    /// scheduler thread performs no per-demand synchronous drain — it consumes
+    /// whatever the one receive authority delivers and routes it through the
+    /// shared `apply_completion` path.
+    fn drain_one_completion(&mut self) -> Result<(), Box<MachineError>> {
+        let completion = self.completion_inbox.recv().map_err(|LostCompletion| {
             Box::new(MachineError::runtime(
                 MachineOperation::Drive,
-                RuntimeFault::QuiescentUnresolvedDemand { key: root },
+                RuntimeFault::LostCompletion,
                 None,
-                Some(root),
+                None,
             ))
-        })
+        })?;
+        self.counters.completion_inbox_receipts += 1;
+        self.apply_completion(completion)
+    }
+
+    /// Clear every transient scheduler map. Called on machine-error teardown so
+    /// a faulted runtime carries no runnable/parked/pending/result residue into
+    /// a later run or persistent-state extraction.
+    fn clear_transient_scheduler_state(&mut self) {
+        self.runnable.clear();
+        self.parked.clear();
+        self.wire_waiters.clear();
+        self.root_results.clear();
+        self.primitive_pending.clear();
+        self.exec_pending.clear();
     }
 
     /// Publish a demand's completion: record its result and resume every parent
@@ -1646,18 +1778,17 @@ impl<S: EventSink> Runtime<S> {
     /// runnable stack (or cascading a failure).
     fn publish(
         &mut self,
-        results: &mut BTreeMap<DemandKey, Evaluation>,
         demand: DemandKey,
         evaluation: Evaluation,
     ) -> Result<(), Box<MachineError>> {
-        results.insert(demand, evaluation.clone());
+        self.root_results.insert(demand, evaluation.clone());
         let waiters = self.wire_waiters.remove(&demand).unwrap_or_default();
         for waiter in waiters {
             let parent = self
                 .parked
                 .remove(&waiter.task_id)
                 .expect("a wire waiter names a parked task");
-            self.resume_parent(results, parent, waiter.wire_index, evaluation.clone())?;
+            self.resume_parent(parent, waiter.wire_index, evaluation.clone())?;
         }
         Ok(())
     }
@@ -1669,7 +1800,6 @@ impl<S: EventSink> Runtime<S> {
     /// returns the parent to the runnable stack.
     fn resume_parent(
         &mut self,
-        results: &mut BTreeMap<DemandKey, Evaluation>,
         mut parent: TaskContext,
         wire_index: usize,
         resolved: Evaluation,
@@ -1714,7 +1844,7 @@ impl<S: EventSink> Runtime<S> {
                 failure: Some(failure),
                 failure_context: resolved.failure_context,
             };
-            self.publish(results, parent.demand_key, evaluation)?;
+            self.publish(parent.demand_key, evaluation)?;
             return Ok(());
         }
         let word = self.scalar_word(resolved.handle).ok_or_else(|| {
@@ -1740,12 +1870,7 @@ impl<S: EventSink> Runtime<S> {
     /// On a memo hit or immediate failure the parent resumes inline; on a fresh
     /// spawn or a join the parent is registered as a waiter and parked off the
     /// drive stack until the wire's demand completes.
-    fn handle_park(
-        &mut self,
-        ctx: TaskContext,
-        input: u32,
-        results: &mut BTreeMap<DemandKey, Evaluation>,
-    ) -> Result<(), Box<MachineError>> {
+    fn handle_park(&mut self, ctx: TaskContext, input: u32) -> Result<(), Box<MachineError>> {
         let index = input as usize;
         let Some(wire) = ctx.wires.get(index) else {
             let error = MachineError::runtime(
@@ -1779,7 +1904,7 @@ impl<S: EventSink> Runtime<S> {
         })?;
         match outcome {
             SubmitOutcome::Ready(resolved) => {
-                self.resume_parent(results, ctx, index, resolved)?;
+                self.resume_parent(ctx, index, resolved)?;
             }
             SubmitOutcome::Spawned(child) | SubmitOutcome::Joined(child) => {
                 self.wire_waiters
@@ -1818,72 +1943,78 @@ impl<S: EventSink> Runtime<S> {
         let attribution = attribution.as_ref();
         let task_id = ctx.task_id;
         let demand_key = ctx.demand_key;
-        loop {
-            let mut primitive_host = PrimitiveHostQueue::default();
-            let step = {
-                let mut call_primitive = |frame: &mut [u8]| primitive_host.call(frame);
-                let mut hosts: [HostFn<'_>; 1] = [&mut call_primitive];
-                match self.store.with_value_memory_overrides(
-                    &ctx.value_memory_overrides,
-                    |value_memories| {
-                        ctx.task
-                            .drive_hosted_with_value_memories(
-                                &mut ctx.ready,
-                                &ctx.awaited,
-                                &mut hosts,
-                                value_memories,
-                            )
-                            .map_err(Box::new)
-                    },
-                ) {
-                    Ok(step) => step,
-                    Err(fault) => {
-                        let error = self.task_fault(
+        let mut primitive_host = PrimitiveHostQueue::default();
+        let step = {
+            let mut call_primitive = |frame: &mut [u8]| primitive_host.call(frame);
+            let mut hosts: [HostFn<'_>; 1] = [&mut call_primitive];
+            match self.store.with_value_memory_overrides(
+                &ctx.value_memory_overrides,
+                |value_memories| {
+                    ctx.task
+                        .drive_hosted_with_value_memories(
+                            &mut ctx.ready,
+                            &ctx.awaited,
+                            &mut hosts,
+                            value_memories,
+                        )
+                        .map_err(Box::new)
+                },
+            ) {
+                Ok(step) => step,
+                Err(fault) => {
+                    let error = self.task_fault(
+                        MachineOperation::Drive,
+                        *fault,
+                        lowered,
+                        attribution,
+                        None,
+                    );
+                    return Err(Box::new(
+                        self.terminate_machine_fault(task_id, demand_key, error),
+                    ));
+                }
+            }
+        };
+        match step {
+            TaskStep::Done => {}
+            TaskStep::Yielded => {
+                // A registered-primitive `HostCallYield`. Do not complete it
+                // inline: return control to the loop so the frame parks in
+                // demand-owned pending state and its completion crosses the
+                // unified inbox. Only an ABI-shape fault terminates here.
+                match (primitive_host.fault, primitive_host.requests.as_slice()) {
+                    (None, [request]) => {
+                        return Ok(DriveOutcome::YieldedPrimitive(request.clone()));
+                    }
+                    (Some(detail), _) => {
+                        let error = MachineError::runtime(
                             MachineOperation::Drive,
-                            *fault,
-                            lowered,
-                            attribution,
+                            primitive_runtime_fault(PrimitiveHostFailure::Abi(detail)),
                             None,
+                            Some(demand_key),
+                        );
+                        return Err(Box::new(
+                            self.terminate_machine_fault(task_id, demand_key, error),
+                        ));
+                    }
+                    (None, requests) => {
+                        let error = MachineError::runtime(
+                            MachineOperation::Drive,
+                            primitive_runtime_fault(PrimitiveHostFailure::Abi(format!(
+                                "primitive yield recorded {} host requests",
+                                requests.len()
+                            ))),
+                            None,
+                            Some(demand_key),
                         );
                         return Err(Box::new(
                             self.terminate_machine_fault(task_id, demand_key, error),
                         ));
                     }
                 }
-            };
-            match step {
-                TaskStep::Done => break,
-                TaskStep::Yielded => {
-                    let result = match (primitive_host.fault, primitive_host.requests.as_slice()) {
-                        (Some(detail), _) => Err(PrimitiveHostFailure::Abi(detail)),
-                        (None, [request]) => self.complete_primitive_host_call(
-                            &mut ctx.task,
-                            lowered,
-                            request.clone(),
-                        ),
-                        (None, requests) => Err(PrimitiveHostFailure::Abi(format!(
-                            "primitive yield recorded {} host requests",
-                            requests.len()
-                        ))),
-                    };
-                    match result {
-                        Ok(reads) => ctx.primitive_reads.extend(reads),
-                        Err(failure) => {
-                            let error = MachineError::runtime(
-                                MachineOperation::Drive,
-                                primitive_runtime_fault(failure),
-                                None,
-                                Some(demand_key),
-                            );
-                            return Err(Box::new(
-                                self.terminate_machine_fault(task_id, demand_key, error),
-                            ));
-                        }
-                    }
-                }
-                TaskStep::Parked { input } => {
-                    return Ok(DriveOutcome::Parked(input));
-                }
+            }
+            TaskStep::Parked { input } => {
+                return Ok(DriveOutcome::Parked(input));
             }
         }
         for event in ctx.task.trace() {
@@ -3108,18 +3239,134 @@ impl<S: EventSink> Runtime<S> {
         Ok(paths)
     }
 
-    fn complete_primitive_host_call(
+    /// Terminate a task whose registered-primitive request violated the machine
+    /// ABI or completed as a transient error, returning the typed machine fault.
+    fn terminate_primitive(
         &mut self,
-        task: &mut weavy::exec::ExecTask,
-        lowered: &DemandExecution<'_>,
+        task_id: TaskId,
+        demand_key: DemandKey,
+        failure: PrimitiveHostFailure,
+    ) -> Box<MachineError> {
+        let error = MachineError::runtime(
+            MachineOperation::Drive,
+            primitive_runtime_fault(failure),
+            None,
+            Some(demand_key),
+        );
+        Box::new(self.terminate_machine_fault(task_id, demand_key, error))
+    }
+
+    /// Terminate every waiter of a failed/errored primitive demand and return
+    /// the first waiter's typed machine fault. In the common single-waiter case
+    /// this is exactly the historical inline failure.
+    fn terminate_primitive_waiters(
+        &mut self,
+        waiters: Vec<PrimitiveWaiter>,
+        failure: PrimitiveHostFailure,
+    ) -> Box<MachineError> {
+        let mut waiters = waiters.into_iter();
+        let first = waiters
+            .next()
+            .expect("a primitive pending always has at least one waiter");
+        for waiter in waiters {
+            let derived = MachineError::runtime(
+                MachineOperation::Drive,
+                RuntimeFault::PrimitiveHost {
+                    detail: "joined primitive demand failed".to_owned(),
+                },
+                None,
+                Some(waiter.ctx.demand_key),
+            );
+            let _ =
+                self.terminate_machine_fault(waiter.ctx.task_id, waiter.ctx.demand_key, derived);
+        }
+        self.terminate_primitive(first.ctx.task_id, first.ctx.demand_key, failure)
+    }
+
+    /// Begin or join a registered-primitive demand for a yielded task, then park
+    /// the frame in demand-owned pending state. The first caller installs the
+    /// single staged authority and ticket subscription and delivers the one
+    /// completion into the unified inbox; a joiner reuses that authority and
+    /// only adds itself as a waiter. The frame is retained off the recursive
+    /// Rust stack until `apply_completion` materializes the admitted value
+    /// through this waiter's own ABI plan.
+    ///
+    /// r[impl machine.scheduler.tickets-outlive-tasks]
+    /// r[impl machine.scheduler.join-atomic]
+    fn begin_primitive(
+        &mut self,
+        ctx: TaskContext,
         request: PrimitiveHostRequest,
-    ) -> Result<Vec<ReadWitness>, PrimitiveHostFailure> {
-        let plan = lowered
-            .primitive_calls
-            .get(request.plan)
-            .cloned()
-            .ok_or_else(|| format!("primitive host plan {} is absent", request.plan))?;
-        let request_value = task.with_value_resolver(|resolver| {
+    ) -> Result<(), Box<MachineError>> {
+        let task_id = ctx.task_id;
+        let demand_key = ctx.demand_key;
+        let Some(plan) = ctx.lowered.primitive_calls.get(request.plan).cloned() else {
+            return Err(self.terminate_primitive(
+                task_id,
+                demand_key,
+                PrimitiveHostFailure::Abi(format!(
+                    "primitive host plan {} is absent",
+                    request.plan
+                )),
+            ));
+        };
+        let Some(source) = ctx.attribution.source_for_node(plan.node) else {
+            return Err(self.terminate_primitive(
+                task_id,
+                demand_key,
+                PrimitiveHostFailure::Abi(format!(
+                    "primitive host plan {} has no source attribution",
+                    request.plan
+                )),
+            ));
+        };
+        let Some((weavy_function, weavy_pc)) = ctx
+            .lowered
+            .program()
+            .fns
+            .iter()
+            .zip(&ctx.lowered.pc_nodes)
+            .enumerate()
+            .find_map(|(function, (lowered_function, nodes))| {
+                lowered_function
+                    .code
+                    .iter()
+                    .zip(nodes)
+                    .enumerate()
+                    .find_map(|(pc, (op, node))| {
+                        (*node == plan.node && matches!(op, weavy::task::Op::HostCallYield { .. }))
+                            .then_some((function, pc))
+                    })
+            })
+        else {
+            return Err(self.terminate_primitive(
+                task_id,
+                demand_key,
+                PrimitiveHostFailure::Abi(format!(
+                    "primitive host plan {} has no verified yield site",
+                    request.plan
+                )),
+            ));
+        };
+        let site = PrimitiveSuspensionSite {
+            function: source.function,
+            node: source.node,
+            weavy_function: u32::try_from(weavy_function).map_err(|_| {
+                self.terminate_primitive(
+                    task_id,
+                    demand_key,
+                    PrimitiveHostFailure::Abi("primitive frame index overflowed".to_owned()),
+                )
+            })?,
+            weavy_pc: u32::try_from(weavy_pc).map_err(|_| {
+                self.terminate_primitive(
+                    task_id,
+                    demand_key,
+                    PrimitiveHostFailure::Abi("primitive program counter overflowed".to_owned()),
+                )
+            })?,
+        };
+        let request_value = match ctx.task.with_value_resolver(|resolver| {
             primitive_value_from_frame(
                 &request.frame,
                 plan.input,
@@ -3128,51 +3375,136 @@ impl<S: EventSink> Runtime<S> {
                 &resolver,
                 &plan.abi_schemas,
             )
-        })?;
+        }) {
+            Ok(value) => value,
+            Err(detail) => {
+                return Err(self.terminate_primitive(
+                    task_id,
+                    demand_key,
+                    PrimitiveHostFailure::Abi(detail),
+                ));
+            }
+        };
         let request_id = request_value.identity();
         let primitive_demand = primitive_demand_key(&plan.primitive, &request_id);
-        let mut catalog = BTreeMap::new();
-        insert_schema_type(&plan.request, &mut catalog);
-        insert_schema_type(&plan.response, &mut catalog);
-        let mut authority_inputs = vec![(request_id.clone(), request_value.clone())];
-        authority_inputs.extend(self.store.resident_entries().filter_map(|entry| {
-            let bytes = entry.resident_bytes()?;
-            Some((
-                entry.identity.clone(),
-                PrimitiveValue::bytes(entry.identity.schema.clone(), bytes.to_vec()),
-            ))
-        }));
-        let mut authority = StagedEffectAuthority::new(authority_inputs).with_schema_types(catalog);
-        if let Some(persistence) = self.primitive_services.value_persistence() {
-            authority = authority.with_value_persistence(persistence);
-        }
-        if let Some(claims) = self.primitive_services.claim_history() {
-            authority = authority.with_claim_history(claims);
-        }
-        authority = authority.with_origin_adapter(
-            self.primitive_services
-                .origin()
-                .unwrap_or_else(|| Arc::new(self.fixture_store.clone())),
-        );
-        let authority = Arc::new(authority);
-        let ticket = self
-            .primitive_dispatcher
-            .begin_or_join(
+        if let Some(pending) = self.primitive_pending.get_mut(&primitive_demand) {
+            // Join an in-flight primitive demand: reuse the first caller's single
+            // authority and subscription; only add this frame as a waiter.
+            pending.waiters.push(PrimitiveWaiter { ctx, plan, site });
+        } else {
+            // First caller: stage the one authority, begin the ticket, and
+            // register the single subscription delivering into the unified inbox.
+            let mut catalog = BTreeMap::new();
+            insert_schema_type(&plan.request, &mut catalog);
+            insert_schema_type(&plan.response, &mut catalog);
+            let mut authority_inputs = vec![(request_id.clone(), request_value.clone())];
+            authority_inputs.extend(self.store.resident_entries().filter_map(|entry| {
+                let bytes = entry.resident_bytes()?;
+                Some((
+                    entry.identity.clone(),
+                    PrimitiveValue::bytes(entry.identity.schema.clone(), bytes.to_vec()),
+                ))
+            }));
+            let mut authority =
+                StagedEffectAuthority::new(authority_inputs).with_schema_types(catalog);
+            if let Some(persistence) = self.primitive_services.value_persistence() {
+                authority = authority.with_value_persistence(persistence);
+            }
+            if let Some(claims) = self.primitive_services.claim_history() {
+                authority = authority.with_claim_history(claims);
+            }
+            authority = authority.with_origin_adapter(
+                self.primitive_services
+                    .origin()
+                    .unwrap_or_else(|| Arc::new(self.fixture_store.clone())),
+            );
+            let authority = Arc::new(authority);
+            let ticket = match self.primitive_dispatcher.begin_or_join(
                 &plan.primitive,
                 request_id.clone(),
                 EffectCtx::new(primitive_demand, authority.clone()),
-            )
-            .map_err(|error| format!("registered primitive dispatch failed: {error:?}"))?;
-        // Register a demand-owned ticket waiter that delivers into the
-        // scheduler-owned inbox, then take this demand's completion from the
-        // inbox. `join` fires the waiter immediately for an already-complete
-        // ticket, so the completion is always delivered exactly once through the
-        // one mailbox rather than a per-call channel.
-        let subscription = ticket.join(self.completion_inbox.primitive_waiter(primitive_demand));
-        let publication = self.completion_inbox.take_primitive(primitive_demand)?;
+            ) {
+                Ok(ticket) => ticket,
+                Err(error) => {
+                    return Err(self.terminate_primitive(
+                        task_id,
+                        demand_key,
+                        PrimitiveHostFailure::Abi(format!(
+                            "registered primitive dispatch failed: {error:?}"
+                        )),
+                    ));
+                }
+            };
+            self.counters.primitive_invocations += 1;
+            let subscription =
+                ticket.join(self.completion_inbox.primitive_waiter(primitive_demand));
+            self.primitive_pending.insert(
+                primitive_demand,
+                PrimitivePending {
+                    authority,
+                    subscription,
+                    waiters: vec![PrimitiveWaiter { ctx, plan, site }],
+                },
+            );
+        }
+        self.emit(EventKind::PrimitiveParked {
+            task: task_id,
+            key: primitive_demand,
+            site,
+        });
+        // Witness that a yielded primitive frame now resides off the recursive
+        // Rust stack in demand-owned pending state.
+        let parked = self
+            .primitive_pending
+            .values()
+            .map(|pending| pending.waiters.len())
+            .sum::<usize>();
+        self.counters.peak_primitive_parked_frames = self
+            .counters
+            .peak_primitive_parked_frames
+            .max(parked as u64);
+        Ok(())
+    }
+
+    /// Apply one completion drained from the unified inbox. This is the sole
+    /// path that writes primitive frames, resolves exec demands, or retires
+    /// tickets (`machine.scheduler.completion-resumes-direct`).
+    fn apply_completion(
+        &mut self,
+        completion: DeliveredCompletion,
+    ) -> Result<(), Box<MachineError>> {
+        match completion {
+            DeliveredCompletion::Primitive {
+                demand,
+                publication,
+            } => self.apply_primitive_completion(demand, publication),
+            DeliveredCompletion::Exec { demand, output } => {
+                self.apply_exec_completion(demand, output)
+            }
+        }
+    }
+
+    /// Apply a registered-primitive completion: admit the value once, then
+    /// materialize it into every waiter's frame through its own ABI plan and
+    /// return each resumed frame to the runnable stack.
+    fn apply_primitive_completion(
+        &mut self,
+        demand: DemandKey,
+        publication: super::PrimitivePublication,
+    ) -> Result<(), Box<MachineError>> {
+        let Some(pending) = self.primitive_pending.remove(&demand) else {
+            // Late, duplicate, or legitimate post-cancel delivery: no live
+            // waiter. Observe as a typed fact; never apply as a publication.
+            self.counters.stale_completions_ignored += 1;
+            return Ok(());
+        };
+        let PrimitivePending {
+            authority,
+            subscription,
+            waiters,
+        } = pending;
         drop(subscription);
-        self.primitive_dispatcher.retire(primitive_demand);
-        self.counters.primitive_invocations += 1;
+        self.primitive_dispatcher.retire(demand);
         self.counters.fetches_performed += publication
             .receipt
             .reads
@@ -3182,47 +3514,224 @@ impl<S: EventSink> Runtime<S> {
         let identity = match publication.completion {
             PrimitiveCompletion::Ok(identity) => identity,
             PrimitiveCompletion::Failed(identity) => {
-                return Err(
-                    format!("registered primitive returned semantic failure {identity:?}").into(),
-                );
+                return Err(self.terminate_primitive_waiters(
+                    waiters,
+                    PrimitiveHostFailure::Abi(format!(
+                        "registered primitive returned semantic failure {identity:?}"
+                    )),
+                ));
             }
             PrimitiveCompletion::MachineError(error) => {
-                return Err(PrimitiveHostFailure::Machine(error));
+                return Err(
+                    self.terminate_primitive_waiters(waiters, PrimitiveHostFailure::Machine(error))
+                );
             }
         };
-        let value = authority
-            .admitted_value(&identity)
-            .ok_or_else(|| format!("primitive result {identity:?} was not admitted"))?;
-        if value.schema != plan.response.schema_ref() {
-            return Err(format!(
-                "primitive result schema {} disagrees with response schema {}",
-                value.schema,
-                plan.response.schema_ref()
-            )
-            .into());
+        let Some(value) = authority.admitted_value(&identity) else {
+            return Err(self.terminate_primitive_waiters(
+                waiters,
+                PrimitiveHostFailure::Abi(format!(
+                    "primitive result {identity:?} was not admitted"
+                )),
+            ));
+        };
+        for PrimitiveWaiter {
+            mut ctx,
+            plan,
+            site,
+        } in waiters
+        {
+            if value.schema != plan.response.schema_ref() {
+                let failure = PrimitiveHostFailure::Abi(format!(
+                    "primitive result schema {} disagrees with response schema {}",
+                    value.schema,
+                    plan.response.schema_ref()
+                ));
+                return Err(self.terminate_primitive(ctx.task_id, ctx.demand_key, failure));
+            }
+            let mut clear = Ok(());
+            for index in 0..plan.output.words().as_usize() {
+                let Some(slot) = plan.output.word(index) else {
+                    clear = Err("primitive output region overflowed".to_owned());
+                    break;
+                };
+                if let Err(fault) = ctx.task.write_host_word(slot.byte_offset(), 0) {
+                    clear = Err(format!("primitive output clear failed: {fault:?}"));
+                    break;
+                }
+            }
+            if let Err(detail) = clear {
+                return Err(self.terminate_primitive(
+                    ctx.task_id,
+                    ctx.demand_key,
+                    PrimitiveHostFailure::Abi(detail),
+                ));
+            }
+            let mut interned = Vec::new();
+            if let Err(detail) = write_primitive_value(
+                &mut ctx.task,
+                plan.output,
+                0,
+                &plan.response,
+                &value,
+                &mut self.store,
+                &mut interned,
+            ) {
+                return Err(self.terminate_primitive(
+                    ctx.task_id,
+                    ctx.demand_key,
+                    PrimitiveHostFailure::Abi(detail),
+                ));
+            }
+            for value in &interned {
+                self.observe_interned(value);
+            }
+            ctx.primitive_reads
+                .extend(publication.receipt.reads.iter().cloned());
+            self.emit(EventKind::PrimitiveResumed {
+                task: ctx.task_id,
+                key: demand,
+                site,
+            });
+            self.runnable.push(ctx);
         }
-        for index in 0..plan.output.words().as_usize() {
-            let slot = plan
-                .output
-                .word(index)
-                .ok_or_else(|| "primitive output region overflowed".to_owned())?;
-            task.write_host_word(slot.byte_offset(), 0)
-                .map_err(|fault| format!("primitive output clear failed: {fault:?}"))?;
+        Ok(())
+    }
+
+    /// Apply an exec process termination drained from the unified inbox: intern
+    /// the outcome, memoize it, resolve the exec demand, and publish its result.
+    /// This is the only place an exec outcome is interned; the scheduler thread
+    /// never waits on the process (`machine.scheduler.block-on-event`).
+    fn apply_exec_completion(
+        &mut self,
+        demand: DemandKey,
+        output: Result<std::process::Output, String>,
+    ) -> Result<(), Box<MachineError>> {
+        let Some(pending) = self.exec_pending.remove(&demand) else {
+            self.counters.stale_completions_ignored += 1;
+            return Ok(());
+        };
+        let ExecPending {
+            task_id,
+            location,
+            demand_preimage,
+            receipt,
+            result_ty,
+            plan_recipe,
+            function,
+            node,
+            span,
+        } = pending;
+        let output = output.map_err(|detail| {
+            Box::new(MachineError::runtime(
+                MachineOperation::Drive,
+                RuntimeFault::EffectHostFailure { detail },
+                None,
+                Some(demand),
+            ))
+        })?;
+        // The parked exec frame resumes on the scheduler thread: transition it
+        // back to running before recording its outcome, exactly as the former
+        // inline wait did.
+        self.transition_task(task_id, TaskState::Running)?;
+        if output.status.success() {
+            let interned = self.intern_exec_outcome(&result_ty, &output.stdout, &output.stderr);
+            self.memo.insert(
+                location.id,
+                MemoEntry {
+                    location: location.clone(),
+                    key: demand,
+                    preimage: demand_preimage,
+                    result: interned.handle,
+                    receipt: Some(receipt),
+                    current_receipt: true,
+                },
+            );
+            if let Some(record) = self.demands.get_mut(&demand) {
+                record.result = Some(interned.handle);
+            }
+            self.transition_task(task_id, TaskState::Completed)?;
+            self.transition_demand(demand, DemandState::Ready)?;
+            self.emit(EventKind::Completed {
+                key: demand,
+                identity: interned.identity.clone(),
+            });
+            self.root_results.insert(
+                demand,
+                Evaluation {
+                    handle: interned.handle,
+                    identity: interned.identity,
+                    passed: true,
+                    memo: MemoVerdict::Miss,
+                    failure: None,
+                    failure_context: None,
+                },
+            );
+            return Ok(());
         }
-        let mut interned = Vec::new();
-        write_primitive_value(
-            task,
-            plan.output,
-            0,
-            &plan.response,
-            &value,
-            &mut self.store,
-            &mut interned,
-        )?;
-        for value in &interned {
-            self.observe_interned(value);
+        let termination = match output.status.code() {
+            Some(code) => ProcessTermination::Exited {
+                code: i64::from(code),
+            },
+            None => {
+                #[cfg(unix)]
+                let signal = {
+                    use std::os::unix::process::ExitStatusExt as _;
+                    i64::from(output.status.signal().unwrap_or_default())
+                };
+                #[cfg(not(unix))]
+                let signal = 0;
+                ProcessTermination::Signaled { signal }
+            }
+        };
+        let failure = FailureValue::ProcessFailure {
+            recipe: plan_recipe,
+            site: node.0,
+            termination,
+        };
+        let report_context =
+            matches!(&failure, FailureValue::ProcessFailure { recipe, .. } if *recipe == plan_recipe)
+                .then(|| FailureContext {
+                    function,
+                    node,
+                    span,
+                    demand_chain: vec![demand],
+                });
+        let interned = self.store.intern_failure(failure.clone(), &output.stderr);
+        self.observe_interned(&interned);
+        self.memo.insert(
+            location.id,
+            MemoEntry {
+                location: location.clone(),
+                key: demand,
+                preimage: demand_preimage,
+                result: interned.handle,
+                receipt: Some(receipt),
+                current_receipt: true,
+            },
+        );
+        if let Some(record) = self.demands.get_mut(&demand) {
+            record.result = Some(interned.handle);
         }
-        Ok(publication.receipt.reads)
+        self.transition_task(task_id, TaskState::Completed)?;
+        self.transition_demand(demand, DemandState::Failed)?;
+        self.emit(EventKind::LanguageFailed {
+            task: task_id,
+            key: demand,
+            failure: failure.clone(),
+        });
+        self.root_results.insert(
+            demand,
+            Evaluation {
+                handle: interned.handle,
+                identity: interned.identity,
+                passed: false,
+                memo: MemoVerdict::Miss,
+                failure: Some(failure),
+                failure_context: report_context,
+            },
+        );
+        Ok(())
     }
 
     /// Drive one generator task to `Done` and return its outcome: either the
@@ -3459,80 +3968,30 @@ impl<S: EventSink> Runtime<S> {
                 schema_bytes.copy_from_slice(&i64::from(element_schema.0).to_le_bytes());
                 value_memory_overrides.push((argument.handle, abi_view));
             }
-            let mut primitive_reads = Vec::new();
-            loop {
-                let mut primitive_host = PrimitiveHostQueue::default();
-                let step = {
-                    let mut call_primitive = |frame: &mut [u8]| primitive_host.call(frame);
-                    let mut hosts: [HostFn<'_>; 1] = [&mut call_primitive];
-                    match self.store.with_value_memory_overrides(
-                        &value_memory_overrides,
-                        |value_memories| {
-                            task.drive_hosted_with_value_memories(
-                                &mut [],
-                                &[],
-                                &mut hosts,
-                                value_memories,
-                            )
-                            .map_err(Box::new)
-                        },
-                    ) {
-                        Ok(step) => step,
-                        Err(fault) => {
-                            let error = self.task_fault(
-                                MachineOperation::Drive,
-                                *fault,
-                                lowered,
-                                attribution,
-                                None,
-                            );
-                            return Err(Box::new(self.terminate_machine_fault(
-                                task_id,
-                                lowered.demand_key,
-                                error,
-                            )));
-                        }
-                    }
-                };
-                match step {
-                    TaskStep::Done => break,
-                    TaskStep::Yielded => {
-                        let result =
-                            match (primitive_host.fault, primitive_host.requests.as_slice()) {
-                                (Some(detail), _) => Err(PrimitiveHostFailure::Abi(detail)),
-                                (None, [request]) => self.complete_primitive_host_call(
-                                    &mut task,
-                                    lowered,
-                                    request.clone(),
-                                ),
-                                (None, requests) => Err(PrimitiveHostFailure::Abi(format!(
-                                    "primitive yield recorded {} host requests",
-                                    requests.len()
-                                ))),
-                            };
-                        match result {
-                            Ok(reads) => primitive_reads.extend(reads),
-                            Err(failure) => {
-                                let error = MachineError::runtime(
-                                    MachineOperation::Drive,
-                                    primitive_runtime_fault(failure),
-                                    None,
-                                    Some(lowered.demand_key),
-                                );
-                                return Err(Box::new(self.terminate_machine_fault(
-                                    task_id,
-                                    lowered.demand_key,
-                                    error,
-                                )));
-                            }
-                        }
-                    }
-                    TaskStep::Parked { input } => {
-                        let error = MachineError::runtime(
+            let mut primitive_host = PrimitiveHostQueue::default();
+            let step = {
+                let mut call_primitive = |frame: &mut [u8]| primitive_host.call(frame);
+                let mut hosts: [HostFn<'_>; 1] = [&mut call_primitive];
+                match self.store.with_value_memory_overrides(
+                    &value_memory_overrides,
+                    |value_memories| {
+                        task.drive_hosted_with_value_memories(
+                            &mut [],
+                            &[],
+                            &mut hosts,
+                            value_memories,
+                        )
+                        .map_err(Box::new)
+                    },
+                ) {
+                    Ok(step) => step,
+                    Err(fault) => {
+                        let error = self.task_fault(
                             MachineOperation::Drive,
-                            RuntimeFault::PureIslandParked { input },
+                            *fault,
+                            lowered,
+                            attribution,
                             None,
-                            Some(lowered.demand_key),
                         );
                         return Err(Box::new(self.terminate_machine_fault(
                             task_id,
@@ -3540,6 +3999,40 @@ impl<S: EventSink> Runtime<S> {
                             error,
                         )));
                     }
+                }
+            };
+            match step {
+                TaskStep::Done => {}
+                TaskStep::Yielded => {
+                    // A generator runs only real `Match`/`If` control and
+                    // never reaches a registered-primitive `HostCallYield`.
+                    // A yield here is a machine invariant violation, so the
+                    // one primitive completion authority stays in the main
+                    // task loop's demand-owned pending path.
+                    let error = MachineError::runtime(
+                        MachineOperation::Drive,
+                        RuntimeFault::PureIslandYielded,
+                        None,
+                        Some(lowered.demand_key),
+                    );
+                    return Err(Box::new(self.terminate_machine_fault(
+                        task_id,
+                        lowered.demand_key,
+                        error,
+                    )));
+                }
+                TaskStep::Parked { input } => {
+                    let error = MachineError::runtime(
+                        MachineOperation::Drive,
+                        RuntimeFault::PureIslandParked { input },
+                        None,
+                        Some(lowered.demand_key),
+                    );
+                    return Err(Box::new(self.terminate_machine_fault(
+                        task_id,
+                        lowered.demand_key,
+                        error,
+                    )));
                 }
             }
             for event in task.trace() {
@@ -4251,8 +4744,12 @@ impl<S: EventSink> Runtime<S> {
             }
 
             // Spawn, then PARK: the scheduler holds no busy loop while the
-            // process runs — the wait below is a block-on-event completion that
-            // resumes the parked task.
+            // process runs. The blocking wait runs on an isolated worker thread
+            // that owns the process boundary and delivers the raw termination
+            // through the scheduler's one completion event source; the parked
+            // exec frame resumes only when the scheduler drains that completion
+            // and `apply_exec_completion` interns it
+            // (machine.scheduler.no-shadow-scheduler, block-on-event).
             self.counters.effect_spawns += 1;
             self.emit(EventKind::EffectSpawned {
                 task: task_id,
@@ -4274,12 +4771,22 @@ impl<S: EventSink> Runtime<S> {
                 .spawn()
                 .map_err(|error| host_fault(format!("spawn `{program}`: {error}")))?;
             self.transition_task(task_id, TaskState::Parked)?;
-            // The blocking process wait runs on an isolated worker thread that
-            // owns the process boundary and delivers the raw termination through
-            // the scheduler's single completion event source. The scheduler
-            // thread performs no wait_with_output/wait/block_on drain
-            // (machine.scheduler.no-shadow-scheduler, block-on-event); the parked
-            // exec task resumes only when the scheduler drains this completion.
+            self.exec_pending.insert(
+                demand_key,
+                ExecPending {
+                    task_id,
+                    location: location.clone(),
+                    demand_preimage: demand_preimage.clone(),
+                    receipt: receipt.clone(),
+                    result_ty: node.ty.clone(),
+                    plan_recipe,
+                    function: island.function,
+                    node: node.id,
+                    span: node.span,
+                },
+            );
+            // `wait_with_output` lives ONLY inside this worker-thread closure;
+            // the scheduler thread never waits on the process boundary.
             let exec_sender = self.completion_inbox.exec_sender();
             let worker_program = program.clone();
             std::thread::spawn(move || {
@@ -4291,100 +4798,25 @@ impl<S: EventSink> Runtime<S> {
                     output,
                 });
             });
-            let output = self
-                .completion_inbox
-                .take_exec(demand_key)
-                .map_err(&host_fault)?
-                .map_err(&host_fault)?;
-            self.transition_task(task_id, TaskState::Running)?;
-
-            // The v1 ratchet capability packages' termination grammar: exit
-            // zero maps to the (unit) answer, anything else — nonzero exit or
-            // signal — is a typed failure carrying the raw termination.
-            if output.status.success() {
-                let interned = self.intern_exec_outcome(&node.ty, &output.stdout, &output.stderr);
-                self.memo.insert(
-                    location.id,
-                    MemoEntry {
-                        location: location.clone(),
-                        key: demand_key,
-                        preimage: demand_preimage.clone(),
-                        result: interned.handle,
-                        receipt: Some(receipt.clone()),
-                        current_receipt: true,
-                    },
-                );
-                if let Some(demand) = self.demands.get_mut(&demand_key) {
-                    demand.result = Some(interned.handle);
-                }
-                self.transition_task(task_id, TaskState::Completed)?;
-                self.transition_demand(demand_key, DemandState::Ready)?;
-                self.emit(EventKind::Completed {
-                    key: demand_key,
-                    identity: interned.identity.clone(),
-                });
-                return Ok(Evaluation {
-                    handle: interned.handle,
-                    identity: interned.identity,
-                    passed: true,
-                    memo: MemoVerdict::Miss,
-                    failure: None,
-                    failure_context: None,
-                });
-            }
-            let termination = match output.status.code() {
-                Some(code) => ProcessTermination::Exited {
-                    code: i64::from(code),
-                },
-                None => {
-                    #[cfg(unix)]
-                    let signal = {
-                        use std::os::unix::process::ExitStatusExt as _;
-                        i64::from(output.status.signal().unwrap_or_default())
-                    };
-                    #[cfg(not(unix))]
-                    let signal = 0;
-                    ProcessTermination::Signaled { signal }
-                }
-            };
-            let failure = FailureValue::ProcessFailure {
-                recipe: plan_recipe,
-                site: node.id.0,
-                termination,
-            };
-            let report_context = effect_context(&failure);
-            let interned = self.store.intern_failure(failure.clone(), &output.stderr);
-            self.observe_interned(&interned);
-            self.memo.insert(
-                location.id,
-                MemoEntry {
-                    location: location.clone(),
-                    key: demand_key,
-                    preimage: demand_preimage.clone(),
-                    result: interned.handle,
-                    receipt: Some(receipt),
-                    current_receipt: true,
-                },
-            );
-            if let Some(demand) = self.demands.get_mut(&demand_key) {
-                demand.result = Some(interned.handle);
-            }
-            self.transition_task(task_id, TaskState::Completed)?;
-            self.transition_demand(demand_key, DemandState::Failed)?;
-            self.emit(EventKind::LanguageFailed {
-                task: task_id,
-                key: demand_key,
-                failure: failure.clone(),
-            });
-            return Ok(Evaluation {
-                handle: interned.handle,
-                identity: interned.identity,
-                passed: false,
-                memo: MemoVerdict::Miss,
-                failure: Some(failure),
-                failure_context: report_context,
-            });
+            break;
         }
+        // Pump the unified event loop until the exec demand resolves through
+        // `apply_exec_completion`. The scheduler thread does no per-demand drain
+        // — it blocks on the one inbox and applies whatever arrives.
+        if let Err(error) =
+            self.pump_until(|runtime| runtime.root_results.contains_key(&demand_key))
+        {
+            self.clear_transient_scheduler_state();
+            return Err(error);
+        }
+        self.root_results.remove(&demand_key).ok_or_else(|| {
+            Box::new(MachineError::runtime(
+                MachineOperation::Drive,
+                RuntimeFault::QuiescentUnresolvedDemand { key: demand_key },
+                None,
+                Some(demand_key),
+            ))
+        })
     }
 
     /// Serve one effect demand from an existing store result: the shared exact-
@@ -4644,6 +5076,7 @@ impl<S: EventSink> Runtime<S> {
 
     #[must_use]
     pub fn into_sink_and_persistent_state(self) -> (S, PersistentRuntimeState) {
+        self.assert_scheduler_quiescent();
         (
             self.sink,
             PersistentRuntimeState {
