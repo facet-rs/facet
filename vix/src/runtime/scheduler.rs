@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::ops::Deref;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use weavy::exec::{
@@ -263,27 +264,34 @@ pub struct ChaosPolicy {
 /// arguments (already realized), and its demand wires (unresolved). A wire is
 /// resolved lazily — only when the task actually parks on it — through the
 /// canonical `DemandPreimage`/memo path, never pre-resolved.
-#[derive(Clone, Copy)]
-pub struct IslandInputs<'a> {
-    pub arguments: &'a [Evaluation],
-    pub wires: &'a [WireDemand<'a>],
+///
+/// The inputs are owned so that a task suspended on a wire can retain them off
+/// the recursive Rust stack: the scheduler moves the parked task's whole
+/// suspension context (its owned artifact handle, wires, and realized
+/// arguments) into a scheduler-owned frame map and resumes it later without
+/// re-borrowing any submission-time state.
+#[derive(Clone)]
+pub struct IslandInputs {
+    pub arguments: Vec<Evaluation>,
+    pub wires: Vec<WireDemand>,
 }
 
 /// One demand wire an island may force: the canonical argument demand the
 /// scheduler evaluates through the existing memo machinery when the consuming
 /// task parks on the wire's `AwaitWire` input. It carries everything needed to
-/// evaluate that argument island — its recipe artifact, cost-model location,
-/// realized arguments, and its own nested wires — plus the callee identity used
-/// to record the realized dependency. A wire is never evaluated unless the task
-/// parks on it.
-#[derive(Clone, Copy)]
-pub struct WireDemand<'a> {
+/// evaluate that argument island — its retained recipe artifact, cost-model
+/// location, realized arguments, and its own nested wires — plus the callee
+/// identity used to record the realized dependency. A wire is never evaluated
+/// unless the task parks on it. Every field is owned so a suspended parent can
+/// keep its unforced wires while it waits off the drive stack.
+#[derive(Clone)]
+pub struct WireDemand {
     pub island: IslandId,
-    pub location: &'a Location,
-    pub lowered: &'a LoweringArtifact,
-    pub attribution: &'a LoweringAttribution,
-    pub arguments: &'a [Evaluation],
-    pub wires: &'a [WireDemand<'a>],
+    pub location: Location,
+    pub lowered: Rc<LoweringArtifact>,
+    pub attribution: Rc<LoweringAttribution>,
+    pub arguments: Vec<Evaluation>,
+    pub wires: Vec<WireDemand>,
     pub function: FunctionId,
     /// The canonical scalar argument identities of this invocation, recorded in
     /// the realized-demand log when the wire actually computes (a memo miss).
@@ -291,10 +299,10 @@ pub struct WireDemand<'a> {
     /// composite or computed argument, which no call-site literal can select. A
     /// memoized re-force adds no entry, so the log counts one realization per
     /// distinct demand identity.
-    pub demand_arguments: Option<&'a [ValueId]>,
+    pub demand_arguments: Option<Vec<ValueId>>,
     /// The canonical structural preimage of this invocation in the authored
     /// graph — the content key a binding-level described wire selects on.
-    pub preimage: &'a str,
+    pub preimage: String,
 }
 
 /// One realized invocation recorded for described-wire observation: which user
@@ -966,14 +974,14 @@ impl<S: EventSink> Runtime<S> {
         &mut self,
         island: IslandId,
         location: &Location,
-        lowered: &LoweringArtifact,
+        lowered: Rc<LoweringArtifact>,
         attribution: &LoweringAttribution,
-        inputs: IslandInputs<'_>,
+        inputs: IslandInputs,
         chaos: ChaosPolicy,
     ) -> Result<Evaluation, Box<MachineError>> {
         let IslandInputs { arguments, wires } = inputs;
         let invocation = DemandExecution::new(
-            lowered,
+            lowered.as_ref(),
             arguments
                 .iter()
                 .map(|argument| argument.identity.clone())
@@ -1304,7 +1312,7 @@ impl<S: EventSink> Runtime<S> {
                     )));
                 }
             }
-            for (binding, argument) in lowered.value_inputs.iter().zip(arguments) {
+            for (binding, argument) in lowered.value_inputs.iter().zip(&arguments) {
                 let frozen = self
                     .store
                     .entry(argument.handle)
@@ -1377,7 +1385,7 @@ impl<S: EventSink> Runtime<S> {
                 }
             }
             let mut value_memory_overrides = Vec::new();
-            for (binding, argument) in lowered.value_inputs.iter().zip(arguments) {
+            for (binding, argument) in lowered.value_inputs.iter().zip(&arguments) {
                 let Some(element_schema) = binding.payload_element_schema else {
                     continue;
                 };
@@ -1506,12 +1514,12 @@ impl<S: EventSink> Runtime<S> {
                         });
                         let resolved = self.evaluate(
                             wire.island,
-                            wire.location,
-                            wire.lowered,
-                            wire.attribution,
+                            &wire.location,
+                            Rc::clone(&wire.lowered),
+                            wire.attribution.as_ref(),
                             IslandInputs {
-                                arguments: wire.arguments,
-                                wires: wire.wires,
+                                arguments: wire.arguments.clone(),
+                                wires: wire.wires.clone(),
                             },
                             ChaosPolicy::default(),
                         )?;
@@ -1522,8 +1530,8 @@ impl<S: EventSink> Runtime<S> {
                         if resolved.memo == MemoVerdict::Miss {
                             self.record_wire_demand(
                                 wire.function,
-                                wire.demand_arguments.map(<[ValueId]>::to_vec),
-                                wire.preimage.to_owned(),
+                                wire.demand_arguments.clone(),
+                                wire.preimage.clone(),
                             );
                         }
                         if let Some(failure) = resolved.failure {
@@ -7012,7 +7020,7 @@ fn duplicate_key() -> Stream<Check> {
 
         let (first, demand_key) = {
             let artifact = cache
-                .get_or_lower(island)
+                .get_or_lower_owned(island)
                 .expect("first compilation lowers through the verified executable");
             let demand_key = artifact.demand_key;
             let evaluation = runtime
@@ -7022,8 +7030,8 @@ fn duplicate_key() -> Stream<Check> {
                     artifact,
                     &first_attribution,
                     IslandInputs {
-                        arguments: &[],
-                        wires: &[],
+                        arguments: Vec::new(),
+                        wires: Vec::new(),
                     },
                     ChaosPolicy::default(),
                 )
@@ -7055,7 +7063,7 @@ fn duplicate_key() -> Stream<Check> {
 
         let second = {
             let artifact = cache
-                .get_or_lower(shifted_island)
+                .get_or_lower_owned(shifted_island)
                 .expect("span-only recompilation reuses the verified artifact");
             runtime
                 .evaluate(
@@ -7064,8 +7072,8 @@ fn duplicate_key() -> Stream<Check> {
                     artifact,
                     &shifted_attribution,
                     IslandInputs {
-                        arguments: &[],
-                        wires: &[],
+                        arguments: Vec::new(),
+                        wires: Vec::new(),
                     },
                     ChaosPolicy::default(),
                 )
@@ -7135,11 +7143,11 @@ fn duplicate_key() -> Stream<Check> {
                 .evaluate(
                     IslandId(0),
                     &location,
-                    &artifact,
+                    Rc::new(artifact),
                     attribution,
                     IslandInputs {
-                        arguments: &[],
-                        wires: &[],
+                        arguments: Vec::new(),
+                        wires: Vec::new(),
                     },
                     ChaosPolicy::default(),
                 )
@@ -7202,7 +7210,7 @@ fn passing() -> Stream<Check> {
         let mut cache = LoweringCache::default();
         let mut runtime = Runtime::new(EventLog::default());
         let artifact = cache
-            .get_or_lower(island)
+            .get_or_lower_owned(island)
             .expect("source lowers through the verified executable");
         let evaluation = runtime
             .evaluate(
@@ -7211,8 +7219,8 @@ fn passing() -> Stream<Check> {
                 artifact,
                 &attribution,
                 IslandInputs {
-                    arguments: &[],
-                    wires: &[],
+                    arguments: Vec::new(),
+                    wires: Vec::new(),
                 },
                 ChaosPolicy::default(),
             )

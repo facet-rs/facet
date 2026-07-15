@@ -1,13 +1,11 @@
 //! Production-path ratchet runner: source -> generated AST -> VIR -> Weavy.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
 
 use crate::compiler::{Compiler, CompilerConfig};
 use crate::diagnostic::Diagnostics;
-use crate::lowering::{
-    LoweringArtifact, LoweringAttribution, LoweringCache, LoweringCacheCounters, LoweringError,
-    attribution_for,
-};
+use crate::lowering::{LoweringCache, LoweringCacheCounters, LoweringError, attribution_for};
 use crate::runtime::{
     ChaosPolicy, Counters, DemandState, Evaluation, Event, EventKind, EventLog, FailureContext,
     FailureValue, FramedNode, GeneratorOutcome, IslandInputs, Location, MachineError, MemoVerdict,
@@ -16,8 +14,8 @@ use crate::runtime::{
     SnapshotOutcome, TaskState, ValueId, WireDemand,
 };
 use crate::vir::{
-    DescribedWire, FunctionId, Island, IslandId, Module, Op, PartitionedRecipe, PartitionedValue,
-    TraceCheck, ValueIslandId, WireArg, WireSelector,
+    DescribedWire, FunctionId, Island, Module, Op, PartitionedRecipe, PartitionedValue, TraceCheck,
+    ValueIslandId, WireArg, WireSelector,
 };
 
 /// The user functions named by a test's described-wire trace checks. A bundled
@@ -141,62 +139,25 @@ fn observe_bundled_invocations(
     }
 }
 
-/// Owned backing for one island's flat wire-demand tree: everything a
-/// [`WireDemand`] borrows, kept alive alongside the island evaluation it feeds.
-/// A leaf argument island has no realized value inputs and no nested wires, so
-/// each wire's `arguments`/`wires` are empty; deeper argument graphs are built
-/// by the same lazy seam once their rungs are reached.
-struct FlatWires<'a> {
-    islands: Vec<IslandId>,
-    locations: Vec<Location>,
-    attributions: Vec<LoweringAttribution>,
-    functions: Vec<FunctionId>,
-    demand_args: Vec<Option<Vec<ValueId>>>,
-    preimages: Vec<String>,
-    artifacts: Vec<&'a LoweringArtifact>,
-}
-
-impl<'a> FlatWires<'a> {
-    fn demands(&'a self) -> Vec<WireDemand<'a>> {
-        self.islands
-            .iter()
-            .enumerate()
-            .map(|(index, &island)| WireDemand {
-                island,
-                location: &self.locations[index],
-                lowered: self.artifacts[index],
-                attribution: &self.attributions[index],
-                arguments: &[],
-                wires: &[],
-                function: self.functions[index],
-                demand_arguments: self.demand_args[index].as_deref(),
-                preimage: &self.preimages[index],
-            })
-            .collect()
-    }
-}
-
-/// Build the flat wire-demand backing for an island's `wire_inputs`. Every named
-/// argument island was lowered up front, so this only looks it up and pins its
-/// cost-model location — one location per representative wire island, so
-/// structurally equal awaits share one memo cell and realize once.
-fn flat_wires<'a>(
-    cache: &'a LoweringCache,
+/// Build the flat wire-demand tree for an island's `wire_inputs`. Every named
+/// argument island was lowered up front, so this only looks up its retained
+/// artifact handle and pins its cost-model location — one location per
+/// representative wire island, so structurally equal awaits share one memo cell
+/// and realize once. Each [`WireDemand`] owns its whole context (retained
+/// artifact, location, attribution) so the scheduler can keep an unforced wire
+/// on a parked task off the recursive Rust stack. A leaf argument island has no
+/// realized value inputs and no nested wires, so each wire's `arguments`/`wires`
+/// are empty; deeper argument graphs are built by the same lazy seam once their
+/// rungs are reached.
+fn flat_wires(
+    cache: &LoweringCache,
     module: &Module,
     wire_lookup: &BTreeMap<ValueIslandId, &PartitionedValue>,
     wire_inputs: &[ValueIslandId],
     test_name: &str,
     source_revision: Option<&str>,
-) -> FlatWires<'a> {
-    let mut backing = FlatWires {
-        islands: Vec::with_capacity(wire_inputs.len()),
-        locations: Vec::with_capacity(wire_inputs.len()),
-        attributions: Vec::with_capacity(wire_inputs.len()),
-        functions: Vec::with_capacity(wire_inputs.len()),
-        demand_args: Vec::with_capacity(wire_inputs.len()),
-        preimages: Vec::with_capacity(wire_inputs.len()),
-        artifacts: Vec::with_capacity(wire_inputs.len()),
-    };
+) -> Vec<WireDemand> {
+    let mut wires = Vec::with_capacity(wire_inputs.len());
     for value in wire_inputs {
         let wire = wire_lookup
             .get(value)
@@ -205,33 +166,38 @@ fn flat_wires<'a>(
             wire.island.value_inputs.is_empty() && wire.island.wire_inputs.is_empty(),
             "argument island with nested inputs awaits the general wire seam",
         );
-        let artifact = cache
-            .lowered(&wire.island)
+        let lowered = cache
+            .lowered_owned(&wire.island)
             .expect("argument island was lowered before execution");
-        backing.islands.push(wire.island.id);
-        backing.locations.push(scoped_location(
+        let location = scoped_location(
             Location::for_test_value(test_name, &format!("wire-{}", value.stable_segment())),
             source_revision,
-        ));
-        backing.attributions.push(attribution_for(&wire.island));
-        let provenance = wire.wire.as_ref();
-        backing.functions.push(
-            provenance
-                .map(|provenance| provenance.function)
-                .unwrap_or(wire.island.function),
         );
-        backing.demand_args.push(provenance.and_then(|provenance| {
+        let attribution = Rc::new(attribution_for(&wire.island));
+        let provenance = wire.wire.as_ref();
+        let function = provenance
+            .map(|provenance| provenance.function)
+            .unwrap_or(wire.island.function);
+        let demand_arguments = provenance.and_then(|provenance| {
             provenance
                 .arguments
                 .as_ref()
                 .map(|arguments| arguments.iter().map(wire_arg_identity).collect())
-        }));
-        backing
-            .preimages
-            .push(module.invocation_preimage(wire.id.function, wire.id.node));
-        backing.artifacts.push(artifact);
+        });
+        let preimage = module.invocation_preimage(wire.id.function, wire.id.node);
+        wires.push(WireDemand {
+            island: wire.island.id,
+            location,
+            lowered,
+            attribution,
+            arguments: Vec::new(),
+            wires: Vec::new(),
+            function,
+            demand_arguments,
+            preimage,
+        });
     }
-    backing
+    wires
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1227,12 +1193,10 @@ fn evaluate_value_site(
     site: u32,
     chaos: ChaosPolicy,
 ) -> Result<CheckRun, RunError> {
-    // The island was lowered up front; re-lower to guarantee the cache entry,
-    // then hold every borrow immutably so the wire-demand tree can be built.
-    cache.get_or_lower(island)?;
-    let lowered = cache
-        .lowered(island)
-        .expect("value-check island is lowered");
+    // The island was lowered up front; take a retained artifact handle so the
+    // wire-demand tree can own its context and the cache borrow is released
+    // before it is read immutably to build the wires.
+    let lowered = cache.get_or_lower_owned(island)?;
     let attribution = attribution_for(island);
     let provenance = ProvenanceKey::site(site);
     let location = scoped_location(
@@ -1252,7 +1216,7 @@ fn evaluate_value_site(
         .collect::<Vec<_>>();
     // Each `AwaitWire` in this island forces its argument island lazily through
     // the memo path; an untaken control region never parks, so it never demands.
-    let wires_backing = flat_wires(
+    let wires = flat_wires(
         cache,
         context.module,
         context.wire_lookup,
@@ -1260,22 +1224,18 @@ fn evaluate_value_site(
         context.test_name,
         context.source_revision,
     );
-    let wires = wires_backing.demands();
+    let argument_identities = arguments
+        .iter()
+        .map(|argument| argument.identity.clone())
+        .collect();
     let evaluation: Evaluation = runtime.evaluate(
         island.id,
         &location,
         lowered,
         &attribution,
-        IslandInputs {
-            arguments: &arguments,
-            wires: &wires,
-        },
+        IslandInputs { arguments, wires },
         chaos,
     )?;
-    let argument_identities = arguments
-        .iter()
-        .map(|argument| argument.identity.clone())
-        .collect();
     Ok(CheckRun {
         provenance,
         identity: Some(evaluation.identity),
@@ -1311,8 +1271,7 @@ fn evaluate_snapshot_site(
     seen_names: &mut BTreeSet<String>,
     chaos: ChaosPolicy,
 ) -> Result<CheckRun, RunError> {
-    cache.get_or_lower(island)?;
-    let lowered = cache.lowered(island).expect("snapshot island is lowered");
+    let lowered = cache.get_or_lower_owned(island)?;
     let output_type = lowered.output_type.clone();
     let attribution = attribution_for(island);
     let provenance = ProvenanceKey::site(site);
@@ -1331,7 +1290,7 @@ fn evaluate_snapshot_site(
                 .expect("partitioned value input was published")
         })
         .collect::<Vec<_>>();
-    let wires_backing = flat_wires(
+    let wires = flat_wires(
         cache,
         context.module,
         context.wire_lookup,
@@ -1339,22 +1298,18 @@ fn evaluate_snapshot_site(
         context.test_name,
         context.source_revision,
     );
-    let wires = wires_backing.demands();
+    let argument_identities = arguments
+        .iter()
+        .map(|argument| argument.identity.clone())
+        .collect();
     let evaluation: Evaluation = runtime.evaluate(
         island.id,
         &location,
         lowered,
         &attribution,
-        IslandInputs {
-            arguments: &arguments,
-            wires: &wires,
-        },
+        IslandInputs { arguments, wires },
         chaos,
     )?;
-    let argument_identities = arguments
-        .iter()
-        .map(|argument| argument.identity.clone())
-        .collect();
     // If the value publication itself language-failed, there is nothing to
     // render; surface that as the check failure with its own attribution.
     if !evaluation.passed || evaluation.failure.is_some() {
@@ -1537,7 +1492,7 @@ fn run_lane(
                     )?
                 }
             } else {
-                let lowered = cache.get_or_lower(&value.island)?;
+                let lowered = cache.get_or_lower_owned(&value.island)?;
                 let attribution = attribution_for(&value.island);
                 runtime.evaluate(
                     value.island.id,
@@ -1548,8 +1503,8 @@ fn run_lane(
                     lowered,
                     &attribution,
                     IslandInputs {
-                        arguments: &arguments,
-                        wires: &[],
+                        arguments,
+                        wires: Vec::new(),
                     },
                     chaos,
                 )?

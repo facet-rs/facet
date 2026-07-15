@@ -350,7 +350,7 @@ pub struct LoweringCacheCounters {
 ///
 /// r[impl machine.lowering.cache]
 pub struct LoweringCache {
-    entries: BTreeMap<RecipeId, LoweringArtifact>,
+    entries: BTreeMap<RecipeId, Rc<LoweringArtifact>>,
     counters: LoweringCacheCounters,
     trace_mode: TraceMode,
     /// The typed lane every executable in this cache is compiled for. The
@@ -399,12 +399,39 @@ impl LoweringCache {
         let recipe = RecipeId::from_canonical_vir(&island.canonical_recipe_bytes());
         if self.entries.contains_key(&recipe) {
             self.counters.hits += 1;
-            return Ok(self.entries.get(&recipe).expect("entry was just observed"));
+            return Ok(self
+                .entries
+                .get(&recipe)
+                .expect("entry was just observed")
+                .as_ref());
         }
         self.counters.misses += 1;
-        let lowered = lower_island(island, recipe, self.trace_mode, self.lane)?;
+        let lowered = Rc::new(lower_island(island, recipe, self.trace_mode, self.lane)?);
         self.entries.insert(recipe, lowered);
-        Ok(self.entries.get(&recipe).expect("entry was just inserted"))
+        Ok(self
+            .entries
+            .get(&recipe)
+            .expect("entry was just inserted")
+            .as_ref())
+    }
+
+    /// Lower `island` if needed and return an owned, retainable handle to the
+    /// artifact. The handle is a cheap `Rc` clone that a scheduler can suspend
+    /// alongside a parked task off the drive stack, so the artifact metadata
+    /// (constants, value inputs, output shape) outlives the borrow of this cache.
+    pub fn get_or_lower_owned(
+        &mut self,
+        island: &Island,
+    ) -> Result<Rc<LoweringArtifact>, LoweringError> {
+        let recipe = RecipeId::from_canonical_vir(&island.canonical_recipe_bytes());
+        if let Some(entry) = self.entries.get(&recipe) {
+            self.counters.hits += 1;
+            return Ok(Rc::clone(entry));
+        }
+        self.counters.misses += 1;
+        let lowered = Rc::new(lower_island(island, recipe, self.trace_mode, self.lane)?);
+        self.entries.insert(recipe, Rc::clone(&lowered));
+        Ok(lowered)
     }
 
     /// The already-lowered artifact for `island`, without lowering it or counting
@@ -414,7 +441,16 @@ impl LoweringCache {
     #[must_use]
     pub fn lowered(&self, island: &Island) -> Option<&LoweringArtifact> {
         let recipe = RecipeId::from_canonical_vir(&island.canonical_recipe_bytes());
-        self.entries.get(&recipe)
+        self.entries.get(&recipe).map(|entry| entry.as_ref())
+    }
+
+    /// The already-lowered artifact for `island` as an owned retainable handle,
+    /// without lowering it or counting a hit. Returns `None` if the island was
+    /// never lowered.
+    #[must_use]
+    pub fn lowered_owned(&self, island: &Island) -> Option<Rc<LoweringArtifact>> {
+        let recipe = RecipeId::from_canonical_vir(&island.canonical_recipe_bytes());
+        self.entries.get(&recipe).map(Rc::clone)
     }
 
     #[must_use]
@@ -423,7 +459,9 @@ impl LoweringCache {
     }
 
     pub fn inspect(&self) -> impl Iterator<Item = (&RecipeId, &LoweringArtifact)> {
-        self.entries.iter()
+        self.entries
+            .iter()
+            .map(|(recipe, artifact)| (recipe, artifact.as_ref()))
     }
 }
 
