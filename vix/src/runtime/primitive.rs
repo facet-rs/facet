@@ -97,6 +97,44 @@ pub trait OriginAdapter: Send + Sync {
     ) -> Result<Vec<u8>, PrimitiveMachineError>;
 }
 
+/// The provenance coordinate an observation reads from: a capability referenced
+/// by identity (`machine.primitive.capabilities-by-identity`) plus the
+/// capability-relative coordinate string. Unlike a pinned fetch, no value
+/// identity is known before the read.
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ObserveCoordinate {
+    pub capability: ValueId,
+    pub coordinate: String,
+}
+
+/// A receipted observation: the identity a coordinate resolved to at execution
+/// time. FV-D1C, `machine.primitive.fetch-is-pinned`: an observation names its
+/// value only after the bytes arrive, and that identity is pinned into the
+/// receipt at execution time.
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct ObservedClaim {
+    pub coordinate: ObserveCoordinate,
+    pub observed: ValueId,
+}
+
+/// The append-only claim log for observation coordinates. Every observation
+/// appends a new head; prior heads are never overwritten or dropped, because an
+/// identity is an immutable fact even after a claim expires
+/// (`machine.persistence.four-lifetimes`). The value bytes themselves are
+/// self-verifying CAS entries stored through [`ValuePersistence`]; this seam
+/// records only the coordinate→identity claims.
+pub trait ClaimHistory: Send + Sync {
+    fn head(
+        &self,
+        coordinate: &ObserveCoordinate,
+    ) -> Result<Option<ObservedClaim>, PrimitiveMachineError>;
+    fn append(&self, claim: &ObservedClaim) -> Result<(), PrimitiveMachineError>;
+    fn history(
+        &self,
+        coordinate: &ObserveCoordinate,
+    ) -> Result<Vec<ObservedClaim>, PrimitiveMachineError>;
+}
+
 /// Runtime-installed services used by registered primitives. These are
 /// authorities, not semantic inputs: request values still carry every
 /// capability and coordinate that may affect admissibility or identity.
@@ -104,6 +142,7 @@ pub trait OriginAdapter: Send + Sync {
 pub struct PrimitiveServices {
     value_persistence: Option<Arc<dyn ValuePersistence>>,
     origin: Option<Arc<dyn OriginAdapter>>,
+    claim_history: Option<Arc<dyn ClaimHistory>>,
     fixture_store: Option<super::FixtureStore>,
 }
 
@@ -121,6 +160,12 @@ impl PrimitiveServices {
     }
 
     #[must_use]
+    pub fn with_claim_history(mut self, claims: Arc<dyn ClaimHistory>) -> Self {
+        self.claim_history = Some(claims);
+        self
+    }
+
+    #[must_use]
     pub fn with_fixture_store(mut self, fixture_store: super::FixtureStore) -> Self {
         self.fixture_store = Some(fixture_store);
         self
@@ -132,6 +177,10 @@ impl PrimitiveServices {
 
     pub(crate) fn origin(&self) -> Option<Arc<dyn OriginAdapter>> {
         self.origin.clone()
+    }
+
+    pub(crate) fn claim_history(&self) -> Option<Arc<dyn ClaimHistory>> {
+        self.claim_history.clone()
     }
 
     pub(crate) fn fixture_store(&self) -> Option<super::FixtureStore> {
@@ -305,6 +354,24 @@ pub trait EffectAuthority: Send + Sync {
             detail: "no origin adapter is installed for this effect snapshot".to_owned(),
         })
     }
+
+    fn claim_head(
+        &self,
+        _coordinate: &ObserveCoordinate,
+    ) -> Result<Option<ObservedClaim>, PrimitiveMachineError> {
+        Ok(None)
+    }
+
+    fn append_claim(&self, _claim: &ObservedClaim) -> Result<(), PrimitiveMachineError> {
+        Ok(())
+    }
+
+    fn claim_history(
+        &self,
+        _coordinate: &ObserveCoordinate,
+    ) -> Result<Vec<ObservedClaim>, PrimitiveMachineError> {
+        Ok(Vec::new())
+    }
 }
 
 #[derive(Default)]
@@ -315,6 +382,7 @@ pub struct StagedEffectAuthority {
     schema_types: BTreeMap<SchemaRef, Type>,
     persistence: Option<Arc<dyn ValuePersistence>>,
     origin: Option<Arc<dyn OriginAdapter>>,
+    claims: Option<Arc<dyn ClaimHistory>>,
 }
 
 impl StagedEffectAuthority {
@@ -341,6 +409,12 @@ impl StagedEffectAuthority {
     #[must_use]
     pub fn with_origin_adapter(mut self, origin: Arc<dyn OriginAdapter>) -> Self {
         self.origin = Some(origin);
+        self
+    }
+
+    #[must_use]
+    pub fn with_claim_history(mut self, claims: Arc<dyn ClaimHistory>) -> Self {
+        self.claims = Some(claims);
         self
     }
 
@@ -467,6 +541,30 @@ impl EffectAuthority for StagedEffectAuthority {
             })?
             .read(capability, coordinate)
     }
+
+    fn claim_head(
+        &self,
+        coordinate: &ObserveCoordinate,
+    ) -> Result<Option<ObservedClaim>, PrimitiveMachineError> {
+        self.claims
+            .as_ref()
+            .map_or(Ok(None), |claims| claims.head(coordinate))
+    }
+
+    fn append_claim(&self, claim: &ObservedClaim) -> Result<(), PrimitiveMachineError> {
+        self.claims
+            .as_ref()
+            .map_or(Ok(()), |claims| claims.append(claim))
+    }
+
+    fn claim_history(
+        &self,
+        coordinate: &ObserveCoordinate,
+    ) -> Result<Vec<ObservedClaim>, PrimitiveMachineError> {
+        self.claims
+            .as_ref()
+            .map_or(Ok(Vec::new()), |claims| claims.history(coordinate))
+    }
 }
 
 #[derive(Clone)]
@@ -579,6 +677,53 @@ impl EffectCtx {
                 observation: ReadObservation::Value(observed),
             });
         Ok(bytes)
+    }
+
+    /// Read an observation coordinate whose result identity is not known before
+    /// the read. The arriving bytes name themselves under `schema`, and that
+    /// observed identity is pinned into the receipt as an `Origin` read witness
+    /// (`machine.primitive.fetch-is-pinned`: an observation result is pinned into
+    /// its receipt at execution time). Returns the bytes and their observed
+    /// identity; unlike [`Self::origin_candidate`], no expected identity gates
+    /// the read.
+    pub fn observe_origin(
+        &self,
+        capability: &ValueId,
+        coordinate: &str,
+        schema: &SchemaRef,
+    ) -> Result<(Vec<u8>, ValueId), PrimitiveMachineError> {
+        let bytes = self.authority.origin_candidate(capability, coordinate)?;
+        let observed = FramedNode::leaf(schema.clone(), bytes.clone()).identity();
+        self.transaction
+            .lock()
+            .expect("effect transaction mutex poisoned")
+            .reads
+            .push(ReadWitness {
+                source: capability.clone(),
+                projection: ReadProjection::Origin {
+                    coordinate: coordinate.to_owned(),
+                },
+                observation: ReadObservation::Value(observed.clone()),
+            });
+        Ok((bytes, observed))
+    }
+
+    pub fn claim_head(
+        &self,
+        coordinate: &ObserveCoordinate,
+    ) -> Result<Option<ObservedClaim>, PrimitiveMachineError> {
+        self.authority.claim_head(coordinate)
+    }
+
+    pub fn append_claim(&self, claim: &ObservedClaim) -> Result<(), PrimitiveMachineError> {
+        self.authority.append_claim(claim)
+    }
+
+    pub fn claim_history(
+        &self,
+        coordinate: &ObserveCoordinate,
+    ) -> Result<Vec<ObservedClaim>, PrimitiveMachineError> {
+        self.authority.claim_history(coordinate)
     }
 
     pub fn observe(&self, observation: JournalObservation) {

@@ -34,9 +34,10 @@ use super::store::{
     StoreJournalLoadReport,
 };
 use super::{
-    DecodePrimitive, EffectCtx, PinnedFetchPrimitive, PrimitiveCompletion, PrimitiveDispatcher,
-    PrimitiveField, PrimitiveFieldValue, PrimitiveMachineError, PrimitiveRegistry, PrimitiveValue,
-    PrimitiveValueBody, StagedEffectAuthority, blob_id_type, origin_hint_type,
+    DecodePrimitive, EffectCtx, ObservePrimitive, PinnedFetchPrimitive, PrimitiveCompletion,
+    PrimitiveDispatcher, PrimitiveField, PrimitiveFieldValue, PrimitiveMachineError,
+    PrimitiveRegistry, PrimitiveValue, PrimitiveValueBody, StagedEffectAuthority, blob_id_type,
+    origin_hint_type,
 };
 use super::{MachineAttribution, MachineError, MachineOperation, RuntimeFault};
 
@@ -377,6 +378,9 @@ fn default_primitive_dispatcher() -> PrimitiveDispatcher {
     registry
         .register(Arc::new(PinnedFetchPrimitive::default()))
         .expect("the built-in pinned fetch primitive is registered once");
+    registry
+        .register(Arc::new(ObservePrimitive::default()))
+        .expect("the built-in observe primitive is registered once");
     PrimitiveDispatcher::new(Arc::new(registry))
 }
 
@@ -2452,6 +2456,51 @@ impl<S: EventSink> Runtime<S> {
                 )
                 .map(EffectTerm::Value)
             }
+            Op::RegistryCoordinate => {
+                let EffectTerm::Value(registry) = input(0, self)? else {
+                    return effect_fault("registry coordinate receiver was codata");
+                };
+                let EffectTerm::Value(name) = input(1, self)? else {
+                    return effect_fault("registry coordinate name was codata");
+                };
+                let name = String::from_utf8(name.resident)
+                    .map_err(|_| effect_machine_error("registry artifact name was not UTF-8"))?;
+                let manifest = self.fixture_store.registry_manifest().map_err(|_| {
+                    effect_machine_error("fixture registry manifest was unavailable")
+                })?;
+                reads.push(super::model::ReadWitness {
+                    source: registry.identity.clone(),
+                    projection: ReadProjection::RegistryManifest,
+                    observation: ReadObservation::Value(
+                        effect_leaf(&Type::String, manifest.clone().into_bytes()).identity,
+                    ),
+                });
+                let url = manifest
+                    .lines()
+                    .find_map(|line| {
+                        let mut fields = line.split_whitespace();
+                        let artifact = fields.next()?;
+                        let url = fields.next()?;
+                        (artifact == name).then(|| url.to_owned())
+                    })
+                    .ok_or_else(|| effect_machine_error("fixture registry artifact was absent"))?;
+                let capability =
+                    primitive_value_from_effect(&Type::Extern(ExternKind::Registry), &registry)?;
+                effect_value_from_primitive(
+                    &node.ty,
+                    PrimitiveValue {
+                        schema: node.ty.schema_ref(),
+                        body: PrimitiveValueBody::Product(vec![
+                            primitive_child_field(capability),
+                            primitive_child_field(PrimitiveValue::bytes(
+                                Type::String.schema_ref(),
+                                url.into_bytes(),
+                            )),
+                        ]),
+                    },
+                )
+                .map(EffectTerm::Value)
+            }
             Op::Fetch => {
                 let EffectTerm::Value(pinned) = input(0, self)? else {
                     return effect_fault("fetch URL was codata");
@@ -2673,6 +2722,9 @@ impl<S: EventSink> Runtime<S> {
         let mut authority = StagedEffectAuthority::new(authority_inputs).with_schema_types(catalog);
         if let Some(persistence) = self.primitive_services.value_persistence() {
             authority = authority.with_value_persistence(persistence);
+        }
+        if let Some(claims) = self.primitive_services.claim_history() {
+            authority = authority.with_claim_history(claims);
         }
         authority = authority.with_origin_adapter(
             self.primitive_services

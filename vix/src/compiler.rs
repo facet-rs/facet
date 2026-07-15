@@ -10,7 +10,10 @@ use taxon::{
 
 use crate::decode::{self, DecodeFormat, DecodedValue};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics, Label};
-use crate::runtime::{pinned_blob_ref_type, pinned_fetch_primitive_id, pinned_fetch_request_type};
+use crate::runtime::{
+    observe_primitive_id, observe_request_type, origin_hint_type, pinned_blob_ref_type,
+    pinned_fetch_primitive_id, pinned_fetch_request_type,
+};
 use crate::schema::{SchemaBatch, SchemaRef, SchemaSet};
 use crate::support::{Span, Spanned};
 use crate::surface::{SurfaceParser, ast};
@@ -2855,6 +2858,7 @@ enum PreludeMethod {
     TreeEntryText,
     BlobLen,
     RegistryUrl,
+    RegistryCoordinate,
 }
 
 #[derive(Clone, Copy)]
@@ -3099,6 +3103,12 @@ impl PreludeMethodRegistry {
                 name: "url",
                 arity: 1,
                 method: PreludeMethod::RegistryUrl,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Registry,
+                name: "coordinate",
+                arity: 1,
+                method: PreludeMethod::RegistryCoordinate,
             },
         ],
     };
@@ -4504,6 +4514,22 @@ fn lower_method_call(
                 ty,
             })
         }
+        PreludeMethod::RegistryCoordinate => {
+            let name = lower_value(nodes, bindings, context, &positional[0])?;
+            require_type(&name, &Type::String, expr_span(&positional[0]))?;
+            let ty = origin_hint_type();
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::EFFECT,
+                    vec![receiver.node, name.node],
+                    Op::RegistryCoordinate,
+                ),
+                ty,
+            })
+        }
         PreludeMethod::StreamFindMin | PreludeMethod::StreamFindMax => {
             let (_, value) = receiver
                 .ty
@@ -4733,7 +4759,7 @@ fn decode_format(name: &str) -> Option<DecodeFormat> {
 fn effect_intrinsic(name: &str) -> bool {
     matches!(
         name,
-        "fixture_tree" | "fixture_registry" | "fetch" | "untar"
+        "fixture_tree" | "fixture_registry" | "fetch" | "observe" | "untar"
     )
 }
 
@@ -4777,6 +4803,34 @@ fn lower_effect_intrinsic(
             ty,
         });
     }
+    if call.callee.value == "observe" {
+        check_arity(call, 1)?;
+        let origin = lower_value(nodes, bindings, context, &call.args.args[0])?;
+        require_type(&origin, &origin_hint_type(), expr_span(&call.args.args[0]))?;
+        let request_ty = observe_request_type();
+        let request = push_node(
+            nodes,
+            call.span,
+            request_ty,
+            EffectFacts::PURE,
+            vec![origin.node],
+            Op::Record,
+        );
+        let ty = Type::Extern(ExternKind::Blob);
+        return Ok(LoweredValue {
+            node: push_node(
+                nodes,
+                call.span,
+                ty.clone(),
+                EffectFacts::PURE,
+                vec![request],
+                Op::InvokePrimitive {
+                    primitive: observe_primitive_id(),
+                },
+            ),
+            ty,
+        });
+    }
     let (ty, op, inputs) = match call.callee.value.as_str() {
         "fixture_tree" => {
             check_arity(call, 1)?;
@@ -4797,6 +4851,7 @@ fn lower_effect_intrinsic(
             )
         }
         "fetch" => unreachable!("registered fetch returned above"),
+        "observe" => unreachable!("registered observe returned above"),
         "untar" => {
             check_arity(call, 1)?;
             let blob = lower_value(nodes, bindings, context, &call.args.args[0])?;

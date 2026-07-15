@@ -5989,6 +5989,7 @@ fn lower_node(
         | Op::TreeGlob
         | Op::FixtureRegistry
         | Op::RegistryUrl
+        | Op::RegistryCoordinate
         | Op::Fetch
         | Op::MiniSolve { .. }
         | Op::Untar

@@ -1352,6 +1352,11 @@ pub enum Op {
     /// `PinnedUrl`: provenance URL plus the REQUIRED vix ContentHash
     /// (`machine.primitive.fetch-is-pinned`).
     RegistryUrl,
+    /// Resolve an artifact name against the registry manifest into an
+    /// observation coordinate (`OriginHint`): a provenance URL with NO pinned
+    /// identity, because an observation names its value only after the bytes
+    /// arrive (`machine.primitive.fetch-is-pinned`, the `observe` counterpart).
+    RegistryCoordinate,
     /// Fetch a pinned Blob by content identity: resolve the store first, only
     /// then the (fixture) origin; verify the bytes against the pinned hash.
     ///
@@ -3241,6 +3246,7 @@ fn is_effect_root(node: &Node) -> bool {
             | Op::TreeEntryText
             | Op::FixtureRegistry
             | Op::RegistryUrl
+            | Op::RegistryCoordinate
             | Op::Fetch
             | Op::MiniSolve { .. }
             | Op::Untar
@@ -3761,6 +3767,7 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::TreeGlob => op.push(93),
         Op::FixtureRegistry => op.push(94),
         Op::RegistryUrl => op.push(95),
+        Op::RegistryCoordinate => op.push(102),
         Op::Fetch => op.push(96),
         Op::MiniSolve {
             function,

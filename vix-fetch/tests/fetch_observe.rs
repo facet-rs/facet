@@ -7,8 +7,9 @@ use std::thread::JoinHandle;
 use tempfile::TempDir;
 use vix::ratchet::{RunError, prepare_source};
 use vix::runtime::{
-    CanonicalBlobPersistence, FixtureStore, FramedNode, MachineCause, PrimitiveMachineError,
-    PrimitiveServices, RuntimeFault, ValueBodyCandidate, ValueId, ValuePersistence,
+    CanonicalBlobPersistence, ClaimHistory, FixtureStore, FramedNode, MachineCause,
+    ObserveCoordinate, ObservedClaim, PrimitiveMachineError, PrimitiveServices, RuntimeFault,
+    ValueBodyCandidate, ValueId, ValuePersistence,
 };
 use vix::vir::{ExternKind, Type};
 use vix_fetch::HttpBlobOriginAdapter;
@@ -522,6 +523,146 @@ fn pinned_fetch_rejects_corrupt_provider_then_admits_verified_origin() {
             .expect("corrupt persistence admission mutex poisoned"),
         [(identity.clone(), bytes.clone()), (identity, bytes),]
     );
+    for run in [&report.plain, &report.chaos] {
+        assert_eq!(run.counters.primitive_invocations, 1, "{run:#?}");
+        assert_eq!(run.counters.fetches_performed, 1, "{run:#?}");
+    }
+}
+
+#[derive(Default)]
+struct RecordingClaimHistory {
+    appended: Mutex<Vec<ObservedClaim>>,
+}
+
+impl RecordingClaimHistory {
+    fn appended(&self) -> Vec<ObservedClaim> {
+        self.appended
+            .lock()
+            .expect("claim history mutex poisoned")
+            .clone()
+    }
+}
+
+impl ClaimHistory for RecordingClaimHistory {
+    fn head(
+        &self,
+        coordinate: &ObserveCoordinate,
+    ) -> Result<Option<ObservedClaim>, PrimitiveMachineError> {
+        Ok(self
+            .appended
+            .lock()
+            .expect("claim history mutex poisoned")
+            .iter()
+            .rev()
+            .find(|claim| &claim.coordinate == coordinate)
+            .cloned())
+    }
+
+    fn append(&self, claim: &ObservedClaim) -> Result<(), PrimitiveMachineError> {
+        self.appended
+            .lock()
+            .expect("claim history mutex poisoned")
+            .push(claim.clone());
+        Ok(())
+    }
+
+    fn history(
+        &self,
+        coordinate: &ObserveCoordinate,
+    ) -> Result<Vec<ObservedClaim>, PrimitiveMachineError> {
+        Ok(self
+            .appended
+            .lock()
+            .expect("claim history mutex poisoned")
+            .iter()
+            .filter(|claim| &claim.coordinate == coordinate)
+            .cloned()
+            .collect())
+    }
+}
+
+#[derive(Default)]
+struct RecordingCasPersistence {
+    puts: Mutex<Vec<(ValueId, Vec<u8>)>>,
+}
+
+impl ValuePersistence for RecordingCasPersistence {
+    fn get(&self, _value: &ValueId) -> Result<Option<ValueBodyCandidate>, PrimitiveMachineError> {
+        Ok(None)
+    }
+
+    fn put(&self, value: &ValueId, bytes: &[u8]) -> Result<(), PrimitiveMachineError> {
+        self.puts
+            .lock()
+            .expect("cas persistence mutex poisoned")
+            .push((value.clone(), bytes.to_vec()));
+        Ok(())
+    }
+}
+
+const OBSERVE_ONCE: &str = r#"
+#[test]
+fn observe_records_the_coordinate_claim() -> Stream<Check> {
+    let blob = observe(fixture_registry().coordinate("case.crate"));
+    yield expect_eq(blob.len(), 4096);
+    yield fetched(1);
+}
+"#;
+
+#[test]
+fn observe_records_appends_and_persists_the_verified_observation() {
+    let bytes = archive_bytes();
+    let identity = blob_identity(&bytes);
+    let upstream = vix::fetch::sha256_hex(&bytes);
+    let server = BlobServer::start(bytes.clone());
+    let fixtures = TempDir::new().expect("create observe fixture root");
+    let claims = Arc::new(RecordingClaimHistory::default());
+    let persistence = Arc::new(RecordingCasPersistence::default());
+    let services = PrimitiveServices::default()
+        .with_fixture_store(fixture_store(
+            &fixtures,
+            &server.url(),
+            &identity,
+            &upstream,
+        ))
+        .with_value_persistence(persistence.clone())
+        .with_claim_history(claims.clone())
+        .with_origin_adapter(Arc::new(HttpBlobOriginAdapter));
+
+    let report = prepare_source(OBSERVE_ONCE)
+        .expect("prepare observe source")
+        .execute_with_primitive_services(services)
+        .expect("observe records a coordinate claim");
+
+    assert!(report.passed(), "observe report: {report:#?}");
+    // One observation per lane across two lanes: the origin is read to discover
+    // an identity not known before the read.
+    assert_eq!(server.requests(), 2);
+    assert_eq!(server.transfers(), 2);
+    assert_eq!(server.targets(), ["/blob", "/blob"]);
+
+    // Each observation appends a claim binding the coordinate to the identity it
+    // resolved to; the observed identity is the self-verifying identity of the
+    // arriving bytes (append-only claim log, one head per lane).
+    let appended = claims.appended();
+    assert_eq!(appended.len(), 2);
+    for claim in &appended {
+        assert_eq!(claim.observed, identity);
+        assert_eq!(claim.coordinate.coordinate, server.url());
+    }
+
+    // The verified observation body is persisted into the CAS under its
+    // self-verifying identity.
+    let persisted = persistence
+        .puts
+        .lock()
+        .expect("cas persistence mutex poisoned")
+        .clone();
+    assert_eq!(persisted.len(), 2);
+    for entry in &persisted {
+        assert_eq!(*entry, (identity.clone(), bytes.clone()));
+    }
+
     for run in [&report.plain, &report.chaos] {
         assert_eq!(run.counters.primitive_invocations, 1, "{run:#?}");
         assert_eq!(run.counters.fetches_performed, 1, "{run:#?}");
