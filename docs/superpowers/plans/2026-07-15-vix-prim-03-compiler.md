@@ -1,6 +1,6 @@
 # Vix Typed Primitives — Phase 03: Compiler Surface Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Make a registered primitive callable from vix source — `probe_version where { text: ... }` type-checks its named fields against the primitive's registered Request record and lowers to a new `Op::EffectRequest` node typed as the Response — with typed diagnostics for every mis-call, and zero lowering/scheduler wiring (phases 04–05).
 
@@ -41,7 +41,7 @@
   - `EffectKind::Effect` (new variant, appended after `Codata`).
   - `Op::EffectRequest { primitive: EffectId }` (new struct variant).
 
-- [ ] **Step 1: Write failing tests** in `vir.rs` `#[cfg(test)]` (add to the existing test module, or create one; `canonical_node` is private but in-module):
+- [x] **Step 1: Write failing tests** in `vir.rs` `#[cfg(test)]` (add to the existing test module, or create one; `canonical_node` is private but in-module):
 
 ```rust
 #[test]
@@ -86,8 +86,8 @@ fn effect_kind_effect_canonicalizes_distinctly() {
 }
 ```
 
-- [ ] **Step 2: Run to verify failure** — `nix shell nixpkgs#cargo-nextest --command cargo nextest run -p vix effect_request` → compile error (`EffectId`, `Op::EffectRequest`, `EffectKind::Effect` missing). Expected.
-- [ ] **Step 3: Implement.**
+- [x] **Step 2: Run to verify failure** — `nix shell nixpkgs#cargo-nextest --command cargo nextest run -p vix effect_request` → compile error (`EffectId`, `Op::EffectRequest`, `EffectKind::Effect` missing). Expected.
+- [x] **Step 3: Implement.**
 
 Add `EffectId` immediately above `EffectKind` (~`vir.rs:735`):
 
@@ -143,8 +143,8 @@ And add a new op arm in the `match &node.op` block (anywhere before the closing 
 
 The compiler may report other non-exhaustive `match`es on `Op`/`EffectKind`; per research the only exhaustive-without-wildcard sites are these two in `canonical_node`. If the build flags another, add a mirroring arm there (do NOT introduce a wildcard).
 
-- [ ] **Step 4: Run** `nix shell nixpkgs#cargo-nextest --command cargo nextest run -p vix` (full crate — the new variant must not break any existing `Op` match). Expected: PASS.
-- [ ] **Step 5: Commit** — `git add -A && git commit --no-verify -m "vix: VIR EffectId, EffectKind::Effect, Op::EffectRequest"`
+- [x] **Step 4: Run** `nix shell nixpkgs#cargo-nextest --command cargo nextest run -p vix` (full crate — the new variant must not break any existing `Op` match). Expected: PASS.
+- [x] **Step 5: Commit** — `git add -A && git commit --no-verify -m "vix: VIR EffectId, EffectKind::Effect, Op::EffectRequest"`
 
 ---
 
@@ -161,7 +161,7 @@ The compiler may report other non-exhaustive `match`es on `Op`/`EffectKind`; per
   - `pub struct PrimitiveSignature { pub effect: crate::vir::EffectId, pub request: crate::vir::Type, pub response: crate::vir::Type }` — `Clone, Debug`.
   - `Compiler::with_primitives(self, primitives: PrimitiveManifest) -> Self` (builder).
 
-- [ ] **Step 1: Write failing test** in `compiler.rs` `#[cfg(test)]`:
+- [x] **Step 1: Write failing test** in `compiler.rs` `#[cfg(test)]`:
 
 ```rust
 #[test]
@@ -173,8 +173,8 @@ fn range_still_compiles_with_a_primitive_manifest_present() {
 }
 ```
 
-- [ ] **Step 2: Run to verify failure** — `nix shell nixpkgs#cargo-nextest --command cargo nextest run -p vix range_still_compiles` → compile error (`PrimitiveManifest`/`with_primitives` missing). Expected. (If the exact `source` string does not type-check for reasons unrelated to primitives, simplify it against `vix/tests/ratchet/002-arithmetic.vix` — the assertion under test is only that an empty manifest changes nothing.)
-- [ ] **Step 3: Implement.**
+- [x] **Step 2: Run to verify failure** — `nix shell nixpkgs#cargo-nextest --command cargo nextest run -p vix range_still_compiles` → compile error (`PrimitiveManifest`/`with_primitives` missing). Expected. (If the exact `source` string does not type-check for reasons unrelated to primitives, simplify it against `vix/tests/ratchet/002-arithmetic.vix` — the assertion under test is only that an empty manifest changes nothing.)
+- [x] **Step 3: Implement.**
 
 Add the manifest types near the top of `compiler.rs` (after `Compilation`, ~`compiler.rs:48`):
 
@@ -275,8 +275,8 @@ impl Compiler {
 
 Any other caller of `lower_module` (e.g. in `#[cfg(test)]` blocks or `ratchet.rs`) must pass `&PrimitiveManifest::default()`. Grep `lower_module(` and fix each call site.
 
-- [ ] **Step 4: Run** `nix shell nixpkgs#cargo-nextest --command cargo nextest run -p vix` → PASS (no behavior change; every existing caller uses an empty manifest).
-- [ ] **Step 5: Commit** — `git commit --no-verify -am "vix: thread a PrimitiveManifest into the compiler"`
+- [x] **Step 4: Run** `nix shell nixpkgs#cargo-nextest --command cargo nextest run -p vix` → PASS (no behavior change; every existing caller uses an empty manifest).
+- [x] **Step 5: Commit** — `git commit --no-verify -am "vix: thread a PrimitiveManifest into the compiler"`
 
 ---
 
@@ -290,7 +290,7 @@ Any other caller of `lower_module` (e.g. in `#[cfg(test)]` blocks or `ratchet.rs
 - Consumes: `context.primitives` (Task 2), `PrimitiveSignature` (Task 2), `Op::EffectRequest`/`EffectId`/`EffectKind::Effect` (Task 1), existing `push_node`, `lower_value_expected`, `require_type`, `lookup_binding`, `field_diagnostic`, `unknown_name`, `Diagnostic::unsupported`, `ast::WhereCall`/`ast::WhereArgs`/`ast::NamedValue`, `crate::vir::{Op, Type, RecordField, RecordType, EffectFacts}`.
 - Produces: a where-call to a registered name lowers to `[Op::Record request] -> Op::EffectRequest { primitive }`, the result node typed as the Response `Type`.
 
-- [ ] **Step 1: Write failing tests** in `vix/tests/primitive_compiler.rs`:
+- [x] **Step 1: Write failing tests** in `vix/tests/primitive_compiler.rs`:
 
 ```rust
 use vix::compiler::{Compiler, PrimitiveManifest, PrimitiveSignature};
@@ -386,11 +386,11 @@ fn unregistered_name_is_an_unknown_name() {
 }
 ```
 
-- [ ] **Step 2: Run to verify failure** — `nix shell nixpkgs#cargo-nextest --command cargo nextest run -p vix --test primitive_compiler` → the registered-primitive tests FAIL (`lower_where_call` still rejects every non-`range` callee with `UnknownName`, so the happy-path and field-diagnostic tests fail). Expected.
+- [x] **Step 2: Run to verify failure** — `nix shell nixpkgs#cargo-nextest --command cargo nextest run -p vix --test primitive_compiler` → the registered-primitive tests FAIL (`lower_where_call` still rejects every non-`range` callee with `UnknownName`, so the happy-path and field-diagnostic tests fail). Expected.
 
   Note: if `program(...)`'s scaffolding (`-> Stream<Check>`, `expect_eq`, `.major` projection) does not type-check independently of the primitive, adjust it against `vix/tests/ratchet/001-harness.vix` and `vix/tests/solver_value_lane.rs` — the invariant to preserve is that the where-call is the only thing under test.
 
-- [ ] **Step 3: Implement.**
+- [x] **Step 3: Implement.**
 
 Extract the current `range` body into a helper (verbatim move of `compiler.rs:6886-6916`):
 
@@ -532,8 +532,8 @@ fn lower_where_call(
 
 (`.clone()` the signature to avoid holding a borrow of `context.primitives` across the `&mut nodes` calls.)
 
-- [ ] **Step 4: Run** `nix shell nixpkgs#cargo-nextest --command cargo nextest run -p vix --test primitive_compiler` → PASS, then the full `... run -p vix` → PASS (range and all existing behavior unchanged).
-- [ ] **Step 5: Commit** — `git add -A && git commit --no-verify -m "vix: registered primitives lower through generalized where-call"`
+- [x] **Step 4: Run** `nix shell nixpkgs#cargo-nextest --command cargo nextest run -p vix --test primitive_compiler` → PASS, then the full `... run -p vix` → PASS (range and all existing behavior unchanged).
+- [x] **Step 5: Commit** — `git add -A && git commit --no-verify -m "vix: registered primitives lower through generalized where-call"`
 
 ---
 
@@ -548,7 +548,7 @@ fn lower_where_call(
 - Consumes: `crate::vir::EffectId` (Task 1), `crate::compiler::{PrimitiveManifest, PrimitiveSignature}` (Task 2), `PrimitiveSet::descriptors()` (phase 02), `PrimitiveName`/`RESERVED_NAMES` (phase 02).
 - Produces: `PrimitiveId::effect_id`, `PrimitiveSet::compiler_manifest` — the real path from a registered `PrimitiveSet` to a compiler manifest.
 
-- [ ] **Step 1: Write failing tests** — append to `vix/tests/primitive_compiler.rs`:
+- [x] **Step 1: Write failing tests** — append to `vix/tests/primitive_compiler.rs`:
 
 ```rust
 use vix::runtime::primitive::{MemoPolicy, PrimitiveName, PrimitiveSet, RegistrationError};
@@ -599,8 +599,8 @@ fn a_primitive_cannot_take_a_reserved_builtin_name() {
 }
 ```
 
-- [ ] **Step 2: Run to verify failure** — `nix shell nixpkgs#cargo-nextest --command cargo nextest run -p vix --test primitive_compiler` → the e2e test fails (`compiler_manifest` missing). Expected.
-- [ ] **Step 3: Implement.**
+- [x] **Step 2: Run to verify failure** — `nix shell nixpkgs#cargo-nextest --command cargo nextest run -p vix --test primitive_compiler` → the e2e test fails (`compiler_manifest` missing). Expected.
+- [x] **Step 3: Implement.**
 
 In `descriptor.rs`, add to `impl PrimitiveId`:
 
@@ -643,17 +643,17 @@ In `register.rs`, add to `impl PrimitiveSet`:
 
 If `MemoPolicy`/`PrimitiveName`/`RegistrationError` are not already re-exported from `vix::runtime::primitive`, confirm `runtime/primitive/mod.rs` `pub use`s them (phase 02 re-exports `descriptor::*` and `register::*`, so they are). `facet` must be a dev-usable path in the integration test — add `use facet::Facet;` if the derive needs it, matching how other `vix/tests/*.rs` derive Facet.
 
-- [ ] **Step 4: Run** `nix shell nixpkgs#cargo-nextest --command cargo nextest run -p vix --test primitive_compiler` → PASS, then full `... run -p vix` → PASS.
-- [ ] **Step 5: Commit** — `git add -A && git commit --no-verify -m "vix: build the compiler manifest from a registered PrimitiveSet"`
+- [x] **Step 4: Run** `nix shell nixpkgs#cargo-nextest --command cargo nextest run -p vix --test primitive_compiler` → PASS, then full `... run -p vix` → PASS.
+- [x] **Step 5: Commit** — `git add -A && git commit --no-verify -m "vix: build the compiler manifest from a registered PrimitiveSet"`
 
 ---
 
 ### Task 5: Phase gate
 
-- [ ] Full suite: `nix shell nixpkgs#cargo-nextest --command cargo nextest run -p vix` → all green (nothing outside the new surface may regress; `range` and every existing lane unchanged).
-- [ ] Clippy: `nix shell nixpkgs#clippy nixpkgs#cargo-nextest --command cargo clippy -p vix --all-targets -- -D warnings` → clean.
-- [ ] Re-read the diff against the Global Constraints: `vir` still imports no `runtime`; `compiler` still imports no `runtime`; exactly one `Op::EffectRequest` / one `EffectKind::Effect` / one manifest lookup (no per-primitive arms); all call diagnostics reuse existing `DiagnosticCode` variants; no lowering/scheduler handling of `Op::EffectRequest` was added; `r[machine.primitive.*]` / `r[machine.ir.vix-level]` comments present on the new items.
-- [ ] Update this plan's checkboxes to `[x]`, append a short landing-notes section (deviations, as phase 02 did), commit, then stop — phase 04 (lowering: partition effect edges, `Island::effect_inputs`, `LoweringArtifact` effect bindings) plans against this landed state.
+- [x] Full suite: `nix shell nixpkgs#cargo-nextest --command cargo nextest run -p vix` → all green (nothing outside the new surface may regress; `range` and every existing lane unchanged).
+- [x] Clippy: `nix shell nixpkgs#clippy nixpkgs#cargo-nextest --command cargo clippy -p vix --all-targets -- -D warnings` → clean.
+- [x] Re-read the diff against the Global Constraints: `vir` still imports no `runtime`; `compiler` still imports no `runtime`; exactly one `Op::EffectRequest` / one `EffectKind::Effect` / one manifest lookup (no per-primitive arms); all call diagnostics reuse existing `DiagnosticCode` variants; no lowering/scheduler handling of `Op::EffectRequest` was added; `r[machine.primitive.*]` / `r[machine.ir.vix-level]` comments present on the new items.
+- [x] Update this plan's checkboxes to `[x]`, append a short landing-notes section (deviations, as phase 02 did), commit, then stop — phase 04 (lowering: partition effect edges, `Island::effect_inputs`, `LoweringArtifact` effect bindings) plans against this landed state.
 
 ## Self-review notes (already applied)
 
@@ -663,3 +663,30 @@ If `MemoPolicy`/`PrimitiveName`/`RegistrationError` are not already re-exported 
 - **Out of scope (phases 04–06):** VIR partitioning / `Island::effect_inputs` / lowering bindings (04); scheduler effect resolution, memo policy, receipts, events, failure generalization (05); first real primitive + corpus e2e + perf gate + docs (06). Phase 03 emits `Op::EffectRequest` and stops; lowering/scheduler reach it through existing wildcard arms.
 - **Type consistency:** `PrimitiveSignature { effect: EffectId, request: Type, response: Type }` is produced by `compiler_manifest` (Task 4) and consumed by `lower_where_call` (Task 3); `Op::EffectRequest { primitive: EffectId }` matches Task 1's definition and Task 3's construction; `effect_id()` returns the same `EffectId` the manifest carries.
 - **Known unknowns for the executor:** the exact minimal vix source that type-checks around a where-call (`program(...)` scaffolding) — validate against `tests/ratchet/001-harness.vix` and `tests/solver_value_lane.rs`; the precise set of other caller sites of `lower_module` needing an empty-manifest argument — grep before editing.
+## Implementation notes (phase 03 as landed)
+
+- **Blast radius correction (Task 1):** the plan's research missed that the main
+  VIR→weavy dispatch `lower_node` (`lowering.rs:5868`) is exhaustive with no
+  wildcard. Adding `Op::EffectRequest` forced a new arm there. It's a typed
+  not-yet-wired guard (`lowering_diagnostic`, mirroring the existing
+  `Op::PublishSite` arm), NOT effect-lowering logic — phase 04 replaces it. No
+  wildcard was introduced, per the plan's Task 1 escape hatch.
+- **`EffectId` vs `PrimitiveId`:** as planned, `Op::EffectRequest` carries a
+  `vir`-local `EffectId([u8; 32])`; `PrimitiveId::effect_id()` converts. `vir`
+  stays free of `runtime`; `compiler` stays free of `runtime` (takes a vir-only
+  `PrimitiveManifest`, built by `PrimitiveSet::compiler_manifest()` on the
+  runtime side).
+- **Synthetic `FunctionSignature` per primitive: not done** (as flagged in the
+  plan's self-review). Primitives dispatch through `WhereCall` → `lower_where_call`,
+  never the `FunctionSignature`/`lower_call` path; the manifest lookup there does
+  the whole job.
+- **No new `DiagnosticCode`:** reused `UnknownName`/`UnknownField`/`MissingField`/
+  `DuplicateField`/`TypeMismatch` via the existing `field_diagnostic`/`require_type`
+  factories.
+- **Compile-only phase:** the compiler emits `Op::EffectRequest`; lowering hits
+  the guard arm and the scheduler never sees `vir::Op` (it matches weavy ops).
+  Full suite stayed green throughout (516 tests at Task 3).
+- **PR 2462 note:** the whole `vix-prim-*` stack overlaps PR 2462 only on
+  `vix/Cargo.toml`. 2462 carries a divergent snark/grammar-derived vix
+  architecture on an unpushed branch; if it lands, the primitive work may need
+  re-seating on the new compiler surface. Coordination call, tracked separately.
