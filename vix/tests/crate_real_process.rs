@@ -2861,18 +2861,6 @@ fn facet_core_ladder_builds_facet_core_with_real_process_and_hashes_artifacts() 
         "facet-core-root-selected.txt",
         &selected_rendered,
     )?;
-    let diag_bs_deps = machine.demand_i64("facet_core_diag_build_script_deps", args.clone())?;
-    let diag_selected = machine.demand_i64("facet_core_diag_selected_ids", args.clone())?;
-    let diag_build_pkgs = machine.demand_i64("facet_core_diag_build_packages", args.clone())?;
-    write_tier_a_artifact(
-        "facet-core-diag-ids.txt",
-        &format!(
-            "build_script_deps={:?}\nselected_ids={:?}\nbuild_packages={:?}",
-            machine.render_result("facet_core_diag_build_script_deps", diag_bs_deps)?,
-            machine.render_result("facet_core_diag_selected_ids", diag_selected)?,
-            machine.render_result("facet_core_diag_build_packages", diag_build_pkgs)?,
-        ),
-    )?;
     let build_script_binary = match machine.demand_i64("facet_core_build_script_binary", args.clone()) {
         Ok(binary) => Some(binary),
         Err(err) => {

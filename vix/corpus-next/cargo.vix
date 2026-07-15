@@ -27,6 +27,7 @@ use crate_build::{
     build_script_rustc_cfgs,
     compile_rust_unit,
     default_rust_toolchain,
+    package_edition_from_source,
 };
 use rodin::{Index, Problem, SolveResult, root_candidate_count, root_version_count, solve, solve_selected_versions_text};
 
@@ -755,7 +756,7 @@ fn resolved_unit_spec(target: Target, graph: CargoResolvedGraph, unit: CargoBuil
             },
         },
         toolchain: default_rust_toolchain(),
-        edition_source: unit.edition_source,
+        edition: package_edition_from_source(unit.edition_source, unit.manifest),
         manifest: unit.manifest,
         source: unit.source,
         target: match build_script {
@@ -813,24 +814,28 @@ fn resolved_build_script_binary(target: Target, graph: CargoResolvedGraph, unit_
 fn resolved_build_script_run(target: Target, graph: CargoResolvedGraph, unit_id: Int, target_name: String) -> Tree {
     let unit = resolved_unit(graph, unit_id);
     let binary = resolved_build_script_binary(target, graph, unit_id);
+    build_script_run_exec(binary, unit.link, unit.manifest, unit.package_name, unit.version, target_name)
+}
+
+fn build_script_run_exec(binary: Tree, link: Path, manifest: Tree, package_name: String, version: String, target_name: String) -> Tree {
     let build_script = "build-script-runner";
-    let major = version_major(unit.version);
-    let minor = version_minor(unit.version);
-    let patch = version_patch(unit.version);
-    let pre = version_pre(unit.version);
+    let major = version_major(version);
+    let minor = version_minor(version);
+    let patch = version_patch(version);
+    let pre = version_pre(version);
     let arch = target_arch_env(target_name);
     let vendor = target_vendor_env(target_name);
     let os = target_os_env(target_name);
     let target_env = target_env_env(target_name);
     build_script! {
         --requires-toolchain=cc
-        --executable {binary / unit.link}
+        --executable {binary / link}
         --stdout {p"build.stdout"}
         --out-dir {p"out"}
         --env OUT_DIR={p"out"}
-        --env CARGO_MANIFEST_DIR={unit.manifest}
-        --env CARGO_PKG_NAME={unit.package_name}
-        --env CARGO_PKG_VERSION={unit.version}
+        --env CARGO_MANIFEST_DIR={manifest}
+        --env CARGO_PKG_NAME={package_name}
+        --env CARGO_PKG_VERSION={version}
         --env CARGO_PKG_VERSION_MAJOR={major}
         --env CARGO_PKG_VERSION_MINOR={minor}
         --env CARGO_PKG_VERSION_PATCH={patch}
@@ -1026,22 +1031,6 @@ pub fn facet_core_sparse_row_exists(sparse_jsonl: String, name: String, version:
         Some(_) => 1,
         None => 0,
     }
-}
-
-pub fn facet_core_diag_build_script_deps(workspace: Tree, sparse_jsonl: String, target_name: String) -> [Int] {
-    let state = facet_core_state(workspace, sparse_jsonl);
-    let package = state.package_ids.get("facet-core").unwrap();
-    resolved_unit(facet_core_resolved_graph(workspace, sparse_jsonl, target_name), build_script_unit_id(package)).deps
-}
-
-pub fn facet_core_diag_selected_ids(workspace: Tree, sparse_jsonl: String, target_name: String) -> [Int] {
-    let state = facet_core_state(workspace, sparse_jsonl);
-    let result = facet_core_result(workspace, state, target_name);
-    selected_package_ids(state, result)
-}
-
-pub fn facet_core_diag_build_packages(workspace: Tree, sparse_jsonl: String, target_name: String) -> [Int] {
-    facet_core_resolved_graph(workspace, sparse_jsonl, target_name).build_packages
 }
 
 pub fn facet_core_build_script_binary(workspace: Tree, sparse_jsonl: String, target_name: String) -> Tree {

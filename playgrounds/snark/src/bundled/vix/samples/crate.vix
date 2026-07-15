@@ -34,7 +34,7 @@ fn workspace_package_doc(source: Tree) -> Doc {
     toml(source / p"Cargo.toml").get("workspace").unwrap().get("package").unwrap()
 }
 
-fn package_edition_from_source(source: Tree, manifest: Tree) -> String {
+pub fn package_edition_from_source(source: Tree, manifest: Tree) -> String {
     match package_doc(manifest).get("edition") {
         Some(edition) => match edition.is_map() {
             true => doc_string(workspace_package_doc(source), "edition"),
@@ -389,7 +389,7 @@ pub struct RustUnit {
     crate_name: String,
     crate_type: CargoUnitKind,
     toolchain: RustToolchainSpec,
-    edition_source: Tree,
+    edition: String,
     manifest: Tree,
     source: Path,
     target: Target,
@@ -741,7 +741,7 @@ fn tree_union_tuple(popped: (Tree, [Tree]), out: Tree) -> Tree {
 
 pub fn compile_rust_unit(unit: RustUnit) -> Tree {
     let rustc = Rustc::acquire(unit.target);
-    let edition = package_edition_from_source(unit.edition_source, unit.manifest);
+    let edition = unit.edition;
     let profile_args = rustc_profile_args_opt(unit.profile);
     let cfg_args = rustc_cfg_args(unit.cfgs, []);
     let dep_args = rustc_dependency_args(unit.deps_trees, []);
