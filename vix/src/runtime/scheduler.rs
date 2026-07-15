@@ -695,7 +695,7 @@ impl<S: EventSink> Runtime<S> {
         validation_reads.push(read.clone());
         let interned = self
             .store
-            .intern_realized(semantic_schema_id(&Type::String), &value.resident);
+            .intern_realized(semantic_schema_ref(&Type::String), &value.resident);
         self.store
             .attach_frozen(interned.handle, FrozenValue::Opaque(value.resident.clone()));
         self.observe_interned(&interned);
@@ -1444,7 +1444,7 @@ impl<S: EventSink> Runtime<S> {
                     let bytes = &word.to_le_bytes()[..width.min(8)];
                     let interned = self
                         .store
-                        .intern_realized(semantic_schema_id(&lowered.output_type), bytes);
+                        .intern_realized(semantic_schema_ref(&lowered.output_type), bytes);
                     self.store
                         .attach_frozen(interned.handle, FrozenValue::Inline(bytes.to_vec()));
                     self.observe_interned(&interned);
@@ -3121,7 +3121,7 @@ impl<S: EventSink> Runtime<S> {
         request: DocumentHostRequest,
         reads: &mut Vec<ReadWitness>,
     ) -> Result<(), String> {
-        if plan.target_schema != semantic_schema_id(&plan.target) {
+        if plan.target_schema != semantic_schema_ref(&plan.target) {
             return Err(
                 "document host target schema does not match its declared target type".to_owned(),
             );
@@ -3490,10 +3490,10 @@ impl<S: EventSink> Runtime<S> {
     ///
     /// r[impl machine.primitive.capabilities-by-identity]
     pub fn publish_capability(&mut self, ty: &Type, program: &str) -> Evaluation {
-        let string_schema = semantic_schema_id(&Type::String);
+        let string_schema = semantic_schema_ref(&Type::String);
         let program_leaf = FramedNode::leaf(string_schema.clone(), program.as_bytes().to_vec());
         let node = FramedNode::Variant {
-            schema: semantic_schema_id(ty),
+            schema: semantic_schema_ref(ty),
             tag: 0,
             fields: vec![FramedField {
                 schema: string_schema,
@@ -3843,8 +3843,8 @@ impl<S: EventSink> Runtime<S> {
                 (outcome_ty.clone(), lines_ty)
             }
         };
-        let int_schema = semantic_schema_id(&Type::Int);
-        let string_schema = semantic_schema_id(&Type::String);
+        let int_schema = semantic_schema_ref(&Type::Int);
+        let string_schema = semantic_schema_ref(&Type::String);
         let stream_value = |bytes: &[u8]| -> (FramedNode, FrozenValue) {
             let text = String::from_utf8_lossy(bytes);
             let mut rows = Vec::new();
@@ -3860,14 +3860,14 @@ impl<S: EventSink> Runtime<S> {
                 ));
             }
             let map = FramedNode::OrderedMap {
-                schema: semantic_schema_id(&lines_ty),
+                schema: semantic_schema_ref(&lines_ty),
                 rows,
             };
             let record = FramedNode::Variant {
-                schema: semantic_schema_id(&stream_ty),
+                schema: semantic_schema_ref(&stream_ty),
                 tag: 0,
                 fields: vec![FramedField {
-                    schema: semantic_schema_id(&lines_ty),
+                    schema: semantic_schema_ref(&lines_ty),
                     value: FramedValue::Optional(Some(map.identity())),
                 }],
             };
@@ -3879,15 +3879,15 @@ impl<S: EventSink> Runtime<S> {
         let (stdout_node, stdout_frozen) = stream_value(stdout);
         let (stderr_node, stderr_frozen) = stream_value(stderr);
         let outcome = FramedNode::Variant {
-            schema: semantic_schema_id(outcome_ty),
+            schema: semantic_schema_ref(outcome_ty),
             tag: 0,
             fields: vec![
                 FramedField {
-                    schema: semantic_schema_id(&stream_ty),
+                    schema: semantic_schema_ref(&stream_ty),
                     value: FramedValue::Optional(Some(stdout_node.identity())),
                 },
                 FramedField {
-                    schema: semantic_schema_id(&stream_ty),
+                    schema: semantic_schema_ref(&stream_ty),
                     value: FramedValue::Optional(Some(stderr_node.identity())),
                 },
             ],
@@ -3969,10 +3969,10 @@ impl<S: EventSink> Runtime<S> {
                     operand.identity.schema,
                     operand.identity.content.hex()
                 );
-                let string_schema = semantic_schema_id(&Type::String);
+                let string_schema = semantic_schema_ref(&Type::String);
                 let leaf = FramedNode::leaf(string_schema.clone(), rendered.as_bytes().to_vec());
                 let marker = FramedNode::Variant {
-                    schema: semantic_schema_id(&err_ty),
+                    schema: semantic_schema_ref(&err_ty),
                     tag: 0,
                     fields: vec![FramedField {
                         schema: string_schema,
@@ -3989,10 +3989,10 @@ impl<S: EventSink> Runtime<S> {
             }
         };
         let node = FramedNode::Variant {
-            schema: semantic_schema_id(result_type),
+            schema: semantic_schema_ref(result_type),
             tag,
             fields: vec![FramedField {
-                schema: semantic_schema_id(&field_schema_ty),
+                schema: semantic_schema_ref(&field_schema_ty),
                 value: field,
             }],
         };
@@ -4470,7 +4470,7 @@ fn realize_ordered<'task>(
         }
         Ok((
             FramedNode::OrderedMap {
-                schema: semantic_schema_id(collection_ty),
+                schema: semantic_schema_ref(collection_ty),
                 rows: identities,
             },
             FrozenValue::OrderedMap(frozen),
@@ -4491,7 +4491,7 @@ fn realize_ordered<'task>(
         }
         Ok((
             FramedNode::OrderedSet {
-                schema: semantic_schema_id(collection_ty),
+                schema: semantic_schema_ref(collection_ty),
                 elements: identities,
             },
             FrozenValue::OrderedSet(frozen),
@@ -4511,7 +4511,7 @@ fn realize_structural_node<'task>(
         Type::Bool | Type::Int | Type::Check => {
             let bytes = value.scalar_word()?.to_le_bytes().to_vec();
             Ok((
-                FramedNode::leaf(semantic_schema_id(ty), bytes.clone()),
+                FramedNode::leaf(semantic_schema_ref(ty), bytes.clone()),
                 FrozenValue::Inline(bytes),
                 8,
             ))
@@ -4532,7 +4532,7 @@ fn realize_structural_node<'task>(
                     ))
                 }
                 ResolvedTaskValue::TaskMolten(bytes) => Ok((
-                    FramedNode::leaf(semantic_schema_id(ty), bytes.to_vec()),
+                    FramedNode::leaf(semantic_schema_ref(ty), bytes.to_vec()),
                     FrozenValue::Opaque(bytes.to_vec()),
                     bytes.len(),
                 )),
@@ -4643,7 +4643,7 @@ fn realize_structural_fields<'task, 'ty>(
         let identity = node.identity();
         framed_bytes = framed_bytes.saturating_add(bytes);
         fields.push(FramedField {
-            schema: semantic_schema_id(field_ty),
+            schema: semantic_schema_ref(field_ty),
             value: if matches!(field_ty, Type::Bool | Type::Int | Type::Check) {
                 let FrozenValue::Inline(bytes) = &frozen_field else {
                     return Err(invalid_realized_result(context.lowered, 0));
@@ -4657,7 +4657,7 @@ fn realize_structural_fields<'task, 'ty>(
     }
     Ok((
         FramedNode::Variant {
-            schema: semantic_schema_id(ty),
+            schema: semantic_schema_ref(ty),
             tag: u64::from(tag),
             fields,
         },
@@ -4682,7 +4682,7 @@ fn realize_resolved<'task>(
     match resolved {
         ResolvedTaskValue::TaskMolten(bytes) => match ty {
             Type::String | Type::Path => Ok((
-                FramedNode::leaf(semantic_schema_id(ty), bytes.to_vec()),
+                FramedNode::leaf(semantic_schema_ref(ty), bytes.to_vec()),
                 bytes.to_vec(),
                 bytes.len(),
             )),
@@ -4759,8 +4759,8 @@ fn realize_array<'task>(
     if tag != 1 || width == 0 || HEADER + data_len != bytes.len() {
         return Err(invalid_realized_result(lowered, bytes.len()));
     }
-    let array_schema = semantic_schema_id(&Type::Array(Box::new(element.clone())));
-    let element_schema = semantic_schema_id(element);
+    let array_schema = semantic_schema_ref(&Type::Array(Box::new(element.clone())));
+    let element_schema = semantic_schema_ref(element);
     if !type_contains_handle(element) {
         let expected_width = element
             .word_width()
@@ -5046,12 +5046,12 @@ fn read_payload_word(bytes: &[u8], offset: usize) -> Option<i64> {
     ))
 }
 
-fn semantic_schema_id(ty: &Type) -> SchemaRef {
+fn semantic_schema_ref(ty: &Type) -> SchemaRef {
     ty.schema_ref()
 }
 
 fn effect_schema(ty: &Type) -> SchemaRef {
-    semantic_schema_id(ty)
+    semantic_schema_ref(ty)
 }
 
 fn effect_leaf(ty: &Type, resident: Vec<u8>) -> EffectValue {
@@ -5423,7 +5423,7 @@ fn materialize_decoded_value(
             *cursor += 1;
         }
         (Type::String, DecodedValue::Str(value)) => {
-            let allocated = store.intern_realized(semantic_schema_id(ty), value.as_bytes());
+            let allocated = store.intern_realized(semantic_schema_ref(ty), value.as_bytes());
             let handle = store
                 .weavy_handle(allocated.handle)
                 .ok_or_else(|| "document host allocated a missing String handle".to_owned())?;
