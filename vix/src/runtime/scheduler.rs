@@ -2703,9 +2703,8 @@ impl<S: EventSink> Runtime<S> {
             }
         };
         let value = authority
-            .staged_value(&identity)
-            .or_else(|| (identity == request_id).then_some(request_value))
-            .ok_or_else(|| format!("primitive result {identity:?} was not staged"))?;
+            .admitted_value(&identity)
+            .ok_or_else(|| format!("primitive result {identity:?} was not admitted"))?;
         if value.schema != plan.response.schema_ref() {
             return Err(format!(
                 "primitive result schema {} disagrees with response schema {}",

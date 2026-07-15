@@ -354,6 +354,12 @@ impl StagedEffectAuthority {
     }
 
     #[must_use]
+    pub fn admitted_value(&self, identity: &ValueId) -> Option<PrimitiveValue> {
+        self.staged_value(identity)
+            .or_else(|| self.inputs.get(identity).cloned())
+    }
+
+    #[must_use]
     pub fn events(&self) -> Vec<PrimitiveEvent> {
         self.events
             .lock()
