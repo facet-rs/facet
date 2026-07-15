@@ -40,6 +40,11 @@ pub struct Counters {
     pub framed_bytes: u64,
     pub peak_molten_bytes: u64,
     pub peak_molten_nodes: u64,
+    /// The peak number of tasks simultaneously parked in the scheduler's
+    /// off-stack frame map during a run. A non-zero peak witnesses that a
+    /// wire-parked frame was retained in Runtime scheduler state — not on the
+    /// recursive Rust stack — while its wire's argument demand ran.
+    pub peak_parked_frames: u64,
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]

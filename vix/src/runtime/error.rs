@@ -77,6 +77,12 @@ pub enum RuntimeFault {
     ReentrantDemand {
         key: DemandKey,
     },
+    /// The scheduler's runnable/parked loop went quiescent — no runnable task
+    /// remains — while a submitted root demand is still unresolved. A stuck
+    /// waiter graph is a machine invariant violation, never a language failure.
+    QuiescentUnresolvedDemand {
+        key: DemandKey,
+    },
     MissingFrameAttribution {
         function: FnId,
     },

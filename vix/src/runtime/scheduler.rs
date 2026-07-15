@@ -305,6 +305,62 @@ pub struct WireDemand {
     pub preimage: String,
 }
 
+/// One scheduler-owned runnable/parked task: the owned suspension context plus
+/// the retained Weavy executable task. The scheduler moves this in and out of
+/// its runnable stack and parked map (`take-run-put`) instead of holding a task
+/// on the recursive Rust stack, so a wire-parked frame lives in scheduler state
+/// off the drive stack and resumes to the same identity.
+///
+/// r[impl machine.scheduler.no-shadow-scheduler]
+/// r[impl machine.scheduler.tickets-outlive-tasks]
+struct TaskContext {
+    task_id: TaskId,
+    demand_key: DemandKey,
+    demand_preimage: DemandPreimage,
+    lowered: Rc<LoweringArtifact>,
+    location: Location,
+    attribution: Rc<LoweringAttribution>,
+    arguments: Vec<Evaluation>,
+    wires: Vec<WireDemand>,
+    /// Root-to-self demand keys (excluding this task's own key). A wire that
+    /// forces a `Running`/`Queued` ancestor is a re-entrant demand fault; a
+    /// `Running`/`Queued` non-ancestor joins its in-flight completion.
+    ancestry: Vec<DemandKey>,
+    task: weavy::exec::ExecTask,
+    ready: Vec<bool>,
+    awaited: Vec<i64>,
+    primitive_reads: Vec<ReadWitness>,
+    value_memory_overrides: Vec<(Handle, Vec<u8>)>,
+}
+
+/// One parent task suspended on a wire, waiting for the wire's demand to
+/// complete so its awaited input slot can be filled and the frame resumed.
+struct WireWaiter {
+    task_id: TaskId,
+    wire_index: usize,
+}
+
+/// The outcome of driving a runnable task one `take-run-put` segment.
+enum DriveOutcome {
+    /// The task returned control to the scheduler at an `AwaitWire` on this
+    /// input index, its frame retained as owned suspended state.
+    Parked(u32),
+    /// The task ran to `Done`; its realized (or language-failed) result is
+    /// published to waiters. Boxed so the common `Parked` step stays small.
+    Completed(Box<Evaluation>),
+}
+
+/// The outcome of submitting a demand (a root evaluation or a forced wire).
+enum SubmitOutcome {
+    /// Resolved without a task: a memo hit or an argument-failure cascade.
+    Ready(Evaluation),
+    /// A fresh task was spawned and pushed runnable under this demand key.
+    Spawned(DemandKey),
+    /// The demand is already in flight (a `Running`/`Queued` non-ancestor); the
+    /// caller joins its completion rather than starting a second backend run.
+    Joined(DemandKey),
+}
+
 /// One realized invocation recorded for described-wire observation: which user
 /// function was demanded, with which canonical argument identities (when the
 /// invocation is literal-selectable), and under which canonical structural
@@ -375,6 +431,14 @@ pub struct Runtime<S> {
     /// The scheduler-owned typed completion mailbox for registered primitives.
     completion_inbox: CompletionInbox,
     authoritative_rerun_audit: bool,
+    /// Transient scheduler state for the runnable/parked task loop. A runnable
+    /// task is one ready to drive; a parked task is suspended on an unresolved
+    /// wire; `wire_waiters` maps a wire's demand key to the parents waiting on
+    /// it. These maps are private, non-persistent, and asserted empty once a
+    /// root resolves — none is ever copied into `PersistentRuntimeState`.
+    runnable: Vec<TaskContext>,
+    parked: BTreeMap<TaskId, TaskContext>,
+    wire_waiters: BTreeMap<DemandKey, Vec<WireWaiter>>,
 }
 
 #[derive(Clone, Default)]
@@ -527,6 +591,9 @@ impl<S: EventSink> Runtime<S> {
             primitive_services: super::PrimitiveServices::default(),
             completion_inbox: CompletionInbox::default(),
             authoritative_rerun_audit: false,
+            runnable: Vec::new(),
+            parked: BTreeMap::new(),
+            wire_waiters: BTreeMap::new(),
         }
     }
 
@@ -557,6 +624,9 @@ impl<S: EventSink> Runtime<S> {
             primitive_services: super::PrimitiveServices::default(),
             completion_inbox: CompletionInbox::default(),
             authoritative_rerun_audit: false,
+            runnable: Vec::new(),
+            parked: BTreeMap::new(),
+            wire_waiters: BTreeMap::new(),
         }
     }
 
@@ -597,6 +667,9 @@ impl<S: EventSink> Runtime<S> {
                 primitive_services: super::PrimitiveServices::default(),
                 completion_inbox: CompletionInbox::default(),
                 authoritative_rerun_audit: false,
+                runnable: Vec::new(),
+                parked: BTreeMap::new(),
+                wire_waiters: BTreeMap::new(),
             },
             PersistentRuntimeJournalLoadReport {
                 store: store_report,
@@ -970,6 +1043,16 @@ impl<S: EventSink> Runtime<S> {
         Some(i64::from_le_bytes(word))
     }
 
+    /// Evaluate one island demand to its realized result. This is a thin
+    /// single-root wrapper over the scheduler-owned runnable/parked loop: it
+    /// submits the root demand, then drives runnable tasks with `take-run-put`
+    /// until the root resolves. No island evaluation happens on the recursive
+    /// Rust stack — a wire-parked frame lives in scheduler state and resumes
+    /// from a demand waiter.
+    ///
+    /// r[impl machine.scheduler.passive-no-loop]
+    /// r[impl machine.scheduler.no-shadow-scheduler]
+    /// r[impl machine.scheduler.completion-resumes-direct]
     pub fn evaluate(
         &mut self,
         island: IslandId,
@@ -980,95 +1063,229 @@ impl<S: EventSink> Runtime<S> {
         chaos: ChaosPolicy,
     ) -> Result<Evaluation, Box<MachineError>> {
         let IslandInputs { arguments, wires } = inputs;
-        let invocation = DemandExecution::new(
-            lowered.as_ref(),
-            arguments
+        let attribution = Rc::new(attribution.clone());
+        let outcome = self.submit_demand(
+            island,
+            location.clone(),
+            lowered,
+            attribution,
+            arguments,
+            wires,
+            chaos,
+            Vec::new(),
+        )?;
+        let evaluation = match outcome {
+            SubmitOutcome::Ready(evaluation) => evaluation,
+            SubmitOutcome::Spawned(root) | SubmitOutcome::Joined(root) => {
+                self.run_until_root(root)?
+            }
+        };
+        // Successful teardown: a resolved root leaves no runnable task, no
+        // parked frame, and no waiter. These transient scheduler maps are never
+        // extracted into PersistentRuntimeState.
+        debug_assert!(
+            self.runnable.is_empty(),
+            "runnable tasks survived a resolved root"
+        );
+        debug_assert!(
+            self.parked.is_empty(),
+            "parked tasks survived a resolved root"
+        );
+        debug_assert!(
+            self.wire_waiters.is_empty(),
+            "wire waiters survived a resolved root"
+        );
+        Ok(evaluation)
+    }
+
+    /// Whether a demand is already in flight (queued to run or running) and so
+    /// may be joined rather than started a second time.
+    fn demand_in_flight(&self, key: DemandKey) -> bool {
+        self.demands.get(&key).is_some_and(|record| {
+            matches!(record.state, DemandState::Running | DemandState::Queued)
+        })
+    }
+
+    /// Submit a demand into the scheduler: resolve it from memo, join an
+    /// in-flight demand, or spawn a fresh runnable task. Returns without driving.
+    ///
+    /// `ancestry` is the root-to-parent demand chain of the submitting task
+    /// (empty for the root). A wire that forces a `Running`/`Queued` ancestor is
+    /// a re-entrant demand fault; a `Running`/`Queued` non-ancestor joins its
+    /// in-flight completion instead of starting a second backend run.
+    #[allow(clippy::too_many_arguments)]
+    fn submit_demand(
+        &mut self,
+        island: IslandId,
+        location: Location,
+        lowered: Rc<LoweringArtifact>,
+        attribution: Rc<LoweringAttribution>,
+        arguments: Vec<Evaluation>,
+        wires: Vec<WireDemand>,
+        chaos: ChaosPolicy,
+        ancestry: Vec<DemandKey>,
+    ) -> Result<SubmitOutcome, Box<MachineError>> {
+        let demand_preimage = DemandPreimage {
+            closure: lowered.recipe,
+            arguments: arguments
                 .iter()
                 .map(|argument| argument.identity.clone())
                 .collect(),
-        );
-        let lowered = &invocation;
-        self.emit(EventKind::Demanded {
-            key: lowered.demand_key,
-        });
+        };
+        let demand_key = DemandKey::from_preimage(&demand_preimage);
+        self.emit(EventKind::Demanded { key: demand_key });
 
+        // Phase A resolves the demand without a live task where it can:
+        // a memo hit, an in-flight join, a re-entrant fault, or a failed
+        // argument. Only a genuine miss falls through to spawn a task. The
+        // borrowed `DemandExecution` lives only for this scope so the owned
+        // artifact handle is free to move into the spawned task afterward.
+        {
+            let invocation =
+                DemandExecution::new(lowered.as_ref(), demand_preimage.arguments.clone());
+            if let Some(evaluation) = self.try_memo_hit(
+                &location,
+                demand_key,
+                &demand_preimage,
+                &invocation,
+                attribution.as_ref(),
+            )? {
+                return Ok(SubmitOutcome::Ready(evaluation));
+            }
+
+            // A wire that forces a demand already in flight is either a cyclic
+            // re-entrant demand (an ancestor) — a typed fault — or a concurrent
+            // non-ancestor the caller joins.
+            if self.demand_in_flight(demand_key) {
+                if ancestry.contains(&demand_key) {
+                    return Err(Box::new(MachineError::runtime(
+                        MachineOperation::Drive,
+                        RuntimeFault::ReentrantDemand { key: demand_key },
+                        self.output_attribution(lowered.as_ref(), attribution.as_ref()),
+                        Some(demand_key),
+                    )));
+                }
+                return Ok(SubmitOutcome::Joined(demand_key));
+            }
+
+            self.counters.memo_misses += 1;
+            self.emit(EventKind::Memo {
+                location: location.id,
+                verdict: MemoVerdict::Miss,
+                verified: 0,
+            });
+            self.demands.insert(
+                demand_key,
+                DemandRecord {
+                    key: demand_key,
+                    state: DemandState::Queued,
+                    result: None,
+                },
+            );
+            self.emit(EventKind::DemandTransition {
+                key: demand_key,
+                from: DemandState::Absent,
+                to: DemandState::Queued,
+            });
+
+            if let Some(argument) = arguments.iter().find(|argument| argument.failure.is_some()) {
+                let failure = argument.failure.clone().expect("selected failed argument");
+                self.memo.insert(
+                    location.id,
+                    MemoEntry {
+                        location: location.clone(),
+                        key: demand_key,
+                        preimage: demand_preimage.clone(),
+                        result: argument.handle,
+                        receipt: None,
+                        current_receipt: false,
+                    },
+                );
+                if let Some(demand) = self.demands.get_mut(&demand_key) {
+                    demand.result = Some(argument.handle);
+                }
+                self.transition_demand(demand_key, DemandState::Failed)?;
+                return Ok(SubmitOutcome::Ready(Evaluation {
+                    handle: argument.handle,
+                    identity: argument.identity.clone(),
+                    passed: false,
+                    memo: MemoVerdict::Miss,
+                    failure: Some(failure),
+                    failure_context: self
+                        .output_attribution(lowered.as_ref(), attribution.as_ref())
+                        .map(|source| FailureContext {
+                            function: source.function,
+                            node: source.node,
+                            span: source.span,
+                            demand_chain: vec![demand_key],
+                        }),
+                }));
+            }
+
+            if lowered.value_inputs.len() != arguments.len() {
+                return Err(Box::new(MachineError::runtime(
+                    MachineOperation::EntryBinding,
+                    RuntimeFault::ValueInputCardinality {
+                        expected: lowered.value_inputs.len(),
+                        actual: arguments.len(),
+                    },
+                    None,
+                    Some(demand_key),
+                )));
+            }
+        }
+
+        self.spawn_context(
+            island,
+            location,
+            lowered,
+            attribution,
+            arguments,
+            wires,
+            chaos,
+            ancestry,
+            demand_key,
+            demand_preimage,
+        )?;
+        Ok(SubmitOutcome::Spawned(demand_key))
+    }
+
+    /// Resolve a demand from the value memo without running a task. Returns the
+    /// realized [`Evaluation`] on an exact, semantic, or projection hit; `None`
+    /// on a miss. Emits the same `Memo` event and updates the same counters as
+    /// the historical inline memo fast paths.
+    fn try_memo_hit(
+        &mut self,
+        location: &Location,
+        demand_key: DemandKey,
+        demand_preimage: &DemandPreimage,
+        lowered: &DemandExecution<'_>,
+        attribution: &LoweringAttribution,
+    ) -> Result<Option<Evaluation>, Box<MachineError>> {
         if let Some(entry) = self.memo.get(&location.id)
             && entry.location == *location
-            && entry.key == lowered.demand_key
-            && entry.preimage == lowered.demand_preimage
+            && entry.key == demand_key
+            && entry.preimage == *demand_preimage
             && self.exact_memo_replayable(entry)
         {
             let handle = entry.result;
-            let failure = self
-                .store
-                .entry(handle)
-                .and_then(StoreEntry::failure)
-                .cloned();
-            let identity = self
-                .store
-                .entry(handle)
-                .ok_or_else(|| {
-                    MachineError::runtime(
-                        MachineOperation::MemoRead,
-                        RuntimeFault::MissingMemoStoreHandle,
-                        None,
-                        None,
-                    )
-                })?
-                .identity
-                .clone();
-            let passed = failure.is_none()
-                && self
-                    .store
-                    .entry(handle)
-                    .and_then(StoreEntry::resident_bytes)
-                    .is_some_and(|bytes| bytes == [1]);
+            let evaluation =
+                self.memo_evaluation(handle, MemoVerdict::Exact, lowered, attribution)?;
             self.counters.memo_hits_exact += 1;
             self.emit(EventKind::Memo {
                 location: location.id,
                 verdict: MemoVerdict::Exact,
                 verified: 0,
             });
-            return Ok(Evaluation {
-                handle,
-                identity,
-                passed,
-                memo: MemoVerdict::Exact,
-                failure_context: failure
-                    .as_ref()
-                    .and_then(|failure| failure_context(failure, lowered, attribution)),
-                failure,
-            });
+            return Ok(Some(evaluation));
         }
         if let Some(entry) = self
-            .suffix_memo_candidate(location, lowered.demand_key, &lowered.demand_preimage)
+            .suffix_memo_candidate(location, demand_key, demand_preimage)
             .cloned()
         {
             let handle = entry.result;
-            let failure = self
-                .store
-                .entry(handle)
-                .and_then(StoreEntry::failure)
-                .cloned();
-            let identity = self
-                .store
-                .entry(handle)
-                .ok_or_else(|| {
-                    MachineError::runtime(
-                        MachineOperation::MemoRead,
-                        RuntimeFault::MissingMemoStoreHandle,
-                        None,
-                        None,
-                    )
-                })?
-                .identity
-                .clone();
-            let passed = failure.is_none()
-                && self
-                    .store
-                    .entry(handle)
-                    .and_then(StoreEntry::resident_bytes)
-                    .is_some_and(|bytes| bytes == [1]);
+            let evaluation =
+                self.memo_evaluation(handle, MemoVerdict::Semantic, lowered, attribution)?;
             self.counters.memo_hits_semantic += 1;
             self.emit(EventKind::Memo {
                 location: location.id,
@@ -1078,16 +1295,7 @@ impl<S: EventSink> Runtime<S> {
                     .as_ref()
                     .map_or(0, |receipt| receipt.reads.len() as u32),
             });
-            return Ok(Evaluation {
-                handle,
-                identity,
-                passed,
-                memo: MemoVerdict::Semantic,
-                failure_context: failure
-                    .as_ref()
-                    .and_then(|failure| failure_context(failure, lowered, attribution)),
-                failure,
-            });
+            return Ok(Some(evaluation));
         }
         if let Some(entry) = self.memo.get(&location.id).cloned()
             && entry.location == *location
@@ -1097,30 +1305,8 @@ impl<S: EventSink> Runtime<S> {
                 .is_some_and(|receipt| self.reverify_receipt(receipt))
         {
             let handle = entry.result;
-            let failure = self
-                .store
-                .entry(handle)
-                .and_then(StoreEntry::failure)
-                .cloned();
-            let identity = self
-                .store
-                .entry(handle)
-                .ok_or_else(|| {
-                    MachineError::runtime(
-                        MachineOperation::MemoRead,
-                        RuntimeFault::MissingMemoStoreHandle,
-                        None,
-                        None,
-                    )
-                })?
-                .identity
-                .clone();
-            let passed = failure.is_none()
-                && self
-                    .store
-                    .entry(handle)
-                    .and_then(StoreEntry::resident_bytes)
-                    .is_some_and(|bytes| bytes == [1]);
+            let evaluation =
+                self.memo_evaluation(handle, MemoVerdict::Projection, lowered, attribution)?;
             self.counters.memo_hits_projection += 1;
             self.emit(EventKind::Memo {
                 location: location.id,
@@ -1130,115 +1316,89 @@ impl<S: EventSink> Runtime<S> {
                     .as_ref()
                     .map_or(0, |receipt| receipt.reads.len() as u32),
             });
-            return Ok(Evaluation {
-                handle,
-                identity,
-                passed,
-                memo: MemoVerdict::Projection,
-                failure_context: failure
-                    .as_ref()
-                    .and_then(|failure| failure_context(failure, lowered, attribution)),
-                failure,
-            });
+            return Ok(Some(evaluation));
         }
+        Ok(None)
+    }
 
-        // A wire that forces a demand already Running on the stack is a cyclic
-        // demand. The demand state machine detects it here — before the record is
-        // re-queued — as a typed fault, so a re-entrant wire never recurses
-        // forever.
-        if self
-            .demands
-            .get(&lowered.demand_key)
-            .is_some_and(|record| record.state == DemandState::Running)
-        {
-            return Err(Box::new(MachineError::runtime(
-                MachineOperation::Drive,
-                RuntimeFault::ReentrantDemand {
-                    key: lowered.demand_key,
-                },
-                self.output_attribution(lowered.artifact, attribution),
-                Some(lowered.demand_key),
-            )));
-        }
+    /// Build the [`Evaluation`] a memo hit publishes from its stored result
+    /// handle: its identity, pass/fail verdict, and any recorded failure with
+    /// rebuilt source context.
+    fn memo_evaluation(
+        &self,
+        handle: Handle,
+        verdict: MemoVerdict,
+        lowered: &DemandExecution<'_>,
+        attribution: &LoweringAttribution,
+    ) -> Result<Evaluation, Box<MachineError>> {
+        let failure = self
+            .store
+            .entry(handle)
+            .and_then(StoreEntry::failure)
+            .cloned();
+        let identity = self
+            .store
+            .entry(handle)
+            .ok_or_else(|| {
+                MachineError::runtime(
+                    MachineOperation::MemoRead,
+                    RuntimeFault::MissingMemoStoreHandle,
+                    None,
+                    None,
+                )
+            })?
+            .identity
+            .clone();
+        let passed = failure.is_none()
+            && self
+                .store
+                .entry(handle)
+                .and_then(StoreEntry::resident_bytes)
+                .is_some_and(|bytes| bytes == [1]);
+        Ok(Evaluation {
+            handle,
+            identity,
+            passed,
+            memo: verdict,
+            failure_context: failure
+                .as_ref()
+                .and_then(|failure| failure_context(failure, lowered, attribution)),
+            failure,
+        })
+    }
 
-        self.counters.memo_misses += 1;
-        self.emit(EventKind::Memo {
-            location: location.id,
-            verdict: MemoVerdict::Miss,
-            verified: 0,
-        });
-        self.demands.insert(
-            lowered.demand_key,
-            DemandRecord {
-                key: lowered.demand_key,
-                state: DemandState::Queued,
-                result: None,
-            },
-        );
-        self.emit(EventKind::DemandTransition {
-            key: lowered.demand_key,
-            from: DemandState::Absent,
-            to: DemandState::Queued,
-        });
-
-        if let Some(argument) = arguments.iter().find(|argument| argument.failure.is_some()) {
-            let failure = argument.failure.clone().expect("selected failed argument");
-            self.memo.insert(
-                location.id,
-                MemoEntry {
-                    location: location.clone(),
-                    key: lowered.demand_key,
-                    preimage: lowered.demand_preimage.clone(),
-                    result: argument.handle,
-                    receipt: None,
-                    current_receipt: false,
-                },
-            );
-            if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
-                demand.result = Some(argument.handle);
-            }
-            self.transition_demand(lowered.demand_key, DemandState::Failed)?;
-            return Ok(Evaluation {
-                handle: argument.handle,
-                identity: argument.identity.clone(),
-                passed: false,
-                memo: MemoVerdict::Miss,
-                failure: Some(failure),
-                failure_context: self.output_attribution(lowered.artifact, attribution).map(
-                    |source| FailureContext {
-                        function: source.function,
-                        node: source.node,
-                        span: source.span,
-                        demand_chain: vec![lowered.demand_key],
-                    },
-                ),
-            });
-        }
-
-        if lowered.value_inputs.len() != arguments.len() {
-            return Err(Box::new(MachineError::runtime(
-                MachineOperation::EntryBinding,
-                RuntimeFault::ValueInputCardinality {
-                    expected: lowered.value_inputs.len(),
-                    actual: arguments.len(),
-                },
-                None,
-                Some(lowered.demand_key),
-            )));
-        }
-
-        let constants = self.materialize_constants(lowered.artifact);
+    /// Spawn a fresh runnable task for a missed demand: materialize its
+    /// constants, honour the chaos discard, spawn and bind the Weavy task, and
+    /// push the owned [`TaskContext`] onto the runnable stack. Never drives.
+    #[allow(clippy::too_many_arguments)]
+    fn spawn_context(
+        &mut self,
+        island: IslandId,
+        location: Location,
+        lowered: Rc<LoweringArtifact>,
+        attribution: Rc<LoweringAttribution>,
+        arguments: Vec<Evaluation>,
+        wires: Vec<WireDemand>,
+        chaos: ChaosPolicy,
+        ancestry: Vec<DemandKey>,
+        demand_key: DemandKey,
+        demand_preimage: DemandPreimage,
+    ) -> Result<(), Box<MachineError>> {
+        let invocation = DemandExecution::new(lowered.as_ref(), demand_preimage.arguments.clone());
+        let lowered_ex = &invocation;
+        let attribution_ref = attribution.as_ref();
+        let constants = self.materialize_constants(lowered_ex.artifact);
         let mut kill_armed = chaos.kill_first_running_task;
-        loop {
+        let (task_id, mut task) = loop {
             self.counters.scheduler_requests += 1;
-            let task_id = self.spawn_task(lowered.demand_key);
+            let task_id = self.spawn_task(demand_key);
             if matches!(
-                lowered.output_type,
+                lowered_ex.output_type,
                 Type::Array(_) | Type::Map { .. } | Type::Set(_) | Type::Enum(_)
             ) {
                 self.counters.value_island_spawns += 1;
             }
-            self.transition_demand(lowered.demand_key, DemandState::Running)?;
+            self.transition_demand(demand_key, DemandState::Running)?;
             self.transition_task(task_id, TaskState::Running)?;
             self.emit(EventKind::IslandEntered {
                 task: task_id,
@@ -1253,559 +1413,671 @@ impl<S: EventSink> Runtime<S> {
                 kill_armed = false;
                 self.counters.task_discards += 1;
                 self.transition_task(task_id, TaskState::Discarded)?;
-                self.transition_demand(lowered.demand_key, DemandState::Queued)?;
+                self.transition_demand(demand_key, DemandState::Queued)?;
                 continue;
             }
 
-            let mut task = match lowered.executable_rc().spawn(FnId(0)) {
+            let task = match lowered_ex.executable_rc().spawn(FnId(0)) {
                 Ok(task) => task,
                 Err(fault) => {
-                    let error =
-                        self.task_fault(MachineOperation::Spawn, fault, lowered, attribution, None);
-                    return Err(Box::new(self.terminate_machine_fault(
-                        task_id,
-                        lowered.demand_key,
-                        error,
-                    )));
-                }
-            };
-            let lane_facts = execution_facts(lowered.executable().lane_facts());
-            match lane_facts.selected {
-                ExecutionLaneFact::Interpreter => self.counters.interpreter_task_spawns += 1,
-                ExecutionLaneFact::Native => self.counters.native_task_spawns += 1,
-            }
-            self.emit(EventKind::ExecutionLane {
-                task: task_id,
-                facts: lane_facts,
-            });
-            for (constant, handle) in lowered.constants.iter().zip(constants) {
-                let handle = match self.store.weavy_handle(handle) {
-                    Some(handle) => handle,
-                    None => {
-                        let error = MachineError::runtime(
-                            MachineOperation::EntryBinding,
-                            RuntimeFault::MissingConstantStoreHandle,
-                            self.constant_attribution(constant.node, attribution),
-                            Some(lowered.demand_key),
-                        );
-                        return Err(Box::new(self.terminate_machine_fault(
-                            task_id,
-                            lowered.demand_key,
-                            error,
-                        )));
-                    }
-                };
-                if let Err(fault) =
-                    task.write_entry_store_handle(constant.root.entry, constant.root.schema, handle)
-                {
                     let error = self.task_fault(
-                        MachineOperation::EntryBinding,
+                        MachineOperation::Spawn,
                         fault,
-                        lowered,
-                        attribution,
-                        self.constant_attribution(constant.node, attribution),
-                    );
-                    return Err(Box::new(self.terminate_machine_fault(
-                        task_id,
-                        lowered.demand_key,
-                        error,
-                    )));
-                }
-            }
-            for (binding, argument) in lowered.value_inputs.iter().zip(&arguments) {
-                let frozen = self
-                    .store
-                    .entry(argument.handle)
-                    .and_then(StoreEntry::frozen)
-                    .map(|frozen| frozen_to_weavy(frozen, &binding.ty, binding, &self.store))
-                    .transpose()
-                    .map_err(|()| {
-                        Box::new(MachineError::runtime(
-                            MachineOperation::EntryBinding,
-                            RuntimeFault::ValueInputSchemaMismatch,
-                            None,
-                            Some(lowered.demand_key),
-                        ))
-                    })?;
-                let result = if let Some(frozen) = &frozen {
-                    task.write_entry_frozen(binding.entry, frozen)
-                } else {
-                    if binding.store_schema != argument.identity.schema {
-                        let error = MachineError::runtime(
-                            MachineOperation::EntryBinding,
-                            RuntimeFault::ValueInputSchemaMismatch,
-                            None,
-                            Some(lowered.demand_key),
-                        );
-                        return Err(Box::new(self.terminate_machine_fault(
-                            task_id,
-                            lowered.demand_key,
-                            error,
-                        )));
-                    }
-                    let Some(handle) = self.store.weavy_handle(argument.handle) else {
-                        let error = MachineError::runtime(
-                            MachineOperation::EntryBinding,
-                            RuntimeFault::MissingValueInputStoreHandle,
-                            None,
-                            Some(lowered.demand_key),
-                        );
-                        return Err(Box::new(self.terminate_machine_fault(
-                            task_id,
-                            lowered.demand_key,
-                            error,
-                        )));
-                    };
-                    task.write_entry_store_handle(
-                        binding.entry,
-                        binding.schema.ok_or_else(|| {
-                            Box::new(MachineError::runtime(
-                                MachineOperation::EntryBinding,
-                                RuntimeFault::ValueInputSchemaMismatch,
-                                None,
-                                Some(lowered.demand_key),
-                            ))
-                        })?,
-                        handle,
-                    )
-                };
-                if let Err(fault) = result {
-                    let error = self.task_fault(
-                        MachineOperation::EntryBinding,
-                        fault,
-                        lowered,
-                        attribution,
+                        lowered_ex,
+                        attribution_ref,
                         None,
                     );
-                    return Err(Box::new(self.terminate_machine_fault(
-                        task_id,
-                        lowered.demand_key,
-                        error,
-                    )));
+                    return Err(Box::new(
+                        self.terminate_machine_fault(task_id, demand_key, error),
+                    ));
                 }
+            };
+            break (task_id, task);
+        };
+        let lane_facts = execution_facts(lowered_ex.executable().lane_facts());
+        match lane_facts.selected {
+            ExecutionLaneFact::Interpreter => self.counters.interpreter_task_spawns += 1,
+            ExecutionLaneFact::Native => self.counters.native_task_spawns += 1,
+        }
+        self.emit(EventKind::ExecutionLane {
+            task: task_id,
+            facts: lane_facts,
+        });
+        for (constant, handle) in lowered_ex.constants.iter().zip(constants) {
+            let handle = match self.store.weavy_handle(handle) {
+                Some(handle) => handle,
+                None => {
+                    let error = MachineError::runtime(
+                        MachineOperation::EntryBinding,
+                        RuntimeFault::MissingConstantStoreHandle,
+                        self.constant_attribution(constant.node, attribution_ref),
+                        Some(demand_key),
+                    );
+                    return Err(Box::new(
+                        self.terminate_machine_fault(task_id, demand_key, error),
+                    ));
+                }
+            };
+            if let Err(fault) =
+                task.write_entry_store_handle(constant.root.entry, constant.root.schema, handle)
+            {
+                let error = self.task_fault(
+                    MachineOperation::EntryBinding,
+                    fault,
+                    lowered_ex,
+                    attribution_ref,
+                    self.constant_attribution(constant.node, attribution_ref),
+                );
+                return Err(Box::new(
+                    self.terminate_machine_fault(task_id, demand_key, error),
+                ));
             }
-            let mut value_memory_overrides = Vec::new();
-            for (binding, argument) in lowered.value_inputs.iter().zip(&arguments) {
-                let Some(element_schema) = binding.payload_element_schema else {
-                    continue;
-                };
-                let resident = self
-                    .store
-                    .entry(argument.handle)
-                    .and_then(StoreEntry::resident_bytes)
-                    .ok_or_else(|| {
-                        Box::new(MachineError::runtime(
-                            MachineOperation::EntryBinding,
-                            RuntimeFault::MissingValueInputStoreHandle,
-                            None,
-                            Some(lowered.demand_key),
-                        ))
-                    })?;
-                let mut abi_view = resident.to_vec();
-                let schema_bytes = abi_view.get_mut(8..16).ok_or_else(|| {
+        }
+        for (binding, argument) in lowered_ex.value_inputs.iter().zip(&arguments) {
+            let frozen = self
+                .store
+                .entry(argument.handle)
+                .and_then(StoreEntry::frozen)
+                .map(|frozen| frozen_to_weavy(frozen, &binding.ty, binding, &self.store))
+                .transpose()
+                .map_err(|()| {
                     Box::new(MachineError::runtime(
                         MachineOperation::EntryBinding,
                         RuntimeFault::ValueInputSchemaMismatch,
                         None,
-                        Some(lowered.demand_key),
+                        Some(demand_key),
                     ))
                 })?;
-                schema_bytes.copy_from_slice(&i64::from(element_schema.0).to_le_bytes());
-                value_memory_overrides.push((argument.handle, abi_view));
+            let result = if let Some(frozen) = &frozen {
+                task.write_entry_frozen(binding.entry, frozen)
+            } else {
+                if binding.store_schema != argument.identity.schema {
+                    let error = MachineError::runtime(
+                        MachineOperation::EntryBinding,
+                        RuntimeFault::ValueInputSchemaMismatch,
+                        None,
+                        Some(demand_key),
+                    );
+                    return Err(Box::new(
+                        self.terminate_machine_fault(task_id, demand_key, error),
+                    ));
+                }
+                let Some(handle) = self.store.weavy_handle(argument.handle) else {
+                    let error = MachineError::runtime(
+                        MachineOperation::EntryBinding,
+                        RuntimeFault::MissingValueInputStoreHandle,
+                        None,
+                        Some(demand_key),
+                    );
+                    return Err(Box::new(
+                        self.terminate_machine_fault(task_id, demand_key, error),
+                    ));
+                };
+                task.write_entry_store_handle(
+                    binding.entry,
+                    binding.schema.ok_or_else(|| {
+                        Box::new(MachineError::runtime(
+                            MachineOperation::EntryBinding,
+                            RuntimeFault::ValueInputSchemaMismatch,
+                            None,
+                            Some(demand_key),
+                        ))
+                    })?,
+                    handle,
+                )
+            };
+            if let Err(fault) = result {
+                let error = self.task_fault(
+                    MachineOperation::EntryBinding,
+                    fault,
+                    lowered_ex,
+                    attribution_ref,
+                    None,
+                );
+                return Err(Box::new(
+                    self.terminate_machine_fault(task_id, demand_key, error),
+                ));
             }
-            // Demand wires start unresolved. The task drives until it parks on a
-            // wire it actually consumes; only then does the scheduler evaluate
-            // that wire's canonical argument demand through the memo path and
-            // resume the SAME task. A wire the task never parks on — an untaken
-            // branch's argument — is never evaluated, entered, or failed.
-            let mut ready = vec![false; wires.len()];
-            let mut awaited = vec![0i64; wires.len()];
-            let mut primitive_reads = Vec::new();
-            loop {
-                let mut primitive_host = PrimitiveHostQueue::default();
-                let step = {
-                    let mut call_primitive = |frame: &mut [u8]| primitive_host.call(frame);
-                    let mut hosts: [HostFn<'_>; 1] = [&mut call_primitive];
-                    match self.store.with_value_memory_overrides(
-                        &value_memory_overrides,
-                        |value_memories| {
-                            task.drive_hosted_with_value_memories(
-                                &mut ready,
-                                &awaited,
+        }
+        let mut value_memory_overrides = Vec::new();
+        for (binding, argument) in lowered_ex.value_inputs.iter().zip(&arguments) {
+            let Some(element_schema) = binding.payload_element_schema else {
+                continue;
+            };
+            let resident = self
+                .store
+                .entry(argument.handle)
+                .and_then(StoreEntry::resident_bytes)
+                .ok_or_else(|| {
+                    Box::new(MachineError::runtime(
+                        MachineOperation::EntryBinding,
+                        RuntimeFault::MissingValueInputStoreHandle,
+                        None,
+                        Some(demand_key),
+                    ))
+                })?;
+            let mut abi_view = resident.to_vec();
+            let schema_bytes = abi_view.get_mut(8..16).ok_or_else(|| {
+                Box::new(MachineError::runtime(
+                    MachineOperation::EntryBinding,
+                    RuntimeFault::ValueInputSchemaMismatch,
+                    None,
+                    Some(demand_key),
+                ))
+            })?;
+            schema_bytes.copy_from_slice(&i64::from(element_schema.0).to_le_bytes());
+            value_memory_overrides.push((argument.handle, abi_view));
+        }
+        let ready = vec![false; wires.len()];
+        let awaited = vec![0i64; wires.len()];
+        drop(invocation);
+        self.runnable.push(TaskContext {
+            task_id,
+            demand_key,
+            demand_preimage,
+            lowered,
+            location,
+            attribution,
+            arguments,
+            wires,
+            ancestry,
+            task,
+            ready,
+            awaited,
+            primitive_reads: Vec::new(),
+            value_memory_overrides,
+        });
+        Ok(())
+    }
+
+    /// Drive the entire runnable/parked graph until the root demand resolves.
+    /// Each iteration takes one runnable task, drives it one segment, and puts
+    /// it back parked or publishes its completion. A quiescent loop that leaves
+    /// the root unresolved is a typed machine fault.
+    ///
+    /// r[impl machine.scheduler.block-on-event]
+    /// r[impl machine.scheduler.completion-resumes-direct]
+    fn run_until_root(&mut self, root: DemandKey) -> Result<Evaluation, Box<MachineError>> {
+        let mut results: BTreeMap<DemandKey, Evaluation> = BTreeMap::new();
+        while let Some(mut ctx) = self.runnable.pop() {
+            match self.drive_context(&mut ctx)? {
+                DriveOutcome::Completed(evaluation) => {
+                    self.publish(&mut results, ctx.demand_key, *evaluation)?;
+                }
+                DriveOutcome::Parked(input) => {
+                    self.handle_park(ctx, input, &mut results)?;
+                }
+            }
+        }
+        results.remove(&root).ok_or_else(|| {
+            Box::new(MachineError::runtime(
+                MachineOperation::Drive,
+                RuntimeFault::QuiescentUnresolvedDemand { key: root },
+                None,
+                Some(root),
+            ))
+        })
+    }
+
+    /// Publish a demand's completion: record its result and resume every parent
+    /// parked on it, filling the awaited slot and returning the parent to the
+    /// runnable stack (or cascading a failure).
+    fn publish(
+        &mut self,
+        results: &mut BTreeMap<DemandKey, Evaluation>,
+        demand: DemandKey,
+        evaluation: Evaluation,
+    ) -> Result<(), Box<MachineError>> {
+        results.insert(demand, evaluation.clone());
+        let waiters = self.wire_waiters.remove(&demand).unwrap_or_default();
+        for waiter in waiters {
+            let parent = self
+                .parked
+                .remove(&waiter.task_id)
+                .expect("a wire waiter names a parked task");
+            self.resume_parent(results, parent, waiter.wire_index, evaluation.clone())?;
+        }
+        Ok(())
+    }
+
+    /// Resume a parent suspended on wire `wire_index` with the wire's resolved
+    /// result. Records the realized wire demand on a computed miss, propagates a
+    /// language failure to the parent demand (omitting `transition_task`, as the
+    /// historical wire-failure cascade did), or fills the awaited slot and
+    /// returns the parent to the runnable stack.
+    fn resume_parent(
+        &mut self,
+        results: &mut BTreeMap<DemandKey, Evaluation>,
+        mut parent: TaskContext,
+        wire_index: usize,
+        resolved: Evaluation,
+    ) -> Result<(), Box<MachineError>> {
+        // A wire that actually computed (a memo miss that ran) records one
+        // realized demand for its described invocation; a memoized re-force is a
+        // hit and records nothing, so structurally equal forces observe a single
+        // realization.
+        if resolved.memo == MemoVerdict::Miss {
+            let wire = &parent.wires[wire_index];
+            self.record_wire_demand(
+                wire.function,
+                wire.demand_arguments.clone(),
+                wire.preimage.clone(),
+            );
+        }
+        if let Some(failure) = resolved.failure {
+            // A demanded argument failed on the language plane; propagate the
+            // typed failure with its authored source site to the parent demand.
+            // The parent task is abandoned without a `transition_task`, exactly
+            // as the recursive wire-failure cascade left it.
+            self.memo.insert(
+                parent.location.id,
+                MemoEntry {
+                    location: parent.location.clone(),
+                    key: parent.demand_key,
+                    preimage: parent.demand_preimage.clone(),
+                    result: resolved.handle,
+                    receipt: None,
+                    current_receipt: false,
+                },
+            );
+            if let Some(demand) = self.demands.get_mut(&parent.demand_key) {
+                demand.result = Some(resolved.handle);
+            }
+            self.transition_demand(parent.demand_key, DemandState::Failed)?;
+            let evaluation = Evaluation {
+                handle: resolved.handle,
+                identity: resolved.identity,
+                passed: false,
+                memo: MemoVerdict::Miss,
+                failure: Some(failure),
+                failure_context: resolved.failure_context,
+            };
+            self.publish(results, parent.demand_key, evaluation)?;
+            return Ok(());
+        }
+        let word = self.scalar_word(resolved.handle).ok_or_else(|| {
+            Box::new(MachineError::runtime(
+                MachineOperation::Drive,
+                RuntimeFault::PureIslandParked {
+                    input: wire_index as u32,
+                },
+                None,
+                Some(parent.demand_key),
+            ))
+        })?;
+        parent.awaited[wire_index] = word;
+        parent.ready[wire_index] = true;
+        self.emit(EventKind::WeavyResumed {
+            task: parent.task_id,
+        });
+        self.runnable.push(parent);
+        Ok(())
+    }
+
+    /// Handle a task that parked on wire `input`: resolve the wire's demand.
+    /// On a memo hit or immediate failure the parent resumes inline; on a fresh
+    /// spawn or a join the parent is registered as a waiter and parked off the
+    /// drive stack until the wire's demand completes.
+    fn handle_park(
+        &mut self,
+        ctx: TaskContext,
+        input: u32,
+        results: &mut BTreeMap<DemandKey, Evaluation>,
+    ) -> Result<(), Box<MachineError>> {
+        let index = input as usize;
+        let Some(wire) = ctx.wires.get(index) else {
+            let error = MachineError::runtime(
+                MachineOperation::Drive,
+                RuntimeFault::PureIslandParked { input },
+                None,
+                Some(ctx.demand_key),
+            );
+            return Err(Box::new(self.terminate_machine_fault(
+                ctx.task_id,
+                ctx.demand_key,
+                error,
+            )));
+        };
+        self.emit(EventKind::WeavyParked {
+            task: ctx.task_id,
+            input,
+        });
+        let wire = wire.clone();
+        let mut child_ancestry = ctx.ancestry.clone();
+        child_ancestry.push(ctx.demand_key);
+        let outcome = self.submit_demand(
+            wire.island,
+            wire.location,
+            wire.lowered,
+            wire.attribution,
+            wire.arguments,
+            wire.wires,
+            ChaosPolicy::default(),
+            child_ancestry,
+        )?;
+        match outcome {
+            SubmitOutcome::Ready(resolved) => {
+                self.resume_parent(results, ctx, index, resolved)?;
+            }
+            SubmitOutcome::Spawned(child) | SubmitOutcome::Joined(child) => {
+                self.wire_waiters
+                    .entry(child)
+                    .or_default()
+                    .push(WireWaiter {
+                        task_id: ctx.task_id,
+                        wire_index: index,
+                    });
+                self.parked.insert(ctx.task_id, ctx);
+                // Witness that a wire-parked frame now resides in the scheduler's
+                // off-stack parked map rather than on the recursive Rust stack.
+                self.counters.peak_parked_frames = self
+                    .counters
+                    .peak_parked_frames
+                    .max(self.parked.len() as u64);
+            }
+        }
+        Ok(())
+    }
+
+    /// Drive one runnable task one `take-run-put` segment: run the retained
+    /// Weavy task until it parks on an unresolved wire (returned to the loop) or
+    /// runs to `Done` (decoded, memoized, and published). Registered-primitive
+    /// yields are serviced inline through the unified completion inbox.
+    fn drive_context(&mut self, ctx: &mut TaskContext) -> Result<DriveOutcome, Box<MachineError>> {
+        let invocation = DemandExecution::new(
+            ctx.lowered.as_ref(),
+            ctx.arguments
+                .iter()
+                .map(|argument| argument.identity.clone())
+                .collect(),
+        );
+        let lowered = &invocation;
+        let attribution = Rc::clone(&ctx.attribution);
+        let attribution = attribution.as_ref();
+        let task_id = ctx.task_id;
+        let demand_key = ctx.demand_key;
+        loop {
+            let mut primitive_host = PrimitiveHostQueue::default();
+            let step = {
+                let mut call_primitive = |frame: &mut [u8]| primitive_host.call(frame);
+                let mut hosts: [HostFn<'_>; 1] = [&mut call_primitive];
+                match self.store.with_value_memory_overrides(
+                    &ctx.value_memory_overrides,
+                    |value_memories| {
+                        ctx.task
+                            .drive_hosted_with_value_memories(
+                                &mut ctx.ready,
+                                &ctx.awaited,
                                 &mut hosts,
                                 value_memories,
                             )
                             .map_err(Box::new)
-                        },
-                    ) {
-                        Ok(step) => step,
-                        Err(fault) => {
-                            let error = self.task_fault(
-                                MachineOperation::Drive,
-                                *fault,
-                                lowered,
-                                attribution,
-                                None,
-                            );
-                            return Err(Box::new(self.terminate_machine_fault(
-                                task_id,
-                                lowered.demand_key,
-                                error,
-                            )));
-                        }
+                    },
+                ) {
+                    Ok(step) => step,
+                    Err(fault) => {
+                        let error = self.task_fault(
+                            MachineOperation::Drive,
+                            *fault,
+                            lowered,
+                            attribution,
+                            None,
+                        );
+                        return Err(Box::new(
+                            self.terminate_machine_fault(task_id, demand_key, error),
+                        ));
                     }
-                };
-                match step {
-                    TaskStep::Done => break,
-                    TaskStep::Yielded => {
-                        let result =
-                            match (primitive_host.fault, primitive_host.requests.as_slice()) {
-                                (Some(detail), _) => Err(PrimitiveHostFailure::Abi(detail)),
-                                (None, [request]) => self.complete_primitive_host_call(
-                                    &mut task,
-                                    lowered,
-                                    request.clone(),
-                                ),
-                                (None, requests) => Err(PrimitiveHostFailure::Abi(format!(
-                                    "primitive yield recorded {} host requests",
-                                    requests.len()
-                                ))),
-                            };
-                        match result {
-                            Ok(reads) => primitive_reads.extend(reads),
-                            Err(failure) => {
-                                let error = MachineError::runtime(
-                                    MachineOperation::Drive,
-                                    primitive_runtime_fault(failure),
-                                    None,
-                                    Some(lowered.demand_key),
-                                );
-                                return Err(Box::new(self.terminate_machine_fault(
-                                    task_id,
-                                    lowered.demand_key,
-                                    error,
-                                )));
-                            }
-                        }
-                    }
-                    TaskStep::Parked { input } => {
-                        // The task has fully returned control — its frame arena is
-                        // the owned suspended state, so every task/store/value-
-                        // memory borrow is released here. Resolve the wire it parked
-                        // on through the canonical DemandPreimage/memo state
-                        // machine, then resume the same task.
-                        let index = input as usize;
-                        let Some(wire) = wires.get(index) else {
+                }
+            };
+            match step {
+                TaskStep::Done => break,
+                TaskStep::Yielded => {
+                    let result = match (primitive_host.fault, primitive_host.requests.as_slice()) {
+                        (Some(detail), _) => Err(PrimitiveHostFailure::Abi(detail)),
+                        (None, [request]) => self.complete_primitive_host_call(
+                            &mut ctx.task,
+                            lowered,
+                            request.clone(),
+                        ),
+                        (None, requests) => Err(PrimitiveHostFailure::Abi(format!(
+                            "primitive yield recorded {} host requests",
+                            requests.len()
+                        ))),
+                    };
+                    match result {
+                        Ok(reads) => ctx.primitive_reads.extend(reads),
+                        Err(failure) => {
                             let error = MachineError::runtime(
                                 MachineOperation::Drive,
-                                RuntimeFault::PureIslandParked { input },
+                                primitive_runtime_fault(failure),
                                 None,
-                                Some(lowered.demand_key),
+                                Some(demand_key),
                             );
-                            return Err(Box::new(self.terminate_machine_fault(
-                                task_id,
-                                lowered.demand_key,
-                                error,
-                            )));
-                        };
-                        self.emit(EventKind::WeavyParked {
-                            task: task_id,
-                            input,
-                        });
-                        let resolved = self.evaluate(
-                            wire.island,
-                            &wire.location,
-                            Rc::clone(&wire.lowered),
-                            wire.attribution.as_ref(),
-                            IslandInputs {
-                                arguments: wire.arguments.clone(),
-                                wires: wire.wires.clone(),
-                            },
-                            ChaosPolicy::default(),
-                        )?;
-                        // A wire that actually computed (a memo miss that ran)
-                        // records one realized demand for its described invocation;
-                        // a memoized re-force is a hit and records nothing, so
-                        // structurally equal forces observe a single realization.
-                        if resolved.memo == MemoVerdict::Miss {
-                            self.record_wire_demand(
-                                wire.function,
-                                wire.demand_arguments.clone(),
-                                wire.preimage.clone(),
-                            );
+                            return Err(Box::new(
+                                self.terminate_machine_fault(task_id, demand_key, error),
+                            ));
                         }
-                        if let Some(failure) = resolved.failure {
-                            // A demanded argument failed on the language plane;
-                            // propagate the typed failure with its authored source
-                            // site to the parent demand.
-                            self.memo.insert(
-                                location.id,
-                                MemoEntry {
-                                    location: location.clone(),
-                                    key: lowered.demand_key,
-                                    preimage: lowered.demand_preimage.clone(),
-                                    result: resolved.handle,
-                                    receipt: None,
-                                    current_receipt: false,
-                                },
-                            );
-                            if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
-                                demand.result = Some(resolved.handle);
-                            }
-                            self.transition_demand(lowered.demand_key, DemandState::Failed)?;
-                            return Ok(Evaluation {
-                                handle: resolved.handle,
-                                identity: resolved.identity,
-                                passed: false,
-                                memo: MemoVerdict::Miss,
-                                failure: Some(failure),
-                                failure_context: resolved.failure_context,
-                            });
-                        }
-                        let word = self.scalar_word(resolved.handle).ok_or_else(|| {
-                            Box::new(MachineError::runtime(
-                                MachineOperation::Drive,
-                                RuntimeFault::PureIslandParked { input },
-                                None,
-                                Some(lowered.demand_key),
-                            ))
-                        })?;
-                        awaited[index] = word;
-                        ready[index] = true;
-                        self.emit(EventKind::WeavyResumed { task: task_id });
                     }
+                }
+                TaskStep::Parked { input } => {
+                    return Ok(DriveOutcome::Parked(input));
                 }
             }
-            for event in task.trace() {
-                if let Err(error) =
-                    self.emit_weavy(task_id, *event, attribution, lowered.demand_key)
-                {
-                    return Err(Box::new(self.terminate_machine_fault(
-                        task_id,
-                        lowered.demand_key,
-                        *error,
-                    )));
-                }
+        }
+        for event in ctx.task.trace() {
+            if let Err(error) = self.emit_weavy(task_id, *event, attribution, demand_key) {
+                return Err(Box::new(
+                    self.terminate_machine_fault(task_id, demand_key, *error),
+                ));
             }
-            let primitive_receipt = (!primitive_reads.is_empty()).then(|| Receipt {
-                demand: lowered.demand_key,
-                reads: primitive_reads.clone(),
-            });
-            let passed = match decode_result(&task, lowered) {
-                Ok(DecodedResult::OkScalar(passed)) => passed,
-                Ok(DecodedResult::OkScalarValue(word)) => {
-                    // A hoisted wire invocation published its demanded scalar. It
-                    // interns under its semantic schema exactly as an evaluated
-                    // scalar would, so equal recipe+argument demands share one
-                    // identity and memoize once.
-                    let width = lowered
-                        .output_type
-                        .word_width()
-                        .and_then(|words| words.checked_mul(8))
-                        .unwrap_or(8);
-                    let bytes = &word.to_le_bytes()[..width.min(8)];
-                    let interned = self
-                        .store
-                        .intern_realized(semantic_schema_ref(&lowered.output_type), bytes);
-                    self.store
-                        .attach_frozen(interned.handle, FrozenValue::Inline(bytes.to_vec()));
-                    self.observe_interned(&interned);
-                    self.memo.insert(
-                        location.id,
-                        MemoEntry {
-                            location: location.clone(),
-                            key: lowered.demand_key,
-                            preimage: lowered.demand_preimage.clone(),
-                            result: interned.handle,
-                            receipt: primitive_receipt.clone(),
-                            current_receipt: primitive_receipt.is_some(),
-                        },
-                    );
-                    if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
-                        demand.result = Some(interned.handle);
-                    }
-                    self.transition_task(task_id, TaskState::Completed)?;
-                    self.transition_demand(lowered.demand_key, DemandState::Ready)?;
-                    self.emit(EventKind::Completed {
-                        key: lowered.demand_key,
-                        identity: interned.identity.clone(),
-                    });
-                    return Ok(Evaluation {
-                        handle: interned.handle,
-                        identity: interned.identity.clone(),
-                        passed: true,
-                        memo: MemoVerdict::Miss,
-                        failure: None,
-                        failure_context: None,
-                    });
+        }
+        let primitive_receipt = (!ctx.primitive_reads.is_empty()).then(|| Receipt {
+            demand: demand_key,
+            reads: ctx.primitive_reads.clone(),
+        });
+        let location = &ctx.location;
+        let passed = match decode_result(&ctx.task, lowered) {
+            Ok(DecodedResult::OkScalar(passed)) => passed,
+            Ok(DecodedResult::OkScalarValue(word)) => {
+                // A hoisted wire invocation published its demanded scalar. It
+                // interns under its semantic schema exactly as an evaluated
+                // scalar would, so equal recipe+argument demands share one
+                // identity and memoize once.
+                let width = lowered
+                    .output_type
+                    .word_width()
+                    .and_then(|words| words.checked_mul(8))
+                    .unwrap_or(8);
+                let bytes = &word.to_le_bytes()[..width.min(8)];
+                let interned = self
+                    .store
+                    .intern_realized(semantic_schema_ref(&lowered.output_type), bytes);
+                self.store
+                    .attach_frozen(interned.handle, FrozenValue::Inline(bytes.to_vec()));
+                self.observe_interned(&interned);
+                self.memo.insert(
+                    location.id,
+                    MemoEntry {
+                        location: location.clone(),
+                        key: demand_key,
+                        preimage: lowered.demand_preimage.clone(),
+                        result: interned.handle,
+                        receipt: primitive_receipt.clone(),
+                        current_receipt: primitive_receipt.is_some(),
+                    },
+                );
+                if let Some(demand) = self.demands.get_mut(&demand_key) {
+                    demand.result = Some(interned.handle);
                 }
-                Ok(DecodedResult::OkValue) => {
-                    let realized = match realize_value(&task, lowered.artifact, &self.store) {
-                        Ok(realized) => realized,
-                        Err(fault) => {
-                            let error = self.task_fault(
-                                MachineOperation::Result,
-                                fault,
-                                lowered,
-                                attribution,
-                                self.output_attribution(lowered.artifact, attribution),
-                            );
-                            return Err(Box::new(self.terminate_machine_fault(
-                                task_id,
-                                lowered.demand_key,
-                                error,
-                            )));
-                        }
-                    };
-                    self.counters.peak_molten_nodes = self
-                        .counters
-                        .peak_molten_nodes
-                        .max(realized.molten_nodes as u64);
-                    self.counters.peak_molten_bytes = self
-                        .counters
-                        .peak_molten_bytes
-                        .max(realized.molten_bytes as u64);
-                    self.counters.framed_bytes += realized.framed_bytes as u64;
-                    let interned = self.store.intern_tree(&realized.node, &realized.resident);
-                    if let Some(frozen) = realized.frozen {
-                        self.store.attach_frozen(interned.handle, frozen);
+                self.transition_task(task_id, TaskState::Completed)?;
+                self.transition_demand(demand_key, DemandState::Ready)?;
+                self.emit(EventKind::Completed {
+                    key: demand_key,
+                    identity: interned.identity.clone(),
+                });
+                return Ok(DriveOutcome::Completed(Box::new(Evaluation {
+                    handle: interned.handle,
+                    identity: interned.identity.clone(),
+                    passed: true,
+                    memo: MemoVerdict::Miss,
+                    failure: None,
+                    failure_context: None,
+                })));
+            }
+            Ok(DecodedResult::OkValue) => {
+                let realized = match realize_value(&ctx.task, lowered.artifact, &self.store) {
+                    Ok(realized) => realized,
+                    Err(fault) => {
+                        let error = self.task_fault(
+                            MachineOperation::Result,
+                            fault,
+                            lowered,
+                            attribution,
+                            self.output_attribution(lowered.artifact, attribution),
+                        );
+                        return Err(Box::new(
+                            self.terminate_machine_fault(task_id, demand_key, error),
+                        ));
                     }
-                    self.observe_interned(&interned);
-                    self.counters.successful_aggregate_freezes += 1;
-                    if lowered.forced_copy_value {
-                        self.counters.forced_copy_selections += 1;
-                    } else {
-                        self.counters.active_molten_selections += 1;
-                    }
-                    self.memo.insert(
-                        location.id,
-                        MemoEntry {
-                            location: location.clone(),
-                            key: lowered.demand_key,
-                            preimage: lowered.demand_preimage.clone(),
-                            result: interned.handle,
-                            receipt: primitive_receipt.clone(),
-                            current_receipt: primitive_receipt.is_some(),
-                        },
-                    );
-                    if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
-                        demand.result = Some(interned.handle);
-                    }
-                    self.transition_task(task_id, TaskState::Completed)?;
-                    self.transition_demand(lowered.demand_key, DemandState::Ready)?;
-                    self.emit(EventKind::Completed {
-                        key: lowered.demand_key,
-                        identity: interned.identity.clone(),
-                    });
-                    return Ok(Evaluation {
-                        handle: interned.handle,
-                        identity: interned.identity.clone(),
-                        passed: true,
-                        memo: MemoVerdict::Miss,
-                        failure: None,
-                        failure_context: None,
-                    });
+                };
+                self.counters.peak_molten_nodes = self
+                    .counters
+                    .peak_molten_nodes
+                    .max(realized.molten_nodes as u64);
+                self.counters.peak_molten_bytes = self
+                    .counters
+                    .peak_molten_bytes
+                    .max(realized.molten_bytes as u64);
+                self.counters.framed_bytes += realized.framed_bytes as u64;
+                let interned = self.store.intern_tree(&realized.node, &realized.resident);
+                if let Some(frozen) = realized.frozen {
+                    self.store.attach_frozen(interned.handle, frozen);
                 }
-                Ok(DecodedResult::ArrayMachine { site, status }) => {
-                    let error = MachineError::runtime(
-                        MachineOperation::Result,
-                        RuntimeFault::ArrayMachineStatus { site, status },
-                        self.output_attribution(lowered, attribution),
-                        Some(lowered.demand_key),
-                    );
-                    return Err(Box::new(self.terminate_machine_fault(
-                        task_id,
-                        lowered.demand_key,
-                        error,
-                    )));
+                self.observe_interned(&interned);
+                self.counters.successful_aggregate_freezes += 1;
+                if lowered.forced_copy_value {
+                    self.counters.forced_copy_selections += 1;
+                } else {
+                    self.counters.active_molten_selections += 1;
                 }
-                Ok(DecodedResult::OrderedMachine { site, status }) => {
-                    let error = MachineError::runtime(
-                        MachineOperation::Result,
-                        RuntimeFault::OrderedMachineStatus { site, status },
-                        self.output_attribution(lowered, attribution),
-                        Some(lowered.demand_key),
-                    );
-                    return Err(Box::new(self.terminate_machine_fault(
-                        task_id,
-                        lowered.demand_key,
-                        error,
-                    )));
+                self.memo.insert(
+                    location.id,
+                    MemoEntry {
+                        location: location.clone(),
+                        key: demand_key,
+                        preimage: lowered.demand_preimage.clone(),
+                        result: interned.handle,
+                        receipt: primitive_receipt.clone(),
+                        current_receipt: primitive_receipt.is_some(),
+                    },
+                );
+                if let Some(demand) = self.demands.get_mut(&demand_key) {
+                    demand.result = Some(interned.handle);
                 }
-                // r[impl machine.error.index-out-of-bounds]
-                Ok(DecodedResult::IndexOutOfBounds {
+                self.transition_task(task_id, TaskState::Completed)?;
+                self.transition_demand(demand_key, DemandState::Ready)?;
+                self.emit(EventKind::Completed {
+                    key: demand_key,
+                    identity: interned.identity.clone(),
+                });
+                return Ok(DriveOutcome::Completed(Box::new(Evaluation {
+                    handle: interned.handle,
+                    identity: interned.identity.clone(),
+                    passed: true,
+                    memo: MemoVerdict::Miss,
+                    failure: None,
+                    failure_context: None,
+                })));
+            }
+            Ok(DecodedResult::ArrayMachine { site, status }) => {
+                let error = MachineError::runtime(
+                    MachineOperation::Result,
+                    RuntimeFault::ArrayMachineStatus { site, status },
+                    self.output_attribution(lowered, attribution),
+                    Some(demand_key),
+                );
+                return Err(Box::new(
+                    self.terminate_machine_fault(task_id, demand_key, error),
+                ));
+            }
+            Ok(DecodedResult::OrderedMachine { site, status }) => {
+                let error = MachineError::runtime(
+                    MachineOperation::Result,
+                    RuntimeFault::OrderedMachineStatus { site, status },
+                    self.output_attribution(lowered, attribution),
+                    Some(demand_key),
+                );
+                return Err(Box::new(
+                    self.terminate_machine_fault(task_id, demand_key, error),
+                ));
+            }
+            // r[impl machine.error.index-out-of-bounds]
+            Ok(DecodedResult::IndexOutOfBounds {
+                site,
+                index,
+                length,
+            }) => {
+                let failure = FailureValue::IndexOutOfBounds {
+                    recipe: lowered.recipe,
                     site,
                     index,
                     length,
-                }) => {
-                    let failure = FailureValue::IndexOutOfBounds {
-                        recipe: lowered.recipe,
-                        site,
-                        index,
-                        length,
-                        subject: None,
-                    };
-                    let report_context = failure_context(&failure, lowered, attribution);
-                    let interned = self.store.intern_failure(failure.clone(), &[]);
-                    self.observe_interned(&interned);
-                    self.memo.insert(
-                        location.id,
-                        MemoEntry {
-                            location: location.clone(),
-                            key: lowered.demand_key,
-                            preimage: lowered.demand_preimage.clone(),
-                            result: interned.handle,
-                            receipt: primitive_receipt.clone(),
-                            current_receipt: primitive_receipt.is_some(),
-                        },
-                    );
-                    if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
-                        demand.result = Some(interned.handle);
-                    }
-                    self.transition_task(task_id, TaskState::Completed)?;
-                    self.transition_demand(lowered.demand_key, DemandState::Failed)?;
-                    self.emit(EventKind::LanguageFailed {
-                        task: task_id,
-                        key: lowered.demand_key,
-                        failure: failure.clone(),
-                    });
-                    return Ok(Evaluation {
-                        handle: interned.handle,
-                        identity: interned.identity.clone(),
-                        passed: false,
-                        memo: MemoVerdict::Miss,
-                        failure: Some(failure),
-                        failure_context: report_context,
-                    });
+                    subject: None,
+                };
+                let report_context = failure_context(&failure, lowered, attribution);
+                let interned = self.store.intern_failure(failure.clone(), &[]);
+                self.observe_interned(&interned);
+                self.memo.insert(
+                    location.id,
+                    MemoEntry {
+                        location: location.clone(),
+                        key: demand_key,
+                        preimage: lowered.demand_preimage.clone(),
+                        result: interned.handle,
+                        receipt: primitive_receipt.clone(),
+                        current_receipt: primitive_receipt.is_some(),
+                    },
+                );
+                if let Some(demand) = self.demands.get_mut(&demand_key) {
+                    demand.result = Some(interned.handle);
                 }
-                Ok(DecodedResult::MissingKey { site }) => {
-                    let failure = FailureValue::MissingKey {
-                        recipe: lowered.recipe,
-                        site,
-                    };
-                    return self.complete_language_failure(
-                        task_id,
-                        location,
-                        lowered,
-                        attribution,
-                        failure,
-                    );
-                }
-                Ok(DecodedResult::DuplicateKey { site }) => {
-                    let failure = FailureValue::DuplicateKey {
-                        recipe: lowered.recipe,
-                        site,
-                    };
-                    return self.complete_language_failure(
-                        task_id,
-                        location,
-                        lowered,
-                        attribution,
-                        failure,
-                    );
-                }
-                Ok(DecodedResult::MissingDelimiter { site }) => {
-                    return self.complete_language_failure(
+                self.transition_task(task_id, TaskState::Completed)?;
+                self.transition_demand(demand_key, DemandState::Failed)?;
+                self.emit(EventKind::LanguageFailed {
+                    task: task_id,
+                    key: demand_key,
+                    failure: failure.clone(),
+                });
+                return Ok(DriveOutcome::Completed(Box::new(Evaluation {
+                    handle: interned.handle,
+                    identity: interned.identity.clone(),
+                    passed: false,
+                    memo: MemoVerdict::Miss,
+                    failure: Some(failure),
+                    failure_context: report_context,
+                })));
+            }
+            Ok(DecodedResult::MissingKey { site }) => {
+                let failure = FailureValue::MissingKey {
+                    recipe: lowered.recipe,
+                    site,
+                };
+                return self
+                    .complete_language_failure(task_id, location, lowered, attribution, failure)
+                    .map(|evaluation| DriveOutcome::Completed(Box::new(evaluation)));
+            }
+            Ok(DecodedResult::DuplicateKey { site }) => {
+                let failure = FailureValue::DuplicateKey {
+                    recipe: lowered.recipe,
+                    site,
+                };
+                return self
+                    .complete_language_failure(task_id, location, lowered, attribution, failure)
+                    .map(|evaluation| DriveOutcome::Completed(Box::new(evaluation)));
+            }
+            Ok(DecodedResult::MissingDelimiter { site }) => {
+                return self
+                    .complete_language_failure(
                         task_id,
                         location,
                         lowered,
@@ -1814,10 +2086,12 @@ impl<S: EventSink> Runtime<S> {
                             recipe: lowered.recipe,
                             site,
                         },
-                    );
-                }
-                Ok(DecodedResult::InvalidInteger { site }) => {
-                    return self.complete_language_failure(
+                    )
+                    .map(|evaluation| DriveOutcome::Completed(Box::new(evaluation)));
+            }
+            Ok(DecodedResult::InvalidInteger { site }) => {
+                return self
+                    .complete_language_failure(
                         task_id,
                         location,
                         lowered,
@@ -1826,10 +2100,12 @@ impl<S: EventSink> Runtime<S> {
                             recipe: lowered.recipe,
                             site,
                         },
-                    );
-                }
-                Ok(DecodedResult::IntegerOverflow { site }) => {
-                    return self.complete_language_failure(
+                    )
+                    .map(|evaluation| DriveOutcome::Completed(Box::new(evaluation)));
+            }
+            Ok(DecodedResult::IntegerOverflow { site }) => {
+                return self
+                    .complete_language_failure(
                         task_id,
                         location,
                         lowered,
@@ -1838,10 +2114,12 @@ impl<S: EventSink> Runtime<S> {
                             recipe: lowered.recipe,
                             site,
                         },
-                    );
-                }
-                Ok(DecodedResult::IntDivisionByZero { site }) => {
-                    return self.complete_language_failure(
+                    )
+                    .map(|evaluation| DriveOutcome::Completed(Box::new(evaluation)));
+            }
+            Ok(DecodedResult::IntDivisionByZero { site }) => {
+                return self
+                    .complete_language_failure(
                         task_id,
                         location,
                         lowered,
@@ -1850,61 +2128,57 @@ impl<S: EventSink> Runtime<S> {
                             recipe: lowered.recipe,
                             site,
                         },
-                    );
-                }
-                Err(fault) => {
-                    let fallback = result_shape_attribution(
-                        &fault,
-                        self.output_attribution(lowered, attribution),
-                    );
-                    let error = self.task_fault(
-                        MachineOperation::Result,
-                        *fault,
-                        lowered,
-                        attribution,
-                        fallback,
-                    );
-                    return Err(Box::new(self.terminate_machine_fault(
-                        task_id,
-                        lowered.demand_key,
-                        error,
-                    )));
-                }
-            };
-            let interned = self
-                .store
-                .intern_realized(Type::Check.schema_ref(), &[u8::from(passed)]);
-            self.observe_interned(&interned);
-
-            self.memo.insert(
-                location.id,
-                MemoEntry {
-                    location: location.clone(),
-                    key: lowered.demand_key,
-                    preimage: lowered.demand_preimage.clone(),
-                    result: interned.handle,
-                    receipt: primitive_receipt.clone(),
-                    current_receipt: primitive_receipt.is_some(),
-                },
-            );
-            if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
-                demand.result = Some(interned.handle);
+                    )
+                    .map(|evaluation| DriveOutcome::Completed(Box::new(evaluation)));
             }
-            self.transition_task(task_id, TaskState::Completed)?;
-            self.transition_demand(lowered.demand_key, DemandState::Ready)?;
-            self.emit(EventKind::Completed {
-                key: lowered.demand_key,
-                identity: interned.identity.clone(),
-            });
-            return Ok(Evaluation {
-                handle: interned.handle,
-                identity: interned.identity,
-                passed,
-                memo: MemoVerdict::Miss,
-                failure: None,
-                failure_context: None,
-            });
+            Err(fault) => {
+                let fallback =
+                    result_shape_attribution(&fault, self.output_attribution(lowered, attribution));
+                let error = self.task_fault(
+                    MachineOperation::Result,
+                    *fault,
+                    lowered,
+                    attribution,
+                    fallback,
+                );
+                return Err(Box::new(
+                    self.terminate_machine_fault(task_id, demand_key, error),
+                ));
+            }
+        };
+        let interned = self
+            .store
+            .intern_realized(Type::Check.schema_ref(), &[u8::from(passed)]);
+        self.observe_interned(&interned);
+
+        self.memo.insert(
+            location.id,
+            MemoEntry {
+                location: location.clone(),
+                key: demand_key,
+                preimage: lowered.demand_preimage.clone(),
+                result: interned.handle,
+                receipt: primitive_receipt.clone(),
+                current_receipt: primitive_receipt.is_some(),
+            },
+        );
+        if let Some(demand) = self.demands.get_mut(&demand_key) {
+            demand.result = Some(interned.handle);
         }
+        self.transition_task(task_id, TaskState::Completed)?;
+        self.transition_demand(demand_key, DemandState::Ready)?;
+        self.emit(EventKind::Completed {
+            key: demand_key,
+            identity: interned.identity.clone(),
+        });
+        Ok(DriveOutcome::Completed(Box::new(Evaluation {
+            handle: interned.handle,
+            identity: interned.identity,
+            passed,
+            memo: MemoVerdict::Miss,
+            failure: None,
+            failure_context: None,
+        })))
     }
 
     /// Evaluate one machine-plane effect island. Effects use the same demand,
