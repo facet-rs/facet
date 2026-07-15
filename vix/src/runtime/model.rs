@@ -201,8 +201,30 @@ pub enum MemoVerdict {
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct ReadWitness {
     pub source: ValueId,
-    pub projection: String,
+    pub projection: ReadProjection,
     pub observation: ReadObservation,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ReadProjection {
+    Whole,
+    Document,
+    RegistryManifest,
+    CapabilityProgram,
+    TreePath { path: String },
+    Origin { coordinate: String },
+}
+
+impl ReadProjection {
+    #[must_use]
+    pub fn trace_path(&self) -> Option<&str> {
+        match self {
+            Self::TreePath { path } => Some(path),
+            Self::Origin { coordinate } => Some(coordinate),
+            Self::Whole | Self::Document | Self::RegistryManifest | Self::CapabilityProgram => None,
+        }
+    }
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]

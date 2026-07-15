@@ -1815,7 +1815,7 @@ fn run_lane(
         reads: runtime
             .receipts()
             .flat_map(|receipt| receipt.reads.iter())
-            .map(|read| read.projection.clone())
+            .filter_map(|read| read.projection.trace_path().map(str::to_owned))
             .collect(),
         function_calls,
         wire_demands: runtime.realized_wire_demands().to_vec(),

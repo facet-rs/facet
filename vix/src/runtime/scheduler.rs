@@ -25,7 +25,7 @@ use super::identity::{
 use super::identity::{FramedField, FramedNode, FramedValue};
 use super::model::{
     DemandRecord, DemandState, FailureContext, FailureValue, MemoVerdict, ProcessTermination,
-    ReadObservation, ReadWitness, Receipt, TaskId, TaskRecord, TaskState,
+    ReadObservation, ReadProjection, ReadWitness, Receipt, TaskId, TaskRecord, TaskState,
 };
 use super::observe::{
     Counters, Event, EventKind, EventSink, ExecutionFacts, ExecutionFallbackFact,
@@ -529,10 +529,10 @@ impl<S: EventSink> Runtime<S> {
     fn reverify_read_witness(&self, read: &ReadWitness) -> bool {
         match &read.observation {
             ReadObservation::Value(observed) => {
-                if read.projection == "typed-doc-parse" {
+                if matches!(read.projection, ReadProjection::Document) {
                     return observed == &read.source;
                 }
-                if read.projection == "registry/manifest" {
+                if matches!(read.projection, ReadProjection::RegistryManifest) {
                     return self
                         .fixture_store
                         .registry_manifest()
@@ -540,26 +540,40 @@ impl<S: EventSink> Runtime<S> {
                             effect_leaf(&Type::String, manifest.into_bytes()).identity == *observed
                         });
                 }
-                if let Ok(bytes) = self.fixture_store.tree_file_bytes(&read.projection) {
-                    return effect_leaf(&Type::String, bytes).identity == *observed;
-                }
-                if let Ok(bytes) = self
-                    .fixture_store
-                    .fetch_url(&format!("fixture://{}", read.projection))
-                {
-                    return effect_leaf(&Type::Extern(ExternKind::Blob), bytes).identity
-                        == *observed;
+                match &read.projection {
+                    ReadProjection::TreePath { path } => {
+                        if let Ok(bytes) = self.fixture_store.tree_file_bytes(path) {
+                            return effect_leaf(&Type::String, bytes).identity == *observed;
+                        }
+                    }
+                    ReadProjection::Origin { coordinate } => {
+                        if let Ok(bytes) = self.fixture_store.fetch_url(coordinate) {
+                            return effect_leaf(&Type::Extern(ExternKind::Blob), bytes).identity
+                                == *observed;
+                        }
+                    }
+                    ReadProjection::Whole
+                    | ReadProjection::Document
+                    | ReadProjection::RegistryManifest
+                    | ReadProjection::CapabilityProgram => {}
                 }
                 false
             }
             ReadObservation::Missing => matches!(
-                self.fixture_store.tree_file_bytes(&read.projection),
-                Err(FixtureReadError::Missing)
+                &read.projection,
+                ReadProjection::TreePath { path }
+                    if matches!(
+                        self.fixture_store.tree_file_bytes(path),
+                        Err(FixtureReadError::Missing)
+                    )
             ),
-            ReadObservation::Directory { digest } => self
-                .fixture_store
-                .tree_dir_entries(&read.projection)
-                .is_ok_and(|entries| directory_observation_digest(&entries) == *digest),
+            ReadObservation::Directory { digest } => match &read.projection {
+                ReadProjection::TreePath { path } => self
+                    .fixture_store
+                    .tree_dir_entries(path)
+                    .is_ok_and(|entries| directory_observation_digest(&entries) == *digest),
+                _ => false,
+            },
             ReadObservation::Unverifiable => false,
         }
     }
@@ -689,7 +703,9 @@ impl<S: EventSink> Runtime<S> {
         let value = effect_leaf(&Type::String, bytes);
         let read = ReadWitness {
             source: effect_leaf(&Type::String, b"fixture-index".to_vec()).identity,
-            projection: projection.to_owned(),
+            projection: ReadProjection::TreePath {
+                path: projection.to_owned(),
+            },
             observation: ReadObservation::Value(value.identity.clone()),
         };
         validation_reads.push(read.clone());
@@ -754,7 +770,9 @@ impl<S: EventSink> Runtime<S> {
                 let value = effect_leaf(&Type::String, bytes);
                 validation_reads.push(ReadWitness {
                     source: effect_leaf(&Type::String, b"fixture-workspace".to_vec()).identity,
-                    projection: projection.to_owned(),
+                    projection: ReadProjection::TreePath {
+                        path: projection.to_owned(),
+                    },
                     observation: ReadObservation::Value(value.identity),
                 });
                 let text = String::from_utf8(value.resident)
@@ -2200,7 +2218,7 @@ impl<S: EventSink> Runtime<S> {
                     .map_err(|_| effect_machine_error("decode input was not UTF-8"))?;
                 reads.push(ReadWitness {
                     source: document.identity.clone(),
-                    projection: "typed-doc-parse".to_owned(),
+                    projection: ReadProjection::Document,
                     observation: ReadObservation::Value(document.identity.clone()),
                 });
                 let decoded = decode::decode(*format, text, target)
@@ -2271,7 +2289,7 @@ impl<S: EventSink> Runtime<S> {
                 let value = effect_leaf(&node.ty, bytes);
                 reads.push(super::model::ReadWitness {
                     source,
-                    projection,
+                    projection: ReadProjection::TreePath { path: projection },
                     observation: ReadObservation::Value(value.identity.clone()),
                 });
                 Ok(EffectTerm::Value(value))
@@ -2331,7 +2349,7 @@ impl<S: EventSink> Runtime<S> {
                 })?;
                 reads.push(super::model::ReadWitness {
                     source: registry.identity,
-                    projection: "registry/manifest".to_owned(),
+                    projection: ReadProjection::RegistryManifest,
                     observation: ReadObservation::Value(
                         effect_leaf(&Type::String, manifest.clone().into_bytes()).identity,
                     ),
@@ -2368,11 +2386,11 @@ impl<S: EventSink> Runtime<S> {
                 if blob.identity.content.hex() != expected {
                     return effect_fault("fixture fetch did not match its pinned content identity");
                 }
-                let projection = FixtureStore::url_projection(url)
-                    .ok_or_else(|| effect_machine_error("fixture URL lost its projection"))?;
                 reads.push(super::model::ReadWitness {
                     source: pinned_identity,
-                    projection: projection.to_owned(),
+                    projection: ReadProjection::Origin {
+                        coordinate: url.to_owned(),
+                    },
                     observation: ReadObservation::Value(blob.identity.clone()),
                 });
                 self.counters.fetches_performed += 1;
@@ -2494,7 +2512,7 @@ impl<S: EventSink> Runtime<S> {
                 .map_err(|_| effect_machine_error("fixture glob directory was unavailable"))?;
             reads.push(super::model::ReadWitness {
                 source: tree.identity.clone(),
-                projection,
+                projection: ReadProjection::TreePath { path: projection },
                 observation: ReadObservation::Directory {
                     digest: directory_observation_digest(&entries),
                 },
@@ -3144,7 +3162,7 @@ impl<S: EventSink> Runtime<S> {
         .to_owned();
         reads.push(ReadWitness {
             source: entry.identity.clone(),
-            projection: "typed-doc-parse".to_owned(),
+            projection: ReadProjection::Document,
             observation: ReadObservation::Value(entry.identity.clone()),
         });
 
@@ -3556,7 +3574,7 @@ impl<S: EventSink> Runtime<S> {
             demand: demand_key,
             reads: vec![ReadWitness {
                 source: capability.identity.clone(),
-                projection: "capability.program".to_owned(),
+                projection: ReadProjection::CapabilityProgram,
                 observation: ReadObservation::Unverifiable,
             }],
         };
