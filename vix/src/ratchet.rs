@@ -1147,6 +1147,7 @@ impl PreparedRun {
             &mut self.cache,
             ChaosPolicy {
                 kill_first_running_task: true,
+                ..ChaosPolicy::default()
             },
             ExecutionPhase::ChaosRuntimeReady,
             ExecutionPhase::ChaosCompleted,
@@ -1558,6 +1559,7 @@ fn run_lane(
                         .collect::<Vec<_>>();
                     let chaos = ChaosPolicy {
                         kill_first_running_task: kill_available,
+                        ..ChaosPolicy::default()
                     };
                     kill_available = false;
                     let location = scoped_location(
@@ -1650,6 +1652,7 @@ fn run_lane(
                         site,
                         ChaosPolicy {
                             kill_first_running_task: kill_available,
+                            ..ChaosPolicy::default()
                         },
                     )?;
                     kill_available = false;
@@ -1759,6 +1762,7 @@ fn run_lane(
                 &arguments,
                 ChaosPolicy {
                     kill_first_running_task: kill_available,
+                    ..ChaosPolicy::default()
                 },
             )?;
             kill_available = false;
@@ -1891,6 +1895,7 @@ fn run_lane(
                                     site,
                                     ChaosPolicy {
                                         kill_first_running_task: kill_available,
+                                        ..ChaosPolicy::default()
                                     },
                                 )?;
                                 if runtime.counters().memo_misses > misses_before {
@@ -1920,6 +1925,7 @@ fn run_lane(
                                 &mut seen_snapshot_names,
                                 ChaosPolicy {
                                     kill_first_running_task: kill_available,
+                                    ..ChaosPolicy::default()
                                 },
                             )?;
                             if runtime.counters().memo_misses > misses_before {

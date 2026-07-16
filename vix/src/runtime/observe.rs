@@ -67,6 +67,9 @@ pub struct Counters {
     /// duplicate, or legitimate post-cancel delivery. Observed as a typed fact,
     /// never applied as a publication.
     pub stale_completions_ignored: u64,
+    /// Demand-owned effect tickets cancelled after their final obligation was
+    /// explicitly abandoned. Cancellation never publishes a memo or value.
+    pub effect_cancellations: u64,
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]

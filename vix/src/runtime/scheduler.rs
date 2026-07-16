@@ -36,10 +36,10 @@ use super::store::{
     StoreJournalLoadReport,
 };
 use super::{
-    DecodePrimitive, EffectCtx, ObservePrimitive, PinnedFetchPrimitive, PrimitiveCompletion,
-    PrimitiveDispatcher, PrimitiveField, PrimitiveFieldValue, PrimitiveMachineError,
-    PrimitiveRegistry, PrimitiveValue, PrimitiveValueBody, StagedEffectAuthority,
-    TicketSubscription, blob_id_type, origin_hint_type,
+    DecodePrimitive, EffectCtx, EffectTicket, ObservePrimitive, PinnedFetchPrimitive,
+    PrimitiveCompletion, PrimitiveDispatcher, PrimitiveField, PrimitiveFieldValue,
+    PrimitiveMachineError, PrimitiveRegistry, PrimitiveValue, PrimitiveValueBody,
+    StagedEffectAuthority, TicketSubscription, blob_id_type, origin_hint_type,
 };
 use super::{MachineAttribution, MachineError, MachineOperation, RuntimeFault};
 
@@ -221,6 +221,9 @@ impl PrimitiveHostQueue {
 #[derive(facet::Facet, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ChaosPolicy {
     pub kill_first_running_task: bool,
+    /// Discard the first task after it has yielded a registered primitive,
+    /// leaving the demand-owned ticket alive so replay must join it.
+    pub kill_first_parked_primitive: bool,
 }
 
 /// The inputs an island evaluation consumes: its pre-published shared value
@@ -278,6 +281,7 @@ pub struct WireDemand {
 /// r[impl machine.scheduler.tickets-outlive-tasks]
 struct TaskContext {
     task_id: TaskId,
+    island: IslandId,
     demand_key: DemandKey,
     demand_preimage: DemandPreimage,
     lowered: Rc<LoweringArtifact>,
@@ -298,6 +302,7 @@ struct TaskContext {
     awaited: Vec<i64>,
     primitive_reads: Vec<ReadWitness>,
     value_memory_overrides: Vec<(Handle, Vec<u8>)>,
+    kill_on_primitive_park: bool,
 }
 
 /// One parent task suspended on a wire, waiting for the wire's demand to
@@ -328,6 +333,9 @@ enum DriveOutcome {
 /// is a task parked mid-drive, resumed by materializing the one admitted value
 /// through its own ABI plan when the completion crosses the inbox.
 struct PrimitivePending {
+    /// The demand-owned ticket remains live even if a waiting task is discarded;
+    /// replay joins this same ticket instead of beginning a second effect.
+    ticket: EffectTicket,
     /// The first caller's staged authority; joiners never construct another.
     authority: Arc<StagedEffectAuthority>,
     /// The single ticket subscription that delivers this demand's completion
@@ -1708,6 +1716,7 @@ impl<S: EventSink> Runtime<S> {
         drop(invocation);
         self.runnable.push(TaskContext {
             task_id,
+            island,
             demand_key,
             demand_preimage,
             lowered,
@@ -1722,6 +1731,7 @@ impl<S: EventSink> Runtime<S> {
             awaited,
             primitive_reads: Vec::new(),
             value_memory_overrides,
+            kill_on_primitive_park: chaos.kill_first_parked_primitive,
         });
         Ok(())
     }
@@ -1819,6 +1829,76 @@ impl<S: EventSink> Runtime<S> {
         self.root_results.clear();
     }
 
+    /// Explicitly abandon one unresolved island demand. Every retained frame
+    /// for that demand is discarded. If it was the final waiter on a primitive
+    /// ticket, the demand-owned ticket is cancelled and retired without
+    /// publishing a memo, claim, receipt, or partial value.
+    ///
+    /// A chaos kill does not call this method: it transitions the demand back
+    /// to `Queued`, preserving the ticket obligation so replay joins it.
+    pub fn abandon_demand(&mut self, demand: DemandKey) -> Result<bool, Box<MachineError>> {
+        let mut task_ids = self
+            .runnable
+            .iter()
+            .chain(self.parked.values())
+            .filter(|ctx| ctx.demand_key == demand)
+            .map(|ctx| ctx.task_id)
+            .collect::<Vec<_>>();
+        for pending in self.primitive_pending.values() {
+            task_ids.extend(
+                pending
+                    .waiters
+                    .iter()
+                    .filter(|waiter| waiter.ctx.demand_key == demand)
+                    .map(|waiter| waiter.ctx.task_id),
+            );
+        }
+        task_ids.sort();
+        task_ids.dedup();
+        let existed = !task_ids.is_empty()
+            || self.demands.contains_key(&demand)
+            || self.root_results.contains_key(&demand);
+
+        for task_id in &task_ids {
+            self.transition_task(*task_id, TaskState::Discarded)?;
+        }
+        self.runnable.retain(|ctx| ctx.demand_key != demand);
+        self.parked.retain(|_, ctx| ctx.demand_key != demand);
+        for waiters in self.wire_waiters.values_mut() {
+            waiters.retain(|waiter| !task_ids.contains(&waiter.task_id));
+        }
+        self.wire_waiters.retain(|_, waiters| !waiters.is_empty());
+
+        for pending in self.primitive_pending.values_mut() {
+            pending
+                .waiters
+                .retain(|waiter| waiter.ctx.demand_key != demand);
+        }
+        let abandoned_effects = self
+            .primitive_pending
+            .iter()
+            .filter_map(|(primitive_demand, pending)| {
+                pending.waiters.is_empty().then_some(*primitive_demand)
+            })
+            .collect::<Vec<_>>();
+        for primitive_demand in abandoned_effects {
+            if let Some(pending) = self.primitive_pending.remove(&primitive_demand) {
+                drop(pending.subscription);
+                if pending.ticket.cancel_demand() {
+                    self.counters.effect_cancellations += 1;
+                }
+                self.primitive_dispatcher.retire(primitive_demand);
+            }
+        }
+
+        self.root_results.remove(&demand);
+        if self.demands.contains_key(&demand) {
+            self.transition_demand(demand, DemandState::Absent)?;
+            self.demands.remove(&demand);
+        }
+        Ok(existed)
+    }
+
     /// Drive the scheduler's runnable/parked/pending graph until `done` holds.
     /// Each round takes one runnable task and drives it a `take-run-put`
     /// segment; only when no task is runnable does the scheduler block on the
@@ -1885,7 +1965,14 @@ impl<S: EventSink> Runtime<S> {
         self.parked.clear();
         self.wire_waiters.clear();
         self.root_results.clear();
-        self.primitive_pending.clear();
+        let pending = std::mem::take(&mut self.primitive_pending);
+        for (demand, pending) in pending {
+            drop(pending.subscription);
+            if pending.ticket.cancel_demand() {
+                self.counters.effect_cancellations += 1;
+            }
+            self.primitive_dispatcher.retire(demand);
+        }
         self.exec_pending.clear();
     }
 
@@ -3423,6 +3510,22 @@ impl<S: EventSink> Runtime<S> {
     ) -> Result<(), Box<MachineError>> {
         let task_id = ctx.task_id;
         let demand_key = ctx.demand_key;
+        let replay = ctx.kill_on_primitive_park.then(|| {
+            (
+                SubmitRequest {
+                    island: ctx.island,
+                    location: ctx.location.clone(),
+                    lowered: ctx.lowered.clone(),
+                    attribution: ctx.attribution.clone(),
+                    arguments: ctx.arguments.clone(),
+                    wires: ctx.wires.clone(),
+                    chaos: ChaosPolicy::default(),
+                    ancestry: ctx.ancestry.clone(),
+                    realized_as: ctx.realized_as.clone(),
+                },
+                ctx.demand_preimage.clone(),
+            )
+        });
         let Some(plan) = ctx.lowered.primitive_calls.get(request.plan).cloned() else {
             return Err(self.terminate_primitive(
                 task_id,
@@ -3513,6 +3616,7 @@ impl<S: EventSink> Runtime<S> {
         if let Some(pending) = self.primitive_pending.get_mut(&primitive_demand) {
             // Join an in-flight primitive demand: reuse the first caller's single
             // authority and subscription; only add this frame as a waiter.
+            pending.ticket.renew_lease();
             pending.waiters.push(PrimitiveWaiter { ctx, plan, site });
         } else {
             // First caller: stage the one authority, begin the ticket, and
@@ -3564,6 +3668,7 @@ impl<S: EventSink> Runtime<S> {
             self.primitive_pending.insert(
                 primitive_demand,
                 PrimitivePending {
+                    ticket,
                     authority,
                     subscription,
                     waiters: vec![PrimitiveWaiter { ctx, plan, site }],
@@ -3587,6 +3692,23 @@ impl<S: EventSink> Runtime<S> {
             .counters
             .peak_primitive_parked_frames
             .max(parked as u64);
+        if let Some((request, demand_preimage)) = replay {
+            // The demand remains obligated to complete: queue it before
+            // dropping the parked frame, and leave the demand-owned ticket in
+            // `primitive_pending`. The replay reaches the same host yield and
+            // joins that ticket rather than beginning another backend effect.
+            self.counters.task_discards += 1;
+            self.transition_task(task_id, TaskState::Discarded)?;
+            self.transition_demand(demand_key, DemandState::Queued)?;
+            let waiter = self
+                .primitive_pending
+                .get_mut(&primitive_demand)
+                .and_then(|pending| pending.waiters.pop())
+                .expect("the just-parked primitive waiter remains present");
+            debug_assert_eq!(waiter.ctx.task_id, task_id);
+            drop(waiter);
+            self.spawn_context(request, demand_key, demand_preimage)?;
+        }
         Ok(())
     }
 
@@ -3623,6 +3745,7 @@ impl<S: EventSink> Runtime<S> {
             return Ok(());
         };
         let PrimitivePending {
+            ticket: _,
             authority,
             subscription,
             waiters,
@@ -7667,7 +7790,14 @@ mod tests {
     use super::*;
     use crate::compiler::Compiler;
     use crate::lowering::{LoweringCache, attribution_for};
-    use crate::runtime::{EventLog, FramedNode, MachineCause};
+    use crate::runtime::{
+        DecodePrimitive, EventLog, FramedNode, MachineCause, Primitive, PrimitiveDescriptor,
+        PrimitiveRegistry, TicketCompletionError,
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::mpsc::{SyncSender, sync_channel};
+    use std::sync::{Arc, Condvar, Mutex};
+    use std::time::Duration;
     use weavy::exec::{DriveTable, TaskFault};
     use weavy::task::{ArrayOpStatus, Op};
     use weavy::{Executable, ValueShapeRef};
@@ -7707,6 +7837,259 @@ fn duplicate_key() -> Stream<Check> {
     yield expect_eq(values.len(), 0);
 }
 "#;
+
+    const SCHEDULER_DECODE_SOURCE: &str = r#"
+struct Row {
+    name: String,
+}
+
+#[test]
+fn scheduler_decode() -> Stream<Check> {
+    let src = "{\"name\":\"mio\"}";
+    let row: Row = json_decode(src);
+    yield expect_eq(row.name, "mio");
+}
+"#;
+
+    struct CountingDecode {
+        descriptor: PrimitiveDescriptor,
+        begins: Arc<AtomicUsize>,
+    }
+
+    impl Primitive for CountingDecode {
+        fn descriptor(&self) -> &PrimitiveDescriptor {
+            &self.descriptor
+        }
+
+        fn begin(&self, request: ValueId, ctx: EffectCtx) -> EffectTicket {
+            self.begins.fetch_add(1, Ordering::AcqRel);
+            DecodePrimitive::default().begin(request, ctx)
+        }
+    }
+
+    struct DelayedDecode {
+        descriptor: PrimitiveDescriptor,
+        begins: Arc<AtomicUsize>,
+        cancellations: Arc<AtomicUsize>,
+        gate: Arc<(Mutex<bool>, Condvar)>,
+        completed: SyncSender<(
+            Result<(), TicketCompletionError>,
+            super::super::PrimitivePublication,
+        )>,
+    }
+
+    impl Primitive for DelayedDecode {
+        fn descriptor(&self) -> &PrimitiveDescriptor {
+            &self.descriptor
+        }
+
+        fn begin(&self, request: ValueId, ctx: EffectCtx) -> EffectTicket {
+            self.begins.fetch_add(1, Ordering::AcqRel);
+            let gate = self.gate.clone();
+            let cancel_gate = self.gate.clone();
+            let cancellations = self.cancellations.clone();
+            let completed = self.completed.clone();
+            let (ticket, completer) = ctx.ticket(move || {
+                cancellations.fetch_add(1, Ordering::AcqRel);
+                let (released, wake) = &*cancel_gate;
+                *released.lock().expect("decode gate mutex poisoned") = true;
+                wake.notify_all();
+            });
+            std::thread::spawn(move || {
+                let (released, wake) = &*gate;
+                let mut released = released.lock().expect("decode gate mutex poisoned");
+                while !*released {
+                    released = wake.wait(released).expect("decode gate mutex poisoned");
+                }
+                drop(released);
+                let inner = DecodePrimitive::default().begin(request, ctx);
+                let _subscription = inner.join(move |publication| {
+                    let result = completer.complete(publication.clone());
+                    completed
+                        .send((result, publication))
+                        .expect("scheduler test receives delayed completion");
+                });
+            });
+            ticket
+        }
+    }
+
+    fn decode_registry(primitive: Arc<dyn Primitive>) -> PrimitiveDispatcher {
+        let mut registry = PrimitiveRegistry::default();
+        registry
+            .register(primitive)
+            .expect("the scheduler test registers decode once");
+        PrimitiveDispatcher::new(Arc::new(registry))
+    }
+
+    fn primitive_island(partitioned: &crate::vir::PartitionedTest) -> &Island {
+        partitioned
+            .values
+            .iter()
+            .map(|value| &value.island)
+            .chain(partitioned.wire_islands.iter().map(|value| &value.island))
+            .chain(partitioned.islands.iter())
+            .chain(partitioned.generator.iter())
+            .find(|island| {
+                island
+                    .nodes
+                    .iter()
+                    .chain(island.callees.iter().flat_map(|callee| &callee.nodes))
+                    .any(|node| matches!(node.op, crate::vir::Op::InvokePrimitive { .. }))
+            })
+            .expect("scheduler decode has a registered-primitive island")
+    }
+
+    fn scheduler_decode_root(
+        runtime: &mut Runtime<EventLog>,
+        chaos: ChaosPolicy,
+    ) -> Result<Evaluation, Box<MachineError>> {
+        let module = Compiler::new()
+            .compile(SCHEDULER_DECODE_SOURCE)
+            .expect("scheduler decode source compiles");
+        let partitioned = module.partition_test(&module.tests[0]);
+        let island = primitive_island(&partitioned);
+        let attribution = attribution_for(island);
+        let location = Location::for_test_island(&partitioned.name, island.id.0);
+        let mut cache = LoweringCache::default();
+        runtime.evaluate(
+            island.id,
+            &location,
+            cache
+                .get_or_lower_owned(island)
+                .expect("scheduler decode source lowers"),
+            &attribution,
+            IslandInputs {
+                arguments: Vec::new(),
+                wires: Vec::new(),
+            },
+            chaos,
+        )
+    }
+
+    fn submit_scheduler_decode(
+        runtime: &mut Runtime<EventLog>,
+    ) -> Result<DemandKey, Box<MachineError>> {
+        let module = Compiler::new()
+            .compile(SCHEDULER_DECODE_SOURCE)
+            .expect("scheduler decode source compiles");
+        let partitioned = module.partition_test(&module.tests[0]);
+        let island = primitive_island(&partitioned);
+        let mut cache = LoweringCache::default();
+        match runtime.submit_value(ValueRootRequest {
+            island: island.id,
+            location: Location::for_test_island(&partitioned.name, island.id.0),
+            lowered: cache
+                .get_or_lower_owned(island)
+                .expect("scheduler decode source lowers"),
+            attribution: Rc::new(attribution_for(island)),
+            inputs: IslandInputs {
+                arguments: Vec::new(),
+                wires: Vec::new(),
+            },
+            chaos: ChaosPolicy::default(),
+            realized_as: None,
+        })? {
+            RootSubmission::Pending(demand) => Ok(demand),
+            RootSubmission::Ready(_) => panic!("fresh scheduler decode is pending"),
+        }
+    }
+
+    #[test]
+    fn kill_during_primitive_park_replays_and_joins_one_ticket() {
+        let begins = Arc::new(AtomicUsize::new(0));
+        let primitive = DecodePrimitive::default();
+        let mut runtime = Runtime::new(EventLog::default());
+        runtime.primitive_dispatcher = decode_registry(Arc::new(CountingDecode {
+            descriptor: primitive.descriptor().clone(),
+            begins: begins.clone(),
+        }));
+
+        let evaluation = scheduler_decode_root(
+            &mut runtime,
+            ChaosPolicy {
+                kill_first_parked_primitive: true,
+                ..ChaosPolicy::default()
+            },
+        )
+        .expect("replayed decode completes");
+
+        assert!(evaluation.passed, "the replayed frame publishes its check");
+        assert_eq!(
+            begins.load(Ordering::Acquire),
+            1,
+            "replay joins the demand-owned ticket instead of beginning again"
+        );
+        assert_eq!(runtime.counters.task_discards, 1);
+        assert_eq!(runtime.counters.primitive_invocations, 1);
+        assert_eq!(runtime.counters.effect_cancellations, 0);
+        assert_eq!(runtime.primitive_dispatcher.in_flight(), 0);
+        assert!(runtime.primitive_pending.is_empty());
+    }
+
+    #[test]
+    fn last_waiter_abandonment_cancels_without_publication_and_ignores_late_delivery() {
+        let begins = Arc::new(AtomicUsize::new(0));
+        let cancellations = Arc::new(AtomicUsize::new(0));
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let (completed_tx, completed_rx) = sync_channel(1);
+        let primitive = DecodePrimitive::default();
+        let mut runtime = Runtime::new(EventLog::default());
+        runtime.primitive_dispatcher = decode_registry(Arc::new(DelayedDecode {
+            descriptor: primitive.descriptor().clone(),
+            begins: begins.clone(),
+            cancellations: cancellations.clone(),
+            gate,
+            completed: completed_tx,
+        }));
+        let root = submit_scheduler_decode(&mut runtime).expect("decode root submits");
+
+        let mut ctx = runtime.runnable.pop().expect("fresh decode is runnable");
+        let request = match runtime
+            .drive_context(&mut ctx)
+            .expect("decode drives to its verified primitive yield")
+        {
+            DriveOutcome::YieldedPrimitive(request) => request,
+            DriveOutcome::Parked(input) => panic!("decode parked on wire {input}"),
+            DriveOutcome::Completed(_) => panic!("decode completed before its primitive"),
+        };
+        runtime
+            .begin_primitive(ctx, request)
+            .expect("decode frame parks on the delayed ticket");
+        assert_eq!(runtime.primitive_pending.len(), 1);
+        let primitive_demand = *runtime
+            .primitive_pending
+            .keys()
+            .next()
+            .expect("delayed primitive demand is pending");
+
+        assert!(
+            runtime
+                .abandon_demand(root)
+                .expect("abandoning a live root is valid")
+        );
+        let (completion, publication) = completed_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("cancelled worker attempts its late completion");
+        assert_eq!(completion, Err(TicketCompletionError::Cancelled));
+        assert_eq!(begins.load(Ordering::Acquire), 1);
+        assert_eq!(cancellations.load(Ordering::Acquire), 1);
+        assert_eq!(runtime.counters.effect_cancellations, 1);
+        assert_eq!(runtime.primitive_dispatcher.in_flight(), 0);
+        assert!(runtime.primitive_pending.is_empty());
+        assert!(!runtime.demands.contains_key(&root));
+        assert!(runtime.memo.is_empty(), "cancellation never memoizes");
+
+        runtime
+            .apply_completion(DeliveredCompletion::Primitive {
+                demand: primitive_demand,
+                publication,
+            })
+            .expect("a transport-raced late delivery is discarded");
+        assert_eq!(runtime.counters.stale_completions_ignored, 1);
+        assert!(runtime.memo.is_empty(), "late delivery cannot publish");
+        assert!(runtime.root_results.is_empty());
+    }
 
     #[derive(Clone, Copy)]
     enum ExpectedLanguageFailure {
