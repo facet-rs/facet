@@ -294,7 +294,10 @@ fn pinned_fetch_origin_returns_blob_and_separate_extraction() {
     assert_eq!(server.transfers(), 2, "plain and chaos each transfer once");
     assert_eq!(server.requests(), 2, "plain and chaos each request once");
     for run in [&report.plain, &report.chaos] {
-        assert_eq!(run.counters.primitive_invocations, 1, "{run:#?}");
+        assert_eq!(
+            run.counters.primitive_invocations, 2,
+            "one fetch and one observed tree read: {run:#?}"
+        );
         assert_eq!(run.counters.fetches_performed, 1, "{run:#?}");
     }
 }
