@@ -1,5 +1,4 @@
 //! rerun
-//! expect-harness-flag: nondeterministic
 
 // Rung 082 — a nondeterministic computation is DETECTED, not folklore:
 // rerun audit diffs results and flags divergence. (observability)

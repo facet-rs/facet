@@ -83,13 +83,13 @@ fn three_consumers_share_one_publication_identity_and_constant_machinery() {
     assert!(report.passed() && report.agrees());
     assert_eq!(report.plain.values.len(), 1);
     assert_eq!(report.plain.values, report.chaos.values);
-    let published = report.plain.values[0].identity;
+    let published = report.plain.values[0].identity.clone();
     assert_eq!(
         report
             .plain
             .checks
             .iter()
-            .filter(|check| check.arguments == [published])
+            .filter(|check| check.arguments == [published.clone()])
             .count(),
         3,
         "all three xs consumers bind the same ValueId through their demand preimage",
@@ -185,7 +185,7 @@ fn failure() -> Stream<Check> {
     assert!(publication.failure.is_some());
     assert_eq!(report.plain.checks.len(), 2);
     for check in &report.plain.checks {
-        assert_eq!(check.identity, Some(publication.identity));
+        assert_eq!(check.identity, Some(publication.identity.clone()));
         assert_eq!(check.failure, publication.failure);
         assert!(check.failure_context.is_some());
     }
@@ -210,6 +210,7 @@ fn selection() -> Stream<Check> {
         SOURCE,
         CompilerConfig {
             force_molten_copy: true,
+            ..CompilerConfig::default()
         },
     )
     .expect("forced-copy publication runs");

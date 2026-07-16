@@ -30,12 +30,7 @@ use facet_toml::TomlParser;
 
 use crate::vir::{EnumType, RecordField, Type, VariantPayload};
 
-/// Which document grammar a decode targets.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DecodeFormat {
-    Json,
-    Toml,
-}
+pub use crate::vir::DecodeFormat;
 
 impl DecodeFormat {
     fn label(self) -> &'static str {
@@ -454,8 +449,10 @@ fn table_form_variant(enumeration: &EnumType) -> Result<(u32, &[RecordField]), D
 /// Decode one object's fields against a declared field list, in declaration
 /// order. Shared by struct records and record-variant table forms: fields are
 /// matched by name, absent `Option` fields resolve to `None`, and any other
-/// absence or unknown/duplicate field is a typed failure. `container` names the
-/// struct or enum for error attribution.
+/// absence or duplicate field is a typed failure. Unknown fields are consumed
+/// and ignored so open documents such as Cargo manifests can decode into a
+/// smaller typed projection. `container` names the struct or enum for error
+/// attribution.
 fn decode_fields<'de>(
     parser: &mut dyn FormatParser<'de>,
     container: &str,
@@ -504,13 +501,8 @@ fn decode_fields<'de>(
                         slots[index] = Some(value);
                     }
                     None => {
-                        return Err(span_opt(
-                            DecodeError::of(DecodeErrorKind::UnknownField {
-                                container: container.to_owned(),
-                                field: name,
-                            }),
-                            span,
-                        ));
+                        let _ = (container, name, span);
+                        skip_value(parser)?;
                     }
                 }
             }
@@ -540,6 +532,43 @@ fn decode_fields<'de>(
         }
     }
     Ok(out)
+}
+
+fn skip_value<'de>(parser: &mut dyn FormatParser<'de>) -> Result<(), DecodeError> {
+    match consume(parser)?.kind {
+        ParseEventKind::Scalar(_) => Ok(()),
+        ParseEventKind::StructStart(_) => loop {
+            match consume(parser)?.kind {
+                ParseEventKind::StructEnd => return Ok(()),
+                ParseEventKind::FieldKey(_) => skip_value(parser)?,
+                other => {
+                    return Err(DecodeError::of(DecodeErrorKind::ExpectedObject {
+                        container: "unknown field".to_owned(),
+                        found: event_label(&other),
+                    }));
+                }
+            }
+        },
+        ParseEventKind::SequenceStart(_) => loop {
+            match peek(parser)?.0 {
+                Some(ParseEventKind::SequenceEnd) => {
+                    consume(parser)?;
+                    return Ok(());
+                }
+                Some(_) => skip_value(parser)?,
+                None => {
+                    return Err(DecodeError::of(DecodeErrorKind::UnexpectedEnd {
+                        container: "unknown array".to_owned(),
+                    }));
+                }
+            }
+        },
+        ParseEventKind::VariantTag(_) => skip_value(parser),
+        other => Err(DecodeError::of(DecodeErrorKind::ExpectedObject {
+            container: "unknown field".to_owned(),
+            found: event_label(&other),
+        })),
+    }
 }
 
 /// Consume one scalar, returning its value and document span. `expected` names
@@ -678,9 +707,9 @@ mod tests {
     use crate::vir::{EnumType, EnumVariant, RecordField, RecordType, Type, VariantPayload};
 
     fn dep_spec() -> Type {
-        Type::Enum(EnumType {
-            name: "DepSpec".to_owned(),
-            variants: vec![
+        Type::Enum(EnumType::new(
+            "DepSpec",
+            vec![
                 EnumVariant {
                     name: "Req".to_owned(),
                     payload: VariantPayload::Tuple(vec![Type::String]),
@@ -699,7 +728,7 @@ mod tests {
                     ]),
                 },
             ],
-        })
+        ))
     }
 
     #[test]
@@ -736,9 +765,9 @@ mod tests {
     }
 
     fn pkg_row() -> Type {
-        Type::Record(RecordType {
-            name: "PkgRow".to_owned(),
-            fields: vec![
+        Type::Record(RecordType::new(
+            "PkgRow",
+            vec![
                 RecordField {
                     name: "name".to_owned(),
                     ty: Type::String,
@@ -752,7 +781,7 @@ mod tests {
                     ty: Type::Bool,
                 },
             ],
-        })
+        ))
     }
 
     #[test]
@@ -775,13 +804,13 @@ mod tests {
 
     #[test]
     fn decode_toml_nested_struct() {
-        let manifest = Type::Record(RecordType {
-            name: "Manifest".to_owned(),
-            fields: vec![RecordField {
+        let manifest = Type::Record(RecordType::new(
+            "Manifest",
+            vec![RecordField {
                 name: "package".to_owned(),
-                ty: Type::Record(RecordType {
-                    name: "Package".to_owned(),
-                    fields: vec![
+                ty: Type::Record(RecordType::new(
+                    "Package",
+                    vec![
                         RecordField {
                             name: "name".to_owned(),
                             ty: Type::String,
@@ -791,9 +820,9 @@ mod tests {
                             ty: Type::String,
                         },
                     ],
-                }),
+                )),
             }],
-        });
+        ));
         let value = decode(
             DecodeFormat::Toml,
             "[package]\nname = \"taxon\"\nversion = \"0.1.0\"\n",
@@ -811,9 +840,9 @@ mod tests {
 
     #[test]
     fn decode_optional_fields() {
-        let dep_decl = Type::Record(RecordType {
-            name: "DepDecl".to_owned(),
-            fields: vec![
+        let dep_decl = Type::Record(RecordType::new(
+            "DepDecl",
+            vec![
                 RecordField {
                     name: "version".to_owned(),
                     ty: Type::option(Type::String),
@@ -823,7 +852,7 @@ mod tests {
                     ty: Type::option(Type::String),
                 },
             ],
-        });
+        ));
         let value = decode(DecodeFormat::Json, "{\"version\":\"^1.0\"}", &dep_decl)
             .expect("absent option field decodes to None");
         assert_eq!(
@@ -861,9 +890,9 @@ mod tests {
     #[test]
     fn ambiguous_enum_forms_are_rejected_not_first_matched() {
         // Two short (single-String tuple) forms: a scalar document is ambiguous.
-        let two_short = Type::Enum(EnumType {
-            name: "TwoShort".to_owned(),
-            variants: vec![
+        let two_short = Type::Enum(EnumType::new(
+            "TwoShort",
+            vec![
                 EnumVariant {
                     name: "A".to_owned(),
                     payload: VariantPayload::Tuple(vec![Type::String]),
@@ -873,7 +902,7 @@ mod tests {
                     payload: VariantPayload::Tuple(vec![Type::String]),
                 },
             ],
-        });
+        ));
         let err = decode(DecodeFormat::Json, "\"x\"", &two_short)
             .expect_err("two short forms are ambiguous");
         assert_eq!(
@@ -884,9 +913,9 @@ mod tests {
         );
 
         // Two table (record) forms: an object document is ambiguous.
-        let two_table = Type::Enum(EnumType {
-            name: "TwoTable".to_owned(),
-            variants: vec![
+        let two_table = Type::Enum(EnumType::new(
+            "TwoTable",
+            vec![
                 EnumVariant {
                     name: "A".to_owned(),
                     payload: VariantPayload::Record(vec![RecordField {
@@ -902,7 +931,7 @@ mod tests {
                     }]),
                 },
             ],
-        });
+        ));
         let err = decode(DecodeFormat::Json, "{\"x\":true}", &two_table)
             .expect_err("two table forms are ambiguous");
         assert_eq!(

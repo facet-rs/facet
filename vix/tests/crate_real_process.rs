@@ -9,11 +9,36 @@ use std::time::Instant;
 
 use facet::Facet;
 use vix::exec::Tree;
+use vix::fetch::FakeFetchBackend;
 use vix::machine::{DriveEvent, Machine, MachineArg, RenderedValue};
 use vix::real_process::RealProcessBackend;
 
 const SOURCE: &str = include_str!("../../playgrounds/snark/src/bundled/vix/samples/crate.vix");
 const RODIN_SOURCE: &str = include_str!("../../rodin/rodin.vix");
+const CARGO_NEXT_SOURCE: &str = include_str!("../corpus-next/cargo.vix");
+const CRATE_NEXT_SOURCE: &str =
+    include_str!("../../playgrounds/snark/src/bundled/vix/samples/crate.vix");
+const CARGO_MANIFEST_NEXT_SOURCE: &str =
+    include_str!("../../playgrounds/snark/src/bundled/vix/samples/cargo_manifest.vix");
+const BLAKE3_SPARSE_INDEX: &str =
+    include_str!("fixtures/sparse-index/snapshot-2025-03-04/bl/ak/blake3");
+const CC_SPARSE_INDEX: &str = include_str!("fixtures/sparse-index/snapshot-2025-03-04/2/cc");
+const ARRAYREF_SPARSE_INDEX: &str =
+    include_str!("fixtures/sparse-index/snapshot-2025-03-04/ar/ra/arrayref");
+const ARRAYVEC_SPARSE_INDEX: &str =
+    include_str!("fixtures/sparse-index/snapshot-2025-03-04/ar/ra/arrayvec");
+const CFG_IF_SPARSE_INDEX: &str =
+    include_str!("fixtures/sparse-index/snapshot-2025-03-04/cf/g-/cfg-if");
+const CONSTANT_TIME_EQ_SPARSE_INDEX: &str =
+    include_str!("fixtures/sparse-index/snapshot-2025-03-04/co/ns/constant_time_eq");
+const AUTOCFG_SPARSE_INDEX: &str =
+    include_str!("fixtures/sparse-index/snapshot-2025-03-04/au/to/autocfg");
+const CONST_FNV1A_HASH_SPARSE_INDEX: &str =
+    include_str!("fixtures/sparse-index/snapshot-2025-03-04/co/ns/const-fnv1a-hash");
+const IMPLS_SPARSE_INDEX: &str =
+    include_str!("fixtures/sparse-index/snapshot-2025-03-04/im/pl/impls");
+const SHLEX_SPARSE_INDEX: &str =
+    include_str!("fixtures/sparse-index/snapshot-2025-03-04/sh/le/shlex");
 const APP_MANIFEST: &str = include_str!(
     "../../playgrounds/snark/src/bundled/vix/samples/fixtures/two_crate_graph/app/Cargo.toml"
 );
@@ -86,7 +111,7 @@ fn real_process_rustc_builds_two_crate_fixture_and_matches_cargo_unit_graph_orac
 
     let source = crate_source();
     let backend = Arc::new(RealProcessBackend::new());
-    let mut machine = Machine::load(&source)?.with_exec_backend(backend);
+    let mut machine = crate_machine(&source)?.with_exec_backend(backend);
     let target = machine.linux_target_handle();
     let graph = machine
         .intern_arg("Tree", MachineArg::Tree(two_crate_graph_tree()))?
@@ -125,7 +150,7 @@ fn real_process_rustc_builds_lockfile_graph_and_matches_cargo_unit_graph_oracle(
 
     let source = crate_source();
     let backend = Arc::new(RealProcessBackend::new());
-    let mut machine = Machine::load(&source)?.with_exec_backend(backend);
+    let mut machine = crate_machine(&source)?.with_exec_backend(backend);
     let target = machine.linux_target_handle();
     let graph = machine
         .intern_arg("Tree", MachineArg::Tree(lock_graph_tree()))?
@@ -189,7 +214,7 @@ fn generic_walk_builds_resolved_graph_and_matches_cargo_oracle() -> Result<(), S
 
     let source = generic_lock_graph_source();
     let backend = Arc::new(RealProcessBackend::new());
-    let mut machine = Machine::load(&source)?.with_exec_backend(backend);
+    let mut machine = crate_machine(&source)?.with_exec_backend(backend);
     let target = machine.linux_target_handle();
     let graph = machine
         .intern_arg("Tree", MachineArg::Tree(lock_graph_tree()))?
@@ -228,7 +253,7 @@ fn solution_walk_derives_units_from_rodin_and_matches_cargo_oracle() -> Result<(
 
     let source = generic_lock_graph_source();
     let backend = Arc::new(RealProcessBackend::new());
-    let mut machine = Machine::load(&source)?.with_exec_backend(backend);
+    let mut machine = crate_machine(&source)?.with_exec_backend(backend);
     let target = machine.linux_target_handle();
     let graph = machine
         .intern_arg("Tree", MachineArg::Tree(lock_graph_tree()))?
@@ -277,7 +302,7 @@ fn real_process_runs_build_script_threads_directives_and_out_dir_into_parent_rus
 
     let source = crate_source();
     let backend = Arc::new(RealProcessBackend::new());
-    let mut machine = Machine::load(&source)?.with_exec_backend(backend);
+    let mut machine = crate_machine(&source)?.with_exec_backend(backend);
     let target = machine.linux_target_handle();
     let graph = machine
         .intern_arg("Tree", MachineArg::Tree(build_script_tree()))?
@@ -374,15 +399,25 @@ fn build_script_tree() -> Tree {
 }
 
 fn generic_lock_graph_source() -> String {
-    format!("{RODIN_SOURCE}\n\n{SOURCE}\n\n{GENERIC_LOCK_GRAPH_BRIDGE}")
+    format!("{SOURCE}\n\n{GENERIC_LOCK_GRAPH_BRIDGE}")
 }
 
 fn proc_macro_solution_source() -> String {
-    format!("{RODIN_SOURCE}\n\n{SOURCE}\n\n{PROC_MACRO_SOLUTION_BRIDGE}")
+    format!("{SOURCE}\n\n{PROC_MACRO_SOLUTION_BRIDGE}")
 }
 
 fn crate_source() -> String {
-    format!("{RODIN_SOURCE}\n\n{SOURCE}")
+    SOURCE.to_owned()
+}
+
+fn crate_machine(root_source: &str) -> Result<Machine, String> {
+    Machine::load_modules(
+        "root",
+        BTreeMap::from([
+            ("root".to_owned(), root_source.to_owned()),
+            ("rodin".to_owned(), RODIN_SOURCE.to_owned()),
+        ]),
+    )
 }
 
 const GENERIC_LOCK_GRAPH_BRIDGE: &str = r#"
@@ -1563,6 +1598,436 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
+#[derive(Facet)]
+struct RawSparseIndexRow {
+    name: String,
+    vers: String,
+    deps: Vec<RawSparseIndexDep>,
+    cksum: String,
+    features: BTreeMap<String, Vec<String>>,
+    features2: Option<BTreeMap<String, Vec<String>>>,
+    yanked: bool,
+    rust_version: Option<String>,
+    pubtime: String,
+    v: Option<i64>,
+}
+
+#[derive(Facet)]
+struct RawSparseIndexDep {
+    name: String,
+    package: Option<String>,
+    req: String,
+    kind: String,
+    target: Option<String>,
+    optional: bool,
+    default_features: bool,
+    features: Vec<String>,
+}
+
+#[derive(Facet)]
+struct NormalizedSparseIndexRow {
+    name: String,
+    vers: String,
+    deps: Vec<NormalizedSparseIndexDep>,
+    cksum: String,
+    features: BTreeMap<String, Vec<String>>,
+    yanked: bool,
+    pubtime: String,
+}
+
+#[derive(Facet)]
+struct NormalizedSparseIndexDep {
+    name: String,
+    package: String,
+    req: String,
+    kind: String,
+    target: String,
+    optional: bool,
+    default_features: bool,
+    features: Vec<String>,
+}
+
+fn taxon_native_sparse_jsonl() -> Result<String, String> {
+    let rows = [
+        selected_sparse_row(BLAKE3_SPARSE_INDEX, "blake3", "1.6.1")?,
+        selected_sparse_row(CC_SPARSE_INDEX, "cc", "1.2.16")?,
+        selected_sparse_row(ARRAYREF_SPARSE_INDEX, "arrayref", "0.3.9")?,
+        selected_sparse_row(ARRAYVEC_SPARSE_INDEX, "arrayvec", "0.7.6")?,
+        selected_sparse_row(CFG_IF_SPARSE_INDEX, "cfg-if", "1.0.0")?,
+        selected_sparse_row(CONSTANT_TIME_EQ_SPARSE_INDEX, "constant_time_eq", "0.3.1")?,
+        selected_sparse_row(SHLEX_SPARSE_INDEX, "shlex", "1.3.0")?,
+    ];
+    Ok(rows.join("\n"))
+}
+
+fn facet_core_native_sparse_jsonl() -> Result<String, String> {
+    let rows = [
+        selected_sparse_row(AUTOCFG_SPARSE_INDEX, "autocfg", "1.5.1")?,
+        selected_sparse_row(CONST_FNV1A_HASH_SPARSE_INDEX, "const-fnv1a-hash", "1.1.0")?,
+        selected_sparse_row(IMPLS_SPARSE_INDEX, "impls", "1.0.3")?,
+    ];
+    Ok(rows.join("\n"))
+}
+
+fn selected_sparse_row(index: &str, name: &str, version: &str) -> Result<String, String> {
+    for line in index.lines() {
+        let raw: RawSparseIndexRow = facet_json::from_str(line).map_err(|err| err.to_string())?;
+        let RawSparseIndexRow {
+            name: row_name,
+            vers,
+            deps,
+            cksum,
+            features,
+            features2: _,
+            yanked,
+            rust_version: _,
+            pubtime,
+            v: _,
+        } = raw;
+        if row_name != name || vers != version {
+            continue;
+        }
+        let normalized = NormalizedSparseIndexRow {
+            name: row_name,
+            vers,
+            deps: deps
+                .into_iter()
+                .map(|dep| {
+                    let RawSparseIndexDep {
+                        name,
+                        package,
+                        req,
+                        kind,
+                        target,
+                        optional,
+                        default_features,
+                        features,
+                    } = dep;
+                    NormalizedSparseIndexDep {
+                        package: package.unwrap_or_else(|| name.clone()),
+                        target: target.unwrap_or_default(),
+                        name,
+                        req,
+                        kind,
+                        optional,
+                        default_features,
+                        features,
+                    }
+                })
+                .collect(),
+            cksum,
+            features,
+            yanked,
+            pubtime,
+        };
+        return facet_json::to_string(&normalized).map_err(|err| err.to_string());
+    }
+    Err(format!(
+        "missing sparse row {name} {version} in pinned snapshot"
+    ))
+}
+
+fn taxon_native_workspace_tree() -> Result<Tree, String> {
+    let root = workspace_root();
+    let mut entries = BTreeMap::new();
+    let mut blobs = BTreeMap::new();
+    entries.insert(
+        "Cargo.toml".to_owned(),
+        fs::read_to_string(root.join("Cargo.toml")).map_err(|err| err.to_string())?,
+    );
+    copy_tree_into_vix_tree(
+        &root.join("phon/rust/taxon"),
+        "phon/rust/taxon",
+        &mut entries,
+        &mut blobs,
+    )?;
+    Ok(Tree { entries, blobs })
+}
+
+fn facet_core_native_workspace_tree() -> Result<Tree, String> {
+    let root = workspace_root();
+    let mut entries = BTreeMap::new();
+    let mut blobs = BTreeMap::new();
+    entries.insert(
+        "Cargo.toml".to_owned(),
+        fs::read_to_string(root.join("Cargo.toml")).map_err(|err| err.to_string())?,
+    );
+    copy_tree_into_vix_tree(
+        &root.join("facet-core"),
+        "facet-core",
+        &mut entries,
+        &mut blobs,
+    )?;
+    Ok(Tree { entries, blobs })
+}
+
+fn taxon_native_archive_path(name: &str, version: &str) -> PathBuf {
+    let crate_file = format!("{name}-{version}.crate");
+    PathBuf::from(std::env::var_os("HOME").expect("HOME is set"))
+        .join(".cargo/registry/cache/index.crates.io-1949cf8c6b5b557f")
+        .join(crate_file)
+}
+
+fn taxon_native_archive_bytes(name: &str, version: &str) -> Result<Vec<u8>, String> {
+    let path = taxon_native_archive_path(name, version);
+    fs::read(&path).map_err(|err| {
+        format!(
+            "read pinned archive {}: {err}; run `cargo info {name}@{version}` to populate the cache",
+            path.display()
+        )
+    })
+}
+
+fn taxon_native_crate_url(name: &str, version: &str) -> String {
+    format!("https://static.crates.io/crates/{name}/{name}-{version}.crate")
+}
+
+fn taxon_native_fetch_backend() -> Result<FakeFetchBackend, String> {
+    let mut backend = FakeFetchBackend::new();
+    for (name, version) in [
+        ("arrayref", "0.3.9"),
+        ("arrayvec", "0.7.6"),
+        ("cfg-if", "1.0.0"),
+        ("constant_time_eq", "0.3.1"),
+        ("shlex", "1.3.0"),
+        ("cc", "1.2.16"),
+        ("blake3", "1.6.1"),
+    ] {
+        let bytes = taxon_native_archive_bytes(name, version)?;
+        let file = format!("{name}-{version}.crate");
+        backend.insert_archive(
+            taxon_native_crate_url(name, version),
+            &bytes,
+            Tree::of_blobs(&[(file.as_str(), &bytes)]),
+        );
+    }
+    Ok(backend)
+}
+
+fn facet_core_native_fetch_backend() -> Result<FakeFetchBackend, String> {
+    let mut backend = FakeFetchBackend::new();
+    for (name, version) in [
+        ("autocfg", "1.5.1"),
+        ("impls", "1.0.3"),
+        ("const-fnv1a-hash", "1.1.0"),
+    ] {
+        let bytes = facet_core_native_archive_bytes(name, version)?;
+        let file = format!("{name}-{version}.crate");
+        backend.insert_archive(
+            facet_core_native_crate_url(name, version),
+            &bytes,
+            Tree::of_blobs(&[(file.as_str(), &bytes)]),
+        );
+    }
+    Ok(backend)
+}
+
+fn taxon_native_fetch_backend_with_changed_blake3() -> Result<FakeFetchBackend, String> {
+    let mut backend = FakeFetchBackend::new();
+    for (name, version) in [
+        ("arrayref", "0.3.9"),
+        ("arrayvec", "0.7.6"),
+        ("cfg-if", "1.0.0"),
+        ("constant_time_eq", "0.3.1"),
+        ("shlex", "1.3.0"),
+        ("cc", "1.2.16"),
+        ("blake3", "1.6.1"),
+    ] {
+        let mut bytes = taxon_native_archive_bytes(name, version)?;
+        if name == "blake3" {
+            let first = bytes
+                .first_mut()
+                .ok_or_else(|| "empty blake3 archive fixture".to_string())?;
+            *first ^= 0x01;
+        }
+        let file = format!("{name}-{version}.crate");
+        backend.insert_archive(
+            taxon_native_crate_url(name, version),
+            &bytes,
+            Tree::of_blobs(&[(file.as_str(), &bytes)]),
+        );
+    }
+    Ok(backend)
+}
+
+fn taxon_native_machine(fetch_backend: FakeFetchBackend) -> Result<Machine, String> {
+    let sources = BTreeMap::from([
+        ("cargo_demo".to_owned(), CARGO_NEXT_SOURCE.to_owned()),
+        ("crate_build".to_owned(), CRATE_NEXT_SOURCE.to_owned()),
+        (
+            "cargo_manifest".to_owned(),
+            CARGO_MANIFEST_NEXT_SOURCE.to_owned(),
+        ),
+        ("rodin".to_owned(), RODIN_SOURCE.to_owned()),
+    ]);
+    let backend = Arc::new(RealProcessBackend::new());
+    let mut machine = Machine::load_modules("cargo_demo", sources)
+        .map_err(|err| err.to_string())?
+        .with_fetch_backend(fetch_backend)
+        .with_exec_backend(backend);
+    machine.set_force_molten_copy(true);
+    Ok(machine)
+}
+
+fn facet_core_native_machine(fetch_backend: FakeFetchBackend) -> Result<Machine, String> {
+    taxon_native_machine(fetch_backend)
+}
+
+fn taxon_native_args(machine: &mut Machine) -> Result<Vec<i64>, String> {
+    let workspace = machine
+        .intern_arg("Tree", MachineArg::Tree(taxon_native_workspace_tree()?))?
+        .0;
+    let sparse = machine
+        .intern_arg("String", MachineArg::String(taxon_native_sparse_jsonl()?))?
+        .0;
+    let target_name = machine
+        .intern_arg("String", MachineArg::String(host_triple()?))?
+        .0;
+    Ok(vec![workspace, sparse, target_name])
+}
+
+fn facet_core_native_args(machine: &mut Machine, workspace: Tree) -> Result<Vec<i64>, String> {
+    let workspace_arg = machine.intern_arg("Tree", MachineArg::Tree(workspace))?.0;
+    let sparse = machine
+        .intern_arg(
+            "String",
+            MachineArg::String(facet_core_native_sparse_jsonl()?),
+        )?
+        .0;
+    let target_name = machine
+        .intern_arg("String", MachineArg::String(host_triple()?))?
+        .0;
+    Ok(vec![workspace_arg, sparse, target_name])
+}
+
+fn facet_core_native_archive_path(name: &str, version: &str) -> PathBuf {
+    let crate_file = format!("{name}-{version}.crate");
+    PathBuf::from(std::env::var_os("HOME").expect("HOME is set"))
+        .join(".cargo/registry/cache/index.crates.io-1949cf8c6b5b557f")
+        .join(crate_file)
+}
+
+fn facet_core_native_archive_bytes(name: &str, version: &str) -> Result<Vec<u8>, String> {
+    let path = facet_core_native_archive_path(name, version);
+    fs::read(&path).map_err(|err| {
+        format!(
+            "read pinned archive {}: {err}; run `cargo info {name}@{version}` to populate the cache",
+            path.display()
+        )
+    })
+}
+
+fn facet_core_native_crate_url(name: &str, version: &str) -> String {
+    format!("https://static.crates.io/crates/{name}/{name}-{version}.crate")
+}
+
+const PINNED_TAXON_ORACLE_MANIFEST: &str = r#"[package]
+name = "taxon"
+version = "0.2.0-rc.5"
+edition = "2024"
+
+[dependencies]
+blake3 = { version = "=1.6.1", default-features = false }
+"#;
+
+#[derive(Facet)]
+struct CargoMetadataSelection {
+    packages: Vec<CargoMetadataSelectionPackage>,
+}
+
+#[derive(Facet)]
+struct CargoMetadataSelectionPackage {
+    name: String,
+    version: String,
+}
+
+fn selected_versions_set(text: &str) -> Result<BTreeSet<(String, String)>, String> {
+    text.lines()
+        .map(|line| {
+            let (name, version) = line
+                .split_once(' ')
+                .ok_or_else(|| format!("invalid selected-version row `{line}`"))?;
+            Ok((name.to_owned(), version.to_owned()))
+        })
+        .collect()
+}
+
+fn cargo_pinned_taxon_oracle() -> Result<(BTreeSet<(String, String)>, CargoUnitGraph), String> {
+    let temp = tempfile::Builder::new()
+        .prefix("vix-taxon-pinned-cargo-")
+        .tempdir()
+        .map_err(|err| err.to_string())?;
+    let root = temp.path();
+    let src = root.join("src");
+    fs::create_dir_all(&src).map_err(|err| err.to_string())?;
+    fs::write(root.join("Cargo.toml"), PINNED_TAXON_ORACLE_MANIFEST)
+        .map_err(|err| err.to_string())?;
+    let taxon_src = workspace_root().join("phon/rust/taxon/src");
+    for file in ["lib.rs", "identity.rs", "sink.rs"] {
+        fs::copy(taxon_src.join(file), src.join(file)).map_err(|err| err.to_string())?;
+    }
+
+    run_cargo_oracle(root, &["generate-lockfile", "--offline"])?;
+    for (name, version) in [
+        ("arrayref", "0.3.9"),
+        ("arrayvec", "0.7.6"),
+        ("cfg-if", "1.0.0"),
+        ("constant_time_eq", "0.3.1"),
+        ("cc", "1.2.16"),
+        ("shlex", "1.3.0"),
+    ] {
+        run_cargo_oracle(
+            root,
+            &["update", "--offline", "-p", name, "--precise", version],
+        )?;
+    }
+
+    let metadata = run_cargo_oracle(
+        root,
+        &["metadata", "--format-version", "1", "--locked", "--offline"],
+    )?;
+    let metadata = String::from_utf8(metadata.stdout).map_err(|err| err.to_string())?;
+    let metadata: CargoMetadataSelection =
+        facet_json::from_str(&metadata).map_err(|err| err.to_string())?;
+    let selection = metadata
+        .packages
+        .into_iter()
+        .map(|package| (package.name, package.version))
+        .collect();
+
+    let graph = run_cargo_oracle(
+        root,
+        &[
+            "+nightly",
+            "build",
+            "-Z",
+            "unstable-options",
+            "--unit-graph",
+            "--locked",
+            "--offline",
+        ],
+    )?;
+    let graph = String::from_utf8(graph.stdout).map_err(|err| err.to_string())?;
+    let graph = facet_json::from_str(&graph).map_err(|err| err.to_string())?;
+    Ok((selection, graph))
+}
+
+fn run_cargo_oracle(root: &Path, args: &[&str]) -> Result<std::process::Output, String> {
+    let output = Command::new("cargo")
+        .args(args)
+        .current_dir(root)
+        .output()
+        .map_err(|err| format!("spawning cargo {args:?}: {err}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "cargo {args:?} exited with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(output)
+}
+
 fn cargo_real_workspace_unit_graph_oracle() -> Result<CargoUnitGraph, String> {
     let output = Command::new("cargo")
         .arg("+nightly")
@@ -1738,7 +2203,7 @@ fn real_process_rustc_builds_proc_macro_fixture_and_matches_cargo_unit_graph_ora
 
     let source = crate_source();
     let backend = Arc::new(RealProcessBackend::new());
-    let mut machine = Machine::load(&source)?.with_exec_backend(backend);
+    let mut machine = crate_machine(&source)?.with_exec_backend(backend);
     let graph = machine
         .intern_arg("Tree", MachineArg::Tree(proc_macro_graph_tree()))?
         .0;
@@ -1781,7 +2246,7 @@ fn real_process_rustc_builds_derived_proc_macro_fixture_and_matches_cargo_unit_g
 
     let source = proc_macro_solution_source();
     let backend = Arc::new(RealProcessBackend::new());
-    let mut machine = Machine::load(&source)?.with_exec_backend(backend);
+    let mut machine = crate_machine(&source)?.with_exec_backend(backend);
     let graph = machine
         .intern_arg("Tree", MachineArg::Tree(proc_macro_graph_tree()))?
         .0;
@@ -1829,7 +2294,7 @@ fn real_workspace_resolved_profiles_match_cargo_unit_graph_oracle() -> Result<()
     let graph = cargo_real_workspace_unit_graph_oracle()?;
     let workspace_manifest =
         fs::read_to_string(workspace_root().join("Cargo.toml")).map_err(|err| err.to_string())?;
-    let mut machine = Machine::load(&crate_source())?;
+    let mut machine = crate_machine(&crate_source())?;
     let workspace = machine
         .intern_arg(
             "Tree",
@@ -1909,37 +2374,32 @@ fn taxon_ladder_oracle_reveals_blake3_build_script_boundary() -> Result<(), Stri
         has_cc_build_dependency,
         "cargo unit graph for taxon did not expose blake3's cc build dependency: {graph:#?}"
     );
+    let host = host_triple()?;
+    let bridge = taxon_demo_bridge_source(&graph, &host)?;
+    write_tier_a_artifact("taxon-demo-bridge-oracle.vix", &bridge)?;
+    let source_tree = taxon_demo_source_tree(&graph)?;
+    assert_taxon_source_tree_has_blake3_build_main(&source_tree)?;
     Ok(())
 }
 
 #[test]
-#[ignore = "demo checkpoint: runs blake3's real build.rs with declared cc capability"]
 fn taxon_ladder_runs_blake3_build_script_with_declared_cc() -> Result<(), String> {
     if !host_rustc_available() {
         return Ok(());
     }
 
-    let graph = cargo_taxon_unit_graph_oracle()?;
-    if graph.units.is_empty() {
-        return Ok(());
-    }
-
-    let host = host_triple()?;
-    let bridge = taxon_demo_bridge_source(&graph, &host)?;
-    write_tier_a_artifact("taxon-demo-bridge.vix", &bridge)?;
-    let source_tree = taxon_demo_source_tree(&graph)?;
-    assert_taxon_source_tree_has_blake3_build_main(&source_tree)?;
-    let source = format!("{RODIN_SOURCE}\n\n{SOURCE}\n\n{bridge}");
-    let backend = Arc::new(RealProcessBackend::new());
-    let mut machine = Machine::load(&source)?.with_exec_backend(backend);
-    let source_arg = machine.intern_arg("Tree", MachineArg::Tree(source_tree))?.0;
-    let projected_build_rs = machine.demand_i64("taxon_blake3_build_rs", vec![source_arg])?;
+    let mut machine = taxon_native_machine(taxon_native_fetch_backend()?)?;
+    let args = taxon_native_args(&mut machine)?;
+    let projected_build_rs = machine
+        .demand_i64("taxon_blake3_build_rs", args.clone())
+        .map_err(|err| format!("taxon_blake3_build_rs failed: {err}"))?;
     assert_projected_blake3_build_main(&mut machine, projected_build_rs)?;
 
-    let demanded = machine.demand_i64("taxon_blake3_build_script_run", vec![source_arg]);
+    let demanded = machine.demand_i64("taxon_blake3_build_script_run", args);
     let run = match demanded {
         Ok(run) => run,
         Err(err) => {
+            let err = format!("taxon_blake3_build_script_run failed: {err}");
             write_tier_a_artifact(
                 "taxon-blake3-build-script-error.txt",
                 &format!("{err}\nrustc argv trace:\n{}", rustc_argv_trace(&machine)),
@@ -1971,28 +2431,16 @@ fn taxon_ladder_runs_blake3_build_script_with_declared_cc() -> Result<(), String
 }
 
 #[test]
-#[ignore = "demo checkpoint: builds the blake3 build-dependency host closure with real rustc"]
 fn taxon_ladder_builds_cc_host_unit_and_hashes_artifacts() -> Result<(), String> {
     if !host_rustc_available() {
         return Ok(());
     }
 
-    let graph = cargo_taxon_unit_graph_oracle()?;
-    if graph.units.is_empty() {
-        return Ok(());
-    }
+    let mut machine = taxon_native_machine(taxon_native_fetch_backend()?)?;
+    let args = taxon_native_args(&mut machine)?;
 
-    let host = host_triple()?;
-    let bridge = taxon_demo_bridge_source(&graph, &host)?;
-    write_tier_a_artifact("taxon-demo-bridge.vix", &bridge)?;
-    let source_tree = taxon_demo_source_tree(&graph)?;
-    let source = format!("{RODIN_SOURCE}\n\n{SOURCE}\n\n{bridge}");
-    let backend = Arc::new(RealProcessBackend::new());
-    let mut machine = Machine::load(&source)?.with_exec_backend(backend);
-    let source_arg = machine.intern_arg("Tree", MachineArg::Tree(source_tree))?.0;
-
-    let built = demand_with_rustc_trace(&mut machine, "taxon_cc_host_unit", vec![source_arg])?;
-    assert_rustc_requests_include_crates(&machine, &["find_msvc_tools", "shlex", "cc"])?;
+    let built = demand_with_rustc_trace(&mut machine, "taxon_cc_host_unit", args)?;
+    assert_rustc_requests_include_crates(&machine, &["shlex", "cc"])?;
 
     let receipts = artifact_receipt_table(
         &mut machine,
@@ -2015,52 +2463,132 @@ fn taxon_ladder_builds_cc_host_unit_and_hashes_artifacts() -> Result<(), String>
 }
 
 #[test]
-#[ignore = "demo: builds taxon through real rustc, blake3 build.rs, and declared cc capability"]
 fn taxon_ladder_builds_taxon_with_real_process_and_hashes_artifacts() -> Result<(), String> {
     if !host_rustc_available() {
         return Ok(());
     }
 
-    let graph = cargo_taxon_unit_graph_oracle()?;
-    if graph.units.is_empty() {
-        return Ok(());
+    let mut machine = taxon_native_machine(taxon_native_fetch_backend()?)?;
+    let args = taxon_native_args(&mut machine)?;
+    let literal_member_name = machine
+        .demand_i64("taxon_literal_member_package_name", args.clone())
+        .map_err(|err| format!("taxon_literal_member_package_name failed: {err}"))?;
+    write_tier_a_artifact(
+        "taxon-literal-member-package-name.txt",
+        &rendered_result_string(
+            &machine,
+            "taxon_literal_member_package_name",
+            literal_member_name,
+        )?,
+    )?;
+    let member_name = machine
+        .demand_i64("taxon_member_package_name", args.clone())
+        .map_err(|err| format!("taxon_member_package_name failed: {err}"))?;
+    write_tier_a_artifact(
+        "taxon-member-package-name.txt",
+        &rendered_result_string(&machine, "taxon_member_package_name", member_name)?,
+    )?;
+    let member_version = machine
+        .demand_i64("taxon_member_package_version", args.clone())
+        .map_err(|err| format!("taxon_member_package_version failed: {err}"))?;
+    write_tier_a_artifact(
+        "taxon-member-package-version.txt",
+        &rendered_result_string(&machine, "taxon_member_package_version", member_version)?,
+    )?;
+    let member_package_count = machine
+        .demand_i64("taxon_member_only_package_count", args.clone())
+        .map_err(|err| format!("taxon_member_only_package_count failed: {err}"))?;
+    write_tier_a_artifact(
+        "taxon-member-only-package-count.txt",
+        &format!(
+            "{:?}",
+            machine.render_result("taxon_member_only_package_count", member_package_count)?
+        ),
+    )?;
+    let member_packages = machine
+        .demand_i64("taxon_member_only_packages_text", args.clone())
+        .map_err(|err| format!("taxon_member_only_packages_text failed: {err}"))?;
+    write_tier_a_artifact(
+        "taxon-member-only-packages.txt",
+        &rendered_result_string(&machine, "taxon_member_only_packages_text", member_packages)?,
+    )?;
+    let package_count = machine
+        .demand_i64("taxon_index_package_count", args.clone())
+        .map_err(|err| format!("taxon_index_package_count failed: {err}"))?;
+    write_tier_a_artifact(
+        "taxon-index-package-count.txt",
+        &format!(
+            "{:?}",
+            machine.render_result("taxon_index_package_count", package_count)?
+        ),
+    )?;
+    let packages = machine
+        .demand_i64("taxon_index_packages_text", args.clone())
+        .map_err(|err| format!("taxon_index_packages_text failed: {err}"))?;
+    write_tier_a_artifact(
+        "taxon-index-packages.txt",
+        &rendered_result_string(&machine, "taxon_index_packages_text", packages)?,
+    )?;
+    for name in [
+        "taxon_root_pkg_id",
+        "taxon_root_candidate_count",
+        "taxon_root_version_count",
+    ] {
+        let value = machine
+            .demand_i64(name, args.clone())
+            .map_err(|err| format!("{name} failed: {err}"))?;
+        write_tier_a_artifact(
+            &format!("{name}.txt"),
+            &format!("{:?}", machine.render_result(name, value)?),
+        )?;
     }
-
-    let host = host_triple()?;
-    let bridge = taxon_demo_bridge_source(&graph, &host)?;
-    write_tier_a_artifact("taxon-demo-bridge.vix", &bridge)?;
-    let source_tree = taxon_demo_source_tree(&graph)?;
-    assert_taxon_source_tree_has_blake3_build_main(&source_tree)?;
-    let source = format!("{RODIN_SOURCE}\n\n{SOURCE}\n\n{bridge}");
-    let backend = Arc::new(RealProcessBackend::new());
-    let mut machine = Machine::load(&source)?.with_exec_backend(backend);
-    let source_arg = machine.intern_arg("Tree", MachineArg::Tree(source_tree))?.0;
-    let selected = machine.demand_i64("taxon_root_selected_names", Vec::new())?;
+    let selected = machine
+        .demand_i64("taxon_selected_versions", args.clone())
+        .map_err(|err| format!("taxon_selected_versions failed: {err}"))?;
     write_tier_a_artifact(
         "taxon-root-selected.txt",
-        &rendered_result_string(&machine, "taxon_root_selected_names", selected)?,
+        &rendered_result_string(&machine, "taxon_selected_versions", selected)?,
     )?;
-    let build_script_run = demand_with_rustc_trace(
-        &mut machine,
-        "taxon_blake3_build_script_run",
-        vec![source_arg],
+    let selected_ids = machine.demand_i64("taxon_selected_package_ids", args.clone())?;
+    write_tier_a_artifact(
+        "taxon-selected-package-ids.txt",
+        &format!(
+            "{:?}",
+            machine.render_result("taxon_selected_package_ids", selected_ids)?
+        ),
     )?;
+    let source_names = machine
+        .demand_i64("taxon_selected_package_names_text", args.clone())
+        .map_err(|err| format!("taxon_selected_package_names_text failed: {err}"))?;
+    write_tier_a_artifact(
+        "taxon-selected-package-names.txt",
+        &rendered_result_string(&machine, "taxon_selected_package_names_text", source_names)?,
+    )?;
+    let source_names = machine
+        .demand_i64("taxon_source_package_names_text", args.clone())
+        .map_err(|err| format!("taxon_source_package_names_text failed: {err}"))?;
+    write_tier_a_artifact(
+        "taxon-source-package-names.txt",
+        &rendered_result_string(&machine, "taxon_source_package_names_text", source_names)?,
+    )?;
+    let build_script_run =
+        demand_with_rustc_trace(&mut machine, "taxon_blake3_build_script_run", args.clone())?;
     let build_script_stdout = tree_file_bytes(&mut machine, build_script_run, "build.stdout")?;
     write_tier_a_artifact(
         "taxon-blake3-build-stdout-final.txt",
         &String::from_utf8_lossy(&build_script_stdout),
     )?;
-    let cfgs = machine.demand_i64("taxon_blake3_cfgs", vec![source_arg])?;
+    let cfgs = machine.demand_i64("taxon_blake3_cfgs", args.clone())?;
     write_tier_a_artifact(
         "taxon-blake3-cfgs.txt",
         &rendered_result_string(&machine, "taxon_blake3_cfgs", cfgs)?,
     )?;
-    let root_deps = machine.demand_i64("taxon_root_deps_text", vec![source_arg])?;
+    let root_deps = machine.demand_i64("taxon_root_deps_text", args.clone())?;
     write_tier_a_artifact(
         "taxon-root-deps.txt",
         &rendered_result_string(&machine, "taxon_root_deps_text", root_deps)?,
     )?;
-    let blake3 = demand_with_rustc_trace(&mut machine, "taxon_blake3_link", vec![source_arg])?;
+    let blake3 = demand_with_rustc_trace(&mut machine, "taxon_blake3_link", args.clone())?;
     let blake3_receipts = artifact_receipt_table(
         &mut machine,
         blake3,
@@ -2077,7 +2605,7 @@ fn taxon_ladder_builds_taxon_with_real_process_and_hashes_artifacts() -> Result<
     )?;
     write_tier_a_artifact("taxon-blake3-artifact-receipts.tsv", &blake3_receipts)?;
 
-    let built = match demand_with_rustc_trace(&mut machine, "taxon_root_link", vec![source_arg]) {
+    let built = match demand_with_rustc_trace(&mut machine, "taxon_root_link", args) {
         Ok(built) => built,
         Err(err) => {
             write_tier_a_artifact("taxon-final-rustc-trace.txt", &rustc_argv_trace(&machine))?;
@@ -2086,7 +2614,16 @@ fn taxon_ladder_builds_taxon_with_real_process_and_hashes_artifacts() -> Result<
     };
     assert_rustc_requests_include_crates(
         &machine,
-        &["find_msvc_tools", "shlex", "cc", "blake3", "taxon"],
+        &[
+            "shlex",
+            "cc",
+            "arrayref",
+            "arrayvec",
+            "cfg_if",
+            "constant_time_eq",
+            "blake3",
+            "taxon",
+        ],
     )?;
 
     let receipts = artifact_receipt_table(
@@ -2110,7 +2647,100 @@ fn taxon_ladder_builds_taxon_with_real_process_and_hashes_artifacts() -> Result<
 }
 
 #[test]
-#[ignore = "demo: builds facet-core --no-default-features through real rustc and build.rs"]
+fn taxon_ladder_matches_pinned_cargo_selection_and_unit_graph() -> Result<(), String> {
+    if !host_rustc_available() {
+        return Ok(());
+    }
+
+    let (cargo_selection, cargo_graph) = cargo_pinned_taxon_oracle()?;
+    let mut machine = taxon_native_machine(taxon_native_fetch_backend()?)?;
+    let args = taxon_native_args(&mut machine)?;
+    let selected = machine.demand_i64("taxon_selected_versions", args.clone())?;
+    let selected = rendered_result_string(&machine, "taxon_selected_versions", selected)?;
+    let vix_selection = selected_versions_set(&selected)?;
+    if vix_selection != cargo_selection {
+        return Err(format!(
+            "Vix selection did not match pinned Cargo lock selection\nVix: {vix_selection:#?}\nCargo: {cargo_selection:#?}"
+        ));
+    }
+
+    machine.clear_trace();
+    let _built = demand_with_rustc_trace(&mut machine, "taxon_root_link", args)?;
+    let machine_graph = machine_rustc_unit_graph(&machine)?;
+    let cargo_graph = unit_shapes_from_graph(&cargo_graph, |unit| unit.mode != "run-custom-build")?;
+    if machine_graph != cargo_graph {
+        return Err(format!(
+            "Vix-derived Taxon unit graph did not match pinned Cargo oracle\nVix: {machine_graph:#?}\nCargo: {cargo_graph:#?}"
+        ));
+    }
+
+    write_tier_a_artifact("taxon-pinned-selection.tsv", &selected.replace(' ', "\t"))?;
+    write_tier_a_artifact(
+        "taxon-pinned-unit-graph-rustc.txt",
+        &rustc_argv_trace(&machine),
+    )?;
+    Ok(())
+}
+
+#[test]
+fn taxon_ladder_missing_cc_capability_traps_blake3_build_script() -> Result<(), String> {
+    if !host_rustc_available() {
+        return Ok(());
+    }
+
+    let mut machine = taxon_native_machine(taxon_native_fetch_backend()?)?;
+    let args = taxon_native_args(&mut machine)?;
+    let run = machine
+        .demand_i64("taxon_blake3_build_script_run_without_declared_cc", args)
+        .map_err(|err| format!("{err}\nrustc argv trace:\n{}", rustc_argv_trace(&machine)))?;
+    let err = tree_file_bytes(&mut machine, run, "build.stdout")
+        .expect_err("blake3 build.rs must not access cc without declared capability");
+    assert!(
+        err.contains("undeclared C-toolchain capability")
+            || err.contains(".vix-undeclared-toolchain"),
+        "unexpected missing-capability error: {err}\nrustc argv trace:\n{}",
+        rustc_argv_trace(&machine)
+    );
+    Ok(())
+}
+
+#[test]
+fn taxon_ladder_wrong_cc_capability_traps_blake3_build_script() -> Result<(), String> {
+    if !host_rustc_available() {
+        return Ok(());
+    }
+
+    let mut machine = taxon_native_machine(taxon_native_fetch_backend()?)?;
+    let args = taxon_native_args(&mut machine)?;
+    let run = machine
+        .demand_i64("taxon_blake3_build_script_run_with_wrong_toolchain", args)
+        .map_err(|err| format!("{err}\nrustc argv trace:\n{}", rustc_argv_trace(&machine)))?;
+    let err = tree_file_bytes(&mut machine, run, "build.stdout")
+        .expect_err("blake3 build.rs must not accept a non-cc toolchain declaration");
+    assert!(
+        err.contains("undeclared C-toolchain capability")
+            || err.contains(".vix-undeclared-toolchain"),
+        "unexpected wrong-capability error: {err}\nrustc argv trace:\n{}",
+        rustc_argv_trace(&machine)
+    );
+    Ok(())
+}
+
+#[test]
+fn taxon_ladder_changed_blake3_archive_fails_checksum_pin() -> Result<(), String> {
+    let mut machine = taxon_native_machine(taxon_native_fetch_backend_with_changed_blake3()?)?;
+    let args = taxon_native_args(&mut machine)?;
+    let err = machine
+        .demand_i64("taxon_blake3_build_rs", args)
+        .expect_err("changed blake3 archive bytes must fail the sparse-row checksum pin");
+    assert!(
+        err.contains("checksum mismatch") || err.contains("sha256"),
+        "unexpected checksum error: {err}"
+    );
+    Ok(())
+}
+
+#[test]
 fn facet_core_ladder_builds_facet_core_with_real_process_and_hashes_artifacts() -> Result<(), String>
 {
     if !host_rustc_available() {
@@ -2123,57 +2753,205 @@ fn facet_core_ladder_builds_facet_core_with_real_process_and_hashes_artifacts() 
     }
     assert_facet_core_unit_graph_shape(&graph)?;
 
-    let host = host_triple()?;
-    let bridge = facet_core_demo_bridge_source(&graph, &host)?;
-    write_tier_a_artifact("facet-core-demo-bridge.vix", &bridge)?;
-    let source_tree = facet_core_demo_source_tree(&graph)?;
+    let mut machine = facet_core_native_machine(facet_core_native_fetch_backend()?)?;
+    let source_tree = facet_core_native_workspace_tree()?;
     assert_source_tree_has_build_main(
         &source_tree,
         "facet-core/build.rs",
         "facet-core-build-source-head.txt",
     )?;
-    let source = format!("{RODIN_SOURCE}\n\n{SOURCE}\n\n{bridge}");
-    let backend = Arc::new(RealProcessBackend::new());
-    let mut machine = Machine::load(&source)?.with_exec_backend(backend);
-    let source_arg = machine.intern_arg("Tree", MachineArg::Tree(source_tree))?.0;
-
-    let selected = machine.demand_i64("facet_core_root_selected_names", Vec::new())?;
+    let args = facet_core_native_args(&mut machine, source_tree)?;
+    let sparse_rows = machine.demand_i64("facet_core_sparse_rows_text", vec![args[1]])?;
     write_tier_a_artifact(
-        "facet-core-root-selected.txt",
-        &rendered_result_string(&machine, "facet_core_root_selected_names", selected)?,
+        "facet-core-sparse-rows.txt",
+        &rendered_result_string(&machine, "facet_core_sparse_rows_text", sparse_rows)?,
     )?;
-    let build_script_run = demand_with_rustc_trace(
-        &mut machine,
-        "facet_core_build_script_run",
-        vec![source_arg],
-    )?;
-    let build_script_stdout = tree_file_bytes(&mut machine, build_script_run, "build.stdout")?;
+    let selected_root_deps = machine.demand_i64("facet_core_root_deps_text", args.clone())?;
     write_tier_a_artifact(
-        "facet-core-build-stdout-final.txt",
-        &String::from_utf8_lossy(&build_script_stdout),
+        "facet-core-root-deps.txt",
+        &rendered_result_string(&machine, "facet_core_root_deps_text", selected_root_deps)?,
     )?;
-    let cfgs = machine.demand_i64("facet_core_build_script_cfgs", vec![source_arg])?;
+    let selected = machine.demand_i64("facet_core_root_selected_names", args.clone())?;
+    let selected_rendered =
+        rendered_result_string(&machine, "facet_core_root_selected_names", selected)?;
+    let mut missing = Vec::new();
+    for entry in selected_rendered.lines() {
+        if let Some((name, version)) = entry.split_once(' ') {
+            let name_arg = intern_string(&mut machine, name)?;
+            let version_arg = intern_string(&mut machine, version)?;
+            let exists = machine.demand_i64(
+                "facet_core_sparse_row_exists",
+                vec![args[1], name_arg, version_arg],
+            )?;
+            if exists == 0 && name != "facet-core" {
+                missing.push(format!("{name} {version}"));
+            }
+        }
+    }
+    write_tier_a_artifact("facet-core-selected-row-exists.txt", &missing.join("\n"))?;
+    if !missing.is_empty() {
+        return Err(format!(
+            "facet-core selected rows missing from sparse index: {missing:?}"
+        ));
+    }
+    let mut source_identities = Vec::new();
+    for entry in selected_rendered.lines() {
+        let name = entry
+            .split_once(' ')
+            .map(|(name, _)| name)
+            .ok_or_else(|| format!("facet-core selected package had no version: {entry}"))?;
+        let name_arg = intern_string(&mut machine, name)?;
+        let identity = machine
+            .demand_i64(
+                "facet_core_resolved_package_identity",
+                vec![args[0], args[1], args[2], name_arg],
+            )
+            .map_err(|err| {
+                format!(
+                    "facet_core_resolved_package_identity({name}) failed: {err}\nrustc argv trace:\n{}",
+                    rustc_argv_trace(&machine)
+                )
+            })?;
+        source_identities.push(rendered_result_string(
+            &machine,
+            "facet_core_resolved_package_identity",
+            identity,
+        )?);
+    }
     write_tier_a_artifact(
-        "facet-core-build-cfgs.txt",
-        &rendered_result_string(&machine, "facet_core_build_script_cfgs", cfgs)?,
+        "facet-core-resolved-package-identities.txt",
+        &source_identities.join("\n"),
     )?;
-    let root_deps = machine.demand_i64("facet_core_root_deps_text", vec![source_arg])?;
+    let root_pkg_id = machine.demand_i64("facet_core_root_pkg_id", args.clone())?;
+    let mut leaf_artifacts = Vec::new();
+    for entry in selected_rendered.lines() {
+        let name = entry
+            .split_once(' ')
+            .map(|(name, _)| name)
+            .ok_or_else(|| format!("facet-core selected package had no version: {entry}"))?;
+        let name_arg = intern_string(&mut machine, name)?;
+        let package_id = machine.demand_i64(
+            "facet_core_package_id",
+            vec![args[0], args[1], args[2], name_arg],
+        )?;
+        if package_id == root_pkg_id {
+            continue;
+        }
+        let link = machine
+            .demand_i64(
+                "facet_core_resolved_package_link",
+                vec![args[0], args[1], args[2], name_arg],
+            )
+            .map_err(|err| {
+                format!(
+                    "facet_core_resolved_package_link({name}) failed: {err}\nrustc argv trace:\n{}",
+                    rustc_argv_trace(&machine)
+                )
+            })?;
+        let entries = machine
+            .tree_entries(link)
+            .map_err(|err| format!("facet-core package {name} artifact tree failed: {err}"))?;
+        leaf_artifacts.push(format!("{name}\t{:?}", entries.keys().collect::<Vec<_>>()));
+    }
+    write_tier_a_artifact("facet-core-leaf-artifacts.txt", &leaf_artifacts.join("\n"))?;
+    let build_script_deps =
+        machine.demand_i64("facet_core_build_script_dependency_unit_ids", args.clone())?;
+    write_tier_a_artifact(
+        "facet-core-build-script-dependency-unit-ids.txt",
+        &format!(
+            "{:?}",
+            machine.render_result(
+                "facet_core_build_script_dependency_unit_ids",
+                build_script_deps
+            )?
+        ),
+    )?;
+    write_tier_a_artifact(
+        "facet-core-root-pkg-id.txt",
+        &format!("facet-core-root-pkg-id={root_pkg_id}"),
+    )?;
+    write_tier_a_artifact("facet-core-root-selected.txt", &selected_rendered)?;
+    let build_script_binary =
+        match machine.demand_i64("facet_core_build_script_binary", args.clone()) {
+            Ok(binary) => Some(binary),
+            Err(err) => {
+                return Err(format!(
+                    "facet_core_build_script_binary failed: {err}\nrustc argv trace:\n{}",
+                    rustc_argv_trace(&machine)
+                ));
+            }
+        };
+    match build_script_binary {
+        Some(build_script_binary) => {
+            write_tier_a_artifact(
+                "facet-core-build-script-binary.txt",
+                &format!("build-script-binary-handle={build_script_binary}"),
+            )?;
+        }
+        None => {
+            write_tier_a_artifact(
+                "facet-core-build-script-binary-error.txt",
+                "missing or unavailable facet-core build-script binary\n",
+            )?;
+        }
+    }
+    let build_script_run =
+        match demand_with_rustc_trace(&mut machine, "facet_core_build_script_run", args.clone()) {
+            Ok(run) => run,
+            Err(err) => {
+                write_tier_a_artifact(
+                    "facet-core-build-script-run-error.txt",
+                    &format!("{err}\nrustc argv trace:\n{}", rustc_argv_trace(&machine)),
+                )?;
+                0
+            }
+        };
+    if build_script_binary.is_some() && build_script_run != 0 {
+        let build_script_stdout = tree_file_bytes(&mut machine, build_script_run, "build.stdout")?;
+        write_tier_a_artifact(
+            "facet-core-build-stdout-final.txt",
+            &String::from_utf8_lossy(&build_script_stdout),
+        )?;
+        let cfgs = machine.demand_i64("facet_core_build_script_cfgs", args.clone())?;
+        write_tier_a_artifact(
+            "facet-core-build-cfgs.txt",
+            &rendered_result_string(&machine, "facet_core_build_script_cfgs", cfgs)?,
+        )?;
+    } else if build_script_binary.is_none() {
+        write_tier_a_artifact(
+            "facet-core-build-stdout-final.txt",
+            "facet-core build script unavailable\n",
+        )?;
+        write_tier_a_artifact(
+            "facet-core-build-cfgs.txt",
+            "facet-core build script unavailable\n",
+        )?;
+    } else {
+        write_tier_a_artifact(
+            "facet-core-build-stdout-final.txt",
+            "facet-core build-script execution failed\n",
+        )?;
+        write_tier_a_artifact(
+            "facet-core-build-cfgs.txt",
+            "facet-core build-script execution failed\n",
+        )?;
+    }
+    let root_deps = machine.demand_i64("facet_core_root_deps_text", args.clone())?;
     write_tier_a_artifact(
         "facet-core-root-deps.txt",
         &rendered_result_string(&machine, "facet_core_root_deps_text", root_deps)?,
     )?;
 
-    let built =
-        match demand_with_rustc_trace(&mut machine, "facet_core_root_link", vec![source_arg]) {
-            Ok(built) => built,
-            Err(err) => {
-                write_tier_a_artifact(
-                    "facet-core-final-rustc-trace.txt",
-                    &rustc_argv_trace(&machine),
-                )?;
-                return Err(err);
-            }
-        };
+    let built = match demand_with_rustc_trace(&mut machine, "facet_core_root_link", args.clone()) {
+        Ok(built) => built,
+        Err(err) => {
+            write_tier_a_artifact(
+                "facet-core-final-rustc-trace.txt",
+                &rustc_argv_trace(&machine),
+            )?;
+            return Err(err);
+        }
+    };
     assert_rustc_requests_include_crates(
         &machine,
         &[
@@ -2204,6 +2982,136 @@ fn facet_core_ladder_builds_facet_core_with_real_process_and_hashes_artifacts() 
         "facet-core-final-rustc-trace.txt",
         &rustc_argv_trace(&machine),
     )?;
+
+    Ok(())
+}
+
+#[test]
+fn facet_core_ladder_missing_cc_capability_traps_build_script() -> Result<(), String> {
+    if !host_rustc_available() {
+        return Ok(());
+    }
+
+    let mut workspace = facet_core_native_workspace_tree()?;
+    let build_rs = workspace
+        .entries
+        .get("facet-core/build.rs")
+        .ok_or_else(|| "facet-core/build.rs missing from workspace tree".to_string())?;
+    let mut build_rs = build_rs.clone();
+    let mutated_build_rs = build_rs.replace(
+        "fn main() {",
+        "fn main() {\n    if !std::process::Command::new(\"cc\")\n        .args([\"-v\"])\n        .status()\n        .is_ok_and(|status| status.success()) {\n        panic!(\"cc probe failed\");\n    }\n",
+    );
+    if mutated_build_rs == build_rs {
+        return Err("facet-core/build.rs did not contain a `fn main` hook".to_string());
+    }
+    build_rs = mutated_build_rs;
+    workspace
+        .entries
+        .insert("facet-core/build.rs".to_string(), build_rs);
+
+    let mut machine = facet_core_native_machine(facet_core_native_fetch_backend()?)?;
+    let args = facet_core_native_args(&mut machine, workspace)?;
+    let run = machine
+        .demand_i64("facet_core_build_script_run_without_declared_cc", args)
+        .map_err(|err| format!("{err}\nrustc argv trace:\n{}", rustc_argv_trace(&machine)))?;
+    let err = tree_file_bytes(&mut machine, run, "build.stdout")
+        .expect_err("facet-core build.rs must not access cc without declared capability");
+    assert!(
+        err.contains("undeclared C-toolchain capability")
+            || err.contains(".vix-undeclared-toolchain"),
+        "unexpected missing-capability error: {err}\nrustc argv trace:\n{}",
+        rustc_argv_trace(&machine)
+    );
+    Ok(())
+}
+
+#[test]
+fn facet_core_ladder_changed_facet_core_build_script_fails_build() -> Result<(), String> {
+    if !host_rustc_available() {
+        return Ok(());
+    }
+
+    let mut workspace = facet_core_native_workspace_tree()?;
+    let bad_build = "fn this_is_not_rust_syntax";
+    workspace
+        .entries
+        .insert("facet-core/build.rs".to_string(), bad_build.to_owned());
+    let mut machine = facet_core_native_machine(facet_core_native_fetch_backend()?)?;
+    let args = facet_core_native_args(&mut machine, workspace)?;
+    let err = machine
+        .demand_i64("facet_core_root_link", args)
+        .expect_err("invalid facet-core build.rs should fail rustc");
+    let err = format!("{err}\nrustc argv trace:\n{}", rustc_argv_trace(&machine));
+    if !err.contains("could not compile") && !err.contains("expected") && !err.contains("error:") {
+        return Err(format!(
+            "unexpected facet-core build-script failure mode:\n{err}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn facet_core_ladder_reuses_projection_for_irrelevant_file_change() -> Result<(), String> {
+    if !host_rustc_available() {
+        return Ok(());
+    }
+
+    let mut machine = facet_core_native_machine(facet_core_native_fetch_backend()?)?;
+    let mut workspace = facet_core_native_workspace_tree()?;
+    let args = facet_core_native_args(&mut machine, workspace.clone())?;
+    let baseline = demand_with_rustc_trace(&mut machine, "facet_core_root_link", args)?;
+    let baseline_receipts = artifact_receipt_table(
+        &mut machine,
+        baseline,
+        &[
+            ArtifactExpectation {
+                path: "libfacet_core.rlib",
+                archive: true,
+            },
+            ArtifactExpectation {
+                path: "libfacet_core.rmeta",
+                archive: false,
+            },
+        ],
+    )?;
+
+    machine.clear_trace();
+    let irrelevant_key = "irrelevant.txt".to_string();
+    workspace
+        .entries
+        .insert(irrelevant_key, "no-op-content".to_string());
+    let args = facet_core_native_args(&mut machine, workspace)?;
+    let repeated = demand_with_rustc_trace(&mut machine, "facet_core_root_link", args)?;
+    let repeated_receipts = artifact_receipt_table(
+        &mut machine,
+        repeated,
+        &[
+            ArtifactExpectation {
+                path: "libfacet_core.rlib",
+                archive: true,
+            },
+            ArtifactExpectation {
+                path: "libfacet_core.rmeta",
+                archive: false,
+            },
+        ],
+    )?;
+    if baseline_receipts != repeated_receipts {
+        return Err(format!(
+            "facet-core projection reuse changed receipts when only irrelevant file changed:\n{baseline_receipts}\n{repeated_receipts}"
+        ));
+    }
+    let run_requested = machine
+        .trace()
+        .iter()
+        .filter(|event| matches!(event, DriveEvent::RunRequested { .. }))
+        .count();
+    if run_requested != 0 {
+        return Err(format!(
+            "irrelevant-file change expected projection reuse but saw {run_requested} run requests"
+        ));
+    }
 
     Ok(())
 }
@@ -2779,301 +3687,6 @@ fn facet_demo_bridge_source(graph: &CargoUnitGraph, host: &str) -> Result<String
         out.push_str(&format!("        -L dependency={{dep_{crate_name}}}\n"));
     }
     for (_, crate_name, _) in &root_link_deps {
-        out.push_str(&format!(
-            "        --extern {crate_name}={{dep_{crate_name}_arg}}\n"
-        ));
-    }
-    out.push_str("        {cfg_args}\n");
-    out.push_str("        --env CARGO_MANIFEST_DIR={manifest}\n");
-    out.push_str("        {source_arg}\n");
-    out.push_str("    }\n");
-    out.push_str("}\n");
-    Ok(out)
-}
-
-fn facet_core_demo_bridge_source(graph: &CargoUnitGraph, host: &str) -> Result<String, String> {
-    let ids = taxon_included_unit_ids(graph);
-    let run_to_build = taxon_run_custom_build_map(graph);
-    let root_cargo_index = graph
-        .roots
-        .first()
-        .copied()
-        .ok_or_else(|| "facet-core cargo unit graph had no root".to_string())?;
-    let root = *ids
-        .get(&root_cargo_index)
-        .ok_or_else(|| format!("facet-core root unit {root_cargo_index} was not included"))?;
-    let root_version = taxon_pkg_version(&graph.units[root_cargo_index].pkg_id)?;
-    let build_script = graph
-        .units
-        .iter()
-        .enumerate()
-        .find(|(_, unit)| {
-            unit.pkg_id.contains("/facet-core#")
-                && unit.mode == "build"
-                && unit.target.kind.iter().any(|kind| kind == "custom-build")
-        })
-        .and_then(|(index, _)| ids.get(&index).copied())
-        .ok_or_else(|| "missing facet-core custom-build unit".to_string())?;
-    let mut root_link_deps = Vec::new();
-    for dep in &graph.units[root_cargo_index].dependencies {
-        let mapped_dep = run_to_build.get(&dep.index).copied().unwrap_or(dep.index);
-        let Some(dep_id) = ids.get(&mapped_dep).copied() else {
-            continue;
-        };
-        let unit = &graph.units[mapped_dep];
-        if taxon_unit_kind(unit) == "build-script" {
-            continue;
-        }
-        root_link_deps.push((dep_id, unit.target.name.replace('-', "_")));
-    }
-
-    let mut out = String::new();
-    out.push_str("fn facet_core_index() -> Index {\n");
-    out.push_str("    let names: Map<Int, String> = {};\n");
-    out.push_str("    let version_pkgs: Map<Int, Int> = {};\n");
-    out.push_str("    let version_values: Map<Int, String> = {};\n");
-    out.push_str("    let guard_clause_ids: Map<Int, Int> = {};\n");
-    out.push_str("    let guard_tags: Map<Int, String> = {};\n");
-    out.push_str("    let guard_kinds: Map<Int, Int> = {};\n");
-    out.push_str("    let guard_pkgs: Map<Int, Int> = {};\n");
-    out.push_str("    let guard_version_values: Map<Int, String> = {};\n");
-    out.push_str("    let guard_features: Map<Int, Int> = {};\n");
-    out.push_str("    let consequent_tags: Map<Int, String> = {};\n");
-    out.push_str("    let consequent_pkgs: Map<Int, Int> = {};\n");
-    out.push_str("    let consequent_version_sets: Map<Int, VersionSet> = {};\n");
-    out.push_str("    let consequent_features: Map<Int, Int> = {};\n");
-    out.push_str("    let gate_kinds: Map<Int, String> = {};\n");
-    out.push_str("    let gate_targets: Map<Int, String> = {};\n");
-
-    let mut packages = Vec::new();
-    let mut version_ids = Vec::new();
-    for (cargo_index, id) in &ids {
-        let unit = &graph.units[*cargo_index];
-        packages.push(id.to_string());
-        version_ids.push(id.to_string());
-        out.push_str(&format!(
-            "    let names = names.insert({id}, {});\n",
-            vix_string(&taxon_unit_name(unit, *cargo_index))
-        ));
-        out.push_str(&format!(
-            "    let version_pkgs = version_pkgs.insert({id}, {id});\n"
-        ));
-        out.push_str(&format!(
-            "    let version_values = version_values.insert({id}, {});\n",
-            vix_string(&taxon_pkg_version(&unit.pkg_id)?)
-        ));
-    }
-
-    let mut clause = 0usize;
-    let mut guard = 0usize;
-    for (cargo_index, id) in &ids {
-        let unit = &graph.units[*cargo_index];
-        for dep in &unit.dependencies {
-            let mapped_dep = run_to_build.get(&dep.index).copied().unwrap_or(dep.index);
-            let Some(dep_id) = ids.get(&mapped_dep).copied() else {
-                continue;
-            };
-            let dep_version = taxon_pkg_version(&graph.units[mapped_dep].pkg_id)?;
-            push_taxon_clause(
-                &mut out,
-                &mut clause,
-                &mut guard,
-                *id,
-                dep_id,
-                "*",
-                "in_graph",
-            );
-            push_taxon_clause(
-                &mut out,
-                &mut clause,
-                &mut guard,
-                *id,
-                dep_id,
-                &format!("={dep_version}"),
-                "version_set",
-            );
-        }
-    }
-
-    out.push_str("    Index {\n");
-    out.push_str(&format!("        packages: [{}],\n", packages.join(", ")));
-    out.push_str("        names: names,\n");
-    out.push_str(&format!(
-        "        version_ids: [{}],\n",
-        version_ids.join(", ")
-    ));
-    out.push_str("        version_pkgs: version_pkgs,\n");
-    out.push_str("        version_values: version_values,\n");
-    out.push_str(&format!(
-        "        clause_ids: [{}],\n",
-        (0..clause)
-            .map(|id| id.to_string())
-            .collect::<Vec<_>>()
-            .join(", ")
-    ));
-    out.push_str(&format!(
-        "        guard_ids: [{}],\n",
-        (0..guard)
-            .map(|id| id.to_string())
-            .collect::<Vec<_>>()
-            .join(", ")
-    ));
-    out.push_str("        guard_clause_ids: guard_clause_ids,\n");
-    out.push_str("        guard_tags: guard_tags,\n");
-    out.push_str("        guard_kinds: guard_kinds,\n");
-    out.push_str("        guard_pkgs: guard_pkgs,\n");
-    out.push_str("        guard_version_values: guard_version_values,\n");
-    out.push_str("        guard_features: guard_features,\n");
-    out.push_str("        consequent_tags: consequent_tags,\n");
-    out.push_str("        consequent_pkgs: consequent_pkgs,\n");
-    out.push_str("        consequent_version_sets: consequent_version_sets,\n");
-    out.push_str("        consequent_features: consequent_features,\n");
-    out.push_str("        gate_kinds: gate_kinds,\n");
-    out.push_str("        gate_targets: gate_targets,\n");
-    out.push_str("    }\n");
-    out.push_str("}\n\n");
-
-    out.push_str("fn facet_core_problem() -> Problem {\n");
-    out.push_str(&format!(
-        "    Problem {{ root_pkg: {root}, root_req: VersionSet::from_req({}), root_features: [], root_default_feature: 0, root_default_features: false }}\n",
-        vix_string(&format!("={root_version}"))
-    ));
-    out.push_str("}\n\n");
-
-    out.push_str("fn facet_core_targets() -> UnitTargetTable {\n");
-    out.push_str("    let targets: Map<Int, UnitTarget> = {};\n");
-    for (cargo_index, id) in &ids {
-        let unit = &graph.units[*cargo_index];
-        let logical = taxon_logical_unit_root(unit)?;
-        let source = taxon_unit_source_suffix(unit)?;
-        let kind = taxon_unit_kind(unit);
-        let cfgs = unit
-            .features
-            .iter()
-            .map(|feature| vix_string(&format!("feature=\"{feature}\"")))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let crate_name = unit.target.name.replace('-', "_");
-        let (metadata, link, metadata_file, link_file) = if kind == "build-script" {
-            (
-                "build_script_build.rmeta".to_string(),
-                "build_script".to_string(),
-                "build_script_build.rmeta".to_string(),
-                "build_script".to_string(),
-            )
-        } else {
-            (
-                format!("lib{crate_name}.rmeta"),
-                format!("lib{crate_name}.rlib"),
-                format!("lib{crate_name}.rmeta"),
-                format!("lib{crate_name}.rlib"),
-            )
-        };
-        out.push_str(&format!(
-            "    let targets = targets.insert({id}, UnitTarget {{ kind: {}, manifest: p{}, source: p{}, cfgs: [{}], metadata: p{}, link: p{}, metadata_file: {}, link_file: {} }});\n",
-            vix_string(&kind),
-            vix_string(&logical),
-            vix_string(&source),
-            cfgs,
-            vix_string(&metadata),
-            vix_string(&link),
-            vix_string(&metadata_file),
-            vix_string(&link_file),
-        ));
-    }
-    out.push_str(&format!(
-        "    UnitTargetTable {{ root: {root}, targets: targets }}\n"
-    ));
-    out.push_str("}\n\n");
-    out.push_str(
-        "fn facet_core_dep_names(index: Index, deps: [Int], out: [String]) -> [String] {\n",
-    );
-    out.push_str("    match deps.len() == 0 {\n");
-    out.push_str("        true => out,\n");
-    out.push_str("        false => match deps.pop() {\n");
-    out.push_str("            popped => facet_core_dep_names(index, popped.1, out.push(index.names.get(popped.0).unwrap())),\n");
-    out.push_str("        },\n");
-    out.push_str("    }\n");
-    out.push_str("}\n\n");
-    out.push_str("pub fn facet_core_root_selected_names() -> String {\n");
-    out.push_str("    solve_selected_names_text(facet_core_index(), facet_core_problem(), ");
-    out.push_str(&vix_string(host));
-    out.push_str(")\n");
-    out.push_str("}\n\n");
-    out.push_str("pub fn facet_core_root_deps_text(source: Tree) -> String {\n");
-    out.push_str("    let index = facet_core_index();\n");
-    out.push_str("    let result = solve(index, facet_core_problem(), ");
-    out.push_str(&vix_string(host));
-    out.push_str(");\n");
-    out.push_str("    let unit = solution_unit(index, result, facet_core_targets(), source, ");
-    out.push_str(&vix_string(host));
-    out.push_str(", ");
-    out.push_str(&root.to_string());
-    out.push_str(");\n");
-    out.push_str("    facet_core_dep_names(index, unit.deps, []).join(\"\\n\")\n");
-    out.push_str("}\n\n");
-    out.push_str("pub fn facet_core_build_script_run(source: Tree) -> Tree {\n");
-    out.push_str("    let index = facet_core_index();\n");
-    out.push_str("    let result = solve(index, facet_core_problem(), ");
-    out.push_str(&vix_string(host));
-    out.push_str(");\n");
-    out.push_str(
-        "    solution_unit_built(Target::host(), source, index, result, facet_core_targets(), ",
-    );
-    out.push_str(&vix_string(host));
-    out.push_str(", ");
-    out.push_str(&build_script.to_string());
-    out.push_str(", \"link\")\n");
-    out.push_str("}\n\n");
-    out.push_str("pub fn facet_core_build_script_cfgs(source: Tree) -> String {\n");
-    out.push_str("    let run = facet_core_build_script_run(source);\n");
-    out.push_str("    build_script_rustc_cfgs(run).join(\" \")\n");
-    out.push_str("}\n\n");
-    out.push_str("pub fn facet_core_root_link(source: Tree) -> Tree {\n");
-    out.push_str("    let index = facet_core_index();\n");
-    out.push_str("    let result = solve(index, facet_core_problem(), ");
-    out.push_str(&vix_string(host));
-    out.push_str(");\n");
-    out.push_str("    let targets = facet_core_targets();\n");
-    out.push_str("    let unit = solution_unit(index, result, targets, source, ");
-    out.push_str(&vix_string(host));
-    out.push_str(", ");
-    out.push_str(&root.to_string());
-    out.push_str(");\n");
-    out.push_str("    let rustc = Rustc::acquire(Target::host());\n");
-    out.push_str("    let manifest = source / unit.manifest;\n");
-    out.push_str("    let edition = package_edition_from_source(source, manifest);\n");
-    out.push_str("    let profile_args = rustc_profile_args(unit.profile);\n");
-    out.push_str("    let build_run = facet_core_build_script_run(source);\n");
-    out.push_str(
-        "    let cfg_args = push_cfg_args(build_script_rustc_cfgs(build_run), push_cfg_args(unit.cfgs, []));\n",
-    );
-    out.push_str("    let source_arg = argv_source_interpolation(manifest, unit.source);\n");
-    out.push_str(
-        "    let deps = solution_dependency_tree(Target::host(), source, index, result, targets, ",
-    );
-    out.push_str(&vix_string(host));
-    out.push_str(", unit, \"link\");\n");
-    for (id, crate_name) in &root_link_deps {
-        out.push_str(&format!(
-            "    let dep_{crate_name} = solution_unit_built(Target::host(), source, index, result, targets, {}, {id}, \"link\");\n",
-            vix_string(host)
-        ));
-        out.push_str(&format!(
-            "    let dep_{crate_name}_arg = Arg::Interpolation {{ tree: dep_{crate_name}, subpath: p\"lib{crate_name}.rlib\" }};\n"
-        ));
-    }
-    out.push_str("    rustc! {\n");
-    out.push_str("        --crate-name {unit.name}\n");
-    out.push_str("        --edition {edition}\n");
-    out.push_str("        --crate-type lib\n");
-    out.push_str("        {profile_args}\n");
-    out.push_str("        --emit=metadata={unit.metadata},link={unit.link}\n");
-    out.push_str("        -L dependency={deps}\n");
-    for (_, crate_name) in &root_link_deps {
-        out.push_str(&format!("        -L dependency={{dep_{crate_name}}}\n"));
-    }
-    for (_, crate_name) in &root_link_deps {
         out.push_str(&format!(
             "        --extern {crate_name}={{dep_{crate_name}_arg}}\n"
         ));

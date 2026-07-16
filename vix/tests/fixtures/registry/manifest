@@ -1,0 +1,6 @@
+# Offline fixture registry manifest: one artifact per line.
+# <name> <url> <vix blake3 ContentHash of the archive Blob, hex>
+# The ContentHash is the framed Blob value identity (machine.identity.blake3,
+# one hash definition) computed at lock time; the URL is a provenance
+# coordinate resolved against the fixture store, never the network.
+tokio-1.52.3.crate fixture://registry/tokio-1.52.3.crate 01a321713d1aee2ff294bd98772239c0855084fb09a6184c10adfc5c6a8c5596

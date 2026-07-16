@@ -7736,7 +7736,7 @@ impl Driver {
                 let TreeEntry::Concrete(tree) = self.store.borrow().tree_entry(forced)? else {
                     return Err("forced command tree stayed pending".into());
                 };
-                let root = format!("/m/{}", mounts.len());
+                let root = self.mount_tree_root(mounts, forced, None, false)?;
                 let entry_count = tree.entries.len() + tree.blobs.len();
                 let text = if entry_count == 1 && !prefer_tree_root {
                     let key = tree
@@ -7749,7 +7749,6 @@ impl Driver {
                 } else {
                     root.clone()
                 };
-                mounts.push(ExecMount::Concrete(crate::exec::Mount { at: root, tree }));
                 Ok(vec![text])
             }
             other => Err(format!("cannot splice {other} into a command")),
@@ -7788,21 +7787,68 @@ impl Driver {
                 let subpath =
                     read_frame_word(&entry.bytes, field_offset(descriptor, &entry.bytes, 1));
                 let subpath = self.store.borrow().string_value(subpath, "Path")?;
-                let root = format!("/m/{}", mounts.len());
+                let root = self.mount_tree_root(mounts, tree, None, true)?;
                 let text = if subpath.is_empty() {
                     root.clone()
                 } else {
                     format!("{root}/{}", subpath.trim_start_matches('/'))
                 };
-                mounts.push(ExecMount::PendingTree {
-                    at: root,
-                    tree,
-                    projected_path: Some(subpath),
-                });
                 Ok(vec![text])
             }
             other => Err(format!("unknown Arg selector {other}")),
         }
+    }
+
+    fn mount_tree_root(
+        &mut self,
+        mounts: &mut Vec<ExecMount>,
+        tree: i64,
+        projected_path: Option<&str>,
+        pending: bool,
+    ) -> Result<String, String> {
+        let forced = self.force_tree_handle(tree)?;
+        let concrete = match self.store.borrow().tree_entry(forced)? {
+            TreeEntry::Concrete(tree) => tree,
+            _ => return Err("forced command tree stayed pending".into()),
+        };
+        for mount in mounts.iter() {
+            match mount {
+                ExecMount::Concrete(crate::exec::Mount {
+                    tree: existing_tree,
+                    at,
+                }) if projected_path.is_none() && *existing_tree == concrete => {
+                    return Ok(at.clone());
+                }
+                ExecMount::PendingTree {
+                    at,
+                    tree: existing_tree,
+                    projected_path: existing_projected_path,
+                } => {
+                    let forced_existing = self.force_tree_handle(*existing_tree)?;
+                    if forced_existing == forced
+                        && existing_projected_path.as_deref() == projected_path
+                    {
+                        return Ok(at.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let root = format!("/m/{}", mounts.len());
+        if pending || projected_path.is_some() {
+            mounts.push(ExecMount::PendingTree {
+                at: root.clone(),
+                tree: forced,
+                projected_path: projected_path.map(|path| path.to_owned()),
+            });
+        } else {
+            mounts.push(ExecMount::Concrete(crate::exec::Mount {
+                at: root.clone(),
+                tree: concrete,
+            }));
+        }
+        Ok(root)
     }
 
     fn resolve_exec_mounts(
@@ -10560,6 +10606,7 @@ fn op_name(op: &Op) -> &'static str {
         Op::OrderedStatusIs { .. } => "OrderedStatusIs",
         Op::CompareValueBytes { .. } => "CompareValueBytes",
         Op::StringConcat { .. } => "StringConcat",
+        Op::StringTrim { .. } => "StringTrim",
         Op::StringContains { .. } => "StringContains",
         Op::StringIsNumeric { .. } => "StringIsNumeric",
         Op::StringSplitOnce { .. } => "StringSplitOnce",

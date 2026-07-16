@@ -150,6 +150,13 @@ pub struct FunctionContract {
     pub entries: Vec<RegionId>,
     pub result: RegionId,
     pub call_contract: Option<CallContractId>,
+    /// The physical bindings for this function's public semantic call ABI.
+    ///
+    /// Scheduler-owned frame words and closure capture storage are not part of
+    /// a callable's type.  This projection names the concrete frame regions
+    /// where the semantic entries and result live, so verification and runtime
+    /// dispatch can keep the public ABI independent from private frame layout.
+    pub call_abi: Option<CallAbiProjection>,
     /// The boxed capture environment of a closure that carries its captures
     /// through a task-lifetime environment box rather than as call arguments.
     /// Empty for ordinary functions and for closures whose captures ride inline
@@ -159,6 +166,17 @@ pub struct FunctionContract {
     /// lives on the function, not the call contract, so a boxed closure's public
     /// value keeps its uniform semantic callable shape.
     pub environment: Vec<FrameRegion>,
+}
+
+/// The physical realization of a function's public [`CallContract`].
+///
+/// The call contract is expressed in a zero-based semantic frame.  These
+/// region ids bind that view to the function's actual frame without making
+/// scheduler-private words callable.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CallAbiProjection {
+    pub entries: Vec<RegionId>,
+    pub result: RegionId,
 }
 
 impl FunctionContract {
@@ -193,6 +211,14 @@ impl FunctionContract {
 pub struct CallContract {
     pub entries: Vec<FrameRegion>,
     pub result: FrameRegion,
+}
+
+fn semantic_call_region(region: &FrameRegion) -> FrameRegion {
+    let mut projected = FrameRegion::new(0, region.shape.clone());
+    if let Some(value_shape) = region.value_shape {
+        projected = projected.with_value_shape(value_shape);
+    }
+    projected
 }
 
 /// One field use in a structural value shape.
@@ -594,6 +620,8 @@ pub enum ValueFieldSite {
 pub enum RegionReference {
     Entry { index: usize },
     Result,
+    CallAbiEntry { index: usize },
+    CallAbiResult,
 }
 
 /// A program-local table whose indices must fit its public identifier type.
@@ -1101,6 +1129,9 @@ pub enum ProgramDefect {
     },
     AwaitInputCountOverflow {
         input: u32,
+    },
+    HostCountOverflow {
+        host: u32,
     },
     ReachableFallthrough,
 }
@@ -2175,11 +2206,50 @@ impl Verifier<'_> {
                     ));
                 };
                 let call = &self.contract.calls[call_index];
-                // A boxed closure's call contract covers only the leading
-                // argument entries; the trailing capture entries are
-                // materialized from the environment box and their shapes are
-                // proven against `environment` rather than call arguments.
                 let leading = call.entries.len();
+                let semantic_projection = contract.call_abi.is_some();
+                let projected_entries = if let Some(abi) = &contract.call_abi {
+                    if abi.entries.len() != leading
+                        || entries.len() != leading.saturating_add(contract.environment.len())
+                        || !entries
+                            .iter()
+                            .take(leading)
+                            .zip(&abi.entries)
+                            .all(|(entry, projection)| *entry == projection.0 as usize)
+                    {
+                        return Err(self.function(
+                            function_id,
+                            ProgramDefect::FunctionCallContractMismatch {
+                                contract: call_contract,
+                                mismatch: Box::new(FunctionCallContractMismatch::EntryCount {
+                                    function_entries: entries.len(),
+                                    call_entries: leading,
+                                    environment_entries: contract.environment.len(),
+                                }),
+                            },
+                        ));
+                    }
+                    let mut projected = Vec::with_capacity(leading);
+                    for (index, region) in abi.entries.iter().copied().enumerate() {
+                        let Some(region) = usize::try_from(region.0)
+                            .ok()
+                            .filter(|region| *region < regions.len())
+                        else {
+                            return Err(self.function(
+                                function_id,
+                                ProgramDefect::RegionReferenceOutOfRange {
+                                    reference: RegionReference::CallAbiEntry { index },
+                                    region: abi.entries[index],
+                                    region_count: regions.len(),
+                                },
+                            ));
+                        };
+                        projected.push(region);
+                    }
+                    projected
+                } else {
+                    entries.iter().copied().take(leading).collect()
+                };
                 let entry_mismatch = if entries.len()
                     != leading.saturating_add(contract.environment.len())
                 {
@@ -2189,16 +2259,19 @@ impl Verifier<'_> {
                         environment_entries: contract.environment.len(),
                     })
                 } else {
-                    entries
+                    projected_entries
                         .iter()
-                        .take(leading)
                         .zip(&call.entries)
                         .enumerate()
                         .find_map(|(index, (region, expected))| {
-                            let function = &contract.frame.regions[*region];
-                            (function != expected).then(|| FunctionCallContractMismatch::Entry {
+                            let function = if semantic_projection {
+                                semantic_call_region(&contract.frame.regions[*region])
+                            } else {
+                                contract.frame.regions[*region].clone()
+                            };
+                            (function != *expected).then(|| FunctionCallContractMismatch::Entry {
                                 index,
-                                function: function.clone(),
+                                function,
                                 call: expected.clone(),
                             })
                         })
@@ -2220,12 +2293,50 @@ impl Verifier<'_> {
                                 })
                         })
                 };
-                let concrete_result = &contract.frame.regions[result];
-                let result_matches = concrete_result.shape == call.result.shape
-                    && concrete_result.value_shape == call.result.value_shape;
+                let projected_result = if let Some(abi) = &contract.call_abi {
+                    let Some(projected_result) = usize::try_from(abi.result.0)
+                        .ok()
+                        .filter(|region| *region < regions.len())
+                    else {
+                        return Err(self.function(
+                            function_id,
+                            ProgramDefect::RegionReferenceOutOfRange {
+                                reference: RegionReference::CallAbiResult,
+                                region: abi.result,
+                                region_count: regions.len(),
+                            },
+                        ));
+                    };
+                    if projected_result != result {
+                        return Err(self.function(
+                            function_id,
+                            ProgramDefect::FunctionCallContractMismatch {
+                                contract: call_contract,
+                                mismatch: Box::new(FunctionCallContractMismatch::Result {
+                                    function: contract.frame.regions[projected_result].clone(),
+                                    call: call.result.clone(),
+                                }),
+                            },
+                        ));
+                    }
+                    projected_result
+                } else {
+                    result
+                };
+                let concrete_result = if semantic_projection {
+                    semantic_call_region(&contract.frame.regions[projected_result])
+                } else {
+                    contract.frame.regions[projected_result].clone()
+                };
+                let result_matches = if semantic_projection {
+                    concrete_result == call.result
+                } else {
+                    concrete_result.shape == call.result.shape
+                        && concrete_result.value_shape == call.result.value_shape
+                };
                 let mismatch = entry_mismatch.or_else(|| {
                     (!result_matches).then(|| FunctionCallContractMismatch::Result {
-                        function: concrete_result.clone(),
+                        function: concrete_result,
                         call: call.result.clone(),
                     })
                 });
@@ -2835,6 +2946,23 @@ impl Verifier<'_> {
                     ));
                 }
             }
+            Op::StringTrim { dst, text } => {
+                let dst_schema =
+                    self.read_handle(function_id, pc, frame, *dst, AccessRole::Destination)?;
+                let text_schema =
+                    self.read_handle(function_id, pc, frame, *text, AccessRole::CompareLeft)?;
+                if dst_schema != text_schema {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::CompareSchemaMismatch {
+                            left: dst_schema,
+                            right: text_schema,
+                        },
+                    ));
+                }
+                self.require_byte_comparable_schema(function_id, pc, text_schema)?;
+            }
             Op::StringContains { dst, text, needle } => {
                 self.require_scalar_write(function_id, pc, frame, *dst, AccessRole::Destination)?;
                 let text_schema =
@@ -3215,8 +3343,18 @@ impl Verifier<'_> {
             Op::HostCall { .. } => {
                 return Err(self.unsupported(function_id, pc, UnsupportedOp::HostCall));
             }
-            Op::HostCallYield { .. } => {
-                return Err(self.unsupported(function_id, pc, UnsupportedOp::HostCallYield));
+            Op::HostCallYield { host } => {
+                let host_count = usize::try_from(*host)
+                    .ok()
+                    .and_then(|host| host.checked_add(1))
+                    .ok_or_else(|| {
+                        self.op(
+                            function_id,
+                            pc,
+                            ProgramDefect::HostCountOverflow { host: *host },
+                        )
+                    })?;
+                requirements.hosts = requirements.hosts.max(host_count);
             }
             Op::OrderedEmpty {
                 dst,
@@ -4931,8 +5069,10 @@ impl Verifier<'_> {
                     | Op::Call { .. }
                     | Op::CallIndirect { .. }
                     | Op::Await { .. }
+                    | Op::HostCallYield { .. }
                     | Op::CompareValueBytes { .. }
                     | Op::StringConcat { .. }
+                    | Op::StringTrim { .. }
                     | Op::StringContains { .. }
                     | Op::StringIsNumeric { .. }
                     | Op::StringSplitOnce { .. }
@@ -4993,13 +5133,6 @@ impl Verifier<'_> {
                     }
                     Op::HostCall { .. } => {
                         return Err(self.unsupported(function_id, pc, UnsupportedOp::HostCall));
-                    }
-                    Op::HostCallYield { .. } => {
-                        return Err(self.unsupported(
-                            function_id,
-                            pc,
-                            UnsupportedOp::HostCallYield,
-                        ));
                     }
                 }
             }
@@ -5190,6 +5323,7 @@ mod tests {
             entries: entries.iter().copied().map(RegionId).collect(),
             result: RegionId(result),
             call_contract: call_contract.map(CallContractId),
+            call_abi: None,
             environment: Vec::new(),
         }
     }
@@ -6452,7 +6586,6 @@ mod tests {
                 },
             ),
             (UnsupportedOp::HostCall, Op::HostCall { host: 0 }),
-            (UnsupportedOp::HostCallYield, Op::HostCallYield { host: 0 }),
         ];
 
         for (expected, op) in unsupported {
@@ -6468,6 +6601,27 @@ mod tests {
                 op_error(1, ProgramDefect::UnsupportedOp { op: expected })
             );
         }
+    }
+
+    #[test]
+    fn host_call_yield_is_admitted_and_counts_the_host_table() {
+        let (program, contract) = single_function(
+            1,
+            vec![Op::HostCallYield { host: 3 }, Op::Ret { src: 0, size: 8 }],
+            vec![word_region(0, WordKind::Scalar)],
+            0,
+        );
+        let verified = program.verify(contract).expect("host yield is verified");
+        assert_eq!(
+            verified.drive_requirements(),
+            DriveRequirements {
+                await_inputs: 0,
+                hosts: 4,
+            }
+        );
+        let facts = verified.facts().function(FnId(0)).expect("function facts");
+        assert!(facts.pc(0).is_some_and(PcFacts::is_reachable));
+        assert!(facts.pc(1).is_some_and(PcFacts::is_reachable));
     }
 
     #[test]

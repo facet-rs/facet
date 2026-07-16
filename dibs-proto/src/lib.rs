@@ -1,10 +1,11 @@
 //! Protocol definitions for dibs CLI-to-service communication.
 //!
-//! This crate defines the vox service interface between the `dibs` CLI
-//! and the user's db crate (e.g., `my-app-db`).
+//! This crate defines the Vox service interface between the `dibs` CLI and an
+//! application's explicit Dibs tooling mode.
 //!
-//! The db crate runs as a short-lived vox service, responding to
-//! schema and migration queries from the CLI.
+//! The application owns the endpoint and links its db crate (for example,
+//! `my-app-db`) so schema and migration queries use the same code as the
+//! deployed application image.
 
 // The `vox::service` macro expands to handler functions whose Result Err
 // type is `vox::VoxError<DibsError>` — large enough that newer clippy

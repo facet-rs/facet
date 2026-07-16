@@ -3,10 +3,19 @@
 //! These tests spawn the actual `dibs lsp-extension` binary and communicate
 //! with it over vox, just like the real Styx LSP does.
 //!
-//! IMPORTANT: These tests need a real dibs project context because the extension
-//! connects to the service to fetch the schema. We use the `my-app-db` example.
+//! The test owns a real application tooling endpoint backed by `my-app-db`, then
+//! launches the actual CLI extension against it.
 
 use std::path::PathBuf;
+use tokio::net::TcpListener;
+
+struct AbortOnDrop(tokio::task::JoinHandle<std::io::Result<()>>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
 
 fn test_file(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -14,18 +23,27 @@ fn test_file(name: &str) -> PathBuf {
         .join(name)
 }
 
-/// Get the path to the my-app-queries example project.
-fn example_project_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .join("examples/dibs-my-app-workspace/my-app-queries")
-}
-
 #[tokio::test]
 async fn test_completions() {
-    // Use a document URI inside the example project so the extension can find the config
-    let project_dir = example_project_dir();
+    my_app_db::ensure_linked();
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = listener.local_addr().unwrap();
+    let _service = AbortOnDrop(tokio::spawn(dibs::serve_listener(listener)));
+
+    let workspace = tempfile::tempdir().unwrap();
+    let config_dir = workspace.path().join(".config");
+    let project_dir = workspace.path().join("my-app-queries");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::create_dir_all(project_dir.join(".dibs-queries")).unwrap();
+    std::fs::write(
+        config_dir.join("dibs.styx"),
+        format!(
+            "@schema {{id crate:dibs@1, cli dibs}}\n\ndb {{\n    crate my-app-db\n    endpoint \"{endpoint}\"\n}}\n"
+        ),
+    )
+    .unwrap();
+
     let document_uri = format!(
         "file://{}/.dibs-queries/queries.styx",
         project_dir.display()

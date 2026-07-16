@@ -3,7 +3,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
+use taxon::{Kind as TaxonKind, Variant as TaxonVariant, VariantPayload as TaxonVariantPayload};
+
 use crate::diagnostic::{Diagnostic, Diagnostics};
+use crate::schema::{SchemaRef, builtin_schema, generic_builtin_schema, taxon_field};
 use crate::support::Span;
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -34,6 +37,39 @@ pub struct RecordField {
 pub struct RecordType {
     pub name: String,
     pub fields: Vec<RecordField>,
+    pub schema: SchemaRef,
+}
+
+impl RecordType {
+    #[must_use]
+    pub fn new(name: impl Into<String>, fields: Vec<RecordField>) -> Self {
+        let name = name.into();
+        let schema = SchemaRef::for_kind(TaxonKind::Struct {
+            name: name.clone(),
+            fields: fields
+                .iter()
+                .map(|field| taxon_field(&field.name, &field.ty.schema_ref()))
+                .collect(),
+        });
+        Self {
+            name,
+            fields,
+            schema,
+        }
+    }
+
+    #[must_use]
+    pub fn with_schema(
+        name: impl Into<String>,
+        fields: Vec<RecordField>,
+        schema: SchemaRef,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            fields,
+            schema,
+        }
+    }
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -99,6 +135,7 @@ pub struct EnumVariant {
 pub struct EnumType {
     pub name: String,
     pub variants: Vec<EnumVariant>,
+    pub schema: SchemaRef,
 }
 
 pub const ORDERING_LESS_VARIANT: u32 = 0;
@@ -106,29 +143,85 @@ pub const ORDERING_EQUAL_VARIANT: u32 = 1;
 pub const ORDERING_GREATER_VARIANT: u32 = 2;
 pub const OPTION_SOME_VARIANT: u32 = 0;
 pub const OPTION_NONE_VARIANT: u32 = 1;
+pub const RESULT_OK_VARIANT: u32 = 0;
+pub const RESULT_ERR_VARIANT: u32 = 1;
 
 impl EnumType {
+    #[must_use]
+    pub fn new(name: impl Into<String>, variants: Vec<EnumVariant>) -> Self {
+        let name = name.into();
+        let schema = SchemaRef::for_kind(TaxonKind::Enum {
+            name: name.clone(),
+            variants: variants
+                .iter()
+                .enumerate()
+                .map(|(index, variant)| TaxonVariant {
+                    name: variant.name.clone(),
+                    index: u32::try_from(index).expect("enum variant index fits u32"),
+                    payload: match &variant.payload {
+                        VariantPayload::Unit => TaxonVariantPayload::Unit,
+                        VariantPayload::Tuple(elements) if elements.len() == 1 => {
+                            TaxonVariantPayload::Newtype(elements[0].schema_ref().to_taxon())
+                        }
+                        VariantPayload::Tuple(elements) => TaxonVariantPayload::Tuple(
+                            elements
+                                .iter()
+                                .map(Type::schema_ref)
+                                .map(|schema| schema.to_taxon())
+                                .collect(),
+                        ),
+                        VariantPayload::Record(fields) => TaxonVariantPayload::Struct(
+                            fields
+                                .iter()
+                                .map(|field| taxon_field(&field.name, &field.ty.schema_ref()))
+                                .collect(),
+                        ),
+                    },
+                })
+                .collect(),
+        });
+        Self {
+            name,
+            variants,
+            schema,
+        }
+    }
+
+    #[must_use]
+    pub fn with_schema(
+        name: impl Into<String>,
+        variants: Vec<EnumVariant>,
+        schema: SchemaRef,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            variants,
+            schema,
+        }
+    }
+
     /// r[impl lang.value.ordering-is-enum]
     #[must_use]
     pub fn ordering() -> Self {
-        Self {
-            name: "Ordering".to_owned(),
-            variants: ["Less", "Equal", "Greater"]
+        Self::new(
+            "Ordering",
+            ["Less", "Equal", "Greater"]
                 .into_iter()
                 .map(|name| EnumVariant {
                     name: name.to_owned(),
                     payload: VariantPayload::Unit,
                 })
                 .collect(),
-        }
+        )
     }
 
     /// r[impl machine.value.option-no-store-alloc]
     #[must_use]
     pub fn option(inner: Type) -> Self {
-        Self {
-            name: format!("Option<{}>", inner.name()),
-            variants: vec![
+        let schema = generic_builtin_schema("Option", vec![inner.schema_ref()]);
+        Self::with_schema(
+            format!("Option<{}>", inner.name()),
+            vec![
                 EnumVariant {
                     name: "Some".to_owned(),
                     payload: VariantPayload::Tuple(vec![inner]),
@@ -138,7 +231,23 @@ impl EnumType {
                     payload: VariantPayload::Unit,
                 },
             ],
-        }
+            schema,
+        )
+    }
+
+    /// The type a caught failure presents as: an opaque record carrying the
+    /// failure value's identity. Its field is not a legal surface identifier,
+    /// so programs can branch on `Err(_)` and pass the failure along, but not
+    /// forge one.
+    #[must_use]
+    pub fn failure_value() -> Type {
+        Type::Record(RecordType::new(
+            "Failure",
+            vec![RecordField {
+                name: "$failure".to_owned(),
+                ty: Type::String,
+            }],
+        ))
     }
 
     #[must_use]
@@ -157,6 +266,52 @@ impl EnumType {
             && matches!(none.payload, VariantPayload::Unit)
             && self.name == format!("Option<{}>", inner.name()))
         .then_some(inner)
+    }
+
+    /// The built-in `Result<Ok, Err>` failure-as-value enum: `Ok(T)` and
+    /// `Err(E)` single-payload tuple variants. Failure is an ordinary domain
+    /// value, not an exception (`r[lang.failure.typed]`).
+    #[must_use]
+    pub fn result(ok: Type, err: Type) -> Self {
+        let name = format!("Result<{}, {}>", ok.name(), err.name());
+        let schema = generic_builtin_schema("Result", vec![ok.schema_ref(), err.schema_ref()]);
+        Self::with_schema(
+            name,
+            vec![
+                EnumVariant {
+                    name: "Ok".to_owned(),
+                    payload: VariantPayload::Tuple(vec![ok]),
+                },
+                EnumVariant {
+                    name: "Err".to_owned(),
+                    payload: VariantPayload::Tuple(vec![err]),
+                },
+            ],
+            schema,
+        )
+    }
+
+    /// The `(ok, err)` payload types iff this enum is the built-in `Result`
+    /// shape (matched structurally and by canonical name, like [`option_inner`]).
+    ///
+    /// [`option_inner`]: EnumType::option_inner
+    #[must_use]
+    pub fn result_inner(&self) -> Option<(&Type, &Type)> {
+        let [ok, err] = self.variants.as_slice() else {
+            return None;
+        };
+        let (VariantPayload::Tuple(ok_payload), VariantPayload::Tuple(err_payload)) =
+            (&ok.payload, &err.payload)
+        else {
+            return None;
+        };
+        let ([ok_ty], [err_ty]) = (ok_payload.as_slice(), err_payload.as_slice()) else {
+            return None;
+        };
+        (ok.name == "Ok"
+            && err.name == "Err"
+            && self.name == format!("Result<{}, {}>", ok_ty.name(), err_ty.name()))
+        .then_some((ok_ty, err_ty))
     }
 }
 
@@ -257,6 +412,9 @@ pub enum TraceCheck {
     MemoEntriesAtMost {
         bound: i64,
     },
+    MemoHitsAtLeast {
+        bound: i64,
+    },
     /// Store interns during the test are at most `bound`.
     StoreInternsAtMost {
         bound: i64,
@@ -303,37 +461,78 @@ pub enum TraceCheck {
     DemandedOnce {
         wire: DescribedWire,
     },
+    /// Exactly `count` effect processes were spawned over the whole run. A
+    /// memoized re-demand of the same (plan × capability) key spawns nothing,
+    /// so this is the whole-run process-count claim the testing chapter names.
+    RanProcesses {
+        count: i64,
+    },
+    /// At least one scheduler segment ran while an independent effect was
+    /// pending, or two effects were simultaneously in flight. This is derived
+    /// from scheduler ownership state, never elapsed-time coincidence.
+    Overlapped,
+    /// The named external path was read during the run: it appears in at least
+    /// one demand receipt.
+    Read {
+        path: String,
+    },
+    /// The named external path was never read during the run: it appears in no
+    /// demand receipt. Read-recording is complete by construction — external
+    /// reads go through the recording fixture-store accessors — so absence in
+    /// the receipts is absence of the read.
+    NeverRead {
+        path: String,
+    },
+    /// Exactly `times` fetch effects were actually performed. Memoized
+    /// re-demands of an identical pinned fetch are memo hits and spawn no
+    /// effect, so they do not count.
+    Fetched {
+        times: i64,
+    },
 }
 
 /// A held description of an unevaluated invocation: which user function is
-/// invoked and, for a call-site selector, the exact scalar argument identities.
-/// This is the "wire" a trace-check constructor pins — it is never demanded,
-/// counted, or lowered to an island; it only names what to look for in the
-/// frozen completed-run demand log. Arguments are carried as their surface
-/// literals and resolved to canonical value identities where the check is
-/// evaluated, so this VIR type stays free of any runtime-identity dependency.
+/// invoked and which of its realizations the check selects. This is the "wire"
+/// a trace-check constructor pins — it is never demanded, counted, or lowered
+/// to an island; it only names what to look for in the frozen completed-run
+/// demand log. Selector contents are surface literals or authored-graph
+/// provenance, resolved to canonical identities where the check is evaluated,
+/// so this VIR type stays free of any runtime-identity dependency.
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct DescribedWire {
     /// The user function whose invocation this wire describes.
     pub function: FunctionId,
-    /// Literal scalar arguments of the described invocation, in order. Empty for
-    /// a zero-argument callee or a name-level selector.
-    pub arguments: Vec<WireArg>,
-    /// A name-level selector matches every argument demand of `function`
-    /// (`demanded_once(costly())` — one distinct realization total); a call-site
-    /// selector matches only the exact described argument identities
-    /// (`demanded_once(costly(1))`).
-    pub name_level: bool,
+    /// Which realizations of `function` the check selects.
+    pub selector: WireSelector,
+}
+
+/// How a described wire selects realized demands of its function.
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum WireSelector {
+    /// A name-level selector matches every argument demand of the function
+    /// (`demanded_once(costly())` — one distinct realization total).
+    Name,
+    /// A call-site selector matches only the exact described scalar argument
+    /// identities (`demanded_once(costly(1))`).
+    CallSite(Vec<WireArg>),
+    /// A binding selector names a let-bound invocation node in the authored
+    /// test graph (`let solve = mini_solve(...); ... demanded_once(solve)`).
+    /// It matches by the invocation's canonical structural preimage, so
+    /// composite and where-clause arguments — which have no literal spelling —
+    /// are selectable without demanding anything.
+    Binding(NodeId),
 }
 
 /// One scalar argument literal of a [`DescribedWire`]. Only closed scalar
 /// literals participate in a described selector; the wire never evaluates a
 /// sub-expression to obtain an argument.
-#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
 pub enum WireArg {
     Int(i64),
     Bool(bool),
+    FixtureTree(String),
 }
 
 /// One arm of a generator [`GeneratorStep::Match`]. The arm body is itself a
@@ -483,6 +682,18 @@ pub struct ArrayMapGrain {
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct CommandArgument {
+    pub pieces: Vec<CommandPiece>,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum CommandPiece {
+    Literal(String),
+    Input { index: u32 },
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Type {
     Bool,
@@ -521,9 +732,84 @@ pub enum Type {
     /// ordinary Vix closure; a consuming operation (`sorted`) reads it and never
     /// materializes an `Order<T>` value in a Weavy frame.
     Order(Box<Type>),
+    /// A store-backed machine-plane value: one handle word whose canonical
+    /// resident bytes are its byte-comparable content. These values are
+    /// constructed only by machine primitives (the effect plane), never by
+    /// lowered pure vocabulary.
+    Extern(ExternKind),
+}
+
+/// The machine-plane value kinds of the tree/fetch band. `Tree` and
+/// `TreeEntry` projections resolve lazily against the store or an external
+/// fixture root; `Blob` is immutable bytes named by its vix ContentHash
+/// (`machine.identity.blake3`); `Registry`/`PinnedUrl` are the lock-time
+/// fixture-registry surface (`machine.primitive.fetch-is-pinned`).
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ExternKind {
+    Tree,
+    TreeEntry,
+    Blob,
+    Registry,
+    PinnedUrl,
+    /// A compiler-published semantic schema reference. Its resident bytes are
+    /// [`SchemaRef::canonical_bytes`]; its identity is an ordinary Store value,
+    /// so registered primitive requests can name schemas without a task-local
+    /// type handle or an ontology string.
+    Schema,
+}
+
+impl ExternKind {
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Tree => "Tree",
+            Self::TreeEntry => "TreeEntry",
+            Self::Blob => "Blob",
+            Self::Registry => "Registry",
+            Self::PinnedUrl => "PinnedUrl",
+            Self::Schema => "Schema",
+        }
+    }
 }
 
 impl Type {
+    /// The Taxon-derived semantic schema carried by value identity. Weavy's
+    /// numeric `SchemaRef` remains a separate program-local ABI index.
+    #[must_use]
+    pub fn schema_ref(&self) -> SchemaRef {
+        match self {
+            Self::Bool => builtin_schema("Bool"),
+            Self::Int => builtin_schema("Int"),
+            Self::Check => builtin_schema("Check"),
+            Self::StreamCheck => builtin_schema("StreamCheck"),
+            Self::String => builtin_schema("String"),
+            Self::Path => builtin_schema("Path"),
+            Self::Function { parameter, result } => {
+                generic_builtin_schema("Fn", vec![parameter.schema_ref(), result.schema_ref()])
+            }
+            Self::Tuple(elements) => SchemaRef::for_kind(TaxonKind::Tuple {
+                elements: elements
+                    .iter()
+                    .map(Self::schema_ref)
+                    .map(|schema| schema.to_taxon())
+                    .collect(),
+            }),
+            Self::Record(record) => record.schema.clone(),
+            Self::Enum(enumeration) => enumeration.schema.clone(),
+            Self::Array(element) => generic_builtin_schema("Array", vec![element.schema_ref()]),
+            Self::Map { key, value } => {
+                generic_builtin_schema("Map", vec![key.schema_ref(), value.schema_ref()])
+            }
+            Self::Set(element) => generic_builtin_schema("Set", vec![element.schema_ref()]),
+            Self::Stream { key, value } => {
+                generic_builtin_schema("Stream", vec![key.schema_ref(), value.schema_ref()])
+            }
+            Self::Order(subject) => generic_builtin_schema("Order", vec![subject.schema_ref()]),
+            Self::Extern(kind) => builtin_schema(kind.name()),
+        }
+    }
+
     #[must_use]
     pub fn ordering() -> Self {
         Self::Enum(EnumType::ordering())
@@ -614,6 +900,19 @@ impl Type {
     }
 
     #[must_use]
+    pub fn result(ok: Type, err: Type) -> Self {
+        Self::Enum(EnumType::result(ok, err))
+    }
+
+    #[must_use]
+    pub fn result_inner(&self) -> Option<(&Type, &Type)> {
+        let Self::Enum(enumeration) = self else {
+            return None;
+        };
+        enumeration.result_inner()
+    }
+
+    #[must_use]
     pub fn name(&self) -> String {
         match self {
             Self::Bool => "Bool".to_owned(),
@@ -643,6 +942,7 @@ impl Type {
                 format!("Stream<{}, {}>", key.name(), value.name())
             }
             Self::Order(subject) => format!("Order<{}>", subject.name()),
+            Self::Extern(kind) => kind.name().to_owned(),
         }
     }
 
@@ -656,6 +956,7 @@ impl Type {
             | Self::Check
             | Self::String
             | Self::Path
+            | Self::Extern(_)
             | Self::Array(_)
             | Self::Map { .. }
             | Self::Set(_) => Some(1),
@@ -684,7 +985,9 @@ impl Type {
     #[must_use]
     pub fn equality_is_structural(&self) -> bool {
         match self {
-            Self::Bool | Self::Int | Self::String | Self::Path => true,
+            // An Extern value's canonical resident bytes are its content, so
+            // byte equality is content-identity equality.
+            Self::Bool | Self::Int | Self::String | Self::Path | Self::Extern(_) => true,
             Self::Array(element) => element.equality_is_structural(),
             Self::Map { .. } | Self::Set(_) => false,
             Self::Function { .. } => false,
@@ -706,6 +1009,7 @@ impl Type {
     pub fn structural_order_is_defined(&self) -> bool {
         match self {
             Self::Bool | Self::Int | Self::String | Self::Path => true,
+            Self::Extern(_) => false,
             Self::Array(element) => element.structural_order_is_defined(),
             Self::Map { .. } | Self::Set(_) => false,
             Self::Function { .. } => false,
@@ -738,6 +1042,92 @@ impl Type {
 pub enum EffectKind {
     Pure,
     Codata,
+    /// A registered runtime-primitive demand (exec, fetch): the node's value is
+    /// produced by the scheduler-owned effect path, never by in-frame Weavy
+    /// code. Demanding it may spawn external work; not demanding it runs
+    /// nothing.
+    Effect,
+}
+
+/// The grammar owned by the typed document-deserialization primitive.
+///
+/// This lives in VIR rather than in the parser implementation: a dynamic
+/// decode is a semantic operation whose format and target schema participate in
+/// the recipe identity and are carried across the compiler/runtime boundary.
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum DecodeFormat {
+    Json,
+    Toml,
+}
+
+#[must_use]
+pub fn decode_primitive_id() -> crate::runtime::PrimitiveId {
+    crate::runtime::PrimitiveId {
+        namespace: "vix".to_owned(),
+        name: "decode".to_owned(),
+        version: 1,
+    }
+}
+
+/// The authored request schema of the registered document decoder. `target`
+/// is a Store-backed Taxon [`SchemaRef`], not a compiler-local type index;
+/// `fallible` selects `Result<T, DecodeError>` versus the infallible surface.
+#[must_use]
+pub fn decode_request_type() -> Type {
+    Type::Record(RecordType::new(
+        "DecodeRequest",
+        vec![
+            RecordField {
+                name: "format".to_owned(),
+                ty: Type::Int,
+            },
+            RecordField {
+                name: "target".to_owned(),
+                ty: Type::Extern(ExternKind::Schema),
+            },
+            RecordField {
+                name: "fallible".to_owned(),
+                ty: Type::Bool,
+            },
+            RecordField {
+                name: "document".to_owned(),
+                ty: Type::String,
+            },
+        ],
+    ))
+}
+
+#[must_use]
+pub fn decode_error_type() -> Type {
+    Type::Record(RecordType::new(
+        "DecodeError",
+        vec![
+            RecordField {
+                name: "kind".to_owned(),
+                ty: Type::String,
+            },
+            RecordField {
+                name: "path".to_owned(),
+                ty: Type::String,
+            },
+            RecordField {
+                name: "document_offset".to_owned(),
+                ty: Type::Int,
+            },
+            RecordField {
+                name: "document_len".to_owned(),
+                ty: Type::Int,
+            },
+        ],
+    ))
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum MiniSolveRequirements {
+    Static { packages: Vec<String> },
+    FixtureWorkspace,
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
@@ -759,6 +1149,15 @@ impl EffectFacts {
         fallible: false,
         placed: false,
     };
+
+    /// Machine-plane primitive: fallible (an exec termination grammar may map
+    /// to a typed failure, a projection can miss, a fetch can fail integrity)
+    /// and never lowered to Weavy.
+    pub const EFFECT: Self = Self {
+        kind: EffectKind::Effect,
+        fallible: true,
+        placed: false,
+    };
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -775,6 +1174,8 @@ pub enum Op {
     Yield,
     String(String),
     Path(String),
+    /// One closed Taxon schema reference as an ordinary Store-backed value.
+    Schema(SchemaRef),
     Parameter(ParameterId),
     Call(FunctionId),
     Closure(FunctionId),
@@ -786,6 +1187,13 @@ pub enum Op {
     /// where it is consumed, so an unconsumed wire issues no demand.
     AwaitWire {
         input: u32,
+    },
+    /// Invoke one registered primitive with one ordinary typed request value.
+    /// The node's declared type supplies the expected response schema; the
+    /// machine dispatches solely by `PrimitiveId` and never matches the
+    /// primitive's name or request ontology.
+    InvokePrimitive {
+        primitive: crate::runtime::PrimitiveId,
     },
     Tuple,
     Record,
@@ -906,6 +1314,8 @@ pub enum Op {
     StreamSplitMin,
     /// Concatenate two immutable strings.
     StringConcat,
+    /// Remove leading and trailing ASCII whitespace from a string.
+    StringTrim,
     /// Test whether a string contains a byte-identical substring.
     StringContains,
     /// Partition a string at its first delimiter occurrence.
@@ -914,6 +1324,8 @@ pub enum Op {
     StringParseInt,
     /// Test whether a string is a non-empty run of ASCII decimal digits.
     StringIsNumeric,
+    /// Split a string into its line-framed dense array view.
+    StringLines,
     /// Join a compiler-validated segment suffix onto a relative Path.
     PathJoin,
     /// Render a relative Path as its String spelling.
@@ -922,6 +1334,67 @@ pub enum Op {
     /// The operand is an inline scalar; the result is a fresh resident
     /// molten byte run, identical in byte semantics to a string literal.
     IntToString,
+    /// Run a command through the exec effect primitive. The single input is the
+    /// capability value (referenced by identity — its `ValueId` enters the
+    /// demand preimage); `argv` is the command grammar's parse of the template.
+    /// The node's value is the `ExecOutcome` the termination grammar produces;
+    /// a nonzero exit is a typed language failure, never a status integer.
+    ///
+    /// r[impl machine.primitive.exec-outcome]
+    /// r[impl machine.primitive.capabilities-by-identity]
+    Exec {
+        argv: Vec<CommandArgument>,
+    },
+    /// Postfix `?`: catch the operand's demand edge. The operand becomes its
+    /// own demanded island; this node's value is `Result::Ok(value)` when that
+    /// demand publishes and `Result::Err(failure)` when it language-fails —
+    /// the failure participates as an ordinary value, address intact.
+    Try,
+    /// Open the named harness fixture tree as a lazy `Tree` value. Reads
+    /// nothing: the value's identity is the pending fixture-tree reference;
+    /// projections resolve — and record reads — only where demanded.
+    FixtureTree,
+    /// Project one segment (String) or a segment path (Path) through a Tree
+    /// or a Dir TreeEntry. Resolves lazily: it reads directory listings along
+    /// the projected path only, never sibling entries or file contents.
+    TreeProject,
+    /// Decode a File TreeEntry's content as UTF-8 text. This is the explicit
+    /// read of the file's bytes; it records the read in the demand's receipt.
+    TreeEntryText,
+    /// Glob over a Tree: a keyed codata recipe (`Stream<Path, Path>`) whose
+    /// collection reads only the directory listings the pattern traverses.
+    TreeGlob,
+    /// Open the offline harness fixture registry (the lock-time manifest).
+    FixtureRegistry,
+    /// Resolve an artifact name against the registry manifest into a
+    /// `PinnedUrl`: provenance URL plus the REQUIRED vix ContentHash
+    /// (`machine.primitive.fetch-is-pinned`).
+    RegistryUrl,
+    /// Resolve an artifact name against the registry manifest into an
+    /// observation coordinate (`OriginHint`): a provenance URL with NO pinned
+    /// identity, because an observation names its value only after the bytes
+    /// arrive (`machine.primitive.fetch-is-pinned`, the `observe` counterpart).
+    RegistryCoordinate,
+    /// Fetch a pinned Blob by content identity: resolve the store first, only
+    /// then the (fixture) origin; verify the bytes against the pinned hash.
+    ///
+    /// r[impl machine.primitive.fetch-returns-a-blob]
+    /// r[impl machine.primitive.fetch-integrity-vs-identity]
+    Fetch,
+    /// Resolve the canonical package solver fixture lazily through visited
+    /// package-row reads. Inputs are the authored universe value and the
+    /// requirements map; receipts carry the package rows actually read.
+    MiniSolve {
+        function: FunctionId,
+        requirements: MiniSolveRequirements,
+    },
+    /// Extract an archive Blob into a Tree whose identity is the canonical
+    /// tree encoding — never the archive bytes' ContentHash.
+    ///
+    /// r[impl machine.identity.tree-model]
+    Untar,
+    /// The byte length of a Blob, read from the store entry.
+    BlobLen,
 }
 
 /// One SSA-like operation. Dependencies are explicit node ids; no Rust
@@ -1060,9 +1533,10 @@ pub struct Test {
 
 /// Typed, in-language `#[test]` metadata. Parsed once at compile time from the
 /// attribute arguments; the outer enforcing runner reads it before execution.
-#[derive(facet::Facet, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(facet::Facet, Clone, Debug, Default, PartialEq, Eq)]
 pub struct TestMetadata {
     pub budget: Budget,
+    pub rerun_with: Option<String>,
 }
 
 /// A test execution budget. Each dimension is independently optional; a ceiling
@@ -1098,6 +1572,7 @@ pub struct Module {
     pub functions: Vec<Function>,
     pub tests: Vec<Test>,
     pub force_molten_copy: bool,
+    pub force_scalar_call_boundaries: bool,
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -1133,6 +1608,11 @@ pub enum IslandPurpose {
     /// envelope is forced for every type — including scalars and strings — so the
     /// runtime always freezes a renderable structure.
     Snapshot,
+    /// A machine-plane primitive demand (tree projection, glob, fetch,
+    /// extract): its output node is an [`EffectKind::Effect`] op the runtime
+    /// evaluates directly against the store/fixture root with a recorded
+    /// read-set. Never lowered to a Weavy program.
+    Effect,
 }
 
 /// Content-free canonical graph provenance for a shared value producer. This
@@ -1161,16 +1641,25 @@ pub struct PartitionedValue {
     /// so a described-wire trace check can observe the invocation. Absent for an
     /// ordinary shared-publication island.
     pub wire: Option<WireProvenance>,
+    /// Present when this is an effect island ([`IslandPurpose::Effect`]): the
+    /// node-id-independent structural fingerprint of the effect's authored
+    /// subtree. Two structurally identical effect expressions nominate the
+    /// same memo location through this fingerprint, so the second demand of an
+    /// identical pinned fetch is an exact memo hit, never a second effect.
+    pub effect_fingerprint: Option<String>,
 }
 
-/// The described invocation a hoisted wire value island realizes: the callee
-/// user function and its exact scalar argument literals. Recorded so a
-/// described-wire trace check can select this realization by callee identity and
-/// argument identities.
+/// The described invocation a hoisted value or wire island realizes: the callee
+/// user function and, when every argument is a closed scalar literal, the exact
+/// argument literals. Recorded so a described-wire trace check can select this
+/// realization by callee identity, argument identities, or canonical preimage.
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct WireProvenance {
     pub function: FunctionId,
-    pub arguments: Vec<WireArg>,
+    /// `Some` when the invocation is call-site selectable (every argument is a
+    /// closed scalar literal); `None` for a composite or computed-argument
+    /// invocation, which remains selectable through its binding preimage.
+    pub arguments: Option<Vec<WireArg>>,
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
@@ -1186,10 +1675,42 @@ pub struct ArrayMapPartition {
     pub shape: ArrayMapExecutionShape,
 }
 
+/// One capability parameter of a test: a value the demand root (the harness)
+/// supplies by identity before any island of the test runs. It is named by the
+/// same [`ValueIslandId`] space as shared publications, so consuming islands
+/// list it in `value_inputs` and the runner resolves it from the same
+/// published-values map.
+///
+/// r[impl machine.primitive.capabilities-by-identity]
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct PartitionedCapability {
+    pub id: ValueIslandId,
+    pub parameter: ParameterId,
+    pub name: String,
+    pub ty: Type,
+}
+
+/// One `?` catch: after the operand island publishes (value or typed failure),
+/// the runner constructs the `Result` value under this id, so consuming check
+/// islands receive it as an ordinary pre-published enum input.
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct PartitionedCatch {
+    /// The Try node's published identity.
+    pub id: ValueIslandId,
+    /// The caught operand island (an effect island or an ordinary value island).
+    pub operand: ValueIslandId,
+    /// The `Result<T>` enum type the catch constructs.
+    pub result_type: Type,
+}
+
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct PartitionedTest {
     pub name: String,
+    /// Harness-supplied capability inputs, published before `values`.
+    pub capabilities: Vec<PartitionedCapability>,
     pub values: Vec<PartitionedValue>,
+    /// `?` catches, constructed after `values` publish and before any site runs.
+    pub catches: Vec<PartitionedCatch>,
     /// Argument islands demanded lazily through force-on-park, keyed by their
     /// [`ValueIslandId`]. A consuming island's [`Island::wire_inputs`] names one
     /// of these; the runner builds a `WireDemand` from it and drives it through
@@ -1336,7 +1857,24 @@ impl Module {
     }
 
     pub fn try_partition_test(&self, test: &Test) -> Result<PartitionedTest, Diagnostics> {
-        let function = &self.functions[test.function.0 as usize];
+        // Cut every mixed effect+primitive helper call so no primitive is ever
+        // absorbed into a machine-plane effect island (FV-D1D Layer 1). This is a
+        // structural pre-pass over the authored graph; a test with no such call
+        // is returned unchanged. When splicing renumbers the function's nodes, the
+        // test's generator references move through the same map so the shared
+        // node-id space stays consistent.
+        let (function, mixed_remap) =
+            self.inline_mixed_primitive_calls(&self.functions[test.function.0 as usize])?;
+        let (function, map_remap) = self.expand_effectful_array_maps(&function)?;
+        let remap = compose_node_remaps(mixed_remap, map_remap);
+        let function = &function;
+        let remapped_test;
+        let test = if let Some(remap) = &remap {
+            remapped_test = remap_test_nodes(test, remap);
+            &remapped_test
+        } else {
+            test
+        };
         // Every site, in stable YieldSiteId order (dense across value and trace
         // sites). Island ordinals compact over value sites only, so a site is
         // keyed by its YieldSiteId, never by its position after filtering.
@@ -1375,6 +1913,48 @@ impl Module {
                     .insert(PublicationConsumer::GeneratorControl);
             }
         }
+        // Capability parameters: values the demand root supplies by identity
+        // (no ambient acquire). Each becomes a pre-published input every island
+        // may name; the harness interns the capability value before any island
+        // of this test runs.
+        //
+        // r[impl machine.primitive.capabilities-by-identity]
+        let capabilities = function
+            .parameters
+            .iter()
+            .map(|parameter| PartitionedCapability {
+                id: self.value_island_id(function.id, parameter.node),
+                parameter: parameter.id,
+                name: parameter.name.clone(),
+                ty: parameter.ty.clone(),
+            })
+            .collect::<Vec<_>>();
+        let capability_ids = function
+            .parameters
+            .iter()
+            .map(|parameter| {
+                (
+                    parameter.node,
+                    self.value_island_id(function.id, parameter.node),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        // Every effect root is an island boundary regardless of consumer count:
+        // a machine-plane primitive can never be lowered into a Weavy island, so
+        // it is hoisted into its own Effect island and consumed as a published
+        // value input. This includes exec roots (possibly caught with `?`) and
+        // tree/fetch/extract roots. Effect roots are the non-codata Effect-kind
+        // nodes; a codata effect recipe stays interior to the collection that
+        // realizes it.
+        let effect_nodes = function
+            .nodes
+            .iter()
+            .filter(|node| self.is_effect_root(node))
+            .collect::<Vec<_>>();
+        let effect_ids = effect_nodes
+            .iter()
+            .map(|node| (node.id, self.value_island_id(function.id, node.id)))
+            .collect::<BTreeMap<_, _>>();
         let mut shared = function
             .nodes
             .iter()
@@ -1384,6 +1964,7 @@ impl Module {
                     .is_some_and(|sites| sites.len() >= 2)
             })
             .filter(|node| is_shared_publication_candidate(node))
+            .filter(|node| !effect_ids.contains_key(&node.id))
             .collect::<Vec<_>>();
         let candidate_ids = shared.iter().map(|node| node.id).collect::<BTreeSet<_>>();
         shared.retain(|candidate| {
@@ -1397,6 +1978,50 @@ impl Module {
                     && consumer_sets.get(&other) == consumer_sets.get(&candidate.id)
             })
         });
+        let forced_scalar_calls = if self.force_scalar_call_boundaries {
+            function
+                .nodes
+                .iter()
+                .filter(|node| {
+                    is_scalar_call_candidate(node)
+                        && !matches!(node.op, Op::Call(callee) if callee == function.id)
+                        && !effect_ids.contains_key(&node.id)
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        let forced_eager_scalar_ids = forced_scalar_calls
+            .iter()
+            .filter(|candidate| {
+                function.nodes.iter().any(|consumer| {
+                    matches!(consumer.op, Op::Call(_)) && consumer.inputs.contains(&candidate.id)
+                })
+            })
+            .map(|candidate| candidate.id)
+            .collect::<BTreeSet<_>>();
+        for node in forced_scalar_calls
+            .iter()
+            .copied()
+            .filter(|node| forced_eager_scalar_ids.contains(&node.id))
+        {
+            if !shared.iter().any(|candidate| candidate.id == node.id) {
+                shared.push(node);
+            }
+        }
+        // Registered primitive invocations are eager value publications. Their
+        // Weavy task must suspend and resume through the generic host boundary;
+        // a downstream legacy effect island may consume the published value,
+        // but can never absorb and reinterpret the invocation itself.
+        for node in function
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.op, Op::InvokePrimitive { .. }))
+        {
+            if !shared.iter().any(|candidate| candidate.id == node.id) {
+                shared.push(node);
+            }
+        }
         shared.sort_by_key(|node| ValueIslandId {
             function: function.id,
             node: node.id,
@@ -1410,17 +2035,95 @@ impl Module {
         // Aggregate publications remain eager shared value islands.
         let mut wire_nodes = Vec::new();
         shared.retain(|node| {
-            if is_scalar_call_candidate(node) {
+            if is_scalar_call_candidate(node) && !forced_eager_scalar_ids.contains(&node.id) {
                 wire_nodes.push(*node);
                 false
             } else {
                 true
             }
         });
-        let shared_ids = shared
+        for node in forced_scalar_calls
+            .iter()
+            .copied()
+            .filter(|node| !forced_eager_scalar_ids.contains(&node.id))
+        {
+            if !wire_nodes.iter().any(|candidate| candidate.id == node.id) {
+                wire_nodes.push(node);
+            }
+        }
+        // Eager aggregate publications use the same structural representative
+        // rule as lazy wires. Every authored duplicate maps to the first
+        // representative's value island, so the Store/memo path realizes one
+        // content-keyed outcome rather than one location-keyed computation per
+        // spelling. This is the in-session reuse boundary for aggregate solver
+        // outcomes; it does not retain a fact independently across solves.
+        let (shared_ids, value_representatives) = {
+            let mut fingerprints = BTreeMap::new();
+            let mut representative_of = BTreeMap::<String, NodeId>::new();
+            let mut representatives = Vec::new();
+            let shared_ids = shared
+                .iter()
+                .map(|node| {
+                    let fingerprint = structural_fingerprint(function, node.id, &mut fingerprints);
+                    let representative =
+                        *representative_of.entry(fingerprint).or_insert_with(|| {
+                            representatives.push(node.id);
+                            node.id
+                        });
+                    (node.id, self.value_island_id(function.id, representative))
+                })
+                .collect::<BTreeMap<_, _>>();
+            (shared_ids, representatives)
+        };
+        // `?` catches: each consumed Try node publishes a constructed Result
+        // value; its operand becomes its own demanded island — the expression
+        // edge the catch holds — unless it is already an effect island.
+        let catch_nodes = function
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.op, Op::Try) && consumer_sets.contains_key(&node.id))
+            .collect::<Vec<_>>();
+        let mut catch_operand_nodes: Vec<&Node> = Vec::new();
+        for catch in &catch_nodes {
+            let operand = catch.inputs[0];
+            if effect_ids.contains_key(&operand)
+                || shared_ids.contains_key(&operand)
+                || catch_operand_nodes.iter().any(|node| node.id == operand)
+            {
+                continue;
+            }
+            catch_operand_nodes.push(&function.nodes[operand.0 as usize]);
+        }
+        let catch_operand_ids = catch_operand_nodes
             .iter()
             .map(|node| (node.id, self.value_island_id(function.id, node.id)))
             .collect::<BTreeMap<_, _>>();
+        let catches = catch_nodes
+            .iter()
+            .map(|node| PartitionedCatch {
+                id: self.value_island_id(function.id, node.id),
+                operand: self.value_island_id(function.id, node.inputs[0]),
+                result_type: node.ty.clone(),
+            })
+            .collect::<Vec<_>>();
+        // The pre-published inputs every island may name: ordinary shared
+        // publications, harness-supplied capability values, effect
+        // publications, catch operands, and constructed catches all arrive
+        // through the same value-input seam.
+        let published_ids = {
+            let mut map = shared_ids.clone();
+            map.extend(capability_ids.iter().map(|(node, value)| (*node, *value)));
+            map.extend(effect_ids.iter().map(|(node, value)| (*node, *value)));
+            map.extend(
+                catch_operand_ids
+                    .iter()
+                    .map(|(node, value)| (*node, *value)),
+            );
+            for node in &catch_nodes {
+                map.insert(node.id, self.value_island_id(function.id, node.id));
+            }
+            map
+        };
         // The non-strict argument nodes of every lazy call site: a call whose
         // callee has wire parameters demands each such argument inside the callee
         // through force-on-park, so the argument becomes its own wire island. Both
@@ -1471,16 +2174,38 @@ impl Module {
                 .collect::<BTreeMap<_, _>>();
             (wire_ids, lazy_arg_reps)
         };
-        let values = shared
+        // Eager publications: shared aggregates and effect roots, in one
+        // node-id-ordered (therefore dependency-ordered) vector, each built with
+        // every OTHER publication as a boundary. An effect island carries its
+        // structural fingerprint so identical effect expressions nominate one
+        // memo location.
+        let mut effect_fingerprints = BTreeMap::new();
+        let mut publications = value_representatives
+            .iter()
+            .map(|&node_id| (&function.nodes[node_id.0 as usize], IslandPurpose::Value))
+            .chain(
+                effect_nodes
+                    .iter()
+                    .map(|node| (*node, IslandPurpose::Effect)),
+            )
+            .chain(
+                catch_operand_nodes
+                    .iter()
+                    .map(|node| (*node, IslandPurpose::Value)),
+            )
+            .collect::<Vec<_>>();
+        publications.sort_by_key(|(node, _)| node.id);
+        let values = publications
             .iter()
             .enumerate()
-            .map(|(ordinal, node)| {
-                // A value island computes itself; only OTHER shared aggregates are
-                // pre-published inputs.
+            .map(|(ordinal, (node, purpose))| {
+                // A value island computes itself; only OTHER pre-published
+                // values (shared aggregates, capabilities, effect outcomes,
+                // catch operands and catch results) are inputs.
                 let representative_id = self.value_island_id(function.id, node.id);
-                let shared_here = shared_ids
+                let shared_here = published_ids
                     .iter()
-                    .filter(|(candidate, _)| **candidate != node.id)
+                    .filter(|(_, value)| **value != representative_id)
                     .map(|(candidate, value)| (*candidate, *value))
                     .collect();
                 let lazy_here = lazy_reps_excluding(&lazy_arg_reps, representative_id);
@@ -1490,14 +2215,19 @@ impl Module {
                         function,
                         node.id,
                         IslandId(u32::try_from(ordinal).expect("value island index fits u32")),
-                        IslandPurpose::Value,
+                        *purpose,
                         &IslandBoundary {
                             shared: &shared_here,
                             wires: &BTreeMap::new(),
                             lazy_arg_reps: &lazy_here,
                         },
                     ),
-                    wire: None,
+                    wire: matches!(purpose, IslandPurpose::Value)
+                        .then(|| invocation_provenance(function, node))
+                        .flatten(),
+                    effect_fingerprint: matches!(purpose, IslandPurpose::Effect).then(|| {
+                        structural_fingerprint(function, node.id, &mut effect_fingerprints)
+                    }),
                 }
             })
             .collect::<Vec<_>>();
@@ -1525,19 +2255,20 @@ impl Module {
                         IslandId(u32::try_from(ordinal).expect("wire island index fits u32")),
                         IslandPurpose::Value,
                         &IslandBoundary {
-                            shared: &shared_ids,
+                            shared: &published_ids,
                             wires: &wires_here,
                             lazy_arg_reps: &lazy_here,
                         },
                     ),
-                    wire: scalar_call_provenance(function, node),
+                    wire: invocation_provenance(function, node),
+                    effect_fingerprint: None,
                 }
             })
             .collect::<Vec<_>>();
         let generator = test
             .generator
             .has_conditional_sites()
-            .then(|| self.generator_task_island_with_shared(test, &shared_ids))
+            .then(|| self.generator_task_island_with_shared(test, &published_ids))
             .transpose()?;
         let mut islands = Vec::new();
         let mut sites = Vec::with_capacity(ordered.len());
@@ -1551,7 +2282,7 @@ impl Module {
                         IslandId(u32::try_from(island).expect("island index fits u32")),
                         IslandPurpose::Check,
                         &IslandBoundary {
-                            shared: &shared_ids,
+                            shared: &published_ids,
                             wires: &wire_ids,
                             lazy_arg_reps: &lazy_arg_reps,
                         },
@@ -1570,7 +2301,7 @@ impl Module {
                         IslandId(u32::try_from(island).expect("island index fits u32")),
                         IslandPurpose::Snapshot,
                         &IslandBoundary {
-                            shared: &shared_ids,
+                            shared: &published_ids,
                             wires: &wire_ids,
                             lazy_arg_reps: &lazy_arg_reps,
                         },
@@ -1589,7 +2320,9 @@ impl Module {
         }
         Ok(PartitionedTest {
             name: test.name.clone(),
+            capabilities,
             values,
+            catches,
             wire_islands,
             generator,
             islands,
@@ -1599,6 +2332,367 @@ impl Module {
 
     fn value_island_id(&self, function: FunctionId, node: NodeId) -> ValueIslandId {
         ValueIslandId { function, node }
+    }
+
+    fn is_effect_root(&self, node: &Node) -> bool {
+        if is_effect_root(node) {
+            return true;
+        }
+        let Op::Call(callee) = node.op else {
+            return false;
+        };
+        self.function_contains_effect(callee, &mut BTreeSet::new())
+    }
+
+    fn function_contains_effect(
+        &self,
+        function: FunctionId,
+        seen: &mut BTreeSet<FunctionId>,
+    ) -> bool {
+        if !seen.insert(function) {
+            return false;
+        }
+        self.functions
+            .get(function.0 as usize)
+            .is_some_and(|function| {
+                function.nodes.iter().any(|node| {
+                    is_effect_root(node)
+                        || matches!(node.op, Op::Call(callee) if self.function_contains_effect(callee, seen))
+                })
+            })
+    }
+
+    /// Expand an effectful `Array.map` over authored dense positions into one
+    /// specialized mapper application per position. Each application is
+    /// spliced into the enclosing graph before effect-root cutting, so its
+    /// machine-plane operations become ordinary scheduler-owned publications
+    /// and the map itself becomes a pure dense-array collector.
+    ///
+    /// Runtime-length arrays retain the materialized in-frame loop for pure
+    /// mappers. An effectful mapper needs stable element keys before execution;
+    /// until dynamic keyed-array demand exists, only authored `Op::Array`
+    /// positions provide those identities.
+    fn expand_effectful_array_maps(
+        &self,
+        function: &Function,
+    ) -> Result<(Function, Option<BTreeMap<NodeId, NodeId>>), Diagnostics> {
+        let mut result = function.clone();
+        let mut expanded_any = false;
+        loop {
+            let target = result.nodes.iter().find_map(|node| {
+                if !matches!(node.op, Op::ArrayMap { .. }) {
+                    return None;
+                }
+                let source = *node.inputs.first()?;
+                let mapper = *node.inputs.get(1)?;
+                let mapper_node = result
+                    .nodes
+                    .iter()
+                    .find(|candidate| candidate.id == mapper)?;
+                let Op::Closure(callee) = mapper_node.op else {
+                    return None;
+                };
+                self.function_contains_effect(callee, &mut BTreeSet::new())
+                    .then_some((node.id, node.span, source, mapper, callee))
+            });
+            let Some((map_id, map_span, source_id, mapper_id, callee_id)) = target else {
+                break;
+            };
+            if node_within_control_region(&result, map_id) {
+                return Err(Diagnostics::one(Diagnostic::unsupported(
+                    map_span,
+                    "an effectful Array.map inside conditional control is not yet keyed as \
+                     scheduler child demands",
+                )));
+            }
+            let source = result
+                .nodes
+                .iter()
+                .find(|node| node.id == source_id)
+                .expect("array map source node is present");
+            if !matches!(source.op, Op::Array) {
+                return Err(Diagnostics::one(Diagnostic::unsupported(
+                    map_span,
+                    "an effectful Array.map requires authored dense positions until dynamic keyed \
+                     array demand is implemented",
+                )));
+            }
+            self.splice_effectful_array_map(&mut result, map_id, source_id, mapper_id, callee_id);
+            expanded_any = true;
+        }
+        if !expanded_any {
+            return Ok((result, None));
+        }
+        let map = renumber_dense(&mut result);
+        Ok((result, Some(map)))
+    }
+
+    fn splice_effectful_array_map(
+        &self,
+        result: &mut Function,
+        map_id: NodeId,
+        source_id: NodeId,
+        mapper_id: NodeId,
+        callee_id: FunctionId,
+    ) {
+        let position = result
+            .nodes
+            .iter()
+            .position(|node| node.id == map_id)
+            .expect("expanded Array.map node is present");
+        let source_elements = result
+            .nodes
+            .iter()
+            .find(|node| node.id == source_id)
+            .expect("expanded Array.map source is present")
+            .inputs
+            .clone();
+        let captures = result
+            .nodes
+            .iter()
+            .find(|node| node.id == mapper_id)
+            .expect("expanded Array.map mapper is present")
+            .inputs
+            .clone();
+        let callee = &self.functions[callee_id.0 as usize];
+        assert_eq!(
+            callee.parameters.len(),
+            captures.len() + 1,
+            "closure parameters are the element followed by captures",
+        );
+        let parameter_nodes = callee
+            .parameters
+            .iter()
+            .map(|parameter| parameter.node)
+            .collect::<BTreeSet<_>>();
+        let mut next_id = result
+            .nodes
+            .iter()
+            .map(|node| node.id.0)
+            .max()
+            .expect("expanded function has nodes")
+            + 1;
+        let mut expanded = Vec::new();
+        let mut outputs = Vec::with_capacity(source_elements.len());
+        for element in source_elements {
+            let mut map = BTreeMap::from([(callee.parameters[0].node, element)]);
+            for (parameter, capture) in callee.parameters[1..].iter().zip(&captures) {
+                map.insert(parameter.node, *capture);
+            }
+            for node in &callee.nodes {
+                if parameter_nodes.contains(&node.id) {
+                    continue;
+                }
+                map.insert(node.id, NodeId(next_id));
+                next_id += 1;
+            }
+            for node in &callee.nodes {
+                if parameter_nodes.contains(&node.id) {
+                    continue;
+                }
+                let mut cloned = node.clone();
+                cloned.id = map[&node.id];
+                remap_node_refs(&mut cloned, &map);
+                expanded.push(cloned);
+            }
+            outputs.push(map[&callee.output.expect("effectful mapper has an output")]);
+        }
+        let mut collector = result.nodes[position].clone();
+        collector.op = Op::Array;
+        collector.inputs = outputs;
+        collector.effect = EffectFacts {
+            fallible: true,
+            ..EffectFacts::PURE
+        };
+        expanded.push(collector);
+        result.nodes.splice(position..=position, expanded);
+    }
+
+    /// Whether `function` transitively invokes a registered primitive. A callee
+    /// that both `function_contains_effect` and `function_contains_primitive`
+    /// would be routed wholesale into a machine-plane effect island, so its
+    /// primitive would reach the legacy interpreter that has no primitive
+    /// authority. Such calls are cut by [`Self::inline_mixed_primitive_calls`].
+    fn function_contains_primitive(
+        &self,
+        function: FunctionId,
+        seen: &mut BTreeSet<FunctionId>,
+    ) -> bool {
+        if !seen.insert(function) {
+            return false;
+        }
+        self.functions
+            .get(function.0 as usize)
+            .is_some_and(|function| {
+                function.nodes.iter().any(|node| {
+                    matches!(node.op, Op::InvokePrimitive { .. })
+                        || matches!(node.op, Op::Call(callee) if self.function_contains_primitive(callee, seen))
+                })
+            })
+    }
+
+    /// Whether `function` reaches `target` through any call edge (including
+    /// itself when `function == target`). Used to reject inlining a mixed
+    /// primitive/effect callee that participates in a recursive cycle, where
+    /// call-site specialization would not terminate.
+    fn function_reaches(
+        &self,
+        function: FunctionId,
+        target: FunctionId,
+        seen: &mut BTreeSet<FunctionId>,
+    ) -> bool {
+        if !seen.insert(function) {
+            return false;
+        }
+        self.functions
+            .get(function.0 as usize)
+            .is_some_and(|function| {
+                function.nodes.iter().any(|node| {
+                    let callee = match node.op {
+                        Op::Call(callee) | Op::Closure(callee) => Some(callee),
+                        Op::MiniSolve {
+                            function: callee, ..
+                        } => Some(callee),
+                        _ => None,
+                    };
+                    callee.is_some_and(|callee| {
+                        callee == target || self.function_reaches(callee, target, seen)
+                    })
+                })
+            })
+    }
+
+    /// A `Call` whose callee mixes effect roots and a registered primitive must
+    /// be cut so the primitive is never absorbed into an effect island. This
+    /// specializes each such call site by splicing the callee's authored graph
+    /// into the caller with fresh, call-context-distinct node identities, so the
+    /// existing effect-root/primitive publication rules produce the required
+    /// dependency-ordered stages: the effect publications that build the request,
+    /// the verified-Weavy primitive publication, then the pure continuation.
+    ///
+    /// Non-mixed calls are untouched: a pure-effect callee keeps its effect
+    /// island, and a pure-primitive callee already lowers to a host call. The
+    /// spliced graph preserves each node's authored span (attribution) and type
+    /// (ABI); structural recipe identity remains derived from the resulting
+    /// authored graph, so distinct arguments keep distinct identities and equal
+    /// spellings still collapse.
+    fn inline_mixed_primitive_calls(
+        &self,
+        function: &Function,
+    ) -> Result<(Function, Option<BTreeMap<NodeId, NodeId>>), Diagnostics> {
+        let mut result = function.clone();
+        let mut spliced_any = false;
+        loop {
+            let target = result.nodes.iter().find_map(|node| {
+                let Op::Call(callee) = node.op else {
+                    return None;
+                };
+                let mixed = self.function_contains_effect(callee, &mut BTreeSet::new())
+                    && self.function_contains_primitive(callee, &mut BTreeSet::new());
+                mixed.then_some((node.id, node.span, callee))
+            });
+            let Some((call_id, call_span, callee_id)) = target else {
+                break;
+            };
+            if self.function_reaches(callee_id, callee_id, &mut BTreeSet::new()) {
+                return Err(Diagnostics::one(Diagnostic::unsupported(
+                    call_span,
+                    "a recursive helper that mixes effect reads and a registered \
+                     primitive cannot be call-site specialized in this milestone",
+                )));
+            }
+            if node_within_control_region(&result, call_id) {
+                return Err(Diagnostics::one(Diagnostic::unsupported(
+                    call_span,
+                    "a registered primitive reached through effect reads inside a \
+                     conditional helper is not yet call-site specialized",
+                )));
+            }
+            self.splice_call_site(&mut result, call_id, callee_id);
+            spliced_any = true;
+        }
+        if !spliced_any {
+            return Ok((result, None));
+        }
+        let map = renumber_dense(&mut result);
+        Ok((result, Some(map)))
+    }
+
+    fn splice_call_site(&self, result: &mut Function, call_id: NodeId, callee_id: FunctionId) {
+        let callee = &self.functions[callee_id.0 as usize];
+        let position = result
+            .nodes
+            .iter()
+            .position(|node| node.id == call_id)
+            .expect("spliced call node is present");
+        let args: Vec<NodeId> = result.nodes[position].inputs.clone();
+        let mut next_id = result
+            .nodes
+            .iter()
+            .map(|node| node.id.0)
+            .max()
+            .expect("caller has nodes")
+            + 1;
+        let param_nodes: BTreeSet<NodeId> =
+            callee.parameters.iter().map(|param| param.node).collect();
+        // Callee node -> caller node. Parameters resolve to the call arguments;
+        // every other callee node gets a fresh, non-colliding caller identity so
+        // two call sites of one helper never collide. Final identities are
+        // assigned by `renumber_dense` once all splicing settles.
+        let mut map: BTreeMap<NodeId, NodeId> = BTreeMap::new();
+        for (index, param) in callee.parameters.iter().enumerate() {
+            map.insert(param.node, args[index]);
+        }
+        for node in &callee.nodes {
+            if param_nodes.contains(&node.id) {
+                continue;
+            }
+            map.insert(node.id, NodeId(next_id));
+            next_id += 1;
+        }
+        // The callee body in authored (dependency) order, parameter nodes elided.
+        let mut spliced = Vec::new();
+        for node in &callee.nodes {
+            if param_nodes.contains(&node.id) {
+                continue;
+            }
+            let mut cloned = node.clone();
+            cloned.id = map[&node.id];
+            remap_node_refs(&mut cloned, &map);
+            spliced.push(cloned);
+        }
+        let callee_output = callee.output.expect("mixed callee publishes an output");
+        let spliced_output = map[&callee_output];
+        // Every reference to the call result now names the spliced output. The
+        // spliced body takes the call's position, so its published effect roots,
+        // primitive invocation, and continuation stay in dependency order.
+        let redirect = BTreeMap::from([(call_id, spliced_output)]);
+        result.nodes.splice(position..=position, spliced);
+        for node in &mut result.nodes {
+            remap_node_refs(node, &redirect);
+        }
+        if result.output == Some(call_id) {
+            result.output = Some(spliced_output);
+        }
+        for check in &mut result.yielded_checks {
+            if *check == call_id {
+                *check = spliced_output;
+            }
+        }
+    }
+
+    /// The canonical structural preimage of the subtree rooted at `node` in
+    /// `function`'s authored graph — the content key a binding-level described
+    /// wire selects on. Computed over the authored graph, never over an island
+    /// cut, so shared-value and wire substitutions cannot distort the preimage;
+    /// nothing is demanded, interned, or executed to produce it.
+    #[must_use]
+    pub fn invocation_preimage(&self, function: FunctionId, node: NodeId) -> String {
+        structural_fingerprint(
+            &self.functions[function.0 as usize],
+            node,
+            &mut BTreeMap::new(),
+        )
     }
 
     fn partition_function_output_with_shared(
@@ -2200,6 +3294,192 @@ fn wire_param_indices(callee: &Function) -> Vec<usize> {
 /// untaken arm never parks and never demands. `new_id` is the specialized frame's
 /// island-local identity; different call sites get different `await_map`s, so a
 /// shared source callee cannot hardcode the wrong task input across call sites.
+/// Rewrite every `NodeId` a node *references* — its inputs and the node lists of
+/// any control regions it carries — through `map`. The node's own id is never
+/// rewritten here; callers assign it. Missing keys are left unchanged.
+fn remap_node_refs(node: &mut Node, map: &BTreeMap<NodeId, NodeId>) {
+    for input in &mut node.inputs {
+        if let Some(&target) = map.get(input) {
+            *input = target;
+        }
+    }
+    match &mut node.op {
+        Op::If {
+            consequent,
+            alternative,
+        } => {
+            remap_region(consequent, map);
+            remap_region(alternative, map);
+        }
+        Op::Match { arms } => {
+            for arm in arms {
+                for id in &mut arm.nodes {
+                    if let Some(&target) = map.get(id) {
+                        *id = target;
+                    }
+                }
+                if let Some(&target) = map.get(&arm.output) {
+                    arm.output = target;
+                }
+            }
+        }
+        Op::OrderedMatch { arms, fallback } => {
+            for arm in arms {
+                remap_region(&mut arm.condition, map);
+                remap_region(&mut arm.body, map);
+            }
+            remap_region(fallback, map);
+        }
+        _ => {}
+    }
+}
+
+/// Reassign every node a dense identity equal to its position, remapping all
+/// references (inputs, control regions, parameters, output, yielded checks). VIR
+/// consumers index `function.nodes[id.0]` positionally and assume dependency
+/// order; call-site splicing preserves order but leaves a sparse id space, so
+/// this restores the invariant. A no-op when ids already equal positions.
+fn renumber_dense(function: &mut Function) -> BTreeMap<NodeId, NodeId> {
+    let map: BTreeMap<NodeId, NodeId> = function
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(index, node)| {
+            (
+                node.id,
+                NodeId(u32::try_from(index).expect("node count fits u32")),
+            )
+        })
+        .collect();
+    for node in &mut function.nodes {
+        node.id = map[&node.id];
+        remap_node_refs(node, &map);
+    }
+    for parameter in &mut function.parameters {
+        parameter.node = map[&parameter.node];
+    }
+    if let Some(output) = &mut function.output {
+        *output = map[output];
+    }
+    for check in &mut function.yielded_checks {
+        *check = map[check];
+    }
+    map
+}
+
+fn compose_node_remaps(
+    first: Option<BTreeMap<NodeId, NodeId>>,
+    second: Option<BTreeMap<NodeId, NodeId>>,
+) -> Option<BTreeMap<NodeId, NodeId>> {
+    match (first, second) {
+        (None, None) => None,
+        (Some(first), None) => Some(first),
+        (None, Some(second)) => Some(second),
+        (Some(first), Some(second)) => Some(
+            first
+                .into_iter()
+                .map(|(source, intermediate)| {
+                    (
+                        source,
+                        second.get(&intermediate).copied().unwrap_or(intermediate),
+                    )
+                })
+                .collect(),
+        ),
+    }
+}
+
+/// Rewrite the node references a test's generator holds into the enclosing
+/// function's node list — yield-site check roots, real-control scrutinees and
+/// conditions, arm bindings, and binding-selector wires — through `map`. A test
+/// and its function share one node-id space; call-site splicing renumbers the
+/// function, so the test must move with it. Ids absent from `map` (e.g. a
+/// scalar-selector wire naming no node) are left unchanged.
+fn remap_test_nodes(test: &Test, map: &BTreeMap<NodeId, NodeId>) -> Test {
+    let remap = |id: NodeId| map.get(&id).copied().unwrap_or(id);
+    fn remap_body(body: &mut GeneratorBody, remap: &impl Fn(NodeId) -> NodeId) {
+        for step in &mut body.steps {
+            match step {
+                GeneratorStep::Yield(site) => match &mut site.recipe {
+                    CheckRecipe::Value { check } => *check = remap(*check),
+                    CheckRecipe::Snapshot { value, .. } => *value = remap(*value),
+                    CheckRecipe::Trace(trace) => remap_trace(trace, remap),
+                },
+                GeneratorStep::Match { scrutinee, arms } => {
+                    *scrutinee = remap(*scrutinee);
+                    for arm in arms {
+                        arm.condition = remap(arm.condition);
+                        for binding in &mut arm.bindings {
+                            *binding = remap(*binding);
+                        }
+                        remap_body(&mut arm.body, remap);
+                    }
+                }
+                GeneratorStep::If {
+                    condition,
+                    consequent,
+                    alternative,
+                } => {
+                    *condition = remap(*condition);
+                    remap_body(consequent, remap);
+                    remap_body(alternative, remap);
+                }
+            }
+        }
+    }
+    let mut test = test.clone();
+    remap_body(&mut test.generator, &remap);
+    test
+}
+
+fn remap_trace(trace: &mut TraceCheck, remap: &impl Fn(NodeId) -> NodeId) {
+    for wire in [match trace {
+        TraceCheck::Demanded { wire }
+        | TraceCheck::NeverDemanded { wire }
+        | TraceCheck::DemandedOnce { wire } => Some(wire),
+        _ => None,
+    }]
+    .into_iter()
+    .flatten()
+    {
+        if let WireSelector::Binding(node) = &mut wire.selector {
+            *node = remap(*node);
+        }
+    }
+}
+
+fn remap_region(region: &mut ControlRegion, map: &BTreeMap<NodeId, NodeId>) {
+    for id in &mut region.nodes {
+        if let Some(&target) = map.get(id) {
+            *id = target;
+        }
+    }
+    if let Some(&target) = map.get(&region.output) {
+        region.output = target;
+    }
+}
+
+/// Whether `node` is nested inside a control region (an `If`/`Match`/
+/// `OrderedMatch` arm) rather than published at the function's top level.
+/// Call-site splicing lifts a callee body to the top level, so a mixed call
+/// nested under a conditional is refused with a typed diagnostic instead.
+fn node_within_control_region(function: &Function, node: NodeId) -> bool {
+    function.nodes.iter().any(|other| match &other.op {
+        Op::If {
+            consequent,
+            alternative,
+        } => consequent.nodes.contains(&node) || alternative.nodes.contains(&node),
+        Op::Match { arms } => arms.iter().any(|arm| arm.nodes.contains(&node)),
+        Op::OrderedMatch { arms, fallback } => {
+            fallback.nodes.contains(&node)
+                || arms.iter().any(|arm| {
+                    arm.condition.nodes.contains(&node) || arm.body.nodes.contains(&node)
+                })
+        }
+        _ => false,
+    })
+}
+
 fn specialize_lazy_callee(
     callee: &Function,
     await_map: &BTreeMap<NodeId, u32>,
@@ -2349,6 +3629,7 @@ fn island_reachable(nodes: &[Node], output: NodeId) -> BTreeSet<NodeId> {
 fn direct_callee(node: &Node) -> Option<FunctionId> {
     match node.op {
         Op::Call(callee) | Op::Closure(callee) => Some(callee),
+        Op::MiniSolve { function, .. } => Some(function),
         _ => None,
     }
 }
@@ -2434,24 +3715,34 @@ fn is_scalar_call_candidate(node: &Node) -> bool {
     matches!(node.op, Op::Call(_)) && matches!(node.ty, Type::Int | Type::Bool)
 }
 
-/// The described invocation a shared scalar call realizes, when every argument is
-/// a closed scalar literal. A call with a non-literal argument shares its
-/// computation but carries no described-wire provenance (nothing selects it).
-fn scalar_call_provenance(function: &Function, node: &Node) -> Option<WireProvenance> {
-    let Op::Call(callee) = node.op else {
-        return None;
+/// The described invocation a hoisted island realizes, when its root is a user
+/// call. Literal scalar arguments make the invocation call-site selectable;
+/// composite or computed arguments leave `arguments` as `None`, so the
+/// realization is selectable only through its binding preimage. A non-call root
+/// (a lazy argument expression) carries no invocation provenance.
+fn invocation_provenance(function: &Function, node: &Node) -> Option<WireProvenance> {
+    let callee = match node.op {
+        Op::Call(callee)
+        | Op::MiniSolve {
+            function: callee, ..
+        } => callee,
+        _ => return None,
     };
-    let mut arguments = Vec::with_capacity(node.inputs.len());
+    let mut literals = Vec::with_capacity(node.inputs.len());
+    let mut literal = true;
     for &input in &node.inputs {
         match function.nodes[input.0 as usize].op {
-            Op::Int(value) => arguments.push(WireArg::Int(value)),
-            Op::Bool(value) => arguments.push(WireArg::Bool(value)),
-            _ => return None,
+            Op::Int(value) => literals.push(WireArg::Int(value)),
+            Op::Bool(value) => literals.push(WireArg::Bool(value)),
+            _ => {
+                literal = false;
+                break;
+            }
         }
     }
     Some(WireProvenance {
         function: callee,
-        arguments,
+        arguments: literal.then_some(literals),
     })
 }
 
@@ -2482,6 +3773,29 @@ fn structural_fingerprint(
     fingerprint
 }
 
+/// An effect root is any machine-plane primitive node that publishes a value:
+/// it is an island boundary regardless of consumer count, because it can never
+/// lower into a Weavy program. A codata effect recipe (`Op::TreeGlob`, type
+/// `Stream<..>`) is not itself a root — the collection realizing it is.
+fn is_effect_root(node: &Node) -> bool {
+    matches!(
+        node.op,
+        Op::Exec { .. }
+            | Op::FixtureTree
+            | Op::TreeProject
+            | Op::TreeEntryText
+            | Op::FixtureRegistry
+            | Op::RegistryUrl
+            | Op::RegistryCoordinate
+            | Op::Fetch
+            | Op::MiniSolve { .. }
+            | Op::Untar
+            | Op::BlobLen
+    ) || (node.effect.kind == EffectKind::Effect
+        && matches!(node.op, Op::StreamCollect)
+        && !matches!(node.ty, Type::Stream { .. }))
+}
+
 fn is_shared_publication_candidate(node: &Node) -> bool {
     if is_scalar_call_candidate(node) {
         return true;
@@ -2498,7 +3812,7 @@ fn is_shared_publication_candidate(node: &Node) -> bool {
         {
             matches!(
                 node.op,
-                Op::Call(_) | Op::CallValue | Op::If { .. } | Op::Match { .. }
+                Op::Call(_) | Op::CallValue | Op::If { .. } | Op::Match { .. } | Op::Exec { .. }
             )
         }
         _ => false,
@@ -2571,6 +3885,12 @@ fn collect_publication_materializers(
         return;
     }
     if is_shared_publication_candidate(node) {
+        materializers.insert(node.id);
+    }
+    // A `?` catch is consumed as a pre-published value like a shared aggregate:
+    // registering it here makes its consumption visible so the partitioner can
+    // island its operand and publish the constructed Result.
+    if matches!(node.op, Op::Try) {
         materializers.insert(node.id);
     }
     for &input in &node.inputs {
@@ -2680,6 +4000,15 @@ fn collect_dependencies_stopping_at(
 }
 
 impl Island {
+    /// The effect node this island publishes, when its output is an effect
+    /// demand. An effect island is evaluated by the registered runtime
+    /// primitive, never lowered to a Weavy frame.
+    #[must_use]
+    pub fn effect_output(&self) -> Option<&Node> {
+        let output = self.nodes.iter().find(|node| node.id == self.output)?;
+        is_effect_root(output).then_some(output)
+    }
+
     pub(crate) fn local_function_ids(&self) -> BTreeMap<FunctionId, u32> {
         let mut ids = BTreeMap::from([(self.function, 0)]);
         for (index, function) in self.callees.iter().enumerate() {
@@ -2787,6 +4116,7 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
             match node.effect.kind {
                 EffectKind::Pure => 0,
                 EffectKind::Codata => 1,
+                EffectKind::Effect => 2,
             },
             u8::from(node.effect.fallible),
             u8::from(node.effect.placed),
@@ -2891,6 +4221,16 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
             op.push(84);
             op.extend_from_slice(&input.to_le_bytes());
         }
+        Op::Schema(reference) => {
+            op.push(100);
+            frame(&mut op, &reference.canonical_bytes());
+        }
+        Op::InvokePrimitive { primitive } => {
+            op.push(101);
+            frame(&mut op, primitive.namespace.as_bytes());
+            frame(&mut op, primitive.name.as_bytes());
+            op.extend_from_slice(&primitive.version.to_le_bytes());
+        }
         Op::Div => op.push(23),
         Op::IsVariant { variant } => {
             op.push(24);
@@ -2916,6 +4256,7 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::SetLen => op.push(42),
         Op::SetValues => op.push(43),
         Op::StringConcat => op.push(44),
+        Op::StringTrim => op.push(67),
         Op::ArrayMap { grain } => {
             op.push(45);
             op.push(match grain.key {
@@ -2948,10 +4289,65 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::StringSplitOnce => op.push(63),
         Op::StringParseInt => op.push(64),
         Op::StringIsNumeric => op.push(65),
+        Op::StringLines => op.push(66),
         Op::PathJoin => op.push(81),
         Op::PathToString => op.push(82),
         Op::IntToString => op.push(84),
         Op::Range => op.push(83),
+        Op::Exec { argv } => {
+            op.push(85);
+            frame(&mut op, &(argv.len() as u64).to_le_bytes());
+            for argument in argv {
+                let mut encoded = Vec::new();
+                encoded.extend_from_slice(&(argument.pieces.len() as u64).to_le_bytes());
+                for piece in &argument.pieces {
+                    match piece {
+                        CommandPiece::Literal(literal) => {
+                            encoded.push(0);
+                            frame(&mut encoded, literal.as_bytes());
+                        }
+                        CommandPiece::Input { index } => {
+                            encoded.push(1);
+                            encoded.extend_from_slice(&index.to_le_bytes());
+                        }
+                    }
+                }
+                frame(&mut op, &encoded);
+            }
+        }
+        Op::Try => op.push(86),
+        Op::FixtureTree => op.push(90),
+        Op::TreeProject => op.push(91),
+        Op::TreeEntryText => op.push(92),
+        Op::TreeGlob => op.push(93),
+        Op::FixtureRegistry => op.push(94),
+        Op::RegistryUrl => op.push(95),
+        Op::RegistryCoordinate => op.push(102),
+        Op::Fetch => op.push(96),
+        Op::MiniSolve {
+            function,
+            requirements,
+        } => {
+            op.push(99);
+            op.extend_from_slice(
+                &function_ids
+                    .get(function)
+                    .expect("mini_solve function belongs to the island closure")
+                    .to_le_bytes(),
+            );
+            match requirements {
+                MiniSolveRequirements::Static { packages } => {
+                    op.push(0);
+                    frame(&mut op, &(packages.len() as u64).to_le_bytes());
+                    for package in packages {
+                        frame(&mut op, package.as_bytes());
+                    }
+                }
+                MiniSolveRequirements::FixtureWorkspace => op.push(1),
+            }
+        }
+        Op::Untar => op.push(97),
+        Op::BlobLen => op.push(98),
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());
@@ -3095,6 +4491,11 @@ pub(crate) fn canonical_type(ty: &Type) -> Vec<u8> {
         Type::Set(element) => {
             let mut bytes = b"set".to_vec();
             frame(&mut bytes, &canonical_type(element));
+            bytes
+        }
+        Type::Extern(kind) => {
+            let mut bytes = b"extern".to_vec();
+            frame(&mut bytes, kind.name().as_bytes());
             bytes
         }
         Type::Stream { key, value } => {

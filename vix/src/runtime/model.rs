@@ -78,6 +78,59 @@ pub enum FailureValue {
         recipe: RecipeId,
         site: u32,
     },
+    /// A process termination the command package's termination grammar did not
+    /// map to an answer: the raw termination information in a typed payload.
+    /// `recipe` is the exec plan identity (normalized command × capability
+    /// axis), `site` the exec node's stable source site. No naked status
+    /// integer escapes into a language value.
+    ///
+    /// r[impl machine.primitive.exit-status-is-not-a-value]
+    ProcessFailure {
+        recipe: RecipeId,
+        site: u32,
+        termination: ProcessTermination,
+    },
+    /// A tree projection named a segment the tree does not contain.
+    MissingTreeEntry {
+        recipe: RecipeId,
+        site: u32,
+    },
+    /// `.text()` (or a deeper projection) demanded a File where the entry is a
+    /// directory or symlink — or projected through a non-directory.
+    TreeEntryNotAFile {
+        recipe: RecipeId,
+        site: u32,
+    },
+    /// A file's bytes were demanded as text but are not valid UTF-8.
+    InvalidText {
+        recipe: RecipeId,
+        site: u32,
+    },
+    /// The registry manifest has no row for the requested artifact name.
+    MissingRegistryArtifact {
+        recipe: RecipeId,
+        site: u32,
+    },
+    /// Fetched bytes do not hash to the pinned vix ContentHash.
+    ///
+    /// r[impl machine.primitive.fetch-integrity-vs-identity]
+    FetchIntegrity {
+        recipe: RecipeId,
+        site: u32,
+    },
+    /// An archive Blob could not be extracted as a well-formed ustar tree.
+    MalformedArchive {
+        recipe: RecipeId,
+        site: u32,
+    },
+}
+
+/// Raw process-termination information carried by a [`FailureValue::ProcessFailure`].
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ProcessTermination {
+    Exited { code: i64 },
+    Signaled { signal: i64 },
 }
 
 /// Context rebuilt while reporting a language failure. It is deliberately not
@@ -148,7 +201,39 @@ pub enum MemoVerdict {
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct ReadWitness {
     pub source: ValueId,
-    pub projection: String,
+    pub projection: ReadProjection,
+    pub observation: ReadObservation,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ReadProjection {
+    Whole,
+    Document,
+    RegistryManifest,
+    CapabilityProgram,
+    TreePath { path: String },
+    Origin { coordinate: String },
+}
+
+impl ReadProjection {
+    #[must_use]
+    pub fn trace_path(&self) -> Option<&str> {
+        match self {
+            Self::TreePath { path } => Some(path),
+            Self::Origin { coordinate } => Some(coordinate),
+            Self::Whole | Self::Document | Self::RegistryManifest | Self::CapabilityProgram => None,
+        }
+    }
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ReadObservation {
+    Value(ValueId),
+    Missing,
+    Directory { digest: super::identity::Digest },
+    Unverifiable,
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]

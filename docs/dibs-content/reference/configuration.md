@@ -3,20 +3,23 @@ title = "Configuration"
 description = ".config/dibs.styx"
 +++
 
-dibs looks for `.config/dibs.styx` in the current directory, then walks up parent directories until it finds one.
-
-## Example
+Dibs searches the current directory and its parents for
+`.config/dibs.styx`. This file configures local schema-authoring tools; the
+production application and migration modes do not need it.
 
 ```styx
 @schema {id crate:dibs@1, cli dibs}
 
 db {
     crate my-app-db
-    // binary "target/debug/my-app-db"
+    endpoint "127.0.0.1:7764"
 }
 ```
 
-## Fields
+- `db.crate` names the library containing schema and migrations. Dibs uses it
+  to place generated migration source and watch the source tree.
+- `db.endpoint` is the application-owned Vox tooling endpoint. Start the
+  application's Dibs mode before using the TUI or schema commands.
 
-- `db.crate`: the Cargo package name that contains your schema + migrations
-- `db.binary` (optional): path to a prebuilt binary to call instead of `cargo run -p ...`
+With Figue's `DIBS` environment prefix, the endpoint can be overridden as
+`DIBS__DB__ENDPOINT` without editing the Styx file.

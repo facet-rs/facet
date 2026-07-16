@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
+use std::rc::Rc;
 
 use weavy::exec::{Executable, LaneRequest};
 use weavy::mem::Layout;
@@ -10,9 +11,9 @@ use weavy::task::{
     Program as WeavyProgram, StructuralFieldSource, TraceMode,
 };
 use weavy::{
-    CallContract as WeavyCallContract, CallContractId as WeavyCallContractId,
-    FrameContract as WeavyFrameContract, FrameRegion as WeavyFrameRegion,
-    FunctionContract as WeavyFunctionContract,
+    CallAbiProjection as WeavyCallAbiProjection, CallContract as WeavyCallContract,
+    CallContractId as WeavyCallContractId, FrameContract as WeavyFrameContract,
+    FrameRegion as WeavyFrameRegion, FunctionContract as WeavyFunctionContract,
     OrderedCollectionContract as WeavyOrderedCollectionContract,
     OrderedCollectionKind as WeavyOrderedCollectionKind, PayloadKind as WeavyPayloadKind,
     ProgramContract as WeavyProgramContract, RegionId as WeavyRegionId,
@@ -26,8 +27,9 @@ use weavy::{
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics};
 use crate::runtime::{
     DemandKey, DemandPreimage, FrameRegion, FrameSlot, FrameWords, MachineAttribution,
-    MachineError, MachineOperation, RecipeId, SchemaId,
+    MachineError, MachineOperation, RecipeId,
 };
+use crate::schema::SchemaRef;
 use crate::support::Span;
 use crate::vir::{
     ArrayMapExecutionShape, ArrayMapPartition, EnumType, EnumVariant, Function, FunctionId, Island,
@@ -84,7 +86,7 @@ pub struct ValueConstant {
     pub node: NodeRef,
     pub root: ConstantBinding,
     pub owner: ConstantBinding,
-    pub store_schema: SchemaId,
+    pub store_schema: SchemaRef,
     pub bytes: Vec<u8>,
 }
 
@@ -93,10 +95,21 @@ pub struct ValueInputBinding {
     pub value: ValueIslandId,
     pub entry: usize,
     pub schema: Option<WeavySchemaRef>,
-    pub store_schema: SchemaId,
+    pub store_schema: SchemaRef,
     pub payload_element_schema: Option<WeavySchemaRef>,
     pub ty: Type,
     pub publication_schemas: Vec<(Type, WeavySchemaRef)>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PrimitiveCall {
+    pub(crate) node: NodeRef,
+    pub(crate) primitive: crate::runtime::PrimitiveId,
+    pub(crate) request: Type,
+    pub(crate) response: Type,
+    pub(crate) input: FrameRegion,
+    pub(crate) output: FrameRegion,
+    pub(crate) abi_schemas: Vec<(Type, WeavySchemaRef)>,
 }
 
 /// The internal result ABI carried by every function in an array-bearing
@@ -120,9 +133,9 @@ impl ArrayOutcomeAbi {
     #[must_use]
     pub fn for_value(value: Type) -> Self {
         Self {
-            ty: Type::Enum(EnumType {
-                name: format!("$array_outcome<{}>", value.name()),
-                variants: vec![
+            ty: Type::Enum(EnumType::new(
+                format!("$array_outcome<{}>", value.name()),
+                vec![
                     EnumVariant {
                         name: "Ok".to_owned(),
                         payload: VariantPayload::Tuple(vec![value]),
@@ -164,7 +177,7 @@ impl ArrayOutcomeAbi {
                         payload: VariantPayload::Tuple(vec![Type::Int]),
                     },
                 ],
-            }),
+            )),
             ok_variant: 0,
             index_out_of_bounds_variant: 1,
             array_machine_variant: 2,
@@ -183,7 +196,7 @@ struct PendingValueConstant {
     node: NodeRef,
     root_slot: FrameSlot,
     owner_slot: FrameSlot,
-    store_schema: SchemaId,
+    store_schema: SchemaRef,
     bytes: Vec<u8>,
     span: Span,
 }
@@ -194,13 +207,14 @@ pub struct LoweringArtifact {
     pub recipe: RecipeId,
     pub demand_key: DemandKey,
     pub demand_preimage: DemandPreimage,
-    executable: Executable,
+    executable: Rc<Executable>,
     pub array_outcome: Option<ArrayOutcomeAbi>,
     pub pc_nodes: Vec<Vec<NodeRef>>,
     pub constants: Vec<ValueConstant>,
     pub value_inputs: Vec<ValueInputBinding>,
+    pub(crate) primitive_calls: Vec<PrimitiveCall>,
     pub output_type: Type,
-    pub output_schema: SchemaId,
+    pub output_schema: SchemaRef,
     pub forced_copy_value: bool,
     pub publishes_value: bool,
     /// This island exists only to publish a value for a snapshot check. Its
@@ -243,19 +257,28 @@ impl LoweringArtifact {
         &self.executable
     }
 
+    /// A retained handle to the executable: spawning through this yields a
+    /// `'static` [`weavy::exec::ExecTask`] a scheduler can suspend and resume off
+    /// the drive stack without borrowing this artifact.
+    #[must_use]
+    pub fn executable_rc(&self) -> Rc<Executable> {
+        Rc::clone(&self.executable)
+    }
+
     #[cfg(test)]
     pub(crate) fn with_test_verified_executable(&self, executable: Executable) -> Self {
         Self {
             recipe: self.recipe,
             demand_key: self.demand_key,
             demand_preimage: self.demand_preimage.clone(),
-            executable,
+            executable: Rc::new(executable),
             array_outcome: self.array_outcome.clone(),
             pc_nodes: self.pc_nodes.clone(),
             constants: self.constants.clone(),
             value_inputs: self.value_inputs.clone(),
+            primitive_calls: self.primitive_calls.clone(),
             output_type: self.output_type.clone(),
-            output_schema: self.output_schema,
+            output_schema: self.output_schema.clone(),
             forced_copy_value: self.forced_copy_value,
             publishes_value: self.publishes_value,
             publishes_snapshot: self.publishes_snapshot,
@@ -286,8 +309,21 @@ impl LoweringArtifact {
                 constant.owner.entry,
                 constant.owner.slot.byte_offset(),
                 constant.owner.schema,
-                constant.store_schema.0.hex(),
+                constant.store_schema,
                 constant.bytes.len()
+            );
+        }
+        for (index, call) in self.primitive_calls.iter().enumerate() {
+            let _ = writeln!(
+                out,
+                "primitive host[{index}] id={}.{}@{} request={} response={} input=frame[{}] output=frame[{}]",
+                call.primitive.namespace,
+                call.primitive.name,
+                call.primitive.version,
+                call.request.name(),
+                call.response.name(),
+                call.input.start().byte_offset(),
+                call.output.start().byte_offset(),
             );
         }
         for (function_index, function) in self.program().fns.iter().enumerate() {
@@ -315,7 +351,7 @@ pub struct LoweringCacheCounters {
 ///
 /// r[impl machine.lowering.cache]
 pub struct LoweringCache {
-    entries: BTreeMap<RecipeId, LoweringArtifact>,
+    entries: BTreeMap<RecipeId, Rc<LoweringArtifact>>,
     counters: LoweringCacheCounters,
     trace_mode: TraceMode,
     /// The typed lane every executable in this cache is compiled for. The
@@ -364,12 +400,39 @@ impl LoweringCache {
         let recipe = RecipeId::from_canonical_vir(&island.canonical_recipe_bytes());
         if self.entries.contains_key(&recipe) {
             self.counters.hits += 1;
-            return Ok(self.entries.get(&recipe).expect("entry was just observed"));
+            return Ok(self
+                .entries
+                .get(&recipe)
+                .expect("entry was just observed")
+                .as_ref());
         }
         self.counters.misses += 1;
-        let lowered = lower_island(island, recipe, self.trace_mode, self.lane)?;
+        let lowered = Rc::new(lower_island(island, recipe, self.trace_mode, self.lane)?);
         self.entries.insert(recipe, lowered);
-        Ok(self.entries.get(&recipe).expect("entry was just inserted"))
+        Ok(self
+            .entries
+            .get(&recipe)
+            .expect("entry was just inserted")
+            .as_ref())
+    }
+
+    /// Lower `island` if needed and return an owned, retainable handle to the
+    /// artifact. The handle is a cheap `Rc` clone that a scheduler can suspend
+    /// alongside a parked task off the drive stack, so the artifact metadata
+    /// (constants, value inputs, output shape) outlives the borrow of this cache.
+    pub fn get_or_lower_owned(
+        &mut self,
+        island: &Island,
+    ) -> Result<Rc<LoweringArtifact>, LoweringError> {
+        let recipe = RecipeId::from_canonical_vir(&island.canonical_recipe_bytes());
+        if let Some(entry) = self.entries.get(&recipe) {
+            self.counters.hits += 1;
+            return Ok(Rc::clone(entry));
+        }
+        self.counters.misses += 1;
+        let lowered = Rc::new(lower_island(island, recipe, self.trace_mode, self.lane)?);
+        self.entries.insert(recipe, Rc::clone(&lowered));
+        Ok(lowered)
     }
 
     /// The already-lowered artifact for `island`, without lowering it or counting
@@ -379,7 +442,16 @@ impl LoweringCache {
     #[must_use]
     pub fn lowered(&self, island: &Island) -> Option<&LoweringArtifact> {
         let recipe = RecipeId::from_canonical_vir(&island.canonical_recipe_bytes());
-        self.entries.get(&recipe)
+        self.entries.get(&recipe).map(|entry| entry.as_ref())
+    }
+
+    /// The already-lowered artifact for `island` as an owned retainable handle,
+    /// without lowering it or counting a hit. Returns `None` if the island was
+    /// never lowered.
+    #[must_use]
+    pub fn lowered_owned(&self, island: &Island) -> Option<Rc<LoweringArtifact>> {
+        let recipe = RecipeId::from_canonical_vir(&island.canonical_recipe_bytes());
+        self.entries.get(&recipe).map(Rc::clone)
     }
 
     #[must_use]
@@ -388,7 +460,9 @@ impl LoweringCache {
     }
 
     pub fn inspect(&self) -> impl Iterator<Item = (&RecipeId, &LoweringArtifact)> {
-        self.entries.iter()
+        self.entries
+            .iter()
+            .map(|(recipe, artifact)| (recipe, artifact.as_ref()))
     }
 }
 
@@ -541,6 +615,7 @@ fn lower_island(
     };
 
     let mut pending_constants = BTreeMap::new();
+    let mut primitive_calls = Vec::new();
     let mut functions_out = Vec::with_capacity(1 + island.callees.len());
     let mut pc_nodes = Vec::with_capacity(1 + island.callees.len());
     let lowered_root = lower_vir_function(
@@ -550,6 +625,7 @@ fn lower_island(
         island.output,
         &context,
         &mut pending_constants,
+        &mut primitive_calls,
     )?;
     functions_out.push(lowered_root.function);
     pc_nodes.push(lowered_root.pc_nodes);
@@ -564,6 +640,7 @@ fn lower_island(
             output,
             &context,
             &mut pending_constants,
+            &mut primitive_calls,
         )?;
         functions_out.push(lowered.function);
         pc_nodes.push(lowered.pc_nodes);
@@ -606,13 +683,14 @@ fn lower_island(
         // Keep source-attributed `Op::Trace` nodes in the verified program. The
         // cache chooses bounded Production tracing for ordinary execution or
         // explicit Innards tracing for diagnostics.
-        executable: Executable::with_lane(verified, trace_mode, lane),
+        executable: Rc::new(Executable::with_lane(verified, trace_mode, lane)),
         array_outcome,
         pc_nodes,
         constants,
         value_inputs,
+        primitive_calls,
         output_type: output.ty.clone(),
-        output_schema: semantic_schema_id(&output.ty),
+        output_schema: semantic_schema_ref(&output.ty),
         forced_copy_value: island.forced_copy_value,
         publishes_value: matches!(
             island.purpose,
@@ -624,7 +702,7 @@ fn lower_island(
 
 fn publication_capability_registered(ty: &Type) -> bool {
     match ty {
-        Type::Bool | Type::Int | Type::Check | Type::String | Type::Path => true,
+        Type::Bool | Type::Int | Type::Check | Type::String | Type::Path | Type::Extern(_) => true,
         Type::Array(element) | Type::Set(element) => publication_capability_registered(element),
         Type::Map { key, value } => {
             publication_capability_registered(key) && publication_capability_registered(value)
@@ -652,8 +730,8 @@ fn publication_capability_registered(ty: &Type) -> bool {
     }
 }
 
-fn semantic_schema_id(ty: &Type) -> SchemaId {
-    SchemaId::named(&format!("vix.semantic.v1:{}", ty.name()))
+fn semantic_schema_ref(ty: &Type) -> SchemaRef {
+    ty.schema_ref()
 }
 
 fn bind_value_inputs(
@@ -690,7 +768,7 @@ fn bind_value_inputs(
                 value: *value,
                 entry,
                 schema,
-                store_schema: semantic_schema_id(&parameter.ty),
+                store_schema: semantic_schema_ref(&parameter.ty),
                 payload_element_schema: match &parameter.ty {
                     Type::Array(element) => Some(schemas.schema_for(element, span)?),
                     _ => None,
@@ -710,7 +788,12 @@ fn publication_schemas(
     fn collect<'a>(ty: &'a Type, out: &mut Vec<&'a Type>) {
         if matches!(
             ty,
-            Type::String | Type::Path | Type::Array(_) | Type::Map { .. } | Type::Set(_)
+            Type::String
+                | Type::Path
+                | Type::Extern(_)
+                | Type::Array(_)
+                | Type::Map { .. }
+                | Type::Set(_)
         ) {
             out.push(ty);
         }
@@ -752,6 +835,7 @@ fn publication_schemas(
             | Type::Check
             | Type::String
             | Type::Path
+            | Type::Extern(_)
             | Type::Function { .. }
             | Type::StreamCheck
             | Type::Stream { .. }
@@ -809,6 +893,7 @@ fn nodes_contain_checked_collection_ops(nodes: &[Node]) -> bool {
                 | Op::SetValues
                 | Op::StringSplitOnce
                 | Op::StringParseInt
+                | Op::StringLines
                 | Op::StreamCollect
                 | Op::StreamFindMin
                 | Op::StreamFindMax
@@ -852,9 +937,13 @@ fn type_contains_array(ty: &Type) -> bool {
         Type::Stream { key, value } => type_contains_array(key) || type_contains_array(value),
         // An `Order<T>` is never a realized frame value.
         Type::Order(_) => false,
-        Type::Bool | Type::Int | Type::Check | Type::StreamCheck | Type::String | Type::Path => {
-            false
-        }
+        Type::Bool
+        | Type::Int
+        | Type::Check
+        | Type::StreamCheck
+        | Type::String
+        | Type::Path
+        | Type::Extern(_) => false,
     }
 }
 
@@ -1218,7 +1307,13 @@ fn collect_schema_types(ty: &Type, out: &mut Vec<Type>) {
         Type::Set(element) => collect_schema_types(element, out),
         Type::Stream { .. } => unreachable!("stream schemas return before insertion"),
         Type::Order(_) => unreachable!("order recipes return before insertion"),
-        Type::Bool | Type::Int | Type::Check | Type::StreamCheck | Type::String | Type::Path => {}
+        Type::Bool
+        | Type::Int
+        | Type::Check
+        | Type::StreamCheck
+        | Type::String
+        | Type::Path
+        | Type::Extern(_) => {}
     }
 }
 
@@ -1361,7 +1456,7 @@ impl SemanticEqualityEmitter<'_, '_, '_> {
                     b: work.byte_offset(),
                 });
             }
-            Type::String | Type::Path => {
+            Type::String | Type::Path | Type::Extern(_) => {
                 self.code.push(WeavyOp::CompareValueBytes {
                     dst: work.byte_offset(),
                     a: a.region.start().byte_offset(),
@@ -1665,7 +1760,8 @@ impl SemanticOrderingEmitter<'_, '_, '_> {
             | Type::Check
             | Type::StreamCheck
             | Type::Stream { .. }
-            | Type::Order(_) => Err(lowering_diagnostic(
+            | Type::Order(_)
+            | Type::Extern(_) => Err(lowering_diagnostic(
                 self.node.span,
                 "structural order is not defined for this VIR type",
             )),
@@ -2149,6 +2245,10 @@ impl<'a> ProgramContractBuilder<'a> {
         let mut regions = Vec::new();
         let mut node_region_ids = BTreeMap::new();
         let mut constant_region_ids = BTreeMap::new();
+        regions.push(WeavyFrameRegion::new(
+            primitive_host_plan_slot().byte_offset(),
+            WeavyRegionShape::word(WeavyWordKind::Scalar),
+        ));
         for node in function.nodes {
             let region = layout.region(node.id, node.span)?;
             let contract = self.frame_region(region.start(), &node.ty)?;
@@ -2287,10 +2387,22 @@ impl<'a> ProgramContractBuilder<'a> {
                 })?
             } else {
                 let slot = layout.constant_slot(*constant, function.span)?;
+                let constant_type = self
+                    .function_order
+                    .iter()
+                    .find(|source| source.id == constant.function)
+                    .and_then(|source| source.nodes.iter().find(|node| node.id == constant.node))
+                    .map(|node| node.ty.clone())
+                    .ok_or_else(|| {
+                        lowering_diagnostic(
+                            function.span,
+                            "captured constant has no authoritative VIR type",
+                        )
+                    })?;
                 let region = WeavyFrameRegion::new(
                     slot.byte_offset(),
                     WeavyRegionShape::word(WeavyWordKind::Handle(
-                        self.schema_for_type(&Type::String, function.span)?,
+                        self.schema_for_type(&constant_type, function.span)?,
                     )),
                 );
                 let region_id = WeavyRegionId(regions.len() as u32);
@@ -2374,24 +2486,18 @@ impl<'a> ProgramContractBuilder<'a> {
                 lowering_diagnostic(function.span, "output node has no frame region")
             })?,
         };
-        // A closure whose captures exceed one inline word, or whose body owns
-        // resident constants, carries every non-argument entry in its
-        // task-lifetime environment box. Its public call contract stays the
-        // plain semantic signature — argument in, result out — so all values of
-        // one function type share a copyable value shape.
-        let capture_entries = if self.closure_targets.contains(&function.id) {
+        // A closure's captures are always materialized from its task-lifetime
+        // environment.  The public callable ABI contains only its argument and
+        // result; physical capture slots, like scheduler-private header words,
+        // remain outside that semantic view.
+        let closure_target = self.closure_targets.contains(&function.id);
+        let capture_entries = if closure_target {
             entries.get(1..function.parameters.len()).unwrap_or(&[])
         } else {
             &[]
         };
         let constant_entries = entries.get(function.parameters.len()..).unwrap_or(&[]);
-        let capture_words: usize = capture_entries
-            .iter()
-            .map(|entry| regions[entry.0 as usize].shape.words.len())
-            .sum();
-        let boxed = self.closure_targets.contains(&function.id)
-            && (capture_words > 1 || !constant_entries.is_empty());
-        let environment = if boxed {
+        let environment = if closure_target {
             let mut offset = 0u32;
             capture_entries
                 .iter()
@@ -2408,7 +2514,7 @@ impl<'a> ProgramContractBuilder<'a> {
         };
         let call_contract = if !self.call_contract_targets.contains(&function.id) {
             None
-        } else if boxed {
+        } else if closure_target {
             let result_type = function
                 .nodes
                 .iter()
@@ -2425,6 +2531,17 @@ impl<'a> ProgramContractBuilder<'a> {
         } else {
             Some(self.call_contract_for_function(&entries, result, &regions)?)
         };
+        let call_abi = if closure_target {
+            let entry = entries.first().copied().ok_or_else(|| {
+                lowering_diagnostic(function.span, "closure function has no callable entry")
+            })?;
+            Some(WeavyCallAbiProjection {
+                entries: vec![entry],
+                result,
+            })
+        } else {
+            None
+        };
         Ok(WeavyFunctionContract {
             frame: WeavyFrameContract {
                 layout: lowered.frame,
@@ -2434,6 +2551,7 @@ impl<'a> ProgramContractBuilder<'a> {
             environment,
             result,
             call_contract,
+            call_abi,
         })
     }
 
@@ -2471,9 +2589,9 @@ impl<'a> ProgramContractBuilder<'a> {
             Type::Bool | Type::Int | Type::Check => {
                 Ok(WeavyRegionShape::word(WeavyWordKind::Scalar))
             }
-            Type::String | Type::Path => Ok(WeavyRegionShape::word(WeavyWordKind::Handle(
-                self.schema_for_type(ty, span)?,
-            ))),
+            Type::String | Type::Path | Type::Extern(_) => Ok(WeavyRegionShape::word(
+                WeavyWordKind::Handle(self.schema_for_type(ty, span)?),
+            )),
             Type::StreamCheck => Err(lowering_diagnostic(
                 span,
                 "Stream<Check> has no contract frame shape",
@@ -2548,14 +2666,17 @@ impl<'a> ProgramContractBuilder<'a> {
         }
         self.schema_ready[index] = true;
         let inline = match ty {
-            Type::String | Type::Path | Type::Array(_) | Type::Map { .. } | Type::Set(_) => {
-                WeavyRegionShape::word(WeavyWordKind::Handle(schema))
-            }
+            Type::String
+            | Type::Path
+            | Type::Extern(_)
+            | Type::Array(_)
+            | Type::Map { .. }
+            | Type::Set(_) => WeavyRegionShape::word(WeavyWordKind::Handle(schema)),
             _ => self.shape_for_type(ty, span)?,
         };
         let value_shape = self.value_shape_for_type(ty, span)?;
         let payload = match ty {
-            Type::String | Type::Path => WeavyPayloadKind::OpaqueBytes {
+            Type::String | Type::Path | Type::Extern(_) => WeavyPayloadKind::OpaqueBytes {
                 byte_comparable: true,
             },
             Type::Array(element) => WeavyPayloadKind::DenseArray {
@@ -2606,6 +2727,7 @@ impl<'a> ProgramContractBuilder<'a> {
             | Type::Check
             | Type::String
             | Type::Path
+            | Type::Extern(_)
             | Type::Array(_)
             | Type::Map { .. }
             | Type::Set(_) => Ok(None),
@@ -2828,7 +2950,7 @@ fn constant_closures(island: &Island) -> BTreeMap<FunctionId, BTreeSet<NodeRef>>
             function,
             nodes
                 .iter()
-                .filter(|node| matches!(node.op, Op::String(_) | Op::Path(_)))
+                .filter(|node| matches!(node.op, Op::String(_) | Op::Path(_) | Op::Schema(_)))
                 .map(|node| NodeRef {
                     function,
                     node: node.id,
@@ -2951,9 +3073,12 @@ impl RegionAssignments {
             let mut assigned = BTreeMap::new();
             for (index, node) in body.iter().enumerate() {
                 layout.region(node.id, node.span)?;
-                let id = WeavyRegionId(u32::try_from(index).map_err(|_| {
-                    lowering_diagnostic(node.span, "region assignment exceeds u32")
-                })?);
+                let id = WeavyRegionId(
+                    u32::try_from(index.checked_add(FRAME_HEADER_WORDS).ok_or_else(|| {
+                        lowering_diagnostic(node.span, "region assignment overflow")
+                    })?)
+                    .map_err(|_| lowering_diagnostic(node.span, "region assignment exceeds u32"))?,
+                );
                 if assigned.insert(node.id, id).is_some() {
                     return Err(lowering_diagnostic(
                         node.span,
@@ -2961,7 +3086,10 @@ impl RegionAssignments {
                     ));
                 }
             }
-            let mut next = body.len();
+            let mut next = body
+                .len()
+                .checked_add(FRAME_HEADER_WORDS)
+                .ok_or_else(|| lowering_diagnostic(span, "region assignment overflow"))?;
             if layout.scratch.is_some() {
                 next = next.checked_add(1).ok_or_else(|| {
                     lowering_diagnostic(span, "scratch region assignment overflow")
@@ -3366,6 +3494,12 @@ struct FunctionLayout {
     frame_size: usize,
 }
 
+const FRAME_HEADER_WORDS: usize = 1;
+
+fn primitive_host_plan_slot() -> FrameSlot {
+    FrameSlot::for_word(0).expect("primitive host plan slot fits")
+}
+
 #[derive(Clone)]
 struct TemporaryRegion {
     region: FrameRegion,
@@ -3403,7 +3537,7 @@ impl FunctionLayout {
             tail_self_call_nodes(function, nodes, parameters, output)
         };
         let mut regions = BTreeMap::new();
-        let mut next_word = 0usize;
+        let mut next_word = FRAME_HEADER_WORDS;
         for node in nodes {
             let width = node.ty.word_width().ok_or_else(|| {
                 lowering_diagnostic(
@@ -3667,7 +3801,7 @@ impl FunctionLayout {
                     .ok_or_else(|| {
                         lowering_diagnostic(span, "closure names a missing local constant")
                     })?;
-                if !matches!(node.op, Op::String(_) | Op::Path(_)) {
+                if !matches!(node.op, Op::String(_) | Op::Path(_) | Op::Schema(_)) {
                     return Err(lowering_diagnostic(
                         node.span,
                         "closure constant is not a realized byte-value node",
@@ -4276,6 +4410,7 @@ fn ordering_temporary_types(ty: &Type, out: &mut Vec<Type>) {
         | Type::Check
         | Type::String
         | Type::Path
+        | Type::Extern(_)
         | Type::Map { .. }
         | Type::Set(_)
         | Type::Function { .. }
@@ -4374,6 +4509,7 @@ fn comparison_temporary_types(ty: &Type, out: &mut Vec<Type>) {
         | Type::Check
         | Type::String
         | Type::Path
+        | Type::Extern(_)
         | Type::Map { .. }
         | Type::Set(_)
         | Type::Function { .. }
@@ -4511,6 +4647,7 @@ fn lower_vir_function(
     output: NodeId,
     context: &LoweringContext<'_>,
     constants: &mut BTreeMap<NodeRef, PendingValueConstant>,
+    primitive_calls: &mut Vec<PrimitiveCall>,
 ) -> Result<LoweredWeavyFunction, Diagnostics> {
     let layout = context
         .layouts
@@ -4547,6 +4684,7 @@ fn lower_vir_function(
         };
         let mut outputs = SequenceOutputs {
             constants,
+            primitive_calls,
             code: &mut code,
         };
         lower_node_sequence(&node_ids, &mut values, &sequence, &mut outputs, None)?;
@@ -4629,6 +4767,7 @@ struct SequenceContext<'nodes, 'function, 'lowering> {
 
 struct SequenceOutputs<'constants, 'code> {
     constants: &'constants mut BTreeMap<NodeRef, PendingValueConstant>,
+    primitive_calls: &'constants mut Vec<PrimitiveCall>,
     code: &'code mut CodeBuilder,
 }
 
@@ -4747,6 +4886,7 @@ fn lower_node_sequence(
                 outputs,
             )?,
             Op::StringContains => lower_string_contains_node(node, dst, values, outputs)?,
+            Op::StringTrim => lower_string_trim_node(node, dst, values, outputs)?,
             Op::StringIsNumeric => lower_string_is_numeric_node(node, dst, values, outputs)?,
             Op::StringSplitOnce | Op::StringParseInt => {
                 lower_checked_string_node(node, dst, values, sequence, outputs)?
@@ -4808,6 +4948,7 @@ fn lower_node_sequence(
                     context: sequence.lowering,
                     nodes: sequence.nodes,
                     constants: outputs.constants,
+                    primitive_calls: outputs.primitive_calls,
                 };
                 let lowered = lower_node(node, dst, dst_region_id, values, &mut lowering)?;
                 outputs.code.extend(lowered.ops);
@@ -4854,6 +4995,28 @@ fn lower_string_contains_node(
         needle: needle.region.start().byte_offset(),
     });
     Ok(ValueRepresentation::Word)
+}
+
+fn lower_string_trim_node(
+    node: &Node,
+    dst: FrameRegion,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    require_node_type(node, Type::String)?;
+    require_input_count(node, 1)?;
+    let text = input_value(node, values, 0)?;
+    require_value(
+        node,
+        &text,
+        &Type::String,
+        ValueRepresentation::RealizedHandle,
+    )?;
+    outputs.code.push(WeavyOp::StringTrim {
+        dst: dst.start().byte_offset(),
+        text: text.region.start().byte_offset(),
+    });
+    Ok(ValueRepresentation::RealizedHandle)
 }
 
 fn lower_string_is_numeric_node(
@@ -5576,7 +5739,7 @@ fn collect_typed_compare_leaves(
             a: a.region.start(),
             b: b.region.start(),
         }),
-        Type::String | Type::Path => leaves.push(CompareLeaf {
+        Type::String | Type::Path | Type::Extern(_) => leaves.push(CompareLeaf {
             kind: CompareLeafKind::ValueBytes,
             a: a.region.start(),
             b: b.region.start(),
@@ -5857,6 +6020,7 @@ struct NodeLoweringContext<'function, 'lowering, 'constants> {
     context: &'lowering LoweringContext<'lowering>,
     nodes: &'function BTreeMap<NodeId, &'function Node>,
     constants: &'constants mut BTreeMap<NodeRef, PendingValueConstant>,
+    primitive_calls: &'constants mut Vec<PrimitiveCall>,
 }
 
 fn lower_node(
@@ -5874,6 +6038,36 @@ fn lower_node(
             return Err(lowering_diagnostic(
                 node.span,
                 "PublishSite is lowered by the generator-task control dispatch, not the value path",
+            ));
+        }
+        Op::Exec { .. } => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "Exec is a scheduler-owned effect demand; an effect island is never lowered to a \
+                 Weavy frame",
+            ));
+        }
+        Op::Try => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "Try is a scheduler-owned catch publication; a catch is never lowered to a Weavy \
+                 frame",
+            ));
+        }
+        Op::FixtureTree
+        | Op::TreeProject
+        | Op::TreeEntryText
+        | Op::TreeGlob
+        | Op::FixtureRegistry
+        | Op::RegistryUrl
+        | Op::RegistryCoordinate
+        | Op::Fetch
+        | Op::MiniSolve { .. }
+        | Op::Untar
+        | Op::BlobLen => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "a machine-plane primitive is evaluated by the runtime effect plane, never lowered to a Weavy island",
             ));
         }
         Op::Bool(value) => {
@@ -5932,14 +6126,14 @@ fn lower_node(
                 node: constant,
                 root_slot,
                 owner_slot: dst_slot,
-                store_schema: SchemaId::named("vix.String.v1"),
+                store_schema: Type::String.schema_ref(),
                 bytes: value.as_bytes().to_vec(),
                 span: node.span,
             };
             if let Some(previous) = lowering.constants.insert(constant, pending)
                 && (previous.root_slot != root_slot
                     || previous.owner_slot != dst_slot
-                    || previous.store_schema != SchemaId::named("vix.String.v1")
+                    || previous.store_schema != Type::String.schema_ref()
                     || previous.bytes != value.as_bytes())
             {
                 return Err(lowering_diagnostic(
@@ -5973,12 +6167,12 @@ fn lower_node(
                 .get(&lowering.context.root_function)
                 .ok_or_else(|| lowering_diagnostic(node.span, "missing island root layout"))?;
             let root_slot = root_layout.constant_slot(constant, node.span)?;
-            let store_schema = SchemaId::named("vix.Path.v1");
+            let store_schema = Type::Path.schema_ref();
             let pending = PendingValueConstant {
                 node: constant,
                 root_slot,
                 owner_slot: dst_slot,
-                store_schema,
+                store_schema: store_schema.clone(),
                 bytes: value.as_bytes().to_vec(),
                 span: node.span,
             };
@@ -5994,6 +6188,95 @@ fn lower_node(
                 ));
             }
             (Vec::new(), ValueRepresentation::RealizedHandle)
+        }
+        Op::Schema(reference) => {
+            require_input_count(node, 0)?;
+            require_node_type(node, Type::Extern(crate::vir::ExternKind::Schema))?;
+            let constant = NodeRef {
+                function: lowering.function.id,
+                node: node.id,
+            };
+            if lowering
+                .function
+                .layout
+                .constant_slot(constant, node.span)?
+                != dst_slot
+            {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "Schema node does not occupy its local closure slot",
+                ));
+            }
+            let root_layout = lowering
+                .context
+                .layouts
+                .get(&lowering.context.root_function)
+                .ok_or_else(|| lowering_diagnostic(node.span, "missing island root layout"))?;
+            let root_slot = root_layout.constant_slot(constant, node.span)?;
+            let store_schema = Type::Extern(crate::vir::ExternKind::Schema).schema_ref();
+            let bytes = reference.canonical_bytes();
+            let pending = PendingValueConstant {
+                node: constant,
+                root_slot,
+                owner_slot: dst_slot,
+                store_schema: store_schema.clone(),
+                bytes: bytes.clone(),
+                span: node.span,
+            };
+            if let Some(previous) = lowering.constants.insert(constant, pending)
+                && (previous.root_slot != root_slot
+                    || previous.owner_slot != dst_slot
+                    || previous.store_schema != store_schema
+                    || previous.bytes != bytes)
+            {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "constant NodeRef was lowered with conflicting metadata",
+                ));
+            }
+            (Vec::new(), ValueRepresentation::RealizedHandle)
+        }
+        Op::InvokePrimitive { primitive } => {
+            require_input_count(node, 1)?;
+            let request = input_value(node, values, 0)?;
+            let host = i64::try_from(lowering.primitive_calls.len()).map_err(|_| {
+                lowering_diagnostic(node.span, "primitive host plan index overflow")
+            })?;
+            let abi_schemas = lowering
+                .context
+                .schemas
+                .types
+                .iter()
+                .map(|ty| {
+                    lowering
+                        .context
+                        .schemas
+                        .schema_for(ty, node.span)
+                        .map(|schema| (ty.clone(), schema))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            lowering.primitive_calls.push(PrimitiveCall {
+                node: NodeRef {
+                    function: lowering.function.id,
+                    node: node.id,
+                },
+                primitive: primitive.clone(),
+                request: request.ty.clone(),
+                response: node.ty.clone(),
+                input: request.region,
+                output: dst_region,
+                abi_schemas,
+            });
+            (
+                vec![
+                    WeavyOp::ConstI64 {
+                        dst: primitive_host_plan_slot().byte_offset(),
+                        value: host,
+                    },
+                    WeavyOp::HostCallYield { host: 0 },
+                ],
+                representation_for_type(&node.ty, node.span)?,
+            )
         }
         Op::Parameter(parameter_id) => {
             require_input_count(node, 0)?;
@@ -6062,7 +6345,8 @@ fn lower_node(
                 || target_layout
                     .region(target_parameter.node, node.span)?
                     .start()
-                    != FrameSlot::for_word(0).expect("word zero is a frame slot")
+                    != FrameSlot::for_word(FRAME_HEADER_WORDS)
+                        .expect("callable parameter slot fits")
             {
                 return Err(lowering_diagnostic(
                     node.span,
@@ -6084,12 +6368,9 @@ fn lower_node(
                     .closure(lowering.function.id, node.id, node.span)?;
             let (callee_temp, environment_temp) =
                 lowering.function.layout.closure_temps(node.id, node.span)?;
-            // The total inline width of the captures decides the environment
-            // representation: a single word rides inline in the environment
-            // word (the optimized static path); anything wider — notably a
-            // captured callable — is boxed behind a task-lifetime environment
-            // handle, since a uniform recursive closure cannot inline a value of
-            // its own two-word width.
+            // Captures never enter the semantic call ABI.  They travel through
+            // the closure environment, while the call itself supplies only its
+            // public argument to the callee's projected physical entry region.
             let capture_slots = (0..node.inputs.len())
                 .map(|index| input_value(node, values, index))
                 .collect::<Result<Vec<_>, _>>()?;
@@ -6107,7 +6388,7 @@ fn lower_node(
                         .constant(lowering.function.id, *constant, node.span)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            let environment = if capture_words > 1 || !constant_regions.is_empty() {
+            let environment = if capture_words != 0 || !constant_regions.is_empty() {
                 WeavyOp::EnvBox {
                     dst: environment_region,
                     callee: WeavyFnId(callee),
@@ -6116,12 +6397,6 @@ fn lower_node(
                         .map(|slot| slot.region_id)
                         .chain(constant_regions)
                         .collect(),
-                }
-            } else if let [capture] = capture_slots.as_slice() {
-                require_value(node, capture, &Type::Int, ValueRepresentation::Word)?;
-                WeavyOp::CopyI64 {
-                    dst: environment_temp.start().byte_offset(),
-                    src: capture.region.start().byte_offset(),
                 }
             } else {
                 WeavyOp::ConstI64 {
@@ -6437,7 +6712,12 @@ fn lower_node(
                 ValueRepresentation::RealizedHandle,
             )
         }
-        Op::StringContains | Op::StringIsNumeric | Op::StringSplitOnce | Op::StringParseInt => {
+        Op::StringContains
+        | Op::StringTrim
+        | Op::StringIsNumeric
+        | Op::StringSplitOnce
+        | Op::StringParseInt
+        | Op::StringLines => {
             return Err(lowering_diagnostic(
                 node.span,
                 "string operation did not reach checked lowering",
@@ -11630,46 +11910,10 @@ fn static_closure_call_args(
             "closure capture inputs do not match the callable ABI",
         ));
     }
-    let target_layout = context
-        .layouts
-        .get(&target_id)
-        .ok_or_else(|| lowering_diagnostic(span, "closure target has no frame layout"))?;
-    let capture_words = closure.inputs.iter().try_fold(0usize, |words, capture| {
-        let source = caller_layout.region(*capture, span)?;
-        words
-            .checked_add(source.words().as_usize())
-            .ok_or_else(|| lowering_diagnostic(span, "closure capture width overflow"))
-    })?;
-    let boxed = capture_words > 1 || !target_layout.constant_slots.is_empty();
-    let mut args = Vec::with_capacity(
-        closure
-            .inputs
-            .len()
-            .saturating_add(target_layout.constant_slots.len()),
-    );
-    if !boxed {
-        for (index, capture) in closure.inputs.iter().enumerate() {
-            let source = caller_layout.region(*capture, span)?;
-            let destination = target.parameters[index + 1].node;
-            let destination = target_layout.region(destination, span)?;
-            args.push(ArgCopy {
-                src: source.start().byte_offset(),
-                dst: destination.start().byte_offset(),
-                size: source
-                    .byte_size()
-                    .ok_or_else(|| lowering_diagnostic(span, "closure capture size overflow"))?,
-            });
-        }
-        for (&constant, &destination) in &target_layout.constant_slots {
-            let source = caller_layout.constant_slot(constant, span)?;
-            args.push(ArgCopy {
-                src: source.byte_offset(),
-                dst: destination.byte_offset(),
-                size: FrameSlot::word_size(),
-            });
-        }
-    }
-    Ok(Some((target_id, args)))
+    // The closure environment is the sole carrier for captures.  Keeping this
+    // static lookup lets lowering retain its structural target check without
+    // leaking capture slots into the semantic indirect-call ABI.
+    Ok(Some((target_id, Vec::new())))
 }
 
 fn lower_call_value_node(
@@ -12111,7 +12355,7 @@ fn type_words(ty: &Type, span: Span) -> Result<FrameWords, Diagnostics> {
 fn representation_for_type(ty: &Type, span: Span) -> Result<ValueRepresentation, Diagnostics> {
     match ty {
         Type::Bool | Type::Int | Type::Check => Ok(ValueRepresentation::Word),
-        Type::String | Type::Path => Ok(ValueRepresentation::RealizedHandle),
+        Type::String | Type::Path | Type::Extern(_) => Ok(ValueRepresentation::RealizedHandle),
         Type::Function { .. } | Type::Tuple(_) | Type::Record(_) | Type::Enum(_) => {
             Ok(ValueRepresentation::InlineComposite)
         }

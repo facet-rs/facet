@@ -31,6 +31,7 @@ pub mod ide;
 pub mod lowering;
 pub mod machine;
 pub(crate) mod module;
+pub mod modules;
 pub mod ratchet;
 #[cfg(all(feature = "real-process", not(target_arch = "wasm32")))]
 pub mod real_process;
@@ -38,6 +39,7 @@ pub mod reloc_selection;
 #[cfg(all(feature = "runner-rpc", not(target_arch = "wasm32")))]
 pub mod rpc_process;
 pub mod runtime;
+pub mod schema;
 pub mod surface;
 pub mod value;
 pub mod vir;

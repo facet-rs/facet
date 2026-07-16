@@ -74,7 +74,7 @@ fn value_check_identities(report: &RatchetReport) -> Vec<Option<vix::runtime::Va
         .checks
         .iter()
         .filter(|check| check.identity.is_some())
-        .map(|check| check.identity)
+        .map(|check| check.identity.clone())
         .collect()
 }
 

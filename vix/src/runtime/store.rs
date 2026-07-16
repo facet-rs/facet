@@ -3,8 +3,11 @@ use std::collections::BTreeMap;
 use weavy::exec::StoreHandle;
 use weavy::task::{ValueMemories, ValueMemory};
 
-use super::identity::{Digest, FramedField, FramedNode, FramedValue, SchemaId, ValueId};
-use super::model::FailureValue;
+use crate::schema::SchemaRef;
+use crate::vir::Type;
+
+use super::identity::{Digest, FramedField, FramedNode, FramedValue, ValueId};
+use super::model::{FailureValue, ProcessTermination};
 
 /// Store-owned handle. It is valid for one runtime snapshot and is never
 /// reused for a different entry during that lifetime. Resident bytes may be
@@ -36,6 +39,70 @@ pub struct StoreEntry {
     residence: Residence,
     failure: Option<FailureValue>,
     frozen: Option<FrozenValue>,
+}
+
+const STORE_JOURNAL_VERSION: u32 = 2;
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct StoreIdentityAuthority {
+    pub value_epoch: String,
+    pub store_epoch: String,
+}
+
+impl Default for StoreIdentityAuthority {
+    fn default() -> Self {
+        Self {
+            value_epoch: "vix.identity.value.framed.v2.schema-ref".to_owned(),
+            store_epoch: "vix.store.persistence.v2.schema-ref".to_owned(),
+        }
+    }
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct StoreJournal {
+    pub version: u32,
+    pub authority: StoreIdentityAuthority,
+    pub values: Vec<StoreJournalValue>,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct StoreJournalValue {
+    pub identity: ValueId,
+    pub resident: Vec<u8>,
+}
+
+#[derive(facet::Facet, Clone, Debug, Default, PartialEq, Eq)]
+pub struct StoreJournalLoadReport {
+    pub values_loaded: u64,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum StoreJournalError {
+    UnsupportedVersion {
+        version: u32,
+    },
+    AuthorityMismatch {
+        error: Box<StoreJournalAuthorityMismatch>,
+    },
+    DuplicateValue {
+        index: u64,
+        identity: ValueId,
+    },
+    CorruptValue(Box<StoreJournalCorruptValue>),
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct StoreJournalAuthorityMismatch {
+    pub expected: StoreIdentityAuthority,
+    pub found: StoreIdentityAuthority,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct StoreJournalCorruptValue {
+    pub index: u64,
+    pub claimed: ValueId,
+    pub observed: ValueId,
 }
 
 /// Scheduler-owned semantic execution representation for a published value.
@@ -71,14 +138,14 @@ impl StoreEntry {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct StoreKey {
-    schema: SchemaId,
+    schema: SchemaRef,
     tier: HandleTier,
     content: Digest,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Interned {
     pub handle: Handle,
     pub identity: ValueId,
@@ -86,13 +153,86 @@ pub struct Interned {
     pub bytes_hashed: u64,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Store {
     entries: Vec<StoreEntry>,
     by_identity: BTreeMap<StoreKey, Handle>,
 }
 
 impl Store {
+    #[must_use]
+    pub fn to_journal(&self) -> StoreJournal {
+        let values = self
+            .entries
+            .iter()
+            .filter_map(|entry| {
+                let resident = entry.resident_bytes()?;
+                if entry.failure.is_some() {
+                    return None;
+                }
+                let observed =
+                    FramedNode::leaf(entry.identity.schema.clone(), resident.to_vec()).identity();
+                (observed == entry.identity).then(|| StoreJournalValue {
+                    identity: entry.identity.clone(),
+                    resident: resident.to_vec(),
+                })
+            })
+            .collect();
+        StoreJournal {
+            version: STORE_JOURNAL_VERSION,
+            authority: StoreIdentityAuthority::default(),
+            values,
+        }
+    }
+
+    pub fn from_journal(
+        journal: StoreJournal,
+    ) -> Result<(Self, StoreJournalLoadReport), StoreJournalError> {
+        if journal.version != STORE_JOURNAL_VERSION {
+            return Err(StoreJournalError::UnsupportedVersion {
+                version: journal.version,
+            });
+        }
+        let expected = StoreIdentityAuthority::default();
+        if journal.authority != expected {
+            return Err(StoreJournalError::AuthorityMismatch {
+                error: Box::new(StoreJournalAuthorityMismatch {
+                    expected,
+                    found: journal.authority,
+                }),
+            });
+        }
+        let mut store = Store::default();
+        let mut seen = BTreeMap::new();
+        for (index, value) in journal.values.into_iter().enumerate() {
+            let observed =
+                FramedNode::leaf(value.identity.schema.clone(), value.resident.clone()).identity();
+            if observed != value.identity {
+                return Err(StoreJournalError::CorruptValue(Box::new(
+                    StoreJournalCorruptValue {
+                        index: index as u64,
+                        claimed: value.identity,
+                        observed,
+                    },
+                )));
+            }
+            if seen.insert(value.identity.clone(), index).is_some() {
+                return Err(StoreJournalError::DuplicateValue {
+                    index: index as u64,
+                    identity: value.identity,
+                });
+            }
+            let interned = store.intern_realized(value.identity.schema.clone(), &value.resident);
+            debug_assert_eq!(interned.identity, value.identity);
+        }
+        Ok((
+            store,
+            StoreJournalLoadReport {
+                values_loaded: seen.len() as u64,
+            },
+        ))
+    }
+
     /// Intern a realized scalar/opaque value. The value becomes a framed
     /// scalar/opaque leaf whose identity is computed by the closed writer, then
     /// deduplicated and stored through the single `intern_tree` path.
@@ -100,7 +240,7 @@ impl Store {
     /// r[impl machine.identity.value-identity-pair]
     /// r[impl machine.identity.hash-at-construction]
     /// r[impl machine.store.dedup]
-    pub fn intern_realized(&mut self, schema: SchemaId, bytes: &[u8]) -> Interned {
+    pub fn intern_realized(&mut self, schema: SchemaRef, bytes: &[u8]) -> Interned {
         let node = FramedNode::leaf(schema, bytes.to_vec());
         self.intern_tree(&node, bytes)
     }
@@ -131,10 +271,10 @@ impl Store {
         }
     }
 
-    pub(crate) fn handle_for_identity(&self, identity: ValueId) -> Option<Handle> {
+    pub(crate) fn handle_for_identity(&self, identity: &ValueId) -> Option<Handle> {
         self.by_identity
             .get(&StoreKey {
-                schema: identity.schema,
+                schema: identity.schema.clone(),
                 tier: HandleTier::Realized,
                 content: identity.content,
             })
@@ -167,7 +307,7 @@ impl Store {
         bytes_hashed: u64,
     ) -> Interned {
         let key = StoreKey {
-            schema: identity.schema,
+            schema: identity.schema.clone(),
             tier: HandleTier::Realized,
             content: identity.content,
         };
@@ -182,7 +322,7 @@ impl Store {
         let handle = Handle(self.entries.len() as u32);
         self.entries.push(StoreEntry {
             handle,
-            identity,
+            identity: identity.clone(),
             tier: HandleTier::Realized,
             residence,
             failure,
@@ -200,6 +340,12 @@ impl Store {
     #[must_use]
     pub fn entry(&self, handle: Handle) -> Option<&StoreEntry> {
         self.entries.get(handle.0 as usize)
+    }
+
+    pub(crate) fn resident_entries(&self) -> impl Iterator<Item = &StoreEntry> {
+        self.entries
+            .iter()
+            .filter(|entry| entry.resident_bytes().is_some())
     }
 
     pub(crate) fn entry_by_weavy_handle(&self, handle: StoreHandle) -> Option<&StoreEntry> {
@@ -256,9 +402,9 @@ impl Store {
 ///
 /// r[impl machine.error.failure-source-site-identity]
 fn failure_node(failure: &FailureValue) -> FramedNode {
-    let schema = SchemaId::named("vix.Failure.v1");
-    let recipe_schema = SchemaId::named("vix.RecipeId");
-    let site_schema = SchemaId::named("vix.FailureSite");
+    let schema = external_schema("vix.Failure.v2");
+    let recipe_schema = external_schema("vix.RecipeId");
+    let site_schema = external_schema("vix.FailureSite");
     match failure {
         FailureValue::IndexOutOfBounds {
             recipe,
@@ -279,16 +425,16 @@ fn failure_node(failure: &FailureValue) -> FramedNode {
                     value: FramedValue::Bytes(site.to_le_bytes().to_vec()),
                 },
                 FramedField {
-                    schema: SchemaId::named("vix.i64.index"),
+                    schema: Type::Int.schema_ref(),
                     value: FramedValue::Bytes(index.to_le_bytes().to_vec()),
                 },
                 FramedField {
-                    schema: SchemaId::named("vix.i64.length"),
+                    schema: Type::Int.schema_ref(),
                     value: FramedValue::Bytes(length.to_le_bytes().to_vec()),
                 },
                 FramedField {
-                    schema: SchemaId::named("vix.Failure.subject"),
-                    value: FramedValue::Optional(*subject),
+                    schema: external_schema("vix.Failure.subject"),
+                    value: FramedValue::Optional(subject.clone()),
                 },
             ],
         },
@@ -297,7 +443,13 @@ fn failure_node(failure: &FailureValue) -> FramedNode {
         | FailureValue::MissingDelimiter { recipe, site }
         | FailureValue::InvalidInteger { recipe, site }
         | FailureValue::IntegerOverflow { recipe, site }
-        | FailureValue::DivisionByZero { recipe, site } => {
+        | FailureValue::DivisionByZero { recipe, site }
+        | FailureValue::MissingTreeEntry { recipe, site }
+        | FailureValue::TreeEntryNotAFile { recipe, site }
+        | FailureValue::InvalidText { recipe, site }
+        | FailureValue::MissingRegistryArtifact { recipe, site }
+        | FailureValue::FetchIntegrity { recipe, site }
+        | FailureValue::MalformedArchive { recipe, site } => {
             let tag = match failure {
                 FailureValue::MissingKey { .. } => 2,
                 FailureValue::DuplicateKey { .. } => 3,
@@ -305,7 +457,15 @@ fn failure_node(failure: &FailureValue) -> FramedNode {
                 FailureValue::InvalidInteger { .. } => 5,
                 FailureValue::IntegerOverflow { .. } => 6,
                 FailureValue::DivisionByZero { .. } => 7,
-                FailureValue::IndexOutOfBounds { .. } => unreachable!("matched above"),
+                FailureValue::MissingTreeEntry { .. } => 8,
+                FailureValue::TreeEntryNotAFile { .. } => 9,
+                FailureValue::InvalidText { .. } => 10,
+                FailureValue::MissingRegistryArtifact { .. } => 11,
+                FailureValue::FetchIntegrity { .. } => 12,
+                FailureValue::MalformedArchive { .. } => 13,
+                FailureValue::IndexOutOfBounds { .. } | FailureValue::ProcessFailure { .. } => {
+                    unreachable!("matched above")
+                }
             };
             FramedNode::Variant {
                 schema,
@@ -322,7 +482,46 @@ fn failure_node(failure: &FailureValue) -> FramedNode {
                 ],
             }
         }
+        FailureValue::ProcessFailure {
+            recipe,
+            site,
+            termination,
+        } => {
+            // The raw termination information is semantic failure content: an
+            // exit-code failure and a signal failure are different values.
+            let (kind, value) = match termination {
+                ProcessTermination::Exited { code } => (0u8, *code),
+                ProcessTermination::Signaled { signal } => (1u8, *signal),
+            };
+            let mut termination_bytes = vec![kind];
+            termination_bytes.extend_from_slice(&value.to_le_bytes());
+            FramedNode::Variant {
+                schema,
+                tag: 8,
+                fields: vec![
+                    FramedField {
+                        schema: recipe_schema,
+                        value: FramedValue::Bytes(recipe.0.0.to_vec()),
+                    },
+                    FramedField {
+                        schema: site_schema,
+                        value: FramedValue::Bytes(site.to_le_bytes().to_vec()),
+                    },
+                    FramedField {
+                        schema: external_schema("vix.ProcessTermination"),
+                        value: FramedValue::Bytes(termination_bytes),
+                    },
+                ],
+            }
+        }
     }
+}
+
+fn external_schema(kind: &str) -> SchemaRef {
+    SchemaRef::for_kind(taxon::Kind::External {
+        kind: kind.to_owned(),
+        metadata: None,
+    })
 }
 
 #[cfg(test)]
@@ -343,7 +542,7 @@ mod tests {
     #[test]
     fn intern_tree_dedupes_on_identity_and_keeps_resident_bytes_separate() {
         let mut store = Store::default();
-        let node = FramedNode::leaf(SchemaId::named("vix.demo"), b"canonical".to_vec());
+        let node = FramedNode::leaf(external_schema("vix.demo"), b"canonical".to_vec());
 
         let first = store.intern_tree(&node, b"canonical");
         // Same semantic value, different (non-identity) resident bytes: identity
@@ -361,7 +560,7 @@ mod tests {
         );
 
         // Realized scalars are the same framed leaf path.
-        let realized = store.intern_realized(SchemaId::named("vix.demo"), b"canonical");
+        let realized = store.intern_realized(external_schema("vix.demo"), b"canonical");
         assert_eq!(realized.identity, first.identity);
         assert!(realized.deduped);
     }

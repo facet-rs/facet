@@ -141,6 +141,15 @@ struct Ctx {
         i64,
         *mut i64,
     ) -> i64,
+    string_trim: unsafe extern "C" fn(
+        *const crate::task::RawValueMemory,
+        usize,
+        *const crate::task::RawValueMemory,
+        usize,
+        *mut core::ffi::c_void,
+        i64,
+        *mut i64,
+    ) -> i64,
     string_contains: unsafe extern "C" fn(
         *const crate::task::RawValueMemory,
         usize,
@@ -585,6 +594,10 @@ fn compile_fn(
                 task_stencils::STRING_CONCAT,
                 Continuations::Fallthrough(task_stencils::STRING_CONCAT_CONT),
             ),
+            Op::StringTrim { .. } => (
+                task_stencils::STRING_TRIM,
+                Continuations::Fallthrough(task_stencils::STRING_TRIM_CONT),
+            ),
             Op::StringContains { .. } => (
                 task_stencils::STRING_CONTAINS,
                 Continuations::Fallthrough(task_stencils::STRING_CONTAINS_CONT),
@@ -756,6 +769,7 @@ fn compile_fn(
             Op::ArrayStatusIs { .. } => 4,
             Op::CompareValueBytes { .. } => 4,
             Op::StringConcat { .. } => 4,
+            Op::StringTrim { .. } => 3,
             Op::StringContains { .. } | Op::StringParseInt { .. } => 4,
             Op::StringIsNumeric { .. } => 3,
             Op::StringStatusIs { .. } => 4,
@@ -1357,6 +1371,12 @@ fn compile_fn(
                 }
                 layout.push_prog_word(root.prog_index, i as u64);
             }
+            Op::StringTrim { dst, text } => {
+                for value in [dst, text] {
+                    layout.push_prog_word(root.prog_index, u64::from(*value));
+                }
+                layout.push_prog_word(root.prog_index, i as u64);
+            }
             Op::StringContains { dst, text, needle } => {
                 for value in [dst, text, needle] {
                     layout.push_prog_word(root.prog_index, u64::from(*value));
@@ -1582,6 +1602,12 @@ impl JitTask {
         self.frames.len()
     }
 
+    /// The function owning the currently suspended frame.
+    #[must_use]
+    pub fn active_function(&self) -> FnId {
+        self.frames.last().expect("live frame").fn_id
+    }
+
     #[must_use]
     pub fn frame_arena_bytes(&self) -> usize {
         self.arena.len()
@@ -1750,6 +1776,7 @@ impl JitTask {
                 ordered_iterate_row: crate::task::ordered_iterate_row_abi,
                 ordered_len: crate::task::ordered_len_abi,
                 string_concat: crate::task::string_concat_abi,
+                string_trim: crate::task::string_trim_abi,
                 int_to_string: crate::task::int_to_string_abi,
                 string_contains: crate::task::string_contains_abi,
                 string_is_numeric: crate::task::string_is_numeric_abi,
@@ -1851,9 +1878,18 @@ impl JitTask {
                     }
                     let callee = &program.fns[callee_id.0 as usize];
                     let callee_base = self.alloc_frame(callee);
-                    for copy in &desc.args {
+                    for (index, copy) in desc.args.iter().enumerate() {
                         let src = frame.base + copy.src as usize;
-                        let dst = callee_base + copy.dst as usize;
+                        let destination = if target_is_frame {
+                            verified.map_or(copy.dst, |verified| {
+                                crate::task::indirect_call_destination(
+                                    verified, callee_id, index, copy.dst,
+                                )
+                            })
+                        } else {
+                            copy.dst
+                        };
+                        let dst = callee_base + destination as usize;
                         self.arena.copy_within(src..src + copy.size as usize, dst);
                     }
                     // Boxed-closure capture threading, shared with the

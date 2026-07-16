@@ -250,7 +250,8 @@ fn typed_program_for_shape(shape: &'static Shape) -> Result<Arc<TypedProgram>, E
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 fn native_decode_supported(lowered: &Lowered) -> bool {
-    decode_program_supported(&lowered.program)
+    phon_jit::native::available()
+        && decode_program_supported(&lowered.program)
         && lowered
             .blocks
             .values()
@@ -259,7 +260,8 @@ fn native_decode_supported(lowered: &Lowered) -> bool {
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 fn native_encode_supported(lowered: &Lowered) -> bool {
-    encode_program_supported(&lowered.program)
+    phon_jit::native::available()
+        && encode_program_supported(&lowered.program)
         && lowered
             .blocks
             .values()

@@ -1404,7 +1404,16 @@ fn try_rows(input: SolveInput) where {
     }
 }
 
-// r[depends solver.learning.reuse]
+// r[impl solver.learning.reuse]
+//
+// A learned no-good is a pure content-keyed value: the solve is a function of
+// typed SolveInput alone, and every DeadRegion it derives rides in the typed
+// outcome with no session identity, private cache, or hand-rolled fact
+// serialization. Recurring inputs therefore reuse the learned regions through
+// the substrate's Store/memo identity — equal solve preimages share one
+// realization, and its learned regions with it (in-session; warm cross-session
+// fact retention stays out of scope until facts carry the adjudicated
+// premise-keyed shape).
 pub fn rodin_solve(input: SolveInput) -> RodinOutcome {
     match input.unsupported {
         Some(unsupported) => RodinOutcome::Unsupported(unsupported),

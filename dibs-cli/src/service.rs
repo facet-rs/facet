@@ -1,34 +1,15 @@
-//! Service connection handling for dibs CLI.
-//!
-//! This module handles spawning the user's db crate as a vox service
-//! and connecting to it.
-//!
-//! # Connection Model
-//!
-//! The CLI acts as the TCP *server* (acceptor), and the spawned db crate
-//! connects to it as a client (initiator). This avoids race conditions:
-//! the CLI is already listening before spawning the child.
-//!
-//! Vox supports bidirectional RPC, so both sides can call each other.
+//! Connection handling for an application-owned Dibs tooling endpoint.
 
 use crate::DbConfig;
 use dibs_proto::DibsServiceClient;
-use std::process::{Child, Command, Stdio};
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::net::TcpListener;
-use tokio::process::Command as TokioCommand;
-use tracing::info;
-
-const CLI_DIBS_VERSION: &str = env!("CARGO_PKG_VERSION");
+use std::net::SocketAddr;
+use tokio::net::TcpStream;
+use tracing::{info, warn};
 
 /// A connection to the dibs service.
 pub struct ServiceConnection {
     /// The typed vox client for making calls.
     client: DibsServiceClient,
-    /// The spawned child process (if held)
-    _child: Option<Child>,
-    /// The binary mtime (for staleness checks)
-    pub binary_mtime: Option<std::time::SystemTime>,
     /// The migrations directory path
     pub migrations_dir: Option<std::path::PathBuf>,
 }
@@ -38,95 +19,43 @@ impl ServiceConnection {
     pub fn client(&self) -> DibsServiceClient {
         self.client.clone()
     }
-
-    /// Check if any migration files are newer than the binary.
-    ///
-    /// Returns `Some(path)` with the path of a stale file, or `None` if all files are fresh.
-    pub fn check_migrations_stale(&self) -> Option<std::path::PathBuf> {
-        let binary_mtime = self.binary_mtime?;
-        let migrations_dir = self.migrations_dir.as_ref()?;
-
-        if !migrations_dir.exists() {
-            return None;
-        }
-
-        // Check all .rs files in the migrations directory
-        let entries = std::fs::read_dir(migrations_dir).ok()?;
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("rs")
-                && let Ok(meta) = path.metadata()
-                && let Ok(mtime) = meta.modified()
-                && mtime > binary_mtime
-            {
-                return Some(path);
-            }
-        }
-
-        None
-    }
 }
 
-/// Connect to the dibs service specified in the config.
-///
-/// 1. Binds to a random local port
-/// 2. Spawns the db crate with `DIBS_CLI_ADDR` pointing to our listener
-/// 3. Accepts the incoming connection from the child
-/// 4. Returns a handle for making RPC calls
+/// Connect to the application-owned Dibs endpoint specified in the config.
 pub async fn connect_to_service(db_config: &DbConfig) -> Result<ServiceConnection, ServiceError> {
-    // Bind to a random available port
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .map_err(|e| ServiceError::Spawn(format!("Failed to bind to port: {}", e)))?;
-    let addr = listener
-        .local_addr()
-        .map_err(|e| ServiceError::Spawn(format!("Failed to get local address: {}", e)))?;
-
-    // Build the command to spawn the service
-    let mut cmd = if let Some(binary) = &db_config.binary {
-        info!(binary = %binary, "Launching db service binary");
-        Command::new(binary)
-    } else if let Some(crate_name) = &db_config.crate_name {
-        info!(crate_name = %crate_name, "Launching db service via cargo");
-        let mut cmd = Command::new("cargo");
-        cmd.args(["run", "-p", crate_name, "--"]);
-        cmd
-    } else {
-        return Err(ServiceError::Config(
-            "No db.crate or db.binary specified in config".to_string(),
-        ));
-    };
-
-    // Tell the service where to connect
-    cmd.env("DIBS_CLI_ADDR", addr.to_string());
-    cmd.stdout(Stdio::inherit());
-    cmd.stderr(Stdio::inherit());
-
-    // Spawn the service
-    let child = cmd
-        .spawn()
-        .map_err(|e| ServiceError::Spawn(format!("Failed to spawn db service: {}", e)))?;
-
-    // Accept the incoming connection from the child
-    // TODO: Add a timeout here
-    let (stream, _peer_addr) = listener
-        .accept()
-        .await
-        .map_err(|e| ServiceError::Connection(format!("Failed to accept connection: {}", e)))?;
-
-    // Establish vox session (we're the acceptor).
+    let endpoint = endpoint(db_config)?;
+    info!(%endpoint, "Connecting to Dibs tooling endpoint");
+    let stream = TcpStream::connect(endpoint).await.map_err(|error| {
+        ServiceError::Connection(format!("Failed to connect to {endpoint}: {error}"))
+    })?;
     let link = vox_stream::StreamLink::tcp(stream);
-    let client = vox::acceptor_on(link)
+    let client = vox::initiator_on(link)
         .establish::<DibsServiceClient>()
         .await
         .map_err(|e| ServiceError::Connection(format!("Vox handshake failed: {}", e)))?;
-    validate_service_version(&client).await?;
+    observe_service_version(&client).await;
 
     Ok(ServiceConnection {
         client,
-        _child: Some(child),
-        binary_mtime: None,
-        migrations_dir: None,
+        migrations_dir: migrations_dir(db_config),
+    })
+}
+
+fn endpoint(db_config: &DbConfig) -> Result<SocketAddr, ServiceError> {
+    let endpoint = db_config.endpoint.as_deref().ok_or_else(|| {
+        ServiceError::Config(
+            "db.endpoint is required; start the application in its Dibs tooling mode and configure its address"
+                .to_string(),
+        )
+    })?;
+    endpoint
+        .parse()
+        .map_err(|error| ServiceError::Config(format!("Invalid db.endpoint {endpoint:?}: {error}")))
+}
+
+fn migrations_dir(db_config: &DbConfig) -> Option<std::path::PathBuf> {
+    db_config.crate_name.as_ref().and_then(|crate_name| {
+        crate::config::find_crate_path(crate_name).map(|path| path.join("src/migrations"))
     })
 }
 
@@ -135,8 +64,6 @@ pub async fn connect_to_service(db_config: &DbConfig) -> Result<ServiceConnectio
 pub enum ServiceError {
     /// Configuration error
     Config(String),
-    /// Failed to spawn the service
-    Spawn(String),
     /// Connection error
     Connection(String),
 }
@@ -145,7 +72,6 @@ impl std::fmt::Display for ServiceError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ServiceError::Config(e) => write!(f, "Configuration error: {}", e),
-            ServiceError::Spawn(e) => write!(f, "Failed to spawn service: {}", e),
             ServiceError::Connection(e) => write!(f, "Connection error: {}", e),
         }
     }
@@ -164,244 +90,71 @@ pub struct BuildOutput {
 
 /// A build process that captures output and eventually yields a connection.
 pub struct BuildProcess {
-    /// Receiver for output lines from background tasks
-    output_rx: tokio::sync::mpsc::UnboundedReceiver<BuildOutput>,
-    /// The TCP listener waiting for the service to connect back
-    listener: TcpListener,
-    /// Handle to the child process (to check exit status)
-    child_handle: tokio::task::JoinHandle<Option<std::process::ExitStatus>>,
-    /// Cached exit status
-    exit_status: Option<std::process::ExitStatus>,
-    /// The binary path (for mtime checks)
-    binary_path: Option<std::path::PathBuf>,
-    /// The migrations directory path
+    endpoint: SocketAddr,
     migrations_dir: Option<std::path::PathBuf>,
 }
 
 impl BuildProcess {
     /// Poll for the next line of output (non-blocking).
     pub fn try_read_line(&mut self) -> Option<BuildOutput> {
-        self.output_rx.try_recv().ok()
+        None
     }
 
     /// Check if the child process has exited (async version).
     pub async fn check_exit(&mut self) -> Option<std::process::ExitStatus> {
-        if self.exit_status.is_some() {
-            return self.exit_status;
-        }
-        // Check if the background task completed
-        if self.child_handle.is_finished() {
-            // Poll it to get the result
-            use tokio::time::{Duration, timeout};
-            if let Ok(Ok(status)) = timeout(Duration::from_millis(1), &mut self.child_handle).await
-            {
-                self.exit_status = status;
-                return status;
-            }
-        }
         None
     }
 
-    /// Try to accept a connection from the service.
+    /// Try to connect to the application-owned service.
     ///
     /// Returns `None` if no connection is ready yet.
     pub async fn try_accept(&mut self) -> Result<Option<ServiceConnection>, ServiceError> {
         use tokio::time::{Duration, timeout};
 
         // Try to accept with a very short timeout (non-blocking feel)
-        match timeout(Duration::from_millis(10), self.listener.accept()).await {
-            Ok(Ok((stream, _peer_addr))) => {
-                // Establish vox session.
+        match timeout(
+            Duration::from_millis(100),
+            TcpStream::connect(self.endpoint),
+        )
+        .await
+        {
+            Ok(Ok(stream)) => {
                 let link = vox_stream::StreamLink::tcp(stream);
-                let client = vox::acceptor_on(link)
+                let client = vox::initiator_on(link)
                     .establish::<DibsServiceClient>()
                     .await
                     .map_err(|e| {
                         ServiceError::Connection(format!("Vox handshake failed: {}", e))
                     })?;
-                validate_service_version(&client).await?;
-
-                // Get binary mtime
-                let binary_mtime = self
-                    .binary_path
-                    .as_ref()
-                    .and_then(|p| p.metadata().ok().and_then(|m| m.modified().ok()));
+                observe_service_version(&client).await;
 
                 Ok(Some(ServiceConnection {
                     client,
-                    _child: None,
-                    binary_mtime,
                     migrations_dir: self.migrations_dir.clone(),
                 }))
             }
-            Ok(Err(e)) => Err(ServiceError::Connection(format!("Accept failed: {}", e))),
-            Err(_) => Ok(None), // Timeout - no connection yet
+            Ok(Err(_)) | Err(_) => Ok(None),
         }
     }
 }
 
-/// Start building/running the service, returning a BuildProcess that can be polled.
+/// Start connecting to the tooling endpoint, returning a process the TUI can poll.
 pub async fn start_service(db_config: &DbConfig) -> Result<BuildProcess, ServiceError> {
-    // Bind to a random available port
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .map_err(|e| ServiceError::Spawn(format!("Failed to bind to port: {}", e)))?;
-    let addr = listener
-        .local_addr()
-        .map_err(|e| ServiceError::Spawn(format!("Failed to get local address: {}", e)))?;
-
-    // Build the command
-    let mut cmd = if let Some(binary) = &db_config.binary {
-        info!(binary = %binary, "Launching db service binary");
-        TokioCommand::new(binary)
-    } else if let Some(crate_name) = &db_config.crate_name {
-        info!(crate_name = %crate_name, "Launching db service via cargo");
-        let mut cmd = TokioCommand::new("cargo");
-        cmd.args(["run", "-p", crate_name, "--"]);
-        cmd
-    } else {
-        return Err(ServiceError::Config(
-            "No db.crate or db.binary specified in config".to_string(),
-        ));
-    };
-
-    // Tell the service where to connect
-    cmd.env("DIBS_CLI_ADDR", addr.to_string());
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
-
-    // Spawn the service
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| ServiceError::Spawn(format!("Failed to spawn db service: {}", e)))?;
-
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| ServiceError::Spawn("Failed to capture stdout".to_string()))?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| ServiceError::Spawn("Failed to capture stderr".to_string()))?;
-
-    // Create channel for output
-    let (output_tx, output_rx) = tokio::sync::mpsc::unbounded_channel();
-
-    // Spawn background task to read stdout
-    let tx_stdout = output_tx.clone();
-    tokio::spawn(async move {
-        let mut reader = BufReader::new(stdout);
-        let mut line = String::new();
-        loop {
-            line.clear();
-            match reader.read_line(&mut line).await {
-                Ok(0) => break, // EOF
-                Ok(_) => {
-                    let _ = tx_stdout.send(BuildOutput {
-                        text: line.trim_end().to_string(),
-                        is_stderr: false,
-                    });
-                }
-                Err(_) => break,
-            }
-        }
-    });
-
-    // Spawn background task to read stderr
-    let tx_stderr = output_tx;
-    tokio::spawn(async move {
-        let mut reader = BufReader::new(stderr);
-        let mut line = String::new();
-        loop {
-            line.clear();
-            match reader.read_line(&mut line).await {
-                Ok(0) => break, // EOF
-                Ok(_) => {
-                    let _ = tx_stderr.send(BuildOutput {
-                        text: line.trim_end().to_string(),
-                        is_stderr: true,
-                    });
-                }
-                Err(_) => break,
-            }
-        }
-    });
-
-    // Spawn background task to wait for child exit
-    let child_handle = tokio::spawn(async move { child.wait().await.ok() });
-
-    // Determine binary path for mtime checks
-    let binary_path = if let Some(crate_name) = &db_config.crate_name {
-        // For cargo run, the binary is in target/debug/<crate_name>
-        let target_dir = std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| "target".to_string());
-        Some(std::path::PathBuf::from(format!(
-            "{}/debug/{}",
-            target_dir, crate_name
-        )))
-    } else {
-        db_config.binary.as_ref().map(std::path::PathBuf::from)
-    };
-
-    // Find migrations directory from config
-    let migrations_dir = db_config.crate_name.as_ref().and_then(|crate_name| {
-        crate::config::find_crate_path_for_watch(crate_name).map(|p| p.join("src/migrations"))
-    });
-
     Ok(BuildProcess {
-        output_rx,
-        listener,
-        child_handle,
-        exit_status: None,
-        binary_path,
-        migrations_dir,
+        endpoint: endpoint(db_config)?,
+        migrations_dir: migrations_dir(db_config),
     })
 }
 
-async fn validate_service_version(client: &DibsServiceClient) -> Result<(), ServiceError> {
-    let service_version = client.dibs_version().await.map_err(|e| {
-        ServiceError::Connection(format!(
-            "Failed to read db service Dibs version; the service binary may have been built with an incompatible Dibs protocol: {e}"
-        ))
-    })?;
-
-    check_service_version(&service_version)?;
-
-    info!(
-        cli_version = CLI_DIBS_VERSION,
-        service_version, "Dibs CLI and db service versions match"
-    );
-    Ok(())
-}
-
-fn check_service_version(service_version: &str) -> Result<(), ServiceError> {
-    if service_version != CLI_DIBS_VERSION {
-        return Err(ServiceError::Connection(format!(
-            "Dibs CLI version {CLI_DIBS_VERSION} does not match db service Dibs version {service_version}; rebuild the db crate or use a matching dibs binary"
-        )));
-    }
-
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{CLI_DIBS_VERSION, ServiceError, check_service_version};
-
-    #[test]
-    fn accepts_matching_service_version() {
-        check_service_version(CLI_DIBS_VERSION).unwrap();
-    }
-
-    #[test]
-    fn rejects_mismatched_service_version() {
-        let err = check_service_version("0.0.0-different").unwrap_err();
-
-        let ServiceError::Connection(message) = err else {
-            panic!("expected connection error");
-        };
-        assert!(message.contains("Dibs CLI version"));
-        assert!(message.contains(CLI_DIBS_VERSION));
-        assert!(message.contains("db service Dibs version 0.0.0-different"));
-        assert!(message.contains("rebuild the db crate"));
+async fn observe_service_version(client: &DibsServiceClient) {
+    match client.dibs_version().await {
+        Ok(service_version) => info!(
+            cli_version = env!("CARGO_PKG_VERSION"),
+            service_version, "Connected to Dibs tooling endpoint"
+        ),
+        Err(error) => warn!(
+            %error,
+            "Dibs endpoint did not report package metadata; Vox schema negotiation succeeded"
+        ),
     }
 }

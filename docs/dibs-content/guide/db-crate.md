@@ -1,93 +1,94 @@
 +++
 title = "Setting up your -db crate"
-description = "Create the schema crate and configure dibs"
+description = "Define schema and migrations as a library linked by your application"
 weight = 1
 +++
 
-The **-db crate** is where you define your database schema as Rust structs. dibs reads this crate to generate migrations and power the <abbr title="Text User Interface">TUI</abbr>.
+The **-db crate** is the library where database schema and migrations live. It
+is not a deployment executable. Your application links it and exposes explicit
+execution modes for serving, migration, and optional Dibs tooling.
 
 ## Workspace structure
 
-A typical dibs workspace looks like this:
-
-```
+```text
 my-app/
-  .config/dibs.styx    # dibs configuration
+  .config/dibs.styx    # local Dibs tooling endpoint
   crates/
-    my-app-db/         # schema + migrations (this guide)
-    my-app-queries/    # query definitions (covered later)
-    my-app/            # your application
+    my-app-db/         # schema + migrations
+    my-app-queries/    # generated typed queries
+    my-app/            # the only application binary
 ```
 
-## Create the -db crate
+## Create the library
 
 ```bash
 cargo new --lib crates/my-app-db
 ```
 
-Add dependencies to `crates/my-app-db/Cargo.toml`:
+Add Dibs and Facet to `crates/my-app-db/Cargo.toml`:
 
 ```toml
 [dependencies]
-# dibs/facet are currently developed rapidly; for now, the recommended setup is to use git deps:
 dibs = { git = "https://github.com/facet-rs/facet", branch = "main" }
 facet = { git = "https://github.com/facet-rs/facet", branch = "main" }
-
-[[bin]]
-name = "my-app-db"
-path = "src/main.rs"
 ```
 
-## Add the service binary
-
-Create `crates/my-app-db/src/main.rs`:
+Define a real symbol that the application can call:
 
 ```rust
-fn main() {
-    // Force the linker to keep this crate's table submissions. Must be a real
-    // symbol reference (a function call) — a `type_name`/`TypeId::of` reference
-    // is a const intrinsic and does NOT link the crate's inventory statics, so
-    // dibs would discover zero tables.
-    my_app_db::ensure_linked();
-
-    dibs::run_service();
-}
+// crates/my-app-db/src/lib.rs
+pub fn ensure_linked() {}
 ```
 
-This binary is spawned by the dibs CLI to answer schema requests. You don't run it directly.
+The call forces the linker to retain the table and migration inventory from
+the library. Merely naming one of its types through `type_name` or `TypeId` does
+not retain inventory submissions.
 
-The `ensure_linked()` call ensures your table types are included in the binary so dibs can discover them via inventory. Define it once in your crate as an empty `pub fn ensure_linked() {}`.
+## Link it into the application
 
-## Configure dibs
+```toml
+# crates/my-app/Cargo.toml
+[dependencies]
+my-app-db = { path = "../my-app-db" }
+dibs = { git = "https://github.com/facet-rs/facet", branch = "main" }
+```
 
-Create `.config/dibs.styx` at the workspace root:
+The application calls `my_app_db::ensure_linked()` and implements at least two
+modes:
+
+- `serve` starts the application;
+- `migrate` connects to Postgres and calls `dibs::MigrationRunner` directly.
+
+The [production deployment guide](deployment/) shows the full shape. Both
+modes run from the same binary and image.
+
+## Configure local tooling
+
+The Dibs TUI and schema-authoring commands use an explicitly enabled endpoint
+inside the application. Configure where the CLI should connect:
 
 ```styx
 @schema {id crate:dibs@1, cli dibs}
 
 db {
     crate my-app-db
+    endpoint "127.0.0.1:7764"
 }
 ```
 
-This tells dibs which crate contains your schema.
+Add a development-only application mode that calls
+`dibs::serve("127.0.0.1:7764".parse()?).await`. Start that mode yourself, then
+run `dibs schema`, `dibs diff`, or the TUI. The CLI never searches `PATH`, runs
+Cargo, or launches an application binary on your behalf.
 
 ## Set up the database
 
-Create a `.env` file at the workspace root (and add it to `.gitignore`):
-
-```
-DATABASE_URL=postgres://user:pass@localhost/mydb
-```
-
-dibs reads this when connecting to your database for migrations and diffs.
-
-On macOS, [Postgres.app](https://postgresapp.com/) is a nice way to run Postgres locally.
-
-## Verify the setup
+Set `DATABASE_URL` in your development environment. Dibs reads it for commands
+that compare with or migrate a live database.
 
 ```bash
-dibs schema
+export DATABASE_URL=postgres://user:pass@localhost/mydb
 ```
 
-You should see "No tables defined" since we haven't created any yet.
+On macOS, [Postgres.app](https://postgresapp.com/) is a convenient local
+Postgres installation.

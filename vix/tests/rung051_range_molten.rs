@@ -217,6 +217,7 @@ fn strict() -> Stream<Check> {
         SOURCE,
         CompilerConfig {
             force_molten_copy: true,
+            ..CompilerConfig::default()
         },
     );
     assert!(
@@ -277,6 +278,7 @@ fn differential() -> Stream<Check> {
         SOURCE,
         CompilerConfig {
             force_molten_copy: true,
+            ..CompilerConfig::default()
         },
     )
     .expect("forced-copy differential runs");
@@ -288,13 +290,25 @@ fn differential() -> Stream<Check> {
         .plain
         .checks
         .iter()
-        .map(|check| (check.provenance.clone(), check.identity, check.passed))
+        .map(|check| {
+            (
+                check.provenance.clone(),
+                check.identity.clone(),
+                check.passed,
+            )
+        })
         .collect();
     let copy_ids: Vec<_> = copy
         .plain
         .checks
         .iter()
-        .map(|check| (check.provenance.clone(), check.identity, check.passed))
+        .map(|check| {
+            (
+                check.provenance.clone(),
+                check.identity.clone(),
+                check.passed,
+            )
+        })
         .collect();
     assert_eq!(
         molten_ids, copy_ids,
@@ -324,6 +338,7 @@ fn duplicates() -> Stream<Check> {
         SOURCE,
         CompilerConfig {
             force_molten_copy: true,
+            ..CompilerConfig::default()
         },
     )
     .expect("forced-copy duplicates run");
@@ -333,7 +348,7 @@ fn duplicates() -> Stream<Check> {
             .plain
             .checks
             .iter()
-            .map(|check| (check.provenance.clone(), check.identity))
+            .map(|check| (check.provenance.clone(), check.identity.clone()))
             .collect()
     };
     assert_eq!(

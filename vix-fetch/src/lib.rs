@@ -4,6 +4,45 @@ use std::path::Component;
 use flate2::read::GzDecoder;
 use vix::exec::Tree;
 use vix::fetch::{FetchBackend, FetchOutput};
+use vix::runtime::{OriginAdapter, PrimitiveMachineError, ValueId};
+use vix::vir::{ExternKind, Type};
+
+/// Raw Blob transport for the registered pinned-fetch primitive. Archive
+/// interpretation is deliberately absent: extraction is a separate Vix
+/// demand over the verified Blob identity.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HttpBlobOriginAdapter;
+
+impl OriginAdapter for HttpBlobOriginAdapter {
+    fn read(
+        &self,
+        capability: &ValueId,
+        coordinate: &str,
+    ) -> Result<Vec<u8>, PrimitiveMachineError> {
+        if capability.schema != Type::Extern(ExternKind::Registry).schema_ref() {
+            return Err(PrimitiveMachineError::PolicyRejected {
+                detail: "HTTP Blob origin requires a Registry capability".to_owned(),
+            });
+        }
+        if !(coordinate.starts_with("http://") || coordinate.starts_with("https://")) {
+            return Err(PrimitiveMachineError::PolicyRejected {
+                detail: format!("HTTP Blob origin rejects coordinate {coordinate}"),
+            });
+        }
+        let mut response =
+            ureq::get(coordinate)
+                .call()
+                .map_err(|error| PrimitiveMachineError::Unavailable {
+                    detail: format!("HTTP Blob origin {coordinate} failed: {error}"),
+                })?;
+        response
+            .body_mut()
+            .read_to_vec()
+            .map_err(|error| PrimitiveMachineError::Unavailable {
+                detail: format!("HTTP Blob origin {coordinate} body failed: {error}"),
+            })
+    }
+}
 
 #[derive(Clone)]
 pub struct HttpArchiveFetchBackend {

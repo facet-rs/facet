@@ -1,103 +1,99 @@
 +++
-title = "Running migrations in prod"
-description = "Deploy migrations to Kubernetes"
+title = "Running migrations in production"
+description = "One image, one application binary, explicit execution modes"
 weight = 5
 +++
 
-In production, you'll want to run migrations as part of your deployment process. Here's how to do it with Kubernetes.
+Production deployments should contain one application image and one application
+binary. The binary links the `-db` library crate, so the schema and migration
+inventory is exactly the code being deployed. An environment variable selects
+whether that binary migrates the database or serves traffic.
 
-## The deployment model
+There is no separately installed `dibs` CLI and no schema-service executable in
+the production image.
 
-dibs needs two things to run migrations:
-1. The `dibs` CLI binary
-2. Your `-db` binary (the schema service)
+## Application modes
 
-The `dibs` CLI spawns your `-db` binary to read the schema, then applies migrations to the database.
+The names are application-owned. This example uses `MY_APP_MODE`:
 
-## Build the binaries
-
-In your CI pipeline, build both binaries:
-
-```dockerfile
-FROM rust:1.75 as builder
-
-WORKDIR /app
-COPY . .
-
-# Build the db service binary
-RUN cargo build --release -p my-app-db
-
-# Install dibs CLI
-RUN cargo install --git https://github.com/facet-rs/facet dibs-cli
-```
-
-## Running migrations
-
-Two common approaches:
-
-**Init container** - Runs before your app starts, blocks deployment until complete. Good for: ensuring the app never starts with an outdated schema.
-
-**Separate Job** - Runs independently, can be triggered by CI/CD. Good for: long-running migrations, separating migration failures from app deployments.
-
-Both use the same container spec:
-
-```yaml
-# Container spec (used in either approach)
-- name: migrate
-  image: my-app-migrations:latest
-  env:
-    - name: DATABASE_URL
-      valueFrom:
-        secretKeyRef:
-          name: db-credentials
-          key: url
-  command: ["/usr/local/bin/dibs", "migrate"]
-  volumeMounts:
-    - name: config
-      mountPath: /.config
-```
-
-For init container, add this to your Deployment's `spec.template.spec.initContainers`. For a Job, wrap it in a `batch/v1 Job` with `restartPolicy: Never`.
-
-## Config
-
-Mount `.config/dibs.styx` via ConfigMap:
-
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: dibs-config
-data:
-  dibs.styx: |
-    @schema {id crate:dibs@1, cli dibs}
-
-    db {
-        crate my-app-db
-        binary "/app/my-app-db"
+```rust
+match mode {
+    Mode::Migrate => {
+        let (mut client, connection) =
+            tokio_postgres::connect(&database_url, tokio_postgres::NoTls).await?;
+        tokio::spawn(connection);
+        dibs::MigrationRunner::new(&mut client).migrate().await?;
     }
+    Mode::Serve => serve(database_url).await?,
+    Mode::Dibs => {
+        // Optional local-development tooling endpoint; not a production mode.
+        dibs::serve("127.0.0.1:7764".parse()?).await?;
+    }
+}
 ```
 
-## Container image
+Call a real symbol such as `my_app_db::ensure_linked()` before dispatching the
+mode. This keeps the crate's inventory submissions linked into the application
+binary. A `type_name` or `TypeId` reference is not sufficient.
 
-Your migration container needs:
-- `/usr/local/bin/dibs` (the CLI)
-- `/app/my-app-db` (your db binary)
-- `/.config/dibs.styx` (config)
-
-Example Dockerfile:
+## Build one image
 
 ```dockerfile
+FROM rust:bookworm AS builder
+WORKDIR /src
+COPY . .
+RUN cargo build --locked --release -p my-app
+
 FROM debian:bookworm-slim
-
-# Install dibs CLI
-COPY --from=builder /usr/local/cargo/bin/dibs /usr/local/bin/dibs
-
-# Copy your db binary
-COPY --from=builder /app/target/release/my-app-db /app/my-app-db
-
-# Config will be mounted at runtime
-RUN mkdir -p /.config
-
-CMD ["/usr/local/bin/dibs", "migrate"]
+COPY --from=builder /src/target/release/my-app /usr/local/bin/my-app
+ENTRYPOINT ["/usr/local/bin/my-app"]
 ```
+
+The migration and application containers must use the same immutable image
+digest. This removes an entire compatibility problem: migration code, schema
+inventory, and serving code cannot accidentally come from different builds.
+
+## Kubernetes init container
+
+Use the image once as an init container with migration mode, then again as the
+application container with serve mode:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: migrate
+          image: registry.example/my-app@sha256:0123456789abcdef
+          env:
+            - name: MY_APP_MODE
+              value: migrate
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: my-app-postgres
+                  key: url
+      containers:
+        - name: app
+          image: registry.example/my-app@sha256:0123456789abcdef
+          env:
+            - name: MY_APP_MODE
+              value: serve
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: my-app-postgres
+                  key: url
+```
+
+Kubernetes does not start the application container unless the migration mode
+exits successfully. Migration failures therefore remain distinguishable from
+application startup failures without creating a second image or binary.
+
+For migrations that should not gate a rollout directly, run the same image and
+`MY_APP_MODE=migrate` in a `batch/v1 Job`. The executable contract stays the
+same.

@@ -4,7 +4,6 @@ vix/tests/ratchet/079-cross-run-reuse.vix:1 - `//! rerun` has no attribute mappi
 vix/tests/ratchet/082-flaky-detected.vix:1 - `//! rerun` has no attribute mapping in SURFACE.md, so the header remains. PROPOSAL: add `#[test { rerun: true }]`.
 vix/tests/ratchet/105-reuse-not-recompute.vix:1 - `//! rerun` has no attribute mapping in SURFACE.md, so the header remains. PROPOSAL: add `#[test { rerun: true }]`.
 vix/tests/ratchet/110-module-memo-boundary.vix:2 - `//! rerun` has no attribute mapping in SURFACE.md, so the header remains. PROPOSAL: add `#[test { rerun: true }]`.
-vix/tests/ratchet/082-flaky-detected.vix:2 - `//! expect-harness-flag: nondeterministic` is still a header because no in-language harness-flag surface is ratified. PROPOSAL: add `#[test { expect_harness_flag: "nondeterministic" }]` or keep this as a file directive.
 vix/tests/ratchet/106-imports.vix:1 - `//! uses: lib/geometry.vix` intentionally remains a file-level module directive per the mission.
 vix/tests/ratchet/107-visibility.reject.vix:3 - `//! uses: lib/geometry.vix` intentionally remains a file-level module directive per the mission.
 vix/tests/ratchet/108-import-std.vix:1 - `//! uses: lib/geometry.vix` intentionally remains a file-level module directive per the mission.

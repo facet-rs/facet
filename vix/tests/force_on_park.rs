@@ -9,6 +9,8 @@
 //! constructing the verified islands — no host callback, no pre-resolution, no
 //! second memo, no lane fallback.
 
+use std::rc::Rc;
+
 use vix::lowering::{LoweringArtifact, LoweringAttribution, LoweringCache, attribution_for};
 use vix::runtime::{
     ChaosPolicy, EventKind, EventLog, FailureValue, IslandInputs, Location, MachineCause, Runtime,
@@ -79,21 +81,24 @@ fn dummy_wire(index: u32) -> ValueIslandId {
     }
 }
 
-fn wire<'a>(
+fn wire(
     arg: &Island,
-    lowered: &'a LoweringArtifact,
-    attribution: &'a LoweringAttribution,
-    location: &'a Location,
-) -> WireDemand<'a> {
+    lowered: Rc<LoweringArtifact>,
+    attribution: LoweringAttribution,
+    location: Location,
+) -> WireDemand {
     WireDemand {
         island: arg.id,
         location,
         lowered,
-        attribution,
-        arguments: &[],
-        wires: &[],
+        attribution: Rc::new(attribution),
+        arguments: Vec::new(),
+        wires: Vec::new(),
         function: arg.function,
-        demand_arguments: &[],
+        // Synthetic argument islands carry no invocation provenance: nothing
+        // literal-selectable and no authored preimage to select on.
+        demand_arguments: None,
+        preimage: String::new(),
     }
 }
 
@@ -111,9 +116,9 @@ fn await_wire_parks_resolves_and_resumes() {
 
     let mut arg_cache = LoweringCache::default();
     let mut consumer_cache = LoweringCache::default();
-    let arg_lowered = arg_cache.get_or_lower(&arg).expect("arg lowers");
+    let arg_lowered = arg_cache.get_or_lower_owned(&arg).expect("arg lowers");
     let consumer_lowered = consumer_cache
-        .get_or_lower(&consumer)
+        .get_or_lower_owned(&consumer)
         .expect("consumer lowers");
     let arg_attr = attribution_for(&arg);
     let consumer_attr = attribution_for(&consumer);
@@ -121,7 +126,7 @@ fn await_wire_parks_resolves_and_resumes() {
     let consumer_loc = Location::for_test_value("force", "consumer");
 
     let mut runtime = Runtime::new(EventLog::default());
-    let wires = [wire(&arg, arg_lowered, &arg_attr, &arg_loc)];
+    let wires = vec![wire(&arg, arg_lowered, arg_attr, arg_loc)];
     let result = runtime
         .evaluate(
             consumer.id,
@@ -129,8 +134,8 @@ fn await_wire_parks_resolves_and_resumes() {
             consumer_lowered,
             &consumer_attr,
             IslandInputs {
-                arguments: &[],
-                wires: &wires,
+                arguments: Vec::new(),
+                wires,
             },
             ChaosPolicy::default(),
         )
@@ -155,6 +160,144 @@ fn await_wire_parks_resolves_and_resumes() {
     assert!(resumed, "the scheduler resumed the same task");
 }
 
+/// Production-path certificate: a wire-parked frame resides in Runtime
+/// scheduler state — off the recursive Rust stack — while its wire's argument
+/// demand runs as a separate scheduler task, and the SAME frame resumes to the
+/// realized identity.
+///
+/// This drives the ordinary `evaluate` loop (no manual stepping, no host
+/// callback). It witnesses three facts that only hold when the parked frame is
+/// scheduler-resident rather than a suspended Rust call frame:
+///
+/// 1. `peak_parked_frames` is non-zero — a frame was retained in the scheduler's
+///    off-stack parked map during the run;
+/// 2. the wire's argument island ran under a *different* `TaskId` than the
+///    consumer while the consumer was parked;
+/// 3. the same `TaskId` that emitted `WeavyParked` emitted `WeavyResumed`, and
+///    the resumed frame produced the realized wire value.
+#[test]
+fn parked_frame_is_scheduler_resident_off_stack_and_resumes_to_same_identity() {
+    let arg = const_island(1, 999);
+    let consumer = island(
+        2,
+        vec![node(0, Type::Int, vec![], Op::AwaitWire { input: 0 })],
+        0,
+        vec![dummy_wire(0)],
+    );
+
+    let mut arg_cache = LoweringCache::default();
+    let mut consumer_cache = LoweringCache::default();
+    let arg_lowered = arg_cache.get_or_lower_owned(&arg).expect("arg lowers");
+    let consumer_lowered = consumer_cache
+        .get_or_lower_owned(&consumer)
+        .expect("consumer lowers");
+    let arg_attr = attribution_for(&arg);
+    let consumer_attr = attribution_for(&consumer);
+    let arg_loc = Location::for_test_value("force", "arg");
+    let consumer_loc = Location::for_test_value("force", "consumer");
+
+    let mut runtime = Runtime::new(EventLog::default());
+    let wires = vec![wire(&arg, arg_lowered, arg_attr, arg_loc)];
+    let result = runtime
+        .evaluate(
+            consumer.id,
+            &consumer_loc,
+            consumer_lowered,
+            &consumer_attr,
+            IslandInputs {
+                arguments: Vec::new(),
+                wires,
+            },
+            ChaosPolicy::default(),
+        )
+        .expect("the parked frame resumes with the resolved value");
+
+    // (1) A frame was retained in the scheduler's off-stack parked map.
+    assert!(
+        runtime.counters().peak_parked_frames >= 1,
+        "a wire-parked frame was retained in Runtime scheduler state off the recursive stack",
+    );
+
+    // (2) The wire's argument island ran under its own scheduler task while the
+    // consumer frame was parked — the two frames are distinct scheduler tasks,
+    // not one nested Rust stack frame.
+    let parked_task = runtime
+        .sink()
+        .events()
+        .iter()
+        .find_map(|event| match event.kind {
+            EventKind::WeavyParked { task, .. } => Some(task),
+            _ => None,
+        })
+        .expect("the consumer frame parked");
+    let arg_task = runtime
+        .sink()
+        .events()
+        .iter()
+        .find_map(|event| match event.kind {
+            EventKind::IslandEntered { task, island } if island == arg.id => Some(task),
+            _ => None,
+        })
+        .expect("the wire's argument island entered as its own task");
+    assert_ne!(
+        parked_task, arg_task,
+        "the parked consumer frame and its wire's argument ran as distinct scheduler tasks",
+    );
+
+    // (3) The SAME frame that parked resumed, and it produced the realized value.
+    let resumed_task = runtime
+        .sink()
+        .events()
+        .iter()
+        .find_map(|event| match event.kind {
+            EventKind::WeavyResumed { task } => Some(task),
+            _ => None,
+        })
+        .expect("the parked frame resumed");
+    assert_eq!(
+        parked_task, resumed_task,
+        "the frame that parked is the frame that resumed",
+    );
+    assert!(result.failure.is_none());
+    assert_eq!(
+        runtime.scalar_word(result.handle),
+        Some(999),
+        "the resumed frame returns the realized wire value",
+    );
+
+    // The resumed frame's result identity is stable: a fresh runtime re-running
+    // the same demand parks, resumes, and realizes the byte-identical value.
+    let mut arg_cache = LoweringCache::default();
+    let mut consumer_cache = LoweringCache::default();
+    let arg_lowered = arg_cache.get_or_lower_owned(&arg).expect("arg lowers");
+    let consumer_lowered = consumer_cache
+        .get_or_lower_owned(&consumer)
+        .expect("consumer lowers");
+    let arg_attr = attribution_for(&arg);
+    let consumer_attr = attribution_for(&consumer);
+    let arg_loc = Location::for_test_value("force", "arg");
+    let consumer_loc = Location::for_test_value("force", "consumer");
+    let mut replay = Runtime::new(EventLog::default());
+    let wires = vec![wire(&arg, arg_lowered, arg_attr, arg_loc)];
+    let replayed = replay
+        .evaluate(
+            consumer.id,
+            &consumer_loc,
+            consumer_lowered,
+            &consumer_attr,
+            IslandInputs {
+                arguments: Vec::new(),
+                wires,
+            },
+            ChaosPolicy::default(),
+        )
+        .expect("the replay parks and resumes");
+    assert_eq!(
+        result.identity, replayed.identity,
+        "the parked-then-resumed frame resolves to the same realized identity",
+    );
+}
+
 /// A selected division-by-zero argument propagates `DivisionByZero` with its
 /// authored source site to the parent demand.
 #[test]
@@ -169,9 +312,9 @@ fn forced_division_by_zero_wire_propagates_the_typed_failure() {
 
     let mut arg_cache = LoweringCache::default();
     let mut consumer_cache = LoweringCache::default();
-    let arg_lowered = arg_cache.get_or_lower(&arg).expect("arg lowers");
+    let arg_lowered = arg_cache.get_or_lower_owned(&arg).expect("arg lowers");
     let consumer_lowered = consumer_cache
-        .get_or_lower(&consumer)
+        .get_or_lower_owned(&consumer)
         .expect("consumer lowers");
     let arg_attr = attribution_for(&arg);
     let consumer_attr = attribution_for(&consumer);
@@ -179,7 +322,7 @@ fn forced_division_by_zero_wire_propagates_the_typed_failure() {
     let consumer_loc = Location::for_test_value("force", "consumer");
 
     let mut runtime = Runtime::new(EventLog::default());
-    let wires = [wire(&arg, arg_lowered, &arg_attr, &arg_loc)];
+    let wires = vec![wire(&arg, arg_lowered, arg_attr, arg_loc)];
     let result = runtime
         .evaluate(
             consumer.id,
@@ -187,8 +330,8 @@ fn forced_division_by_zero_wire_propagates_the_typed_failure() {
             consumer_lowered,
             &consumer_attr,
             IslandInputs {
-                arguments: &[],
-                wires: &wires,
+                arguments: Vec::new(),
+                wires,
             },
             ChaosPolicy::default(),
         )
@@ -222,9 +365,9 @@ fn repeated_force_of_one_wire_evaluates_once() {
 
     let mut arg_cache = LoweringCache::default();
     let mut consumer_cache = LoweringCache::default();
-    let arg_lowered = arg_cache.get_or_lower(&arg).expect("arg lowers");
+    let arg_lowered = arg_cache.get_or_lower_owned(&arg).expect("arg lowers");
     let consumer_lowered = consumer_cache
-        .get_or_lower(&consumer)
+        .get_or_lower_owned(&consumer)
         .expect("consumer lowers");
     let arg_attr = attribution_for(&arg);
     let consumer_attr = attribution_for(&consumer);
@@ -233,9 +376,14 @@ fn repeated_force_of_one_wire_evaluates_once() {
 
     let mut runtime = Runtime::new(EventLog::default());
     // Both wire inputs resolve the SAME argument island (same location/preimage).
-    let wires = [
-        wire(&arg, arg_lowered, &arg_attr, &arg_loc),
-        wire(&arg, arg_lowered, &arg_attr, &arg_loc),
+    let wires = vec![
+        wire(
+            &arg,
+            Rc::clone(&arg_lowered),
+            arg_attr.clone(),
+            arg_loc.clone(),
+        ),
+        wire(&arg, arg_lowered, arg_attr, arg_loc),
     ];
     let result = runtime
         .evaluate(
@@ -244,8 +392,8 @@ fn repeated_force_of_one_wire_evaluates_once() {
             consumer_lowered,
             &consumer_attr,
             IslandInputs {
-                arguments: &[],
-                wires: &wires,
+                arguments: Vec::new(),
+                wires,
             },
             ChaosPolicy::default(),
         )
@@ -283,7 +431,9 @@ fn reentrant_wire_demand_is_a_typed_fault() {
         vec![dummy_wire(0)],
     );
     let mut cache = LoweringCache::default();
-    let lowered = cache.get_or_lower(&consumer).expect("consumer lowers");
+    let lowered = cache
+        .get_or_lower_owned(&consumer)
+        .expect("consumer lowers");
     let attribution = attribution_for(&consumer);
     let consumer_loc = Location::for_test_value("force", "cycle");
     let wire_loc = Location::for_test_value("force", "cycle-wire");
@@ -291,15 +441,16 @@ fn reentrant_wire_demand_is_a_typed_fault() {
     let mut runtime = Runtime::new(EventLog::default());
     // The wire resolves the SAME island — the consumer's own demand key — so
     // forcing it re-enters a demand already `Running` on the stack.
-    let wires = [WireDemand {
+    let wires = vec![WireDemand {
         island: consumer.id,
-        location: &wire_loc,
-        lowered,
-        attribution: &attribution,
-        arguments: &[],
-        wires: &[],
+        location: wire_loc,
+        lowered: Rc::clone(&lowered),
+        attribution: Rc::new(attribution.clone()),
+        arguments: Vec::new(),
+        wires: Vec::new(),
         function: consumer.function,
-        demand_arguments: &[],
+        demand_arguments: None,
+        preimage: String::new(),
     }];
     let error = runtime
         .evaluate(
@@ -308,8 +459,8 @@ fn reentrant_wire_demand_is_a_typed_fault() {
             lowered,
             &attribution,
             IslandInputs {
-                arguments: &[],
-                wires: &wires,
+                arguments: Vec::new(),
+                wires,
             },
             ChaosPolicy::default(),
         )
