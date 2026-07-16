@@ -1,8 +1,10 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::ops::Deref;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use weavy::exec::{
     FallbackReason, FaultSite, LaneKind, ResolvedTaskValue, TaskFault, TaskStructuralValue,
@@ -368,6 +370,28 @@ struct ExecPending {
     node: NodeId,
     span: Span,
     realized_as: Option<RealizedWireDemand>,
+    workspace: ExecWorkspace,
+}
+
+struct ExecWorkspace {
+    path: PathBuf,
+}
+
+impl ExecWorkspace {
+    fn create() -> Result<Self, String> {
+        static NEXT_WORKSPACE: AtomicU64 = AtomicU64::new(0);
+        let ordinal = NEXT_WORKSPACE.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("vix-exec-{}-{ordinal}", std::process::id()));
+        std::fs::create_dir(&path)
+            .map_err(|error| format!("create exec workspace `{}`: {error}", path.display()))?;
+        Ok(Self { path })
+    }
+}
+
+impl Drop for ExecWorkspace {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
 }
 
 /// One island demand submission: everything needed to resolve it from memo,
@@ -3869,6 +3893,7 @@ impl<S: EventSink> Runtime<S> {
             node,
             span,
             realized_as,
+            workspace,
         } = pending;
         let output = output.map_err(|detail| {
             Box::new(MachineError::runtime(
@@ -3883,7 +3908,16 @@ impl<S: EventSink> Runtime<S> {
         // inline wait did.
         self.transition_task(task_id, TaskState::Running)?;
         if output.status.success() {
-            let interned = self.intern_exec_outcome(&result_ty, &output.stdout, &output.stderr);
+            let tree = archive_directory(&workspace.path).map_err(|detail| {
+                Box::new(MachineError::runtime(
+                    MachineOperation::Result,
+                    RuntimeFault::EffectHostFailure { detail },
+                    None,
+                    Some(demand),
+                ))
+            })?;
+            let interned =
+                self.intern_exec_outcome(&result_ty, &tree, &output.stdout, &output.stderr);
             self.memo.insert(
                 location.id,
                 MemoEntry {
@@ -5095,8 +5129,10 @@ impl<S: EventSink> Runtime<S> {
                     Some(demand_key),
                 ))
             };
+            let workspace = ExecWorkspace::create().map_err(host_fault)?;
             let child = std::process::Command::new(&program)
                 .args(&materialized_argv)
+                .current_dir(&workspace.path)
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
@@ -5116,6 +5152,7 @@ impl<S: EventSink> Runtime<S> {
                     node: node.id,
                     span: node.span,
                     realized_as,
+                    workspace,
                 },
             );
             self.observe_effect_frontier();
@@ -5171,23 +5208,28 @@ impl<S: EventSink> Runtime<S> {
         })
     }
 
-    /// Intern one completed `ExecOutcome` under the v1 output protocol: stdout
-    /// and stderr are UTF-8 line-framed, each stream's completed content the
-    /// line-number-keyed map, framed and frozen exactly as the production
-    /// realize path frames a record of records of maps.
-    fn intern_exec_outcome(&mut self, outcome_ty: &Type, stdout: &[u8], stderr: &[u8]) -> Interned {
-        let (stream_ty, lines_ty) = match outcome_ty {
+    /// Intern one completed `ExecOutcome`: the workspace becomes one canonical
+    /// immutable Tree, while stdout and stderr are UTF-8 line-framed streams.
+    fn intern_exec_outcome(
+        &mut self,
+        outcome_ty: &Type,
+        tree: &[u8],
+        stdout: &[u8],
+        stderr: &[u8],
+    ) -> Interned {
+        let (tree_ty, stream_ty, lines_ty) = match outcome_ty {
             Type::Record(record) => {
-                let stream_ty = record.fields[0].ty.clone();
+                let tree_ty = record.fields[0].ty.clone();
+                let stream_ty = record.fields[1].ty.clone();
                 let lines_ty = match &stream_ty {
                     Type::Record(stream) => stream.fields[0].ty.clone(),
                     _ => Type::map(Type::Int, Type::String),
                 };
-                (stream_ty, lines_ty)
+                (tree_ty, stream_ty, lines_ty)
             }
             _ => {
                 let lines_ty = Type::map(Type::Int, Type::String);
-                (outcome_ty.clone(), lines_ty)
+                (Type::Extern(ExternKind::Tree), outcome_ty.clone(), lines_ty)
             }
         };
         let int_schema = semantic_schema_ref(&Type::Int);
@@ -5235,12 +5277,18 @@ impl<S: EventSink> Runtime<S> {
                 ]),
             )
         };
+        let canonical_tree = canonical_archive_tree(tree);
+        let tree_node = FramedNode::leaf(semantic_schema_ref(&tree_ty), canonical_tree);
         let (stdout_node, stdout_frozen) = stream_value(stdout);
         let (stderr_node, stderr_frozen) = stream_value(stderr);
         let outcome = FramedNode::Variant {
             schema: semantic_schema_ref(outcome_ty),
             tag: 0,
             fields: vec![
+                FramedField {
+                    schema: semantic_schema_ref(&tree_ty),
+                    value: FramedValue::Optional(Some(tree_node.identity())),
+                },
                 FramedField {
                     schema: semantic_schema_ref(&stream_ty),
                     value: FramedValue::Optional(Some(stdout_node.identity())),
@@ -5254,7 +5302,11 @@ impl<S: EventSink> Runtime<S> {
         let interned = self.store.intern_tree(&outcome, &[]);
         self.store.attach_frozen(
             interned.handle,
-            FrozenValue::Product(vec![stdout_frozen, stderr_frozen]),
+            FrozenValue::Product(vec![
+                FrozenValue::Opaque(tree.to_vec()),
+                stdout_frozen,
+                stderr_frozen,
+            ]),
         );
         self.observe_interned(&interned);
         interned
@@ -7222,6 +7274,23 @@ fn effect_value_from_frozen(
             effect.frozen = Some(frozen);
             Ok(effect)
         }
+        (FrozenValue::Opaque(bytes), Type::Extern(ExternKind::Tree)) => {
+            parse_ustar(bytes)
+                .map_err(|_| effect_machine_error("frozen Tree was not plain ustar"))?;
+            let canonical = canonical_archive_tree(bytes);
+            let node = FramedNode::leaf(effect_schema(ty), canonical);
+            Ok(EffectValue {
+                identity: node.identity(),
+                resident: bytes.clone(),
+                frozen: Some(frozen),
+                node: Some(node),
+            })
+        }
+        (FrozenValue::Opaque(bytes), Type::Extern(_)) => {
+            let mut effect = effect_leaf(ty, bytes.clone());
+            effect.frozen = Some(frozen);
+            Ok(effect)
+        }
         (FrozenValue::Product(fields), Type::Record(record)) => {
             if fields.len() != record.fields.len() {
                 return effect_fault("frozen product field count disagreed with schema");
@@ -7393,6 +7462,93 @@ fn split_tree_entry(bytes: &[u8]) -> Result<(&[u8], &[u8]), Box<MachineError>> {
 fn fixture_tree_name(bytes: &[u8]) -> Option<&[u8]> {
     let name = bytes.strip_prefix(b"fixture-tree\0")?;
     Some(name.split(|byte| *byte == 0).next().unwrap_or(name))
+}
+
+fn archive_directory(root: &Path) -> Result<Vec<u8>, String> {
+    fn collect(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+        let mut entries = std::fs::read_dir(directory)
+            .map_err(|error| {
+                format!(
+                    "read exec output directory `{}`: {error}",
+                    directory.display()
+                )
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("read exec output entry: {error}"))?;
+        entries.sort_by_key(std::fs::DirEntry::file_name);
+        for entry in entries {
+            let path = entry.path();
+            let metadata = std::fs::symlink_metadata(&path)
+                .map_err(|error| format!("inspect exec output `{}`: {error}", path.display()))?;
+            if metadata.file_type().is_symlink() {
+                return Err(format!(
+                    "exec output symlink `{}` is not yet supported",
+                    path.display()
+                ));
+            }
+            if metadata.is_dir() {
+                collect(&path, files)?;
+            } else if metadata.is_file() {
+                files.push(path);
+            }
+        }
+        Ok(())
+    }
+
+    fn write_octal(dst: &mut [u8], value: u64) -> Result<(), String> {
+        let width = dst
+            .len()
+            .checked_sub(1)
+            .ok_or_else(|| "ustar octal field was empty".to_owned())?;
+        let text = format!("{value:0width$o}\0");
+        if text.len() != dst.len() {
+            return Err(format!(
+                "ustar value {value} overflowed {} bytes",
+                dst.len()
+            ));
+        }
+        dst.copy_from_slice(text.as_bytes());
+        Ok(())
+    }
+
+    let mut files = Vec::new();
+    collect(root, &mut files)?;
+    files.sort();
+    let mut archive = Vec::new();
+    for file in files {
+        let relative = file
+            .strip_prefix(root)
+            .map_err(|_| format!("exec output `{}` escaped its workspace", file.display()))?;
+        let relative = relative
+            .components()
+            .map(|component| component.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+        if relative.len() > 100 {
+            return Err(format!("exec output path `{relative}` exceeds ustar v1"));
+        }
+        let bytes = std::fs::read(&file)
+            .map_err(|error| format!("read exec output `{}`: {error}", file.display()))?;
+        let mut header = [0u8; 512];
+        header[..relative.len()].copy_from_slice(relative.as_bytes());
+        header[100..108].copy_from_slice(b"0000644\0");
+        header[108..116].copy_from_slice(b"0000000\0");
+        header[116..124].copy_from_slice(b"0000000\0");
+        write_octal(&mut header[124..136], bytes.len() as u64)?;
+        header[136..148].copy_from_slice(b"00000000000\0");
+        header[148..156].fill(b' ');
+        header[156] = b'0';
+        header[257..263].copy_from_slice(b"ustar\0");
+        header[263..265].copy_from_slice(b"00");
+        let checksum: u32 = header.iter().map(|byte| u32::from(*byte)).sum();
+        let checksum = format!("{checksum:06o}\0 ");
+        header[148..156].copy_from_slice(checksum.as_bytes());
+        archive.extend_from_slice(&header);
+        archive.extend_from_slice(&bytes);
+        archive.resize(archive.len().div_ceil(512) * 512, 0);
+    }
+    archive.resize(archive.len() + 1024, 0);
+    Ok(archive)
 }
 
 /// Canonical archive-tree identity material. It records entry kinds, paths,

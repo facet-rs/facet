@@ -1076,8 +1076,8 @@ pub fn byte_stream_type() -> Type {
 }
 
 /// `exec`'s result type. There is no exit-status field: termination becomes
-/// the typed answer or a typed failure. (`answer`/`tree` await their rungs:
-/// unit values and `Tree` are not yet representable surface types here.)
+/// the typed answer or a typed failure. The completed tree is immutable; later
+/// slices expose protocol-authorized projections before whole-process exit.
 ///
 /// r[impl machine.primitive.exec-outcome]
 /// r[impl machine.primitive.exit-status-is-not-a-value]
@@ -1086,6 +1086,10 @@ pub fn exec_outcome_type() -> Type {
     Type::Record(RecordType::new(
         "ExecOutcome",
         vec![
+            RecordField {
+                name: "tree".to_owned(),
+                ty: Type::Extern(ExternKind::Tree),
+            },
             RecordField {
                 name: "stdout".to_owned(),
                 ty: byte_stream_type(),

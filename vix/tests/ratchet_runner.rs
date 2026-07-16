@@ -6369,6 +6369,20 @@ fn rung_067_exec_echo_runs_through_the_capability_effect_demand() {
     }
 }
 
+#[test]
+fn completed_exec_outcome_publishes_its_workspace_tree() {
+    const SOURCE: &str = r#"
+#[test]
+fn completed_exec_tree(sh: Sh) -> Stream<Check> {
+    let out = exec sh`-c "mkdir -p out; printf ready > out/early.txt"`;
+    yield expect_eq((out.tree / "out" / "early.txt").text(), "ready");
+}
+"#;
+    let report = run_source(SOURCE).expect("completed exec tree runs");
+    assert!(report.passed(), "completed exec tree passes: {report:#?}");
+    assert!(report.agrees());
+}
+
 /// A nonzero exit is retained as `ProcessFailure` in the effect demand and
 /// becomes `Result::Err` only at the scheduler-owned postfix-catch boundary.
 ///
