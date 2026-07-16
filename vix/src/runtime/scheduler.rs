@@ -4141,9 +4141,8 @@ impl<S: EventSink> Runtime<S> {
         let projections = self
             .exec_projection_pending
             .iter()
-            .filter_map(|(demand, pending)| {
-                (pending.execution == execution).then(|| (*demand, pending.path.clone()))
-            })
+            .filter(|(_, pending)| pending.execution == execution)
+            .map(|(demand, pending)| (*demand, pending.path.clone()))
             .collect::<Vec<_>>();
         for (demand, path) in projections {
             let bytes = std::fs::read(workspace.join(&path)).map_err(|error| {
