@@ -8,6 +8,11 @@ repository.workspace = true
 description = "WebAssembly bindings for Snark grammar playgrounds"
 publish = false
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 

@@ -9,6 +9,11 @@ version = "0.0.0"
 edition = "2024"
 publish = false
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 snark = { path = "../snark", features = ["json-import"] }
 snark-dsl = { path = "../snark-dsl", features = ["native"] }

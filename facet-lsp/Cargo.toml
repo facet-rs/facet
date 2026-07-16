@@ -8,12 +8,17 @@ repository.workspace = true
 publish = false
 description = "Small Facet-derived LSP 3.17 type subset and JSON-RPC framing."
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 facet.workspace = true
 facet-json.workspace = true
 
 [dev-dependencies]
-facet-testhelpers.workspace = true
+facet-testhelpers = { path = "../facet-testhelpers" }
 
 [lints]
 workspace = true

@@ -11,6 +11,11 @@ edition = "2024"
 publish = false
 description = "SPIKE (throwaway): prove snark-as-gingembre-front-end via resolved-CST -> ast::Template, oracle'd against cst_lower."
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 snark = { path = "../snark", features = ["json-import"] }
 snark-dsl = { path = "../snark-dsl", features = ["native"] }

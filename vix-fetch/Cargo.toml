@@ -5,6 +5,11 @@ edition = "2024"
 publish = false
 description = "Real fetch backend for vix archives."
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 vix = { path = "../vix" }
 flate2 = "1.1"

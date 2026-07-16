@@ -8,6 +8,11 @@ repository.workspace = true
 publish = false
 description = "stdio language server for Vix files."
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [[bin]]
 name = "vix-lsp"
 path = "src/main.rs"
@@ -22,7 +27,7 @@ tracing-subscriber.workspace = true
 vix = { path = "../vix" }
 
 [dev-dependencies]
-facet-testhelpers.workspace = true
+facet-testhelpers = { path = "../facet-testhelpers" }
 
 [lints]
 workspace = true

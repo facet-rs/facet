@@ -13,6 +13,11 @@ edition = "2024"
 publish = false
 description = "vix executor service over vox: observers + producing handles"
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 vix = { path = "../vix" }
 vox = { path = "../vox/rust/vox" }

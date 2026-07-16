@@ -14,6 +14,11 @@ edition = "2024"
 publish = false
 description = "The vix daemon: a vox service that owns demand-driven evaluation."
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 vix = { path = "../vix" }
 vox = { path = "../vox/rust/vox" }
