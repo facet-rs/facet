@@ -1375,12 +1375,6 @@ pub enum Op {
     /// identity, because an observation names its value only after the bytes
     /// arrive (`machine.primitive.fetch-is-pinned`, the `observe` counterpart).
     RegistryCoordinate,
-    /// Fetch a pinned Blob by content identity: resolve the store first, only
-    /// then the (fixture) origin; verify the bytes against the pinned hash.
-    ///
-    /// r[impl machine.primitive.fetch-returns-a-blob]
-    /// r[impl machine.primitive.fetch-integrity-vs-identity]
-    Fetch,
     /// Resolve the canonical package solver fixture lazily through visited
     /// package-row reads. Inputs are the authored universe value and the
     /// requirements map; receipts carry the package rows actually read.
@@ -3913,7 +3907,6 @@ fn is_effect_root(node: &Node) -> bool {
             | Op::FixtureRegistry
             | Op::RegistryUrl
             | Op::RegistryCoordinate
-            | Op::Fetch
             | Op::MiniSolve { .. }
             | Op::Untar
             | Op::BlobLen
@@ -4449,7 +4442,6 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::FixtureRegistry => op.push(94),
         Op::RegistryUrl => op.push(95),
         Op::RegistryCoordinate => op.push(102),
-        Op::Fetch => op.push(96),
         Op::MiniSolve {
             function,
             requirements,

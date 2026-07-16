@@ -732,13 +732,17 @@ fn observe_records_appends_and_persists_the_verified_observation() {
 }
 
 const OBSERVE_THEN_REFRESH: &str = r#"
+fn observed_alias(blob: Blob) -> String {
+    "case-" + blob.len().to_string() + ".crate"
+}
+
 #[test]
 fn refresh_forces_a_fresh_observation_past_the_memo() -> Stream<Check> {
     let first = observe(fixture_registry().coordinate("case.crate"));
     yield expect_eq(first.len(), 4096);
     let second = observe(fixture_registry().coordinate("case.crate"));
     yield expect_eq(second.len(), 4096);
-    let refreshed = refresh(fixture_registry().coordinate("case.crate"));
+    let refreshed = refresh(fixture_registry().coordinate(observed_alias(second)));
     yield expect_eq(refreshed.len(), 4096);
     yield fetched(2);
 }
@@ -754,11 +758,14 @@ fn refresh_reobserves_past_the_memo_and_appends_a_new_head() {
     let claims = Arc::new(RecordingClaimHistory::default());
     let persistence = Arc::new(RecordingCasPersistence::default());
     let services = PrimitiveServices::default()
-        .with_fixture_store(fixture_store(
+        .with_fixture_store(fixture_store_with_manifest(
             &fixtures,
-            &server.url(),
-            &identity,
-            &upstream,
+            &format!(
+                "case.crate {url} {content} {upstream}\n\
+                 case-4096.crate {url} {content} {upstream}\n",
+                url = server.url(),
+                content = identity.content.hex(),
+            ),
         ))
         .with_value_persistence(persistence.clone())
         .with_claim_history(claims.clone())

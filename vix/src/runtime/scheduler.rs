@@ -3366,34 +3366,6 @@ impl<S: EventSink> Runtime<S> {
                 )
                 .map(EffectTerm::Value)
             }
-            Op::Fetch => {
-                let EffectTerm::Value(pinned) = input(0, self)? else {
-                    return effect_fault("fetch URL was codata");
-                };
-                let pinned_identity = pinned.identity;
-                let pinned = String::from_utf8(pinned.resident)
-                    .map_err(|_| effect_machine_error("pinned URL payload was not UTF-8"))?;
-                let (url, expected) = pinned
-                    .split_once('\n')
-                    .ok_or_else(|| effect_machine_error("pinned URL payload was malformed"))?;
-                let bytes = self
-                    .fixture_store
-                    .fetch_url(url)
-                    .map_err(|_| effect_machine_error("fixture fetch origin was unavailable"))?;
-                let blob = effect_leaf(&node.ty, bytes);
-                if blob.identity.content.hex() != expected {
-                    return effect_fault("fixture fetch did not match its pinned content identity");
-                }
-                reads.push(super::model::ReadWitness {
-                    source: pinned_identity,
-                    projection: ReadProjection::Origin {
-                        coordinate: url.to_owned(),
-                    },
-                    observation: ReadObservation::Value(blob.identity.clone()),
-                });
-                self.counters.fetches_performed += 1;
-                Ok(EffectTerm::Value(blob))
-            }
             Op::MiniSolve { requirements, .. } => self
                 .mini_solve_value(&node.ty, requirements, reads)
                 .map(EffectTerm::Value),
