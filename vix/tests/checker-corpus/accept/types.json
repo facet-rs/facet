@@ -27,7 +27,7 @@
     {
       "query": "function_signature",
       "subject": "swap",
-      "expect": "fn<A,B>(Pair<A,B>)->Pair<B,A> checked lowering=GenericLoweringUnsupported",
+      "expect": "fn<A,B>(Pair<A,B>)->Pair<B,A> checked lowering=monomorphization",
       "span_start": 0,
       "span_end": 0
     },

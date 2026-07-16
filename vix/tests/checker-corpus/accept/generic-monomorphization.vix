@@ -7,5 +7,5 @@ fn id<T>(x: T) -> T {
 }
 
 pub fn main() -> Int {
-    id<Int>(1)
+    id(1)
 }

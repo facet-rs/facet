@@ -102,6 +102,16 @@ for them.
 > does not mention every generic parameter. No erased type parameter or runtime
 > generic dictionary survives lowering.
 
+> r[lang.types.generic-function-monomorphized]
+>
+> A generic function declaration is a code template, never a runtime value.
+> Each instantiation substitutes concrete types for the type parameters —
+> inferred from the argument types — and lowers one body per distinct
+> type-argument set. Type parameters are not part of the surface call syntax:
+> an instantiation is written as an ordinary call and its type arguments are
+> inferred. No erased type parameter or runtime generic dictionary survives
+> lowering.
+
 ## Types, records, and enums
 
 Named declarations are nominal. Anonymous `struct { ... }` types are

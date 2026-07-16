@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "reject.generic-lowering-unsupported",
   "outcome": "reject",
-  "description": "Generic functions are checked, but lowering a generic instantiation rejects loudly until monomorphization lands.",
+  "description": "Generic functions are instantiated from inferred type arguments (see accept.generic-monomorphization); explicit turbofish generic-call syntax is not part of the Vix surface and is rejected at parse.",
   "sources": [
     {
       "path": "reject/generic-lowering-unsupported.vix",
@@ -11,11 +11,11 @@
   ],
   "assertions": [
     {
-      "query": "lowering_plan",
-      "subject": "GenericLoweringUnsupported",
-      "expect": "function=id mono_args=Int intended_abi=monomorphization",
+      "query": "diagnostics",
+      "subject": "ParseRejected",
+      "expect": "explicit turbofish generic-call syntax is rejected at parse",
       "span_start": 91,
-      "span_end": 96
+      "span_end": 99
     }
   ]
 }

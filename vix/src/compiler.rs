@@ -1,7 +1,8 @@
 //! Surface AST checking and lowering to Vix IR.
 
-use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet};
+use std::borrow::Cow;
+use std::cell::{Cell, RefCell};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use taxon::{
     Field as TaxonField, Kind as TaxonKind, SchemaRef as TaxonSchemaRef, Variant as TaxonVariant,
@@ -175,15 +176,54 @@ struct ParameterSignature {
 
 struct ModuleContext<'a> {
     signatures: &'a BTreeMap<String, FunctionSignature>,
-    types: &'a BTreeMap<String, Type>,
-    closures: RefCell<ClosureState>,
+    /// Generic function templates, keyed by name. These are not declared or
+    /// lowered up front; each call site instantiates a monomorphized copy per
+    /// concrete type-argument set.
+    generics: &'a BTreeMap<String, &'a ast::FnItem>,
+    /// The concrete named types of the module. Type-parameter bindings for a
+    /// monomorphized body are layered on top (see `types`).
+    base_types: &'a BTreeMap<String, Type>,
+    /// The type environment for the function currently being lowered. For a
+    /// source-order function this is `base_types`; for a monomorphized body it
+    /// additionally binds the generic's type parameters to concrete types.
+    types: Cow<'a, BTreeMap<String, Type>>,
+    generated: &'a GeneratedFunctions,
     config: CompilerConfig,
 }
 
-struct ClosureState {
-    next_function: u32,
-    functions: BTreeMap<FunctionId, Function>,
-    scopes: Vec<ClosureScope>,
+/// Shared, interior-mutable state for functions minted during lowering:
+/// closures and monomorphized generic instantiations. Both draw ids from a
+/// single counter so `module.functions` stays a dense `FunctionId`-indexed
+/// list, and both land in `functions` to be appended after the source-order
+/// functions.
+struct GeneratedFunctions {
+    next_function: Cell<u32>,
+    functions: RefCell<BTreeMap<FunctionId, Function>>,
+    scopes: RefCell<Vec<ClosureScope>>,
+    monomorphs: RefCell<MonomorphState>,
+}
+
+#[derive(Default)]
+struct MonomorphState {
+    /// Every distinct instantiation, for deduplication.
+    instances: Vec<MonomorphInstance>,
+    /// Concrete signatures, available before the body is lowered so recursive
+    /// instantiations at the same type resolve.
+    signatures: BTreeMap<FunctionId, FunctionSignature>,
+    /// Instantiations whose body has not been lowered yet.
+    pending: VecDeque<PendingMonomorph>,
+}
+
+struct MonomorphInstance {
+    name: String,
+    arguments: Vec<Type>,
+    id: FunctionId,
+}
+
+struct PendingMonomorph {
+    id: FunctionId,
+    name: String,
+    arguments: Vec<Type>,
 }
 
 struct ClosureScope {
@@ -191,26 +231,52 @@ struct ClosureScope {
     next_closure: u32,
 }
 
-impl ModuleContext<'_> {
+impl GeneratedFunctions {
+    fn new(base: u32) -> Self {
+        Self {
+            next_function: Cell::new(base),
+            functions: RefCell::new(BTreeMap::new()),
+            scopes: RefCell::new(Vec::new()),
+            monomorphs: RefCell::new(MonomorphState::default()),
+        }
+    }
+
+    fn allocate_function(&self) -> FunctionId {
+        let id = FunctionId(self.next_function.get());
+        self.next_function.set(
+            self.next_function
+                .get()
+                .checked_add(1)
+                .expect("function count fits u32"),
+        );
+        id
+    }
+}
+
+impl<'a> ModuleContext<'a> {
+    fn types(&self) -> &BTreeMap<String, Type> {
+        &self.types
+    }
+
     fn enter_function(&self, path: String) {
-        self.closures.borrow_mut().scopes.push(ClosureScope {
+        self.generated.scopes.borrow_mut().push(ClosureScope {
             path,
             next_closure: 0,
         });
     }
 
     fn leave_function(&self) {
-        self.closures
-            .borrow_mut()
+        self.generated
             .scopes
+            .borrow_mut()
             .pop()
             .expect("function lowering has an active closure scope");
     }
 
     fn allocate_closure(&self) -> (FunctionId, String) {
-        let mut state = self.closures.borrow_mut();
-        let scope = state
-            .scopes
+        let id = self.generated.allocate_function();
+        let mut scopes = self.generated.scopes.borrow_mut();
+        let scope = scopes
             .last_mut()
             .expect("closure lowering occurs inside a function");
         let ordinal = scope.next_closure;
@@ -219,23 +285,108 @@ impl ModuleContext<'_> {
             .checked_add(1)
             .expect("closure count fits u32");
         let name = format!("{}::closure#{ordinal}", scope.path);
-        let id = FunctionId(state.next_function);
-        state.next_function = state
-            .next_function
-            .checked_add(1)
-            .expect("function count fits u32");
         (id, name)
     }
 
     fn insert_closure(&self, function: Function) {
         assert!(
-            self.closures
-                .borrow_mut()
+            self.generated
                 .functions
+                .borrow_mut()
                 .insert(function.id, function)
                 .is_none(),
-            "closure function ids are unique"
+            "generated function ids are unique"
         );
+    }
+
+    /// Layer the generic's type-parameter bindings on top of the module's base
+    /// types, for a concrete type-argument set in declaration order.
+    fn monomorph_types(
+        &self,
+        template: &ast::FnItem,
+        arguments: &[Type],
+    ) -> Result<BTreeMap<String, Type>, Diagnostics> {
+        let generics = template
+            .generics
+            .as_ref()
+            .expect("monomorph template is generic");
+        if generics.params.len() != arguments.len() {
+            return Err(invalid_arity(
+                generics.span,
+                generics.params.len(),
+                arguments.len(),
+            ));
+        }
+        let mut types = self.base_types.clone();
+        for (parameter, argument) in generics.params.iter().zip(arguments) {
+            types.insert(parameter.value.clone(), argument.clone());
+        }
+        Ok(types)
+    }
+
+    /// Resolve — creating if necessary — the monomorphized instance of a generic
+    /// function for a concrete type-argument set, returning its id and concrete
+    /// signature. New instances are queued for body lowering; the signature is
+    /// registered before the body is lowered so recursion at the same type
+    /// resolves against it.
+    fn instantiate_monomorph(
+        &self,
+        name: &str,
+        arguments: Vec<Type>,
+    ) -> Result<(FunctionId, FunctionSignature), Diagnostics> {
+        if let Some((id, signature)) = self
+            .generated
+            .monomorphs
+            .borrow()
+            .instances
+            .iter()
+            .find(|instance| instance.name == name && instance.arguments == arguments)
+            .map(|instance| {
+                (
+                    instance.id,
+                    self.generated.monomorphs.borrow().signatures[&instance.id].clone(),
+                )
+            })
+        {
+            return Ok((id, signature));
+        }
+        let template = *self
+            .generics
+            .get(name)
+            .expect("instantiate_monomorph called for a known generic function");
+        let types = self.monomorph_types(template, &arguments)?;
+        let id = self.generated.allocate_function();
+        let signature = declare_monomorph(id, template, &types)?;
+        let mut monomorphs = self.generated.monomorphs.borrow_mut();
+        monomorphs.instances.push(MonomorphInstance {
+            name: name.to_owned(),
+            arguments: arguments.clone(),
+            id,
+        });
+        monomorphs.signatures.insert(id, signature.clone());
+        monomorphs.pending.push_back(PendingMonomorph {
+            id,
+            name: name.to_owned(),
+            arguments,
+        });
+        Ok((id, signature))
+    }
+
+    fn take_pending_monomorph(&self) -> Option<PendingMonomorph> {
+        self.generated.monomorphs.borrow_mut().pending.pop_front()
+    }
+
+    /// Build a monomorph-body context that shares the module's signatures,
+    /// templates, and generated-function state but binds `T…` concretely.
+    fn monomorph_context(&self, types: BTreeMap<String, Type>) -> ModuleContext<'a> {
+        ModuleContext {
+            signatures: self.signatures,
+            generics: self.generics,
+            base_types: self.base_types,
+            types: Cow::Owned(types),
+            generated: self.generated,
+            config: self.config,
+        }
     }
 }
 
@@ -1121,13 +1272,17 @@ fn lower_module(source: &ast::SourceFile, config: CompilerConfig) -> Result<Modu
         .collect::<BTreeSet<_>>();
     let mut signatures = BTreeMap::new();
     let mut ordered_signatures = Vec::new();
+    // Generic function templates are neither declared nor lowered up front; each
+    // instantiation is monomorphized on demand at its call site.
+    let mut generics: BTreeMap<String, &ast::FnItem> = BTreeMap::new();
+    let mut function_names = BTreeSet::new();
 
     for item in &source.items {
         let ast::Item::Fn(function) = item else {
             continue;
         };
         if declared_type_names.contains(function.name.value.as_str())
-            || signatures.contains_key(&function.name.value)
+            || !function_names.insert(function.name.value.clone())
         {
             return Err(Diagnostics::one(Diagnostic {
                 code: DiagnosticCode::DuplicateDefinition,
@@ -1138,6 +1293,17 @@ fn lower_module(source: &ast::SourceFile, config: CompilerConfig) -> Result<Modu
                 },
             }));
         }
+        // A generic `#[test]` still flows through `declare_function` so its
+        // invalid signature is reported; only generic value functions become
+        // monomorphization templates.
+        let is_test = function
+            .attributes
+            .iter()
+            .any(|attribute| attribute.name.value == "test");
+        if function.generics.is_some() && !is_test {
+            generics.insert(function.name.value.clone(), function);
+            continue;
+        }
         let id = FunctionId(
             u32::try_from(ordered_signatures.len()).expect("module function count fits u32"),
         );
@@ -1146,15 +1312,15 @@ fn lower_module(source: &ast::SourceFile, config: CompilerConfig) -> Result<Modu
         ordered_signatures.push(signature);
     }
 
+    let generated = GeneratedFunctions::new(
+        u32::try_from(ordered_signatures.len()).expect("module function count fits u32"),
+    );
     let context = ModuleContext {
         signatures: &signatures,
-        types: &types,
-        closures: RefCell::new(ClosureState {
-            next_function: u32::try_from(ordered_signatures.len())
-                .expect("module function count fits u32"),
-            functions: BTreeMap::new(),
-            scopes: Vec::new(),
-        }),
+        generics: &generics,
+        base_types: &types,
+        types: Cow::Borrowed(&types),
+        generated: &generated,
         config,
     };
     let mut module = Module {
@@ -1179,6 +1345,9 @@ fn lower_module(source: &ast::SourceFile, config: CompilerConfig) -> Result<Modu
         let ast::Item::Fn(function) = item else {
             continue;
         };
+        if generics.contains_key(&function.name.value) {
+            continue;
+        }
         let signature = ordered_signatures
             .next()
             .expect("every function has a declared signature");
@@ -1199,17 +1368,55 @@ fn lower_module(source: &ast::SourceFile, config: CompilerConfig) -> Result<Modu
         }
         module.functions.push(lowered.function);
     }
-    let closures = context.closures.into_inner().functions;
-    for (id, function) in closures {
+
+    // Drain the monomorphization queue. Lowering an instantiation body may
+    // discover further instantiations (a generic forwarding a type parameter to
+    // a generic callee), so this loop runs until no work remains.
+    while let Some(pending) = context.take_pending_monomorph() {
+        let template = *generics
+            .get(&pending.name)
+            .expect("pending monomorph names a known generic template");
+        let signature = generated.monomorphs.borrow().signatures[&pending.id].clone();
+        let types = context.monomorph_types(template, &pending.arguments)?;
+        let mono_context = context.monomorph_context(types);
+        mono_context.enter_function(monomorph_symbol(&pending.name, &pending.arguments));
+        let lowered = lower_function(&signature, template, &mono_context)
+            .map_err(|diagnostics| anchor_function_diagnostics(template, diagnostics));
+        mono_context.leave_function();
+        let lowered = lowered?;
+        generated
+            .functions
+            .borrow_mut()
+            .insert(signature.id, lowered.function);
+    }
+
+    let generated_functions = std::mem::take(&mut *generated.functions.borrow_mut());
+    for (id, function) in generated_functions {
         assert_eq!(
             usize::try_from(id.0).expect("function id fits usize"),
             module.functions.len(),
-            "closure functions append in FunctionId order"
+            "generated functions append in FunctionId order"
         );
         module.functions.push(function);
     }
 
     Ok(module)
+}
+
+/// A human-readable symbol for a monomorphized instantiation, used only as the
+/// closure-scope path prefix during lowering (e.g. `id<Int>`).
+fn monomorph_symbol(name: &str, arguments: &[Type]) -> String {
+    if arguments.is_empty() {
+        return name.to_owned();
+    }
+    format!(
+        "{name}<{}>",
+        arguments
+            .iter()
+            .map(Type::name)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
 }
 
 fn resolved_enum_declarations(
@@ -1313,6 +1520,28 @@ fn declare_function(
             "generic function",
         )));
     }
+    declare_value_signature(id, function, types)
+}
+
+/// Declare the concrete signature of a monomorphized generic instantiation.
+/// `types` layers the generic's type-parameter bindings on top of the module's
+/// base types, so every declared type resolves to a concrete [`Type`].
+fn declare_monomorph(
+    id: FunctionId,
+    function: &ast::FnItem,
+    types: &BTreeMap<String, Type>,
+) -> Result<FunctionSignature, Diagnostics> {
+    declare_value_signature(id, function, types)
+}
+
+/// The shared body of a non-test function's signature: at most one positional
+/// parameter, optional inline named where-parameters, and a required return
+/// type — all resolved through `types`.
+fn declare_value_signature(
+    id: FunctionId,
+    function: &ast::FnItem,
+    types: &BTreeMap<String, Type>,
+) -> Result<FunctionSignature, Diagnostics> {
     if function.params.params.len() > 1 {
         return Err(invalid_arity(
             function.params.span,
@@ -1373,7 +1602,7 @@ fn declare_function(
         .and_then(|ty| lower_declared_type(ty, types))?;
     Ok(FunctionSignature {
         id,
-        is_test,
+        is_test: false,
         parameters,
         return_type,
         metadata: TestMetadata::default(),
@@ -2226,7 +2455,7 @@ fn lower_let_statement(
     let expected = statement
         .ty
         .as_ref()
-        .map(|annotation| lower_declared_type(annotation, context.types))
+        .map(|annotation| lower_declared_type(annotation, context.types()))
         .transpose()?;
     let value = lower_value_expected(
         nodes,
@@ -5312,7 +5541,7 @@ fn lower_try_decode(
     if type_args.args.len() != 1 {
         return Err(invalid_arity(type_args.span, 1, type_args.args.len()));
     }
-    let target = lower_declared_type(&type_args.args[0], context.types)?;
+    let target = lower_declared_type(&type_args.args[0], context.types())?;
     let result_ty = Type::result(target.clone(), decode_error_type());
 
     let ast::Expr::Str(document) = &call.args.args[0] else {
@@ -5880,7 +6109,7 @@ fn lower_closure(
     };
     let parameter_ty = match (&closure.ty, expected_signature) {
         (Some(declared), expected) => {
-            let declared = lower_declared_type(declared, context.types)?;
+            let declared = lower_declared_type(declared, context.types())?;
             if let Some((expected, _)) = expected
                 && &declared != expected
             {
@@ -5919,7 +6148,7 @@ fn lower_closure_with_parameter(
 ) -> Result<LoweredValue, Diagnostics> {
     let parameter_ty = match &closure.ty {
         Some(declared) => {
-            let declared = lower_declared_type(declared, context.types)?;
+            let declared = lower_declared_type(declared, context.types())?;
             if &declared != parameter {
                 return Err(type_mismatch(
                     type_span(declared_type_ref(closure)),
@@ -5947,7 +6176,7 @@ fn lower_array_stream_closure(
 ) -> Result<LoweredValue, Diagnostics> {
     let parameter_ty = match &closure.ty {
         Some(declared) => {
-            let declared = lower_declared_type(declared, context.types)?;
+            let declared = lower_declared_type(declared, context.types())?;
             if &declared != parameter {
                 return Err(type_mismatch(
                     type_span(declared_type_ref(closure)),
@@ -6011,7 +6240,7 @@ fn lower_by_key(
     };
     let parameter_ty = match &closure.ty {
         Some(declared) => {
-            let declared = lower_declared_type(declared, context.types)?;
+            let declared = lower_declared_type(declared, context.types())?;
             if &declared != subject.as_ref() {
                 return Err(type_mismatch(
                     type_span(declared_type_ref(closure)),
@@ -7255,7 +7484,7 @@ fn lower_named_constructor(
     expression: &ast::RecordExpr,
 ) -> Result<LoweredValue, Diagnostics> {
     let qualified_name = path_name(&expression.ty);
-    if let Some(ty) = context.types.get(&qualified_name) {
+    if let Some(ty) = context.types().get(&qualified_name) {
         let Type::Record(record) = ty else {
             return Err(type_mismatch(expression.ty.span, "record type", ty.name()));
         };
@@ -8634,11 +8863,232 @@ fn lower_call(
     if let Some(callee) = bindings.get(&call.callee.value) {
         return lower_value_call(nodes, bindings, context, call, callee.clone());
     }
-    let signature = context
-        .signatures
+    if let Some(signature) = context.signatures.get(&call.callee.value) {
+        return lower_direct_call(nodes, bindings, context, call, signature);
+    }
+    if context.generics.contains_key(&call.callee.value) {
+        return lower_generic_call(nodes, bindings, context, call);
+    }
+    Err(unknown_name(call.callee.span, &call.callee.value))
+}
+
+/// Lower a call to a generic function by monomorphizing it for the concrete
+/// type arguments — inferred from the positional argument types, or taken from
+/// an explicit turbofish. Each distinct type-argument set lowers one body.
+///
+/// r[impl lang.types.generic-function-monomorphized]
+fn lower_generic_call(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    call: &ast::Call,
+) -> Result<LoweredValue, Diagnostics> {
+    let template = *context
+        .generics
         .get(&call.callee.value)
-        .ok_or_else(|| unknown_name(call.callee.span, &call.callee.value))?;
-    lower_direct_call(nodes, bindings, context, call, signature)
+        .expect("generic callee is a known template");
+    let generics = template
+        .generics
+        .as_ref()
+        .expect("generic template has type parameters");
+
+    let positional = &template.params.params;
+    if call.args.args.len() != positional.len() {
+        return Err(invalid_arity(
+            call.span,
+            positional.len(),
+            call.args.args.len(),
+        ));
+    }
+    // Lower the positional arguments once (with no expected type) so their
+    // concrete types drive inference; the lowered nodes are reused below.
+    let mut lowered_positional = Vec::with_capacity(positional.len());
+    for argument in &call.args.args {
+        lowered_positional.push(lower_value_expected(
+            nodes, bindings, context, argument, None,
+        )?);
+    }
+
+    let parameter_names = generics
+        .params
+        .iter()
+        .map(|parameter| parameter.value.clone())
+        .collect::<BTreeSet<_>>();
+    let mut inferred = BTreeMap::new();
+    if let Some(type_args) = &call.type_args {
+        if type_args.args.len() != generics.params.len() {
+            return Err(invalid_arity(
+                type_args.span,
+                generics.params.len(),
+                type_args.args.len(),
+            ));
+        }
+        for (parameter, argument) in generics.params.iter().zip(&type_args.args) {
+            inferred.insert(
+                parameter.value.clone(),
+                lower_declared_type(argument, context.types())?,
+            );
+        }
+    } else {
+        for (parameter, value) in positional.iter().zip(&lowered_positional) {
+            infer_type_argument(
+                &parameter.ty,
+                &value.ty,
+                &parameter_names,
+                &mut inferred,
+                call.callee.span,
+            )?;
+        }
+    }
+
+    let mut arguments = Vec::with_capacity(generics.params.len());
+    for parameter in &generics.params {
+        let argument = inferred.get(&parameter.value).cloned().ok_or_else(|| {
+            Diagnostics::one(Diagnostic::unsupported(
+                call.callee.span,
+                format!("cannot infer type argument `{}`", parameter.value),
+            ))
+        })?;
+        arguments.push(argument);
+    }
+
+    let (id, signature) = context.instantiate_monomorph(&call.callee.value, arguments)?;
+
+    let mut inputs = Vec::with_capacity(signature.parameters.len());
+    let positional_signature = signature
+        .parameters
+        .iter()
+        .filter(|parameter| parameter.kind == ParameterKind::Positional);
+    for ((parameter, value), argument) in positional_signature
+        .zip(&lowered_positional)
+        .zip(&call.args.args)
+    {
+        require_type(value, &parameter.ty, expr_span(argument))?;
+        inputs.push(value.node);
+    }
+
+    let mut named_values = BTreeMap::new();
+    if let Some(named_args) = &call.named_args {
+        for field in &named_args.fields {
+            if named_values
+                .insert(field.name.value.clone(), field)
+                .is_some()
+            {
+                return Err(Diagnostics::one(Diagnostic {
+                    code: DiagnosticCode::DuplicateBinding,
+                    primary: field.name.span,
+                    labels: Vec::new(),
+                    payload: DiagnosticPayload::Name {
+                        name: field.name.value.clone(),
+                    },
+                }));
+            }
+        }
+    }
+    for parameter in signature
+        .parameters
+        .iter()
+        .filter(|parameter| parameter.kind == ParameterKind::Named)
+    {
+        let field = named_values.remove(&parameter.name).ok_or_else(|| {
+            invalid_arity(
+                call.span,
+                signature.parameters.len(),
+                inputs.len() + named_values.len(),
+            )
+        })?;
+        let value = if let Some(expression) = &field.value {
+            lower_value_expected(nodes, bindings, context, expression, Some(&parameter.ty))?
+        } else {
+            lookup_binding(bindings, &field.name.value, field.name.span)?
+        };
+        require_type(&value, &parameter.ty, field.span)?;
+        inputs.push(value.node);
+    }
+    if let Some((name, field)) = named_values.into_iter().next() {
+        return Err(Diagnostics::one(Diagnostic {
+            code: DiagnosticCode::UnknownName,
+            primary: field.name.span,
+            labels: Vec::new(),
+            payload: DiagnosticPayload::Name { name },
+        }));
+    }
+
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            call.span,
+            signature.return_type.clone(),
+            EffectFacts::PURE,
+            inputs,
+            Op::Call(id),
+        ),
+        ty: signature.return_type,
+    })
+}
+
+/// Unify a declared parameter type (which may mention the generic's type
+/// parameters) against the concrete type of the supplied argument, recording
+/// each type parameter's binding. Shapes that do not structurally correspond
+/// contribute no binding; a parameter that stays unbound is reported at the
+/// call site.
+fn infer_type_argument(
+    declared: &ast::Type,
+    concrete: &Type,
+    parameters: &BTreeSet<String>,
+    inferred: &mut BTreeMap<String, Type>,
+    span: Span,
+) -> Result<(), Diagnostics> {
+    match declared {
+        ast::Type::Path(path)
+            if path.segments.len() == 1 && parameters.contains(&path.segments[0].value) =>
+        {
+            let name = &path.segments[0].value;
+            match inferred.get(name) {
+                Some(existing) if existing != concrete => {
+                    return Err(type_mismatch(span, existing.name(), concrete.name()));
+                }
+                _ => {
+                    inferred.insert(name.clone(), concrete.clone());
+                }
+            }
+        }
+        ast::Type::Array(array) => {
+            if let Type::Array(element) = concrete {
+                infer_type_argument(&array.elem, element, parameters, inferred, span)?;
+            }
+        }
+        ast::Type::Tuple(tuple) => {
+            if let Type::Tuple(elements) = concrete
+                && tuple.elems.len() == elements.len()
+            {
+                for (declared, concrete) in tuple.elems.iter().zip(elements) {
+                    infer_type_argument(declared, concrete, parameters, inferred, span)?;
+                }
+            }
+        }
+        ast::Type::Function(function) => {
+            if let Type::Function { parameter, result } = concrete {
+                infer_type_argument(&function.parameter, parameter, parameters, inferred, span)?;
+                infer_type_argument(&function.result, result, parameters, inferred, span)?;
+            }
+        }
+        ast::Type::Generic(generic) => match (path_name(&generic.base).as_str(), concrete) {
+            ("Array", Type::Array(element)) if generic.args.len() == 1 => {
+                infer_type_argument(&generic.args[0], element, parameters, inferred, span)?;
+            }
+            ("Set", Type::Set(element)) if generic.args.len() == 1 => {
+                infer_type_argument(&generic.args[0], element, parameters, inferred, span)?;
+            }
+            ("Map", Type::Map { key, value }) if generic.args.len() == 2 => {
+                infer_type_argument(&generic.args[0], key, parameters, inferred, span)?;
+                infer_type_argument(&generic.args[1], value, parameters, inferred, span)?;
+            }
+            _ => {}
+        },
+        ast::Type::Path(_) => {}
+    }
+    Ok(())
 }
 
 fn lower_direct_call(
