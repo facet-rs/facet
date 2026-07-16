@@ -682,6 +682,18 @@ pub struct ArrayMapGrain {
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct CommandArgument {
+    pub pieces: Vec<CommandPiece>,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum CommandPiece {
+    Literal(String),
+    Input { index: u32 },
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Type {
     Bool,
@@ -1331,7 +1343,7 @@ pub enum Op {
     /// r[impl machine.primitive.exec-outcome]
     /// r[impl machine.primitive.capabilities-by-identity]
     Exec {
-        argv: Vec<String>,
+        argv: Vec<CommandArgument>,
     },
     /// Postfix `?`: catch the operand's demand edge. The operand becomes its
     /// own demanded island; this node's value is `Result::Ok(value)` when that
@@ -1851,8 +1863,10 @@ impl Module {
         // is returned unchanged. When splicing renumbers the function's nodes, the
         // test's generator references move through the same map so the shared
         // node-id space stays consistent.
-        let (function, remap) =
+        let (function, mixed_remap) =
             self.inline_mixed_primitive_calls(&self.functions[test.function.0 as usize])?;
+        let (function, map_remap) = self.expand_effectful_array_maps(&function)?;
+        let remap = compose_node_remaps(mixed_remap, map_remap);
         let function = &function;
         let remapped_test;
         let test = if let Some(remap) = &remap {
@@ -2346,6 +2360,152 @@ impl Module {
                         || matches!(node.op, Op::Call(callee) if self.function_contains_effect(callee, seen))
                 })
             })
+    }
+
+    /// Expand an effectful `Array.map` over authored dense positions into one
+    /// specialized mapper application per position. Each application is
+    /// spliced into the enclosing graph before effect-root cutting, so its
+    /// machine-plane operations become ordinary scheduler-owned publications
+    /// and the map itself becomes a pure dense-array collector.
+    ///
+    /// Runtime-length arrays retain the materialized in-frame loop for pure
+    /// mappers. An effectful mapper needs stable element keys before execution;
+    /// until dynamic keyed-array demand exists, only authored `Op::Array`
+    /// positions provide those identities.
+    fn expand_effectful_array_maps(
+        &self,
+        function: &Function,
+    ) -> Result<(Function, Option<BTreeMap<NodeId, NodeId>>), Diagnostics> {
+        let mut result = function.clone();
+        let mut expanded_any = false;
+        loop {
+            let target = result.nodes.iter().find_map(|node| {
+                if !matches!(node.op, Op::ArrayMap { .. }) {
+                    return None;
+                }
+                let source = *node.inputs.first()?;
+                let mapper = *node.inputs.get(1)?;
+                let mapper_node = result
+                    .nodes
+                    .iter()
+                    .find(|candidate| candidate.id == mapper)?;
+                let Op::Closure(callee) = mapper_node.op else {
+                    return None;
+                };
+                self.function_contains_effect(callee, &mut BTreeSet::new())
+                    .then_some((node.id, node.span, source, mapper, callee))
+            });
+            let Some((map_id, map_span, source_id, mapper_id, callee_id)) = target else {
+                break;
+            };
+            if node_within_control_region(&result, map_id) {
+                return Err(Diagnostics::one(Diagnostic::unsupported(
+                    map_span,
+                    "an effectful Array.map inside conditional control is not yet keyed as \
+                     scheduler child demands",
+                )));
+            }
+            let source = result
+                .nodes
+                .iter()
+                .find(|node| node.id == source_id)
+                .expect("array map source node is present");
+            if !matches!(source.op, Op::Array) {
+                return Err(Diagnostics::one(Diagnostic::unsupported(
+                    map_span,
+                    "an effectful Array.map requires authored dense positions until dynamic keyed \
+                     array demand is implemented",
+                )));
+            }
+            self.splice_effectful_array_map(&mut result, map_id, source_id, mapper_id, callee_id);
+            expanded_any = true;
+        }
+        if !expanded_any {
+            return Ok((result, None));
+        }
+        let map = renumber_dense(&mut result);
+        Ok((result, Some(map)))
+    }
+
+    fn splice_effectful_array_map(
+        &self,
+        result: &mut Function,
+        map_id: NodeId,
+        source_id: NodeId,
+        mapper_id: NodeId,
+        callee_id: FunctionId,
+    ) {
+        let position = result
+            .nodes
+            .iter()
+            .position(|node| node.id == map_id)
+            .expect("expanded Array.map node is present");
+        let source_elements = result
+            .nodes
+            .iter()
+            .find(|node| node.id == source_id)
+            .expect("expanded Array.map source is present")
+            .inputs
+            .clone();
+        let captures = result
+            .nodes
+            .iter()
+            .find(|node| node.id == mapper_id)
+            .expect("expanded Array.map mapper is present")
+            .inputs
+            .clone();
+        let callee = &self.functions[callee_id.0 as usize];
+        assert_eq!(
+            callee.parameters.len(),
+            captures.len() + 1,
+            "closure parameters are the element followed by captures",
+        );
+        let parameter_nodes = callee
+            .parameters
+            .iter()
+            .map(|parameter| parameter.node)
+            .collect::<BTreeSet<_>>();
+        let mut next_id = result
+            .nodes
+            .iter()
+            .map(|node| node.id.0)
+            .max()
+            .expect("expanded function has nodes")
+            + 1;
+        let mut expanded = Vec::new();
+        let mut outputs = Vec::with_capacity(source_elements.len());
+        for element in source_elements {
+            let mut map = BTreeMap::from([(callee.parameters[0].node, element)]);
+            for (parameter, capture) in callee.parameters[1..].iter().zip(&captures) {
+                map.insert(parameter.node, *capture);
+            }
+            for node in &callee.nodes {
+                if parameter_nodes.contains(&node.id) {
+                    continue;
+                }
+                map.insert(node.id, NodeId(next_id));
+                next_id += 1;
+            }
+            for node in &callee.nodes {
+                if parameter_nodes.contains(&node.id) {
+                    continue;
+                }
+                let mut cloned = node.clone();
+                cloned.id = map[&node.id];
+                remap_node_refs(&mut cloned, &map);
+                expanded.push(cloned);
+            }
+            outputs.push(map[&callee.output.expect("effectful mapper has an output")]);
+        }
+        let mut collector = result.nodes[position].clone();
+        collector.op = Op::Array;
+        collector.inputs = outputs;
+        collector.effect = EffectFacts {
+            fallible: true,
+            ..EffectFacts::PURE
+        };
+        expanded.push(collector);
+        result.nodes.splice(position..=position, expanded);
     }
 
     /// Whether `function` transitively invokes a registered primitive. A callee
@@ -3205,6 +3365,28 @@ fn renumber_dense(function: &mut Function) -> BTreeMap<NodeId, NodeId> {
         *check = map[check];
     }
     map
+}
+
+fn compose_node_remaps(
+    first: Option<BTreeMap<NodeId, NodeId>>,
+    second: Option<BTreeMap<NodeId, NodeId>>,
+) -> Option<BTreeMap<NodeId, NodeId>> {
+    match (first, second) {
+        (None, None) => None,
+        (Some(first), None) => Some(first),
+        (None, Some(second)) => Some(second),
+        (Some(first), Some(second)) => Some(
+            first
+                .into_iter()
+                .map(|(source, intermediate)| {
+                    (
+                        source,
+                        second.get(&intermediate).copied().unwrap_or(intermediate),
+                    )
+                })
+                .collect(),
+        ),
+    }
 }
 
 /// Rewrite the node references a test's generator holds into the enclosing
@@ -4116,7 +4298,21 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
             op.push(85);
             frame(&mut op, &(argv.len() as u64).to_le_bytes());
             for argument in argv {
-                frame(&mut op, argument.as_bytes());
+                let mut encoded = Vec::new();
+                encoded.extend_from_slice(&(argument.pieces.len() as u64).to_le_bytes());
+                for piece in &argument.pieces {
+                    match piece {
+                        CommandPiece::Literal(literal) => {
+                            encoded.push(0);
+                            frame(&mut encoded, literal.as_bytes());
+                        }
+                        CommandPiece::Input { index } => {
+                            encoded.push(1);
+                            encoded.extend_from_slice(&index.to_le_bytes());
+                        }
+                    }
+                }
+                frame(&mut op, &encoded);
             }
         }
         Op::Try => op.push(86),

@@ -112,6 +112,7 @@ const RUNG_108: &str = include_str!("ratchet/108-import-std.vix");
 const RUNG_109: &str = include_str!("ratchet/109-name-collision.reject.vix");
 const RUNG_110: &str = include_str!("ratchet/110-module-memo-boundary.vix");
 const RUNG_126: &str = include_str!("ratchet/126-effects-overlap.vix");
+const RUNG_127: &str = include_str!("ratchet/127-fanout-parallel.vix");
 const RUNG_129: &str = include_str!("ratchet/129-no-inline-draining.vix");
 const LIB_GEOMETRY: &str = include_str!("ratchet/lib/geometry.vix");
 const RUNG_138: &str = include_str!("ratchet/138-map-accumulator.vix");
@@ -6427,6 +6428,20 @@ fn rung_126_independent_exec_roots_overlap_through_the_scheduler_frontier() {
     for lane in [&report.plain, &report.chaos] {
         assert_eq!(lane.counters.effect_spawns, 2);
         assert!(lane.counters.peak_effects_in_flight >= 2);
+        assert!(lane.counters.overlap_observations >= 1);
+    }
+}
+
+/// r[verify machine.scheduler.effect-overlap]
+/// r[verify machine.scheduler.block-on-event]
+#[test]
+fn rung_127_effectful_array_map_fans_out_through_the_scheduler_frontier() {
+    let report = run_source(RUNG_127).expect("rung 127 runs through the production frontier");
+    assert!(report.passed(), "rung 127 checks pass");
+    assert!(report.agrees(), "rung 127 lanes agree");
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.effect_spawns, 4);
+        assert!(lane.counters.peak_effects_in_flight >= 4);
         assert!(lane.counters.overlap_observations >= 1);
     }
 }

@@ -19,14 +19,14 @@ use crate::support::{Span, Spanned};
 use crate::surface::{SurfaceParser, ast};
 use crate::vir::DescribedWire;
 use crate::vir::{
-    ArrayMapGrain, ArrayMapGrainKey, Budget, CheckRecipe, ControlRegion, EffectFacts, EffectKind,
-    EnumType, EnumVariant, ExternKind, Function, FunctionId, GeneratorArm, GeneratorBody,
-    GeneratorStep, MatchArm as VirMatchArm, MiniSolveRequirements, Module, Node, NodeId,
-    OPTION_NONE_VARIANT, OPTION_SOME_VARIANT, ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op,
-    OrderedMatchArm, Parameter, ParameterId, ParameterKind, RESULT_ERR_VARIANT, RESULT_OK_VARIANT,
-    RecordField, RecordType, Test, TestMetadata, TraceCheck, Type, VariantPayload, WireArg,
-    WireSelector, YieldSite, YieldSiteId, decode_error_type, decode_primitive_id,
-    decode_request_type,
+    ArrayMapGrain, ArrayMapGrainKey, Budget, CheckRecipe, CommandArgument, CommandPiece,
+    ControlRegion, EffectFacts, EffectKind, EnumType, EnumVariant, ExternKind, Function,
+    FunctionId, GeneratorArm, GeneratorBody, GeneratorStep, MatchArm as VirMatchArm,
+    MiniSolveRequirements, Module, Node, NodeId, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT,
+    ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, OrderedMatchArm, Parameter, ParameterId,
+    ParameterKind, RESULT_ERR_VARIANT, RESULT_OK_VARIANT, RecordField, RecordType, Test,
+    TestMetadata, TraceCheck, Type, VariantPayload, WireArg, WireSelector, YieldSite, YieldSiteId,
+    decode_error_type, decode_primitive_id, decode_request_type,
 };
 
 pub struct Compiler {
@@ -8279,18 +8279,21 @@ fn lower_command(
 
 /// The ratchet capability packages' command grammar: whitespace-separated
 /// argv elements; a double-quoted element keeps interior whitespace and drops
-/// its quotes. The band's templates are fully literal (no `{expr}` splices
-/// yet), so the parse is closed at compile time and the argv enters the
-/// canonical recipe.
+/// its quotes. `{name}` splices resolve to typed Int, String, or Path inputs;
+/// the scheduler renders those values before normalizing the exec plan, so
+/// distinct mapper arguments remain distinct effect demands.
 ///
 /// r[impl lang.command.typed]
-fn parse_command_template(template: &Spanned<String>) -> Result<Vec<String>, Diagnostics> {
+fn parse_command_template(
+    template: &Spanned<String>,
+    bindings: &BTreeMap<String, LoweredValue>,
+) -> Result<(Vec<CommandArgument>, Vec<NodeId>), Diagnostics> {
     let text = template
         .value
         .strip_prefix('`')
         .and_then(|rest| rest.strip_suffix('`'))
         .unwrap_or(&template.value);
-    let mut argv = Vec::new();
+    let mut raw_argv = Vec::new();
     let mut chars = text.chars().peekable();
     loop {
         while chars.peek().is_some_and(|c| c.is_whitespace()) {
@@ -8314,7 +8317,7 @@ fn parse_command_template(template: &Spanned<String>) -> Result<Vec<String>, Dia
                     }
                 }
             }
-            argv.push(element);
+            raw_argv.push(element);
         } else {
             let mut element = String::new();
             while let Some(&ch) = chars.peek() {
@@ -8324,10 +8327,77 @@ fn parse_command_template(template: &Spanned<String>) -> Result<Vec<String>, Dia
                 element.push(ch);
                 chars.next();
             }
-            argv.push(element);
+            raw_argv.push(element);
         }
     }
-    Ok(argv)
+    let mut inputs = Vec::new();
+    let argv = raw_argv
+        .into_iter()
+        .map(|argument| {
+            let mut pieces = Vec::new();
+            let mut literal = String::new();
+            let mut chars = argument.chars().peekable();
+            while let Some(ch) = chars.next() {
+                if ch != '{' {
+                    if ch == '}' {
+                        return Err(Diagnostics::one(Diagnostic::unsupported(
+                            template.span,
+                            "unmatched `}` in command interpolation",
+                        )));
+                    }
+                    literal.push(ch);
+                    continue;
+                }
+                if !literal.is_empty() {
+                    pieces.push(CommandPiece::Literal(core::mem::take(&mut literal)));
+                }
+                let mut name = String::new();
+                loop {
+                    match chars.next() {
+                        Some('}') => break,
+                        Some('{') => {
+                            return Err(Diagnostics::one(Diagnostic::unsupported(
+                                template.span,
+                                "nested `{` in command interpolation",
+                            )));
+                        }
+                        Some(ch) => name.push(ch),
+                        None => {
+                            return Err(Diagnostics::one(Diagnostic::unsupported(
+                                template.span,
+                                "unterminated command interpolation",
+                            )));
+                        }
+                    }
+                }
+                let value = bindings.get(&name).ok_or_else(|| {
+                    Diagnostics::one(Diagnostic {
+                        code: DiagnosticCode::UnboundIdentifier,
+                        primary: template.span,
+                        labels: Vec::new(),
+                        payload: DiagnosticPayload::Name { name: name.clone() },
+                    })
+                })?;
+                if !matches!(value.ty, Type::Int | Type::String | Type::Path) {
+                    return Err(type_mismatch(
+                        template.span,
+                        "Int, String, or Path command interpolation",
+                        value.ty.name(),
+                    ));
+                }
+                inputs.push(value.node);
+                pieces.push(CommandPiece::Input {
+                    index: u32::try_from(inputs.len())
+                        .expect("command interpolation input count fits u32"),
+                });
+            }
+            if !literal.is_empty() || pieces.is_empty() {
+                pieces.push(CommandPiece::Literal(literal));
+            }
+            Ok(CommandArgument { pieces })
+        })
+        .collect::<Result<Vec<_>, Diagnostics>>()?;
+    Ok((argv, inputs))
 }
 
 /// `exec command` — an effect demand. The capability value is the node's only
@@ -8348,15 +8418,18 @@ fn lower_exec(
             capability.ty.name(),
         ));
     }
-    let argv = parse_command_template(&exec.command.template)?;
+    let (argv, interpolation_inputs) = parse_command_template(&exec.command.template, bindings)?;
     let ty = exec_outcome_type();
+    let mut inputs = Vec::with_capacity(1 + interpolation_inputs.len());
+    inputs.push(capability.node);
+    inputs.extend(interpolation_inputs);
     Ok(LoweredValue {
         node: push_node(
             nodes,
             exec.span,
             ty.clone(),
             EffectFacts::EFFECT,
-            vec![capability.node],
+            inputs,
             Op::Exec { argv },
         ),
         ty,

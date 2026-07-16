@@ -14,8 +14,8 @@ use crate::lowering::{LoweringArtifact, LoweringAttribution, ValueInputBinding};
 use crate::schema::SchemaRef;
 use crate::support::Span;
 use crate::vir::{
-    ExternKind, Function, FunctionId, Island, IslandId, MiniSolveRequirements, NodeId,
-    OPTION_NONE_VARIANT, OPTION_SOME_VARIANT, Op, Type, VariantPayload,
+    CommandPiece, ExternKind, Function, FunctionId, Island, IslandId, MiniSolveRequirements,
+    NodeId, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT, Op, Type, VariantPayload,
 };
 
 use super::fixture::{FixtureEntryKind, FixtureReadError, FixtureStore, TarMember, parse_ustar};
@@ -4736,7 +4736,13 @@ impl<S: EventSink> Runtime<S> {
         capability: &Evaluation,
         chaos: ChaosPolicy,
     ) -> Result<Evaluation, Box<MachineError>> {
-        let evaluation = match self.submit_exec(island, location, capability, chaos, None)? {
+        let evaluation = match self.submit_exec(
+            island,
+            location,
+            core::slice::from_ref(capability),
+            chaos,
+            None,
+        )? {
             RootSubmission::Ready(evaluation) => evaluation,
             RootSubmission::Pending(root) => self.run_until_root(root)?,
         };
@@ -4752,7 +4758,7 @@ impl<S: EventSink> Runtime<S> {
         &mut self,
         island: &Island,
         location: &Location,
-        capability: &Evaluation,
+        arguments: &[Evaluation],
         chaos: ChaosPolicy,
         realized_as: Option<RealizedWireDemand>,
     ) -> Result<RootSubmission, Box<MachineError>> {
@@ -4768,7 +4774,58 @@ impl<S: EventSink> Runtime<S> {
         let Op::Exec { argv } = &node.op else {
             return Err(malformed());
         };
-        let plan_recipe = exec_plan_recipe(argv);
+        let published_arguments = self.effect_arguments(arguments)?;
+        let mut resolved_inputs = Vec::with_capacity(node.inputs.len());
+        let mut reads = Vec::new();
+        for input in &node.inputs {
+            let value = self.evaluate_effect_node(
+                island,
+                island.function,
+                *input,
+                &published_arguments,
+                &mut reads,
+            )?;
+            let EffectTerm::Value(value) = value else {
+                return Err(malformed());
+            };
+            let ty = island
+                .nodes
+                .iter()
+                .find(|candidate| candidate.id == *input)
+                .map(|candidate| candidate.ty.clone())
+                .ok_or_else(malformed)?;
+            resolved_inputs.push((ty, value));
+        }
+        let (_, capability) = resolved_inputs.first().ok_or_else(malformed)?;
+        let mut materialized_argv = Vec::with_capacity(argv.len());
+        for argument in argv {
+            let mut rendered = String::new();
+            for piece in &argument.pieces {
+                match piece {
+                    CommandPiece::Literal(literal) => rendered.push_str(literal),
+                    CommandPiece::Input { index } => {
+                        let (ty, value) = resolved_inputs
+                            .get(usize::try_from(*index).map_err(|_| malformed())?)
+                            .ok_or_else(malformed)?;
+                        match ty {
+                            Type::Int => {
+                                let value = read_i64(&value.resident).ok_or_else(malformed)?;
+                                write!(&mut rendered, "{value}").expect("writing to String");
+                            }
+                            Type::String | Type::Path => {
+                                rendered.push_str(
+                                    core::str::from_utf8(&value.resident)
+                                        .map_err(|_| malformed())?,
+                                );
+                            }
+                            _ => return Err(malformed()),
+                        }
+                    }
+                }
+            }
+            materialized_argv.push(rendered);
+        }
+        let plan_recipe = exec_plan_recipe(&materialized_argv);
         let demand_preimage = DemandPreimage {
             closure: plan_recipe,
             arguments: vec![capability.identity.clone()],
@@ -4868,12 +4925,7 @@ impl<S: EventSink> Runtime<S> {
 
         // The capability's executable identity travels as the value's resident
         // bytes; the value identity already entered the demand key above.
-        let program = self
-            .store
-            .entry(capability.handle)
-            .and_then(StoreEntry::resident_bytes)
-            .and_then(|bytes| String::from_utf8(bytes.to_vec()).ok())
-            .ok_or_else(malformed)?;
+        let program = String::from_utf8(capability.resident.clone()).map_err(|_| malformed())?;
 
         let mut kill_armed = chaos.kill_first_running_task;
         loop {
@@ -4921,7 +4973,7 @@ impl<S: EventSink> Runtime<S> {
                 ))
             };
             let child = std::process::Command::new(&program)
-                .args(argv)
+                .args(&materialized_argv)
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())

@@ -1576,14 +1576,10 @@ fn run_lane(
                             value.island.effect_output().map(|node| &node.op),
                             Some(crate::vir::Op::Exec { .. })
                         ) {
-                            let capability = arguments
-                                .first()
-                                .cloned()
-                                .expect("exec effect island has its declared capability input");
                             runtime.submit_exec(
                                 &value.island,
                                 &location,
-                                &capability,
+                                &arguments,
                                 chaos,
                                 realized_as,
                             )?
