@@ -1580,6 +1580,25 @@ impl MoltenArena {
         Ok(handle)
     }
 
+    fn trim_string_bytes(
+        &mut self,
+        memories: MemoryView<'_>,
+        text: i64,
+    ) -> Result<i64, StringConcatFault> {
+        let text = handle_bytes(memories, self, text)
+            .map_err(|_| StringConcatFault::LeftUnresident(text))?
+            .to_vec();
+        let start = text
+            .iter()
+            .position(|byte| !byte.is_ascii_whitespace())
+            .unwrap_or(text.len());
+        let end = text
+            .iter()
+            .rposition(|byte| !byte.is_ascii_whitespace())
+            .map_or(start, |index| index + 1);
+        self.alloc_string_bytes(&text[start..end])
+    }
+
     fn split_once_value_bytes(
         &mut self,
         memories: MemoryView<'_>,
@@ -2635,6 +2654,48 @@ pub(crate) unsafe extern "C" fn string_concat_abi(
 }
 
 #[cfg_attr(not(feature = "jit"), allow(dead_code))]
+pub(crate) unsafe extern "C" fn string_trim_abi(
+    store: *const RawValueMemory,
+    store_len: usize,
+    lent: *const RawValueMemory,
+    lent_len: usize,
+    arena: *mut core::ffi::c_void,
+    text: i64,
+    out: *mut i64,
+) -> i64 {
+    if out.is_null()
+        || arena.is_null()
+        || (store.is_null() && store_len != 0)
+        || (lent.is_null() && lent_len != 0)
+    {
+        return StringConcatFault::ALLOCATION_STATUS;
+    }
+    unsafe { *out = ARRAY_POISON_HANDLE };
+    let store = if store_len == 0 {
+        &[]
+    } else {
+        unsafe { core::slice::from_raw_parts(store, store_len) }
+    };
+    let lent = if lent_len == 0 {
+        &[]
+    } else {
+        unsafe { core::slice::from_raw_parts(lent, lent_len) }
+    };
+    let memories = MemoryView::Raw(RawValueMemories {
+        store,
+        molten: lent,
+    });
+    let arena = unsafe { &mut *arena.cast::<MoltenArena>() };
+    match arena.trim_string_bytes(memories, text) {
+        Ok(handle) => {
+            unsafe { *out = handle };
+            StringConcatFault::OK_STATUS
+        }
+        Err(fault) => fault.status(),
+    }
+}
+
+#[cfg_attr(not(feature = "jit"), allow(dead_code))]
 pub(crate) unsafe extern "C" fn string_contains_abi(
     store: *const RawValueMemory,
     store_len: usize,
@@ -3230,6 +3291,8 @@ pub enum Op {
     /// with the precise side, and an allocation the arena cannot satisfy faults
     /// rather than fabricating a handle.
     StringConcat { dst: u32, a: u32, b: u32 },
+    /// Copy a string without its leading and trailing ASCII whitespace.
+    StringTrim { dst: u32, text: u32 },
     /// Search two resident string byte runs without exposing their handles.
     StringContains { dst: u32, text: u32, needle: u32 },
     /// Split a resident string at its first delimiter occurrence.
@@ -4196,6 +4259,26 @@ impl Task {
                         Err(fault) => {
                             let Some(verified) = verified else {
                                 panic!("legacy raw StringConcat operand is not resident");
+                            };
+                            return Err(string_concat_fault(
+                                fault_site(verified, fn_id, pc)?,
+                                fault,
+                            ));
+                        }
+                    };
+                    write_i64_at(&mut self.arena, base + dst as usize, handle);
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::StringTrim { dst, text } => {
+                    let text = read_i64_at(&self.arena, base + text as usize);
+                    let handle = match self
+                        .molten
+                        .trim_string_bytes(MemoryView::from(value_memories), text)
+                    {
+                        Ok(handle) => handle,
+                        Err(fault) => {
+                            let Some(verified) = verified else {
+                                panic!("legacy raw StringTrim operand is not resident");
                             };
                             return Err(string_concat_fault(
                                 fault_site(verified, fn_id, pc)?,

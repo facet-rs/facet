@@ -467,6 +467,10 @@ pub enum TraceCheck {
     RanProcesses {
         count: i64,
     },
+    /// At least one scheduler segment ran while an independent effect was
+    /// pending, or two effects were simultaneously in flight. This is derived
+    /// from scheduler ownership state, never elapsed-time coincidence.
+    Overlapped,
     /// The named external path was read during the run: it appears in at least
     /// one demand receipt.
     Read {
@@ -1298,6 +1302,8 @@ pub enum Op {
     StreamSplitMin,
     /// Concatenate two immutable strings.
     StringConcat,
+    /// Remove leading and trailing ASCII whitespace from a string.
+    StringTrim,
     /// Test whether a string contains a byte-identical substring.
     StringContains,
     /// Partition a string at its first delimiter occurrence.
@@ -4068,6 +4074,7 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::SetLen => op.push(42),
         Op::SetValues => op.push(43),
         Op::StringConcat => op.push(44),
+        Op::StringTrim => op.push(67),
         Op::ArrayMap { grain } => {
             op.push(45);
             op.push(match grain.key {

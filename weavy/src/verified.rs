@@ -2946,6 +2946,23 @@ impl Verifier<'_> {
                     ));
                 }
             }
+            Op::StringTrim { dst, text } => {
+                let dst_schema =
+                    self.read_handle(function_id, pc, frame, *dst, AccessRole::Destination)?;
+                let text_schema =
+                    self.read_handle(function_id, pc, frame, *text, AccessRole::CompareLeft)?;
+                if dst_schema != text_schema {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::CompareSchemaMismatch {
+                            left: dst_schema,
+                            right: text_schema,
+                        },
+                    ));
+                }
+                self.require_byte_comparable_schema(function_id, pc, text_schema)?;
+            }
             Op::StringContains { dst, text, needle } => {
                 self.require_scalar_write(function_id, pc, frame, *dst, AccessRole::Destination)?;
                 let text_schema =
@@ -5055,6 +5072,7 @@ impl Verifier<'_> {
                     | Op::HostCallYield { .. }
                     | Op::CompareValueBytes { .. }
                     | Op::StringConcat { .. }
+                    | Op::StringTrim { .. }
                     | Op::StringContains { .. }
                     | Op::StringIsNumeric { .. }
                     | Op::StringSplitOnce { .. }

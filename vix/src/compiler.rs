@@ -1055,17 +1055,23 @@ pub fn is_capability_type(ty: &Type) -> bool {
 }
 
 /// The completed view of one exec output stream under the ratchet capability
-/// packages' output protocol: line-framed text codata, keyed by line number.
-/// The payload field is not a legal surface identifier; `.collect()` is the
-/// only projection.
+/// packages' output protocol: line-framed text codata plus its complete decoded
+/// text. Both payload fields are not legal surface identifiers; typed methods
+/// are the only projections.
 #[must_use]
 pub fn byte_stream_type() -> Type {
     Type::Record(RecordType::new(
         "ByteStream",
-        vec![RecordField {
-            name: "$lines".to_owned(),
-            ty: Type::map(Type::Int, Type::String),
-        }],
+        vec![
+            RecordField {
+                name: "$lines".to_owned(),
+                ty: Type::map(Type::Int, Type::String),
+            },
+            RecordField {
+                name: "$text".to_owned(),
+                ty: Type::String,
+            },
+        ],
     ))
 }
 
@@ -2453,6 +2459,10 @@ fn lower_check(
                 count: trace_bound(call)?,
             }));
         }
+        "overlapped" => {
+            check_arity(call, 0)?;
+            return Ok(CheckRecipe::Trace(TraceCheck::Overlapped));
+        }
         "read" => {
             return Ok(CheckRecipe::Trace(TraceCheck::Read {
                 path: trace_path(call)?,
@@ -2827,6 +2837,7 @@ enum PreludeMethod {
     ArrayAll,
     ArrayAny,
     ArrayContains,
+    StringTrim,
     StringContains,
     StringSplitOnce,
     StringParseInt,
@@ -2854,6 +2865,7 @@ enum PreludeMethod {
     PathToString,
     IntToString,
     ByteStreamCollect,
+    ByteStreamTrim,
     TreeGlob,
     TreeEntryText,
     BlobLen,
@@ -2917,6 +2929,12 @@ impl PreludeMethodRegistry {
                 name: "contains",
                 arity: 1,
                 method: PreludeMethod::ArrayContains,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::String,
+                name: "trim",
+                arity: 0,
+                method: PreludeMethod::StringTrim,
             },
             PreludeMethodEntry {
                 receiver: PreludeReceiverType::String,
@@ -3049,6 +3067,12 @@ impl PreludeMethodRegistry {
                 name: "collect",
                 arity: 0,
                 method: PreludeMethod::ByteStreamCollect,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::ByteStream,
+                name: "trim",
+                arity: 0,
+                method: PreludeMethod::ByteStreamTrim,
             },
             PreludeMethodEntry {
                 receiver: PreludeReceiverType::Stream,
@@ -4040,6 +4064,17 @@ fn lower_method_call(
                 ty: Type::Bool,
             })
         }
+        PreludeMethod::StringTrim => Ok(LoweredValue {
+            node: push_node(
+                nodes,
+                call.span,
+                Type::String,
+                EffectFacts::PURE,
+                vec![receiver.node],
+                Op::StringTrim,
+            ),
+            ty: Type::String,
+        }),
         PreludeMethod::StringSplitOnce => {
             let delimiter = lower_value(nodes, bindings, context, &positional[0])?;
             require_type(&delimiter, &Type::String, expr_span(&positional[0]))?;
@@ -4638,6 +4673,27 @@ fn lower_method_call(
                     Op::Project { index: 0 },
                 ),
                 ty,
+            })
+        }
+        PreludeMethod::ByteStreamTrim => {
+            let text = push_node(
+                nodes,
+                call.span,
+                Type::String,
+                EffectFacts::PURE,
+                vec![receiver.node],
+                Op::Project { index: 1 },
+            );
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    Type::String,
+                    EffectFacts::PURE,
+                    vec![text],
+                    Op::StringTrim,
+                ),
+                ty: Type::String,
             })
         }
         PreludeMethod::IntToString => {

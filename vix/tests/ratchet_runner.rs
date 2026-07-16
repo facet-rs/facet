@@ -111,6 +111,8 @@ const RUNG_107: &str = include_str!("ratchet/107-visibility.reject.vix");
 const RUNG_108: &str = include_str!("ratchet/108-import-std.vix");
 const RUNG_109: &str = include_str!("ratchet/109-name-collision.reject.vix");
 const RUNG_110: &str = include_str!("ratchet/110-module-memo-boundary.vix");
+const RUNG_126: &str = include_str!("ratchet/126-effects-overlap.vix");
+const RUNG_129: &str = include_str!("ratchet/129-no-inline-draining.vix");
 const LIB_GEOMETRY: &str = include_str!("ratchet/lib/geometry.vix");
 const RUNG_138: &str = include_str!("ratchet/138-map-accumulator.vix");
 const RUNG_144: &str = include_str!("ratchet/144-unused-collection-result.warn.vix");
@@ -6411,6 +6413,34 @@ fn rung_069_exec_memoizes_by_plan_and_capability_identity() {
                 .count(),
             1
         );
+    }
+}
+
+/// r[verify machine.scheduler.effect-overlap]
+/// r[verify machine.scheduler.block-on-event]
+/// r[verify machine.scheduler.no-shadow-scheduler]
+#[test]
+fn rung_126_independent_exec_roots_overlap_through_the_scheduler_frontier() {
+    let report = run_source(RUNG_126).expect("rung 126 runs through the production frontier");
+    assert!(report.passed(), "rung 126 checks pass: {report:?}");
+    assert!(report.agrees(), "rung 126 lanes agree: {report:?}");
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.effect_spawns, 2);
+        assert!(lane.counters.peak_effects_in_flight >= 2);
+        assert!(lane.counters.overlap_observations >= 1);
+    }
+}
+
+/// r[verify machine.scheduler.effect-overlap]
+/// r[verify machine.scheduler.block-on-event]
+#[test]
+fn rung_129_pure_work_runs_while_an_exec_root_is_parked() {
+    let report = run_source(RUNG_129).expect("rung 129 runs through the production frontier");
+    assert!(report.passed(), "rung 129 checks pass: {report:?}");
+    assert!(report.agrees(), "rung 129 lanes agree: {report:?}");
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.effect_spawns, 1);
+        assert!(lane.counters.overlap_observations >= 1);
     }
 }
 

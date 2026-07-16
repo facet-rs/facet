@@ -24,6 +24,13 @@ pub struct Counters {
     pub store_dedups: u64,
     pub bytes_hashed: u64,
     pub effect_spawns: u64,
+    /// Scheduler progress observed while at least one independent effect was
+    /// already in flight, or an effect admitted while another was pending.
+    /// This is a causal overlap witness, not a wall-clock inference.
+    pub overlap_observations: u64,
+    /// Peak number of primitive/exec effects simultaneously owned by the
+    /// scheduler. A value above one directly witnesses effect fan-out.
+    pub peak_effects_in_flight: u64,
     /// Fetch effects actually performed (a memo miss that ran). A memoized
     /// re-demand of an identical pinned fetch adds nothing; this is what the
     /// `fetched(n)` trace check reads.

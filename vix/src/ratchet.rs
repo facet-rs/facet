@@ -8,10 +8,10 @@ use crate::diagnostic::Diagnostics;
 use crate::lowering::{LoweringCache, LoweringCacheCounters, LoweringError, attribution_for};
 use crate::runtime::{
     ChaosPolicy, Counters, DemandState, Evaluation, Event, EventKind, EventLog, FailureContext,
-    FailureValue, FramedNode, GeneratorOutcome, IslandInputs, Location, MachineError, MemoVerdict,
+    FailureValue, FramedNode, GeneratorOutcome, IslandInputs, Location, MachineError,
     PersistentRuntimeJournal, PersistentRuntimeJournalError, PersistentRuntimeJournalLoadReport,
-    PersistentRuntimeState, PrimitiveServices, RealizedWireDemand, Runtime, SnapshotCapture,
-    SnapshotOutcome, TaskState, ValueId, WireDemand,
+    PersistentRuntimeState, PrimitiveServices, RealizedWireDemand, RootSubmission, Runtime,
+    SnapshotCapture, SnapshotOutcome, TaskState, ValueId, ValueRootRequest, WireDemand,
 };
 use crate::vir::{
     DescribedWire, FunctionId, Island, Module, Op, PartitionedRecipe, PartitionedValue, TraceCheck,
@@ -335,6 +335,7 @@ struct TraceSnapshot {
     memo_hits: u64,
     store_interns: u64,
     effect_spawns: u64,
+    overlap_observations: u64,
     value_island_spawns: u64,
     successful_aggregate_freezes: u64,
     active_molten_selections: u64,
@@ -465,6 +466,10 @@ impl TraceSnapshot {
             TraceCheck::RanProcesses { count } => {
                 let observed = self.effect_spawns;
                 (observed, i128::from(observed) == i128::from(*count))
+            }
+            TraceCheck::Overlapped => {
+                let observed = self.overlap_observations;
+                (observed, observed >= 1)
             }
             TraceCheck::Read { path } => {
                 let observed = u64::from(self.reads.contains(path));
@@ -1175,6 +1180,33 @@ struct SiteContext<'a> {
     published_values: &'a BTreeMap<ValueIslandId, Evaluation>,
 }
 
+struct PendingValueCheck {
+    provenance: ProvenanceKey,
+    argument_identities: Vec<ValueId>,
+}
+
+enum FrontierWaiter {
+    Value(usize),
+    Check {
+        site: u32,
+        island: usize,
+        pending: PendingValueCheck,
+    },
+}
+
+fn finish_value_check(pending: PendingValueCheck, evaluation: Evaluation) -> CheckRun {
+    CheckRun {
+        provenance: pending.provenance,
+        identity: Some(evaluation.identity),
+        arguments: pending.argument_identities,
+        passed: evaluation.passed,
+        failure: evaluation.failure,
+        failure_context: evaluation.failure_context,
+        trace_failure: None,
+        snapshot: None,
+    }
+}
+
 fn scoped_location(location: Location, source_revision: Option<&str>) -> Location {
     source_revision.map_or(location.clone(), |revision| {
         location.with_source_revision(revision)
@@ -1193,6 +1225,27 @@ fn evaluate_value_site(
     site: u32,
     chaos: ChaosPolicy,
 ) -> Result<CheckRun, RunError> {
+    let (submission, pending) = submit_value_site(runtime, cache, context, island, site, chaos)?;
+    let evaluation = match submission {
+        RootSubmission::Ready(evaluation) => evaluation,
+        RootSubmission::Pending(root) => runtime.run_until_any(&[root])?.1,
+    };
+    runtime.finish_root_batch();
+    Ok(finish_value_check(pending, evaluation))
+}
+
+/// Submit one value-check site through the same scheduler root API as ordinary
+/// value islands. The caller may retain the returned descriptor while other
+/// independent roots run, then materialize the provenance-keyed `CheckRun`
+/// when this demand is harvested.
+fn submit_value_site(
+    runtime: &mut Runtime<EventLog>,
+    cache: &mut LoweringCache,
+    context: &SiteContext<'_>,
+    island: &crate::vir::Island,
+    site: u32,
+    chaos: ChaosPolicy,
+) -> Result<(RootSubmission, PendingValueCheck), RunError> {
     // The island was lowered up front; take a retained artifact handle so the
     // wire-demand tree can own its context and the cache borrow is released
     // before it is read immutably to build the wires.
@@ -1228,24 +1281,22 @@ fn evaluate_value_site(
         .iter()
         .map(|argument| argument.identity.clone())
         .collect();
-    let evaluation: Evaluation = runtime.evaluate(
-        island.id,
-        &location,
+    let submission = runtime.submit_value(ValueRootRequest {
+        island: island.id,
+        location,
         lowered,
-        &attribution,
-        IslandInputs { arguments, wires },
+        attribution: Rc::new(attribution),
+        inputs: IslandInputs { arguments, wires },
         chaos,
-    )?;
-    Ok(CheckRun {
-        provenance,
-        identity: Some(evaluation.identity),
-        arguments: argument_identities,
-        passed: evaluation.passed,
-        failure: evaluation.failure,
-        failure_context: evaluation.failure_context,
-        trace_failure: None,
-        snapshot: None,
-    })
+        realized_as: None,
+    })?;
+    Ok((
+        submission,
+        PendingValueCheck {
+            provenance,
+            argument_identities,
+        },
+    ))
 }
 
 /// Evaluate one `expect_snapshot` site: demand its value-publishing island,
@@ -1441,99 +1492,228 @@ fn run_lane(
             let evaluation = runtime.publish_capability(&capability.ty, &capability.name);
             published_values.insert(capability.id, evaluation);
         }
-        for value in &partitioned.values {
-            let arguments = value
-                .island
-                .value_inputs
+        // Submit every value island whose published inputs are ready, regardless
+        // of its position in the authored/topological vector. For a flat
+        // generator, unconditional value-check sites join the same frontier:
+        // testing is ordinary demand propagation, so independent pure check work
+        // may run while an effect value is parked.
+        let mut remaining = (0..partitioned.values.len()).collect::<BTreeSet<_>>();
+        let mut remaining_flat_checks = if test.generator.has_conditional_sites() {
+            BTreeSet::new()
+        } else {
+            partitioned
+                .sites
                 .iter()
-                .map(|input| {
-                    published_values
-                        .get(input)
-                        .cloned()
-                        .expect("value islands are ordered after their dependencies")
+                .enumerate()
+                .filter_map(|(index, site)| {
+                    matches!(site.recipe, PartitionedRecipe::Value { .. }).then_some(index)
+                })
+                .collect::<BTreeSet<_>>()
+        };
+        let mut completed_flat_checks = BTreeMap::<u32, CheckRun>::new();
+        let mut in_flight = BTreeMap::<crate::runtime::DemandKey, Vec<FrontierWaiter>>::new();
+        let mut completed = vec![None; partitioned.values.len()];
+        while !remaining.is_empty() || !in_flight.is_empty() {
+            let ready_values = remaining
+                .iter()
+                .copied()
+                .filter(|index| {
+                    partitioned.values[*index]
+                        .island
+                        .value_inputs
+                        .iter()
+                        .all(|input| published_values.contains_key(input))
                 })
                 .collect::<Vec<_>>();
-            let chaos = ChaosPolicy {
-                kill_first_running_task: kill_available,
-            };
-            let evaluation = if value.island.purpose == crate::vir::IslandPurpose::Effect {
-                if matches!(
-                    value.island.effect_output().map(|node| &node.op),
-                    Some(crate::vir::Op::Exec { .. })
-                ) {
-                    let capability = arguments
-                        .first()
-                        .cloned()
-                        .expect("exec effect island has its declared capability input");
-                    runtime.evaluate_exec(
-                        &value.island,
-                        &scoped_location(
-                            Location::for_test_value(&partitioned.name, &value.id.stable_segment()),
-                            source_revision,
-                        ),
-                        &capability,
-                        chaos,
-                    )?
-                } else {
-                    let fingerprint = value
-                        .effect_fingerprint
-                        .as_deref()
-                        .expect("effect island carries a structural fingerprint");
-                    runtime.evaluate_effect(
-                        value.island.id,
-                        &scoped_location(
-                            Location::for_test_effect(&partitioned.name, fingerprint),
-                            source_revision,
-                        ),
-                        fingerprint,
-                        &value.island,
-                        &arguments,
-                        chaos,
-                    )?
-                }
-            } else {
-                let lowered = cache.get_or_lower_owned(&value.island)?;
-                let attribution = attribution_for(&value.island);
-                runtime.evaluate(
-                    value.island.id,
-                    &scoped_location(
+            let ready_checks = remaining_flat_checks
+                .iter()
+                .copied()
+                .filter(|index| {
+                    let PartitionedRecipe::Value { island } = partitioned.sites[*index].recipe
+                    else {
+                        return false;
+                    };
+                    partitioned.islands[island]
+                        .value_inputs
+                        .iter()
+                        .all(|input| published_values.contains_key(input))
+                })
+                .collect::<Vec<_>>();
+
+            if !ready_values.is_empty() || !ready_checks.is_empty() {
+                for index in ready_values {
+                    remaining.remove(&index);
+                    let value = &partitioned.values[index];
+                    let arguments = value
+                        .island
+                        .value_inputs
+                        .iter()
+                        .map(|input| {
+                            published_values
+                                .get(input)
+                                .cloned()
+                                .expect("frontier admitted only published dependencies")
+                        })
+                        .collect::<Vec<_>>();
+                    let chaos = ChaosPolicy {
+                        kill_first_running_task: kill_available,
+                    };
+                    kill_available = false;
+                    let location = scoped_location(
                         Location::for_test_value(&partitioned.name, &value.id.stable_segment()),
                         source_revision,
-                    ),
-                    lowered,
-                    &attribution,
-                    IslandInputs {
-                        arguments,
-                        wires: Vec::new(),
-                    },
-                    chaos,
-                )?
-            };
-            kill_available = false;
-            // A hoisted invocation island that actually computed (a memo miss)
-            // records one realized demand for its described invocation. A
-            // memoized re-demand of the same recipe+argument is a hit and adds
-            // nothing, so repeated identical wires memoize to a single
-            // realization.
-            if let Some(wire) = &value.wire
-                && evaluation.memo == MemoVerdict::Miss
-            {
-                let arguments = wire
-                    .arguments
-                    .as_ref()
-                    .map(|arguments| arguments.iter().map(wire_arg_identity).collect::<Vec<_>>());
-                runtime.record_wire_demand(
-                    wire.function,
-                    arguments,
-                    module.invocation_preimage(value.id.function, value.id.node),
-                );
+                    );
+                    let submission = if value.island.purpose == crate::vir::IslandPurpose::Effect {
+                        if matches!(
+                            value.island.effect_output().map(|node| &node.op),
+                            Some(crate::vir::Op::Exec { .. })
+                        ) {
+                            let capability = arguments
+                                .first()
+                                .cloned()
+                                .expect("exec effect island has its declared capability input");
+                            runtime.submit_exec(&value.island, &location, &capability, chaos)?
+                        } else {
+                            let fingerprint = value
+                                .effect_fingerprint
+                                .as_deref()
+                                .expect("effect island carries a structural fingerprint");
+                            let evaluation = runtime.evaluate_effect(
+                                value.island.id,
+                                &scoped_location(
+                                    Location::for_test_effect(&partitioned.name, fingerprint),
+                                    source_revision,
+                                ),
+                                fingerprint,
+                                &value.island,
+                                &arguments,
+                                chaos,
+                            )?;
+                            RootSubmission::Ready(evaluation)
+                        }
+                    } else {
+                        let realized_as = value.wire.as_ref().map(|wire| RealizedWireDemand {
+                            function: wire.function,
+                            arguments: wire.arguments.as_ref().map(|arguments| {
+                                arguments.iter().map(wire_arg_identity).collect::<Vec<_>>()
+                            }),
+                            preimage: module.invocation_preimage(value.id.function, value.id.node),
+                        });
+                        runtime.submit_value(ValueRootRequest {
+                            island: value.island.id,
+                            location,
+                            lowered: cache.get_or_lower_owned(&value.island)?,
+                            attribution: Rc::new(attribution_for(&value.island)),
+                            inputs: IslandInputs {
+                                arguments,
+                                wires: Vec::new(),
+                            },
+                            chaos,
+                            realized_as,
+                        })?
+                    };
+                    match submission {
+                        RootSubmission::Ready(evaluation) => {
+                            published_values.insert(value.id, evaluation.clone());
+                            completed[index] = Some(evaluation);
+                        }
+                        RootSubmission::Pending(demand) => {
+                            in_flight
+                                .entry(demand)
+                                .or_default()
+                                .push(FrontierWaiter::Value(index));
+                        }
+                    }
+                }
+                for site_index in ready_checks {
+                    remaining_flat_checks.remove(&site_index);
+                    let partitioned_site = &partitioned.sites[site_index];
+                    let PartitionedRecipe::Value { island } = partitioned_site.recipe else {
+                        unreachable!("ready flat check is a value recipe");
+                    };
+                    let site = partitioned_site.id.0;
+                    let misses_before = runtime.counters().memo_misses;
+                    let (submission, pending) = submit_value_site(
+                        &mut runtime,
+                        cache,
+                        &SiteContext {
+                            test_name: &partitioned.name,
+                            source_revision,
+                            module,
+                            wire_lookup: &wire_lookup,
+                            published_values: &published_values,
+                        },
+                        &partitioned.islands[island],
+                        site,
+                        ChaosPolicy {
+                            kill_first_running_task: kill_available,
+                        },
+                    )?;
+                    kill_available = false;
+                    match submission {
+                        RootSubmission::Ready(evaluation) => {
+                            if runtime.counters().memo_misses > misses_before {
+                                evaluated_islands.push(island);
+                            }
+                            completed_flat_checks
+                                .insert(site, finish_value_check(pending, evaluation));
+                        }
+                        RootSubmission::Pending(demand) => {
+                            in_flight
+                                .entry(demand)
+                                .or_default()
+                                .push(FrontierWaiter::Check {
+                                    site,
+                                    island,
+                                    pending,
+                                });
+                        }
+                    }
+                }
+                continue;
             }
+
+            if in_flight.is_empty() {
+                break;
+            }
+            let roots = in_flight.keys().copied().collect::<Vec<_>>();
+            let (demand, evaluation) = runtime.run_until_any(&roots)?;
+            let waiters = in_flight
+                .remove(&demand)
+                .expect("a harvested root was tracked by the frontier");
+            for waiter in waiters {
+                match waiter {
+                    FrontierWaiter::Value(index) => {
+                        let value = &partitioned.values[index];
+                        published_values.insert(value.id, evaluation.clone());
+                        completed[index] = Some(evaluation.clone());
+                    }
+                    FrontierWaiter::Check {
+                        site,
+                        island,
+                        pending,
+                    } => {
+                        if evaluation.memo == crate::runtime::MemoVerdict::Miss {
+                            evaluated_islands.push(island);
+                        }
+                        completed_flat_checks
+                            .insert(site, finish_value_check(pending, evaluation.clone()));
+                    }
+                }
+            }
+        }
+        assert!(
+            remaining.is_empty(),
+            "value dependency frontier stalled before every value was published",
+        );
+        runtime.finish_root_batch();
+        for (value, evaluation) in partitioned.values.iter().zip(completed) {
+            let evaluation = evaluation.expect("the full frontier published every value island");
             values.push(ValuePublicationRun {
                 provenance: value.id,
-                identity: evaluation.identity.clone(),
-                failure: evaluation.failure.clone(),
+                identity: evaluation.identity,
+                failure: evaluation.failure,
             });
-            published_values.insert(value.id, evaluation);
         }
         for catch in &partitioned.catches {
             let operand = published_values
@@ -1690,26 +1870,31 @@ fn run_lane(
                     let site = partitioned_site.id.0;
                     match &partitioned_site.recipe {
                         PartitionedRecipe::Value { island } => {
-                            let misses_before = runtime.counters().memo_misses;
-                            let check = evaluate_value_site(
-                                &mut runtime,
-                                cache,
-                                &SiteContext {
-                                    test_name: &partitioned.name,
-                                    source_revision,
-                                    module,
-                                    wire_lookup: &wire_lookup,
-                                    published_values: &published_values,
-                                },
-                                &partitioned.islands[*island],
-                                site,
-                                ChaosPolicy {
-                                    kill_first_running_task: kill_available,
-                                },
-                            )?;
-                            if runtime.counters().memo_misses > misses_before {
-                                evaluated_islands.push(*island);
-                            }
+                            let check = if let Some(check) = completed_flat_checks.remove(&site) {
+                                check
+                            } else {
+                                let misses_before = runtime.counters().memo_misses;
+                                let check = evaluate_value_site(
+                                    &mut runtime,
+                                    cache,
+                                    &SiteContext {
+                                        test_name: &partitioned.name,
+                                        source_revision,
+                                        module,
+                                        wire_lookup: &wire_lookup,
+                                        published_values: &published_values,
+                                    },
+                                    &partitioned.islands[*island],
+                                    site,
+                                    ChaosPolicy {
+                                        kill_first_running_task: kill_available,
+                                    },
+                                )?;
+                                if runtime.counters().memo_misses > misses_before {
+                                    evaluated_islands.push(*island);
+                                }
+                                check
+                            };
                             checks.push(check);
                             kill_available = false;
                         }
@@ -1791,6 +1976,7 @@ fn run_lane(
             + counters.memo_hits_semantic,
         store_interns: counters.store_interns,
         effect_spawns: counters.effect_spawns,
+        overlap_observations: counters.overlap_observations,
         value_island_spawns: counters.value_island_spawns,
         successful_aggregate_freezes: counters.successful_aggregate_freezes,
         active_molten_selections: counters.active_molten_selections,

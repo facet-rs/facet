@@ -289,6 +289,10 @@ struct TaskContext {
     /// forces a `Running`/`Queued` ancestor is a re-entrant demand fault; a
     /// `Running`/`Queued` non-ancestor joins its in-flight completion.
     ancestry: Vec<DemandKey>,
+    /// The described invocation this task realizes when it owns a fresh miss.
+    /// Joiners carry no copy, so publishing one shared demand records exactly
+    /// one realization.
+    realized_as: Option<RealizedWireDemand>,
     task: weavy::exec::ExecTask,
     ready: Vec<bool>,
     awaited: Vec<i64>,
@@ -371,6 +375,9 @@ struct SubmitRequest {
     chaos: ChaosPolicy,
     /// Root-to-parent demand chain of the submitting task (empty for the root).
     ancestry: Vec<DemandKey>,
+    /// The described invocation recorded only if this submission owns a fresh
+    /// miss. An in-flight join drops this metadata.
+    realized_as: Option<RealizedWireDemand>,
 }
 
 /// The outcome of submitting a demand (a root evaluation or a forced wire).
@@ -409,6 +416,28 @@ pub struct Evaluation {
     pub memo: MemoVerdict,
     pub failure: Option<FailureValue>,
     pub failure_context: Option<FailureContext>,
+}
+
+/// The result of submitting one top-level demand without synchronously
+/// draining it. A ready demand resolved immediately; a pending demand remains
+/// owned by the scheduler until a shared harvest call observes its publication.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RootSubmission {
+    Ready(Evaluation),
+    Pending(DemandKey),
+}
+
+/// One top-level pure/value demand submitted by the runner. The request owns
+/// every frame input so the scheduler may retain it across suspension.
+pub struct ValueRootRequest {
+    pub island: IslandId,
+    pub location: Location,
+    pub lowered: Rc<LoweringArtifact>,
+    pub attribution: Rc<LoweringAttribution>,
+    pub inputs: IslandInputs,
+    pub chaos: ChaosPolicy,
+    /// Described invocation metadata owned by the fresh computing task.
+    pub realized_as: Option<RealizedWireDemand>,
 }
 
 /// The outcome of driving one generator task to completion.
@@ -1123,6 +1152,41 @@ impl<S: EventSink> Runtime<S> {
     /// r[impl machine.scheduler.passive-no-loop]
     /// r[impl machine.scheduler.no-shadow-scheduler]
     /// r[impl machine.scheduler.completion-resumes-direct]
+    pub fn submit_value(
+        &mut self,
+        request: ValueRootRequest,
+    ) -> Result<RootSubmission, Box<MachineError>> {
+        let ValueRootRequest {
+            island,
+            location,
+            lowered,
+            attribution,
+            inputs,
+            chaos,
+            realized_as,
+        } = request;
+        let IslandInputs { arguments, wires } = inputs;
+        match self.submit_demand(SubmitRequest {
+            island,
+            location,
+            lowered,
+            attribution,
+            arguments,
+            wires,
+            chaos,
+            ancestry: Vec::new(),
+            realized_as,
+        })? {
+            SubmitOutcome::Ready(evaluation) => Ok(RootSubmission::Ready(evaluation)),
+            SubmitOutcome::Spawned(root) | SubmitOutcome::Joined(root) => {
+                Ok(RootSubmission::Pending(root))
+            }
+        }
+    }
+
+    /// Evaluate one island demand to its realized result. This remains the
+    /// single-root compatibility wrapper over [`Self::submit_value`]; the
+    /// production frontier submits several roots before harvesting any.
     pub fn evaluate(
         &mut self,
         island: IslandId,
@@ -1132,51 +1196,20 @@ impl<S: EventSink> Runtime<S> {
         inputs: IslandInputs,
         chaos: ChaosPolicy,
     ) -> Result<Evaluation, Box<MachineError>> {
-        let IslandInputs { arguments, wires } = inputs;
-        let attribution = Rc::new(attribution.clone());
-        let outcome = self.submit_demand(SubmitRequest {
+        let outcome = self.submit_value(ValueRootRequest {
             island,
             location: location.clone(),
             lowered,
-            attribution,
-            arguments,
-            wires,
+            attribution: Rc::new(attribution.clone()),
+            inputs,
             chaos,
-            ancestry: Vec::new(),
+            realized_as: None,
         })?;
         let evaluation = match outcome {
-            SubmitOutcome::Ready(evaluation) => evaluation,
-            SubmitOutcome::Spawned(root) | SubmitOutcome::Joined(root) => {
-                self.run_until_root(root)?
-            }
+            RootSubmission::Ready(evaluation) => evaluation,
+            RootSubmission::Pending(root) => self.run_until_root(root)?,
         };
-        // Successful teardown: a resolved root leaves no runnable task, no
-        // parked frame, no waiter, and no in-flight primitive/exec pending. The
-        // root result was taken by `run_until_root`; the remaining published
-        // wire-child results are transient scratch (their identities are already
-        // memoized) and are cleared here. None of these transient scheduler maps
-        // is ever extracted into PersistentRuntimeState.
-        self.root_results.clear();
-        debug_assert!(
-            self.runnable.is_empty(),
-            "runnable tasks survived a resolved root"
-        );
-        debug_assert!(
-            self.parked.is_empty(),
-            "parked tasks survived a resolved root"
-        );
-        debug_assert!(
-            self.wire_waiters.is_empty(),
-            "wire waiters survived a resolved root"
-        );
-        debug_assert!(
-            self.primitive_pending.is_empty(),
-            "primitive pending survived a resolved root"
-        );
-        debug_assert!(
-            self.exec_pending.is_empty(),
-            "exec pending survived a resolved root"
-        );
+        self.finish_root_batch();
         Ok(evaluation)
     }
 
@@ -1208,6 +1241,7 @@ impl<S: EventSink> Runtime<S> {
             wires,
             chaos,
             ancestry,
+            realized_as,
         } = request;
         let demand_preimage = DemandPreimage {
             closure: lowered.recipe,
@@ -1249,6 +1283,12 @@ impl<S: EventSink> Runtime<S> {
                         Some(demand_key),
                     )));
                 }
+                self.counters.memo_hits_exact += 1;
+                self.emit(EventKind::Memo {
+                    location: location.id,
+                    verdict: MemoVerdict::Exact,
+                    verified: 0,
+                });
                 return Ok(SubmitOutcome::Joined(demand_key));
             }
 
@@ -1289,6 +1329,9 @@ impl<S: EventSink> Runtime<S> {
                     demand.result = Some(argument.handle);
                 }
                 self.transition_demand(demand_key, DemandState::Failed)?;
+                if let Some(realized) = realized_as {
+                    self.wire_demands.push(realized);
+                }
                 return Ok(SubmitOutcome::Ready(Evaluation {
                     handle: argument.handle,
                     identity: argument.identity.clone(),
@@ -1329,6 +1372,7 @@ impl<S: EventSink> Runtime<S> {
                 wires,
                 chaos,
                 ancestry,
+                realized_as,
             },
             demand_key,
             demand_preimage,
@@ -1471,6 +1515,7 @@ impl<S: EventSink> Runtime<S> {
             wires,
             chaos,
             ancestry,
+            realized_as,
         } = request;
         let invocation = DemandExecution::new(lowered.as_ref(), demand_preimage.arguments.clone());
         let lowered_ex = &invocation;
@@ -1669,6 +1714,7 @@ impl<S: EventSink> Runtime<S> {
             arguments,
             wires,
             ancestry,
+            realized_as,
             task,
             ready,
             awaited,
@@ -1711,6 +1757,66 @@ impl<S: EventSink> Runtime<S> {
         }
     }
 
+    /// Drive the shared scheduler until any one of `roots` publishes, then
+    /// remove and return that root's evaluation. Runnable work across every
+    /// submitted root drains before the loop blocks on the unified inbox.
+    ///
+    /// The caller retains the remaining roots and may submit newly-ready
+    /// dependents before harvesting again; scheduler state therefore persists
+    /// across frontier rounds instead of being torn down per island.
+    pub fn run_until_any(
+        &mut self,
+        roots: &[DemandKey],
+    ) -> Result<(DemandKey, Evaluation), Box<MachineError>> {
+        let unresolved = roots
+            .first()
+            .copied()
+            .expect("run_until_any requires at least one submitted root");
+        let result = self.pump_until(|runtime| {
+            roots
+                .iter()
+                .any(|root| runtime.root_results.contains_key(root))
+        });
+        if let Err(error) = result {
+            self.clear_transient_scheduler_state();
+            return Err(error);
+        }
+        for root in roots {
+            if let Some(evaluation) = self.root_results.remove(root) {
+                return Ok((*root, evaluation));
+            }
+        }
+        let error = Box::new(MachineError::runtime(
+            MachineOperation::Drive,
+            RuntimeFault::QuiescentUnresolvedDemand { key: unresolved },
+            None,
+            Some(unresolved),
+        ));
+        self.clear_transient_scheduler_state();
+        Err(error)
+    }
+
+    /// Finish one multi-root frontier after all submitted roots were harvested.
+    /// Child-demand result entries are transient scratch and are discarded only
+    /// after the scheduler has no runnable, parked, waiting, or pending work.
+    pub fn finish_root_batch(&mut self) {
+        assert!(
+            self.runnable.is_empty()
+                && self.parked.is_empty()
+                && self.wire_waiters.is_empty()
+                && self.primitive_pending.is_empty()
+                && self.exec_pending.is_empty(),
+            "root batch finished with live scheduler work: \
+             runnable={}, parked={}, wire_waiters={}, primitive_pending={}, exec_pending={}",
+            self.runnable.len(),
+            self.parked.len(),
+            self.wire_waiters.len(),
+            self.primitive_pending.len(),
+            self.exec_pending.len(),
+        );
+        self.root_results.clear();
+    }
+
     /// Drive the scheduler's runnable/parked/pending graph until `done` holds.
     /// Each round takes one runnable task and drives it a `take-run-put`
     /// segment; only when no task is runnable does the scheduler block on the
@@ -1723,8 +1829,16 @@ impl<S: EventSink> Runtime<S> {
     fn pump_until(&mut self, done: impl Fn(&Self) -> bool) -> Result<(), Box<MachineError>> {
         while !done(self) {
             if let Some(mut ctx) = self.runnable.pop() {
+                if !self.primitive_pending.is_empty() || !self.exec_pending.is_empty() {
+                    self.counters.overlap_observations += 1;
+                }
                 match self.drive_context(&mut ctx)? {
                     DriveOutcome::Completed(evaluation) => {
+                        if evaluation.memo == MemoVerdict::Miss
+                            && let Some(realized) = ctx.realized_as.take()
+                        {
+                            self.wire_demands.push(realized);
+                        }
                         self.publish(ctx.demand_key, *evaluation)?;
                     }
                     DriveOutcome::Parked(input) => {
@@ -1773,6 +1887,18 @@ impl<S: EventSink> Runtime<S> {
         self.exec_pending.clear();
     }
 
+    /// Observe the scheduler-owned effect frontier after admitting a fresh
+    /// primitive or exec demand. Two simultaneous pending effects are causal
+    /// overlap regardless of worker completion timing.
+    fn observe_effect_frontier(&mut self) {
+        let pending = self.primitive_pending.len() + self.exec_pending.len();
+        self.counters.peak_effects_in_flight =
+            self.counters.peak_effects_in_flight.max(pending as u64);
+        if pending > 1 {
+            self.counters.overlap_observations += 1;
+        }
+    }
+
     /// Publish a demand's completion: record its result and resume every parent
     /// parked on it, filling the awaited slot and returning the parent to the
     /// runnable stack (or cascading a failure).
@@ -1794,28 +1920,17 @@ impl<S: EventSink> Runtime<S> {
     }
 
     /// Resume a parent suspended on wire `wire_index` with the wire's resolved
-    /// result. Records the realized wire demand on a computed miss, propagates a
-    /// language failure to the parent demand (omitting `transition_task`, as the
-    /// historical wire-failure cascade did), or fills the awaited slot and
-    /// returns the parent to the runnable stack.
+    /// result. Propagates a language failure to the parent demand (omitting
+    /// `transition_task`, as the historical wire-failure cascade did), or fills
+    /// the awaited slot and returns the parent to the runnable stack. Realized
+    /// demand recording belongs to the computing child task, never this waiter
+    /// edge, so multiple parents joining one child still observe one realization.
     fn resume_parent(
         &mut self,
         mut parent: TaskContext,
         wire_index: usize,
         resolved: Evaluation,
     ) -> Result<(), Box<MachineError>> {
-        // A wire that actually computed (a memo miss that ran) records one
-        // realized demand for its described invocation; a memoized re-force is a
-        // hit and records nothing, so structurally equal forces observe a single
-        // realization.
-        if resolved.memo == MemoVerdict::Miss {
-            let wire = &parent.wires[wire_index];
-            self.record_wire_demand(
-                wire.function,
-                wire.demand_arguments.clone(),
-                wire.preimage.clone(),
-            );
-        }
         if let Some(failure) = resolved.failure {
             // A demanded argument failed on the language plane; propagate the
             // typed failure with its authored source site to the parent demand.
@@ -1890,6 +2005,11 @@ impl<S: EventSink> Runtime<S> {
             input,
         });
         let wire = wire.clone();
+        let realized_as = Some(RealizedWireDemand {
+            function: wire.function,
+            arguments: wire.demand_arguments.clone(),
+            preimage: wire.preimage.clone(),
+        });
         let mut child_ancestry = ctx.ancestry.clone();
         child_ancestry.push(ctx.demand_key);
         let outcome = self.submit_demand(SubmitRequest {
@@ -1901,6 +2021,7 @@ impl<S: EventSink> Runtime<S> {
             wires: wire.wires,
             chaos: ChaosPolicy::default(),
             ancestry: child_ancestry,
+            realized_as,
         })?;
         match outcome {
             SubmitOutcome::Ready(resolved) => {
@@ -3446,6 +3567,7 @@ impl<S: EventSink> Runtime<S> {
                     waiters: vec![PrimitiveWaiter { ctx, plan, site }],
                 },
             );
+            self.observe_effect_frontier();
         }
         self.emit(EventKind::PrimitiveParked {
             task: task_id,
@@ -4605,6 +4727,25 @@ impl<S: EventSink> Runtime<S> {
         capability: &Evaluation,
         chaos: ChaosPolicy,
     ) -> Result<Evaluation, Box<MachineError>> {
+        let evaluation = match self.submit_exec(island, location, capability, chaos)? {
+            RootSubmission::Ready(evaluation) => evaluation,
+            RootSubmission::Pending(root) => self.run_until_root(root)?,
+        };
+        self.finish_root_batch();
+        Ok(evaluation)
+    }
+
+    /// Submit one exec root without synchronously draining its process
+    /// completion. An identical in-flight plan joins the same demand; a fresh
+    /// process parks at the worker boundary and returns its demand key to the
+    /// shared multi-root frontier.
+    pub fn submit_exec(
+        &mut self,
+        island: &Island,
+        location: &Location,
+        capability: &Evaluation,
+        chaos: ChaosPolicy,
+    ) -> Result<RootSubmission, Box<MachineError>> {
         let malformed = || {
             Box::new(MachineError::runtime(
                 MachineOperation::Drive,
@@ -4650,7 +4791,11 @@ impl<S: EventSink> Runtime<S> {
             && self.exact_memo_replayable(entry)
         {
             let handle = entry.result;
-            return self.effect_memo_hit(location.id, handle, &effect_context);
+            return Ok(RootSubmission::Ready(self.effect_memo_hit(
+                location.id,
+                handle,
+                &effect_context,
+            )?));
         }
         // Same-run demand-key reuse: the same plan under the same capability at
         // a DIFFERENT source location is the same demand. The memo path serves
@@ -4674,16 +4819,17 @@ impl<S: EventSink> Runtime<S> {
                                 current_receipt: false,
                             },
                         );
-                        return Ok(evaluation);
+                        return Ok(RootSubmission::Ready(evaluation));
                     }
                 }
-                DemandState::Running => {
-                    return Err(Box::new(MachineError::runtime(
-                        MachineOperation::Drive,
-                        RuntimeFault::ReentrantDemand { key: demand_key },
-                        None,
-                        Some(demand_key),
-                    )));
+                DemandState::Running | DemandState::Queued => {
+                    self.counters.memo_hits_exact += 1;
+                    self.emit(EventKind::Memo {
+                        location: location.id,
+                        verdict: MemoVerdict::Exact,
+                        verified: 0,
+                    });
+                    return Ok(RootSubmission::Pending(demand_key));
                 }
                 _ => {}
             }
@@ -4785,6 +4931,7 @@ impl<S: EventSink> Runtime<S> {
                     span: node.span,
                 },
             );
+            self.observe_effect_frontier();
             // `wait_with_output` lives ONLY inside this worker-thread closure;
             // the scheduler thread never waits on the process boundary.
             let exec_sender = self.completion_inbox.exec_sender();
@@ -4800,23 +4947,7 @@ impl<S: EventSink> Runtime<S> {
             });
             break;
         }
-        // Pump the unified event loop until the exec demand resolves through
-        // `apply_exec_completion`. The scheduler thread does no per-demand drain
-        // — it blocks on the one inbox and applies whatever arrives.
-        if let Err(error) =
-            self.pump_until(|runtime| runtime.root_results.contains_key(&demand_key))
-        {
-            self.clear_transient_scheduler_state();
-            return Err(error);
-        }
-        self.root_results.remove(&demand_key).ok_or_else(|| {
-            Box::new(MachineError::runtime(
-                MachineOperation::Drive,
-                RuntimeFault::QuiescentUnresolvedDemand { key: demand_key },
-                None,
-                Some(demand_key),
-            ))
-        })
+        Ok(RootSubmission::Pending(demand_key))
     }
 
     /// Serve one effect demand from an existing store result: the shared exact-
@@ -4876,6 +5007,7 @@ impl<S: EventSink> Runtime<S> {
         let string_schema = semantic_schema_ref(&Type::String);
         let stream_value = |bytes: &[u8]| -> (FramedNode, FrozenValue) {
             let text = String::from_utf8_lossy(bytes);
+            let text_bytes = text.as_bytes().to_vec();
             let mut rows = Vec::new();
             let mut frozen_rows = Vec::new();
             for (index, line) in text.lines().enumerate() {
@@ -4895,14 +5027,25 @@ impl<S: EventSink> Runtime<S> {
             let record = FramedNode::Variant {
                 schema: semantic_schema_ref(&stream_ty),
                 tag: 0,
-                fields: vec![FramedField {
-                    schema: semantic_schema_ref(&lines_ty),
-                    value: FramedValue::Optional(Some(map.identity())),
-                }],
+                fields: vec![
+                    FramedField {
+                        schema: semantic_schema_ref(&lines_ty),
+                        value: FramedValue::Optional(Some(map.identity())),
+                    },
+                    FramedField {
+                        schema: string_schema.clone(),
+                        value: FramedValue::Optional(Some(
+                            FramedNode::leaf(string_schema.clone(), text_bytes.clone()).identity(),
+                        )),
+                    },
+                ],
             };
             (
                 record,
-                FrozenValue::Product(vec![FrozenValue::OrderedMap(frozen_rows)]),
+                FrozenValue::Product(vec![
+                    FrozenValue::OrderedMap(frozen_rows),
+                    FrozenValue::Opaque(text_bytes),
+                ]),
             )
         };
         let (stdout_node, stdout_frozen) = stream_value(stdout);
