@@ -23,6 +23,9 @@ exception, it needs no special vocabulary, and nothing about the rest of the
 language bends around it. Demanding an `exec` runs a process. Not demanding it
 runs nothing.
 
+The machine boundary used by host-provided operations is described in
+[Registered primitives](/vix/registered-primitives).
+
 ## What `exec` gives back
 
 ```vix
