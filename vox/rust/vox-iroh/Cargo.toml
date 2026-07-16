@@ -12,6 +12,11 @@ documentation.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 iroh.workspace = true
 tokio = { workspace = true, features = ["io-util", "rt", "sync"] }

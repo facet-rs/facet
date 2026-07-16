@@ -12,6 +12,11 @@ edition = "2024"
 publish = false
 description = "The Vix demand-driven language and runtime."
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 snark = { path = "../snark", features = ["json-import"] }
 facet = { path = "../facet" }

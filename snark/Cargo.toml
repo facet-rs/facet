@@ -38,7 +38,7 @@ smallvec.workspace = true
 weavy.workspace = true
 
 [dev-dependencies]
-facet-styx = { workspace = true }
+facet-styx = { path = "../facet-styx" }
 gingembre-syntax = { path = "../gingembre-syntax" }
 rediff = { path = "../rediff" }
 snark-dsl = { path = "../snark-dsl", features = ["native"] }
@@ -69,3 +69,6 @@ workspace = true
 
 [package.metadata.docs.rs]
 all-features = true
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]

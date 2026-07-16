@@ -9,6 +9,11 @@ homepage.workspace = true
 description = "Test scanner host for Snark Tree-sitter external scanner ABI fixtures."
 publish = false
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [build-dependencies]
 cc.workspace = true
 
