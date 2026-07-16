@@ -6383,6 +6383,83 @@ fn completed_exec_tree(sh: Sh) -> Stream<Check> {
     assert!(report.agrees());
 }
 
+#[test]
+fn progressive_exec_tree_text_is_a_partial_dependency_not_a_whole_outcome_input() {
+    const SOURCE: &str = r#"
+#[test]
+fn progressive_tree(sh: ProgressiveSh) -> Stream<Check> {
+    let producer = exec sh`-c "mkdir -p out; printf ready > out/early.txt; printf 'vix-ready\tout/early.txt\n'; sleep 0.1; printf done > out/late.txt"`;
+    yield expect_eq((producer.tree / "out" / "early.txt").text(), "ready");
+}
+"#;
+    let module = Compiler::new()
+        .compile(SOURCE)
+        .expect("progressive exec projection source compiles");
+    let partitioned = module.partition_test(&module.tests[0]);
+    let [projection] = partitioned.progressive_values.as_slice() else {
+        panic!("one exec tree text projection is partial");
+    };
+    assert_eq!(projection.producer.node.0, 1);
+    assert_eq!(
+        projection.projection,
+        vix::vir::ProgressiveProjection::ExecTreeText {
+            path: "out/early.txt".to_owned(),
+        }
+    );
+    assert!(
+        partitioned.values.iter().all(|value| {
+            !matches!(
+                value.island.effect_output().map(|node| &node.op),
+                Some(VirOp::TreeProject | VirOp::TreeEntryText)
+            )
+        }),
+        "the projection chain is not serialized as whole-value effect islands",
+    );
+    let producer = projection.producer;
+    let progressive = projection.id;
+    let report = run_source(SOURCE).expect("progressive exec projection source runs");
+    assert!(
+        report.passed(),
+        "progressive exec projection passes: {report:#?}"
+    );
+    assert!(report.agrees());
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(
+            lane.counters.progressive_exec_protocol_publications, 1,
+            "the command protocol, not process exit, authorized the projection",
+        );
+        assert_eq!(lane.counters.progressive_exec_exit_publications, 0);
+        let producer_identity = &lane
+            .values
+            .iter()
+            .find(|value| value.provenance == producer)
+            .expect("aggregate exec outcome was published")
+            .identity;
+        let progressive_identity = &lane
+            .values
+            .iter()
+            .find(|value| value.provenance == progressive)
+            .expect("progressive projection was published")
+            .identity;
+        let completed_at = |identity: &vix::runtime::ValueId| {
+            lane.events
+                .iter()
+                .find_map(|event| match &event.kind {
+                    EventKind::Completed {
+                        identity: completed,
+                        ..
+                    } if completed == identity => Some(event.sequence),
+                    _ => None,
+                })
+                .expect("published value has a completion event")
+        };
+        assert!(
+            completed_at(progressive_identity) < completed_at(producer_identity),
+            "the partial product completes before the aggregate exec outcome",
+        );
+    }
+}
+
 /// A nonzero exit is retained as `ProcessFailure` in the effect demand and
 /// becomes `Result::Err` only at the scheduler-owned postfix-catch boundary.
 ///

@@ -7,11 +7,12 @@ use crate::compiler::{Compiler, CompilerConfig};
 use crate::diagnostic::Diagnostics;
 use crate::lowering::{LoweringCache, LoweringCacheCounters, LoweringError, attribution_for};
 use crate::runtime::{
-    ChaosPolicy, Counters, DemandState, Evaluation, Event, EventKind, EventLog, FailureContext,
-    FailureValue, FramedNode, GeneratorOutcome, IslandInputs, Location, MachineError,
-    PersistentRuntimeJournal, PersistentRuntimeJournalError, PersistentRuntimeJournalLoadReport,
-    PersistentRuntimeState, PrimitiveServices, RealizedWireDemand, RootSubmission, Runtime,
-    SnapshotCapture, SnapshotOutcome, TaskState, ValueId, ValueRootRequest, WireDemand,
+    ChaosPolicy, Counters, DemandState, Evaluation, Event, EventKind, EventLog,
+    ExecProjectionRequest, FailureContext, FailureValue, FramedNode, GeneratorOutcome,
+    IslandInputs, Location, MachineError, PersistentRuntimeJournal, PersistentRuntimeJournalError,
+    PersistentRuntimeJournalLoadReport, PersistentRuntimeState, PrimitiveServices,
+    RealizedWireDemand, RootSubmission, Runtime, SnapshotCapture, SnapshotOutcome, TaskState,
+    ValueId, ValueRootRequest, WireDemand,
 };
 use crate::vir::{
     DescribedWire, FunctionId, Island, Module, Op, PartitionedRecipe, PartitionedValue, TraceCheck,
@@ -1189,11 +1190,17 @@ struct PendingValueCheck {
 
 enum FrontierWaiter {
     Value(usize),
+    Progressive(usize),
     Check {
         site: u32,
         island: usize,
         pending: PendingValueCheck,
     },
+}
+
+struct ExecProducer {
+    demand: crate::runtime::DemandKey,
+    capability: ValueId,
 }
 
 fn finish_value_check(pending: PendingValueCheck, evaluation: Evaluation) -> CheckRun {
@@ -1500,6 +1507,8 @@ fn run_lane(
         // testing is ordinary demand propagation, so independent pure check work
         // may run while an effect value is parked.
         let mut remaining = (0..partitioned.values.len()).collect::<BTreeSet<_>>();
+        let mut remaining_progressive =
+            (0..partitioned.progressive_values.len()).collect::<BTreeSet<_>>();
         let mut remaining_flat_checks = if test.generator.has_conditional_sites() {
             BTreeSet::new()
         } else {
@@ -1515,7 +1524,9 @@ fn run_lane(
         let mut completed_flat_checks = BTreeMap::<u32, CheckRun>::new();
         let mut in_flight = BTreeMap::<crate::runtime::DemandKey, Vec<FrontierWaiter>>::new();
         let mut completed = vec![None; partitioned.values.len()];
-        while !remaining.is_empty() || !in_flight.is_empty() {
+        let mut completed_progressive = vec![None; partitioned.progressive_values.len()];
+        let mut exec_producers = BTreeMap::<ValueIslandId, ExecProducer>::new();
+        while !remaining.is_empty() || !remaining_progressive.is_empty() || !in_flight.is_empty() {
             let ready_values = remaining
                 .iter()
                 .copied()
@@ -1525,6 +1536,13 @@ fn run_lane(
                         .value_inputs
                         .iter()
                         .all(|input| published_values.contains_key(input))
+                })
+                .collect::<Vec<_>>();
+            let ready_progressive = remaining_progressive
+                .iter()
+                .copied()
+                .filter(|index| {
+                    exec_producers.contains_key(&partitioned.progressive_values[*index].producer)
                 })
                 .collect::<Vec<_>>();
             let ready_checks = remaining_flat_checks
@@ -1542,7 +1560,8 @@ fn run_lane(
                 })
                 .collect::<Vec<_>>();
 
-            if !ready_values.is_empty() || !ready_checks.is_empty() {
+            if !ready_values.is_empty() || !ready_progressive.is_empty() || !ready_checks.is_empty()
+            {
                 for index in ready_values {
                     remaining.remove(&index);
                     let value = &partitioned.values[index];
@@ -1578,13 +1597,26 @@ fn run_lane(
                             value.island.effect_output().map(|node| &node.op),
                             Some(crate::vir::Op::Exec { .. })
                         ) {
-                            runtime.submit_exec(
+                            let capability = arguments
+                                .first()
+                                .expect("exec island has one capability input")
+                                .identity
+                                .clone();
+                            let submission = runtime.submit_exec(
                                 &value.island,
                                 &location,
                                 &arguments,
                                 chaos,
                                 realized_as,
-                            )?
+                            )?;
+                            exec_producers.insert(
+                                value.id,
+                                ExecProducer {
+                                    demand: submission.demand,
+                                    capability,
+                                },
+                            );
+                            submission.root
                         } else {
                             let fingerprint = value
                                 .effect_fingerprint
@@ -1627,6 +1659,40 @@ fn run_lane(
                                 .entry(demand)
                                 .or_default()
                                 .push(FrontierWaiter::Value(index));
+                        }
+                    }
+                }
+                for index in ready_progressive {
+                    remaining_progressive.remove(&index);
+                    let value = &partitioned.progressive_values[index];
+                    let producer = exec_producers
+                        .get(&value.producer)
+                        .expect("progressive frontier admitted only submitted exec producers");
+                    let function = &module.functions[value.id.function.0 as usize];
+                    let node = &function.nodes[value.id.node.0 as usize];
+                    let submission = runtime.submit_exec_projection(ExecProjectionRequest {
+                        execution: producer.demand,
+                        capability: producer.capability.clone(),
+                        completed: published_values.get(&value.producer).cloned(),
+                        projection: value.projection.clone(),
+                        location: scoped_location(
+                            Location::for_test_value(&partitioned.name, &value.id.stable_segment()),
+                            source_revision,
+                        ),
+                        function: value.id.function,
+                        node: value.id.node,
+                        span: node.span,
+                    })?;
+                    match submission {
+                        RootSubmission::Ready(evaluation) => {
+                            published_values.insert(value.id, evaluation.clone());
+                            completed_progressive[index] = Some(evaluation);
+                        }
+                        RootSubmission::Pending(demand) => {
+                            in_flight
+                                .entry(demand)
+                                .or_default()
+                                .push(FrontierWaiter::Progressive(index));
                         }
                     }
                 }
@@ -1694,6 +1760,11 @@ fn run_lane(
                         published_values.insert(value.id, evaluation.clone());
                         completed[index] = Some(evaluation.clone());
                     }
+                    FrontierWaiter::Progressive(index) => {
+                        let value = &partitioned.progressive_values[index];
+                        published_values.insert(value.id, evaluation.clone());
+                        completed_progressive[index] = Some(evaluation.clone());
+                    }
                     FrontierWaiter::Check {
                         site,
                         island,
@@ -1712,9 +1783,26 @@ fn run_lane(
             remaining.is_empty(),
             "value dependency frontier stalled before every value was published",
         );
+        assert!(
+            remaining_progressive.is_empty(),
+            "progressive dependency frontier stalled before every value was published",
+        );
         runtime.finish_root_batch();
         for (value, evaluation) in partitioned.values.iter().zip(completed) {
             let evaluation = evaluation.expect("the full frontier published every value island");
+            values.push(ValuePublicationRun {
+                provenance: value.id,
+                identity: evaluation.identity,
+                failure: evaluation.failure,
+            });
+        }
+        for (value, evaluation) in partitioned
+            .progressive_values
+            .iter()
+            .zip(completed_progressive)
+        {
+            let evaluation =
+                evaluation.expect("the full frontier published every progressive value");
             values.push(ValuePublicationRun {
                 provenance: value.id,
                 identity: evaluation.identity,
