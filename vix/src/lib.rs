@@ -20,6 +20,7 @@ pub mod ast {
 }
 
 pub mod binder;
+pub mod binding;
 pub mod budget;
 pub mod compiler;
 pub(crate) mod data;
