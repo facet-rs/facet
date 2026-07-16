@@ -2,7 +2,7 @@ use crate::diagnostic::DiagnosticCode;
 use crate::vir::{FunctionId, IslandId, NodeId};
 
 use super::MachineOperation;
-use super::identity::{DemandKey, LocationId, ValueId};
+use super::identity::{DemandKey, LocationId, RecipeId, ValueId};
 use super::model::{DemandState, FailureValue, MemoVerdict, TaskId, TaskState};
 
 #[derive(facet::Facet, Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -139,6 +139,14 @@ pub enum EventKind {
     Completed {
         key: DemandKey,
         identity: ValueId,
+    },
+    /// A registered effect primitive was actually dispatched (a `begin` call, not
+    /// a memo hit). One generic event for every primitive, keyed by the effect
+    /// demand and its closure recipe as DATA (r[machine.primitive.registered]).
+    /// A memo hit does not emit this and does not spawn.
+    EffectDispatched {
+        key: DemandKey,
+        recipe: RecipeId,
     },
     ConservativeFallback {
         code: DiagnosticCode,

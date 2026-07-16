@@ -9,11 +9,14 @@ use weavy::exec::{
 };
 use weavy::task::{FnId, TaskEvent as WeavyTaskEvent, TaskStep};
 
-use crate::lowering::{LoweringArtifact, LoweringAttribution, RealizedBinding};
+use crate::lowering::{
+    EffectInputBinding, LoweringArtifact, LoweringAttribution, RealizedBinding,
+};
 use crate::vir::{FunctionId, IslandId, Type, VariantPayload};
 
 use super::identity::{
-    DemandKey, DemandPreimage, Location, LocationId, SchemaId, ValueId, semantic_schema_id,
+    DemandKey, DemandPreimage, Location, LocationId, RecipeId, SchemaId, ValueId,
+    semantic_schema_id,
 };
 use super::identity::{FramedField, FramedNode, FramedValue};
 use super::model::{
@@ -24,7 +27,7 @@ use super::observe::{
     Counters, Event, EventKind, EventSink, ExecutionFacts, ExecutionFallbackFact,
     ExecutionLaneFact, SafePointClass,
 };
-use super::primitive::PrimitiveSet;
+use super::primitive::{Completion, EffectCtx, MemoPolicy, PrimitiveSet, RequestRef};
 use super::store::{FrozenValue, Handle, Interned, Store, StoreEntry};
 use super::{MachineAttribution, MachineError, MachineOperation, RuntimeFault};
 
@@ -35,6 +38,22 @@ struct MemoEntry {
     preimage: DemandPreimage,
     result: Handle,
     receipt: Option<Receipt>,
+}
+
+/// One memoized effect result. Effects are content-addressed by their
+/// [`DemandKey`] alone — (primitive recipe, request value) — so this dedicated
+/// map can never collide with the location-indexed pure `memo`
+/// (r[machine.memo.effect-results]). The receipt is the first real producer:
+/// the demand plus the reads the primitive witnessed.
+#[derive(Clone, Debug)]
+struct EffectMemoEntry {
+    result: Handle,
+    /// The demand plus the reads the primitive witnessed. Retained as the
+    /// effect's provenance receipt; the replay/verification consumer arrives
+    /// with the Pinned/Observed policies in a later phase, so v1 stores it
+    /// without yet reading it back.
+    #[allow(dead_code)]
+    receipt: Receipt,
 }
 
 /// The failure of one realized-entry bind, tagged by the per-lane policy the two
@@ -192,6 +211,12 @@ pub struct Runtime<S> {
     /// code (r[machine.execution.no-pure-hostcalls]). Shared behind an `Arc` so
     /// the same registry can back many runtimes.
     primitives: Arc<PrimitiveSet>,
+    /// Content-addressed effect results, keyed by the effect's own
+    /// [`DemandKey`] — (primitive recipe, request value). Kept separate from the
+    /// location-indexed pure `memo` so an effect result can never collide with a
+    /// pure island's memo (r[machine.memo.effect-results]). Only Hermetic
+    /// effects populate it; Volatile skips both lookup and insert.
+    effect_memo: BTreeMap<DemandKey, EffectMemoEntry>,
 }
 
 impl<S: EventSink> Runtime<S> {
@@ -208,6 +233,7 @@ impl<S: EventSink> Runtime<S> {
             next_task: 0,
             wire_demands: Vec::new(),
             primitives: Arc::new(PrimitiveSet::new()),
+            effect_memo: BTreeMap::new(),
         }
     }
 
@@ -260,12 +286,21 @@ impl<S: EventSink> Runtime<S> {
         let IslandInputs {
             arguments,
             wires,
-            effects: _,
+            effects,
         } = inputs;
-        let invocation = DemandExecution::new(
-            lowered,
-            arguments.iter().map(|argument| argument.identity).collect(),
-        );
+        // Resolve every effect edge FIRST: an effect's response identity is part
+        // of the consumer's demand identity, so the demand key is only correct
+        // once each request island is evaluated, its primitive dispatched (or an
+        // effect-memo hit taken), and the response interned. Effect-free islands
+        // resolve an empty slice and touch none of this. A failed effect (failed
+        // request or Failed completion) comes back as a failed `Evaluation`; its
+        // identity still folds into the key and the failed-argument scan below
+        // short-circuits the consumer.
+        let resolved_effects = self.resolve_effects(&lowered.effect_inputs, effects)?;
+        let mut demand_arguments: Vec<ValueId> =
+            arguments.iter().map(|argument| argument.identity).collect();
+        demand_arguments.extend(resolved_effects.iter().map(|effect| effect.identity));
+        let invocation = DemandExecution::new(lowered, demand_arguments);
         let lowered = &invocation;
         self.emit(EventKind::Demanded {
             key: lowered.demand_key,
@@ -357,7 +392,11 @@ impl<S: EventSink> Runtime<S> {
             to: DemandState::Queued,
         });
 
-        if let Some(argument) = arguments.iter().find(|argument| argument.failure.is_some()) {
+        if let Some(argument) = arguments
+            .iter()
+            .chain(resolved_effects.iter())
+            .find(|argument| argument.failure.is_some())
+        {
             let failure = argument.failure.clone().expect("selected failed argument");
             self.memo.insert(
                 location.id,
@@ -494,6 +533,30 @@ impl<S: EventSink> Runtime<S> {
                     binding.realized(),
                     argument.handle,
                     argument.identity,
+                    lowered,
+                    attribution,
+                ) {
+                    Ok(Some(override_)) => value_memory_overrides.push(override_),
+                    Ok(None) => {}
+                    Err(EntryBindError::Invariant(error) | EntryBindError::WriteFault(error)) => {
+                        return Err(Box::new(self.terminate_machine_fault(
+                            task_id,
+                            lowered.demand_key,
+                            error,
+                        )));
+                    }
+                    Err(EntryBindError::Raw(error)) => return Err(error),
+                }
+            }
+            // Bind each resolved effect response at its artifact entry slot
+            // (`value_inputs.len() + k`) through the exact same realized-binding
+            // path as any value input — one generic binding for every primitive.
+            for (binding, effect) in lowered.effect_inputs.iter().zip(&resolved_effects) {
+                match self.bind_realized_entry(
+                    &mut task,
+                    binding.realized(),
+                    effect.handle,
+                    effect.identity,
                     lowered,
                     attribution,
                 ) {
@@ -1002,6 +1065,20 @@ impl<S: EventSink> Runtime<S> {
             from: DemandState::Absent,
             to: DemandState::Queued,
         });
+        // v1 wires effects only through the value-island lane (`evaluate`). A
+        // generator island carrying an effect binding is an unsupported position,
+        // reported honestly rather than silently ignored. The generator lane has
+        // no effects channel, so this is the only place an effect could leak in.
+        if let Some(binding) = lowered.effect_inputs.first() {
+            return Err(Box::new(MachineError::runtime(
+                MachineOperation::Effect,
+                RuntimeFault::UnsupportedEffectPosition {
+                    effect: binding.primitive,
+                },
+                None,
+                Some(lowered.demand_key),
+            )));
+        }
         if lowered.value_inputs.len() != arguments.len() {
             return Err(Box::new(MachineError::runtime(
                 MachineOperation::EntryBinding,
@@ -1405,6 +1482,234 @@ impl<S: EventSink> Runtime<S> {
         })
     }
 
+    /// Resolve every effect edge a consumer island demands into a realized
+    /// [`Evaluation`], in binding order. One generic path for every registered
+    /// primitive (r[machine.primitive.registered]): evaluate the request island
+    /// as an ordinary pure demand, fold `(primitive recipe, request value)` into
+    /// the effect's own content-addressed demand key, consult the dedicated
+    /// effect memo policy-aware, and on a miss dispatch the primitive through its
+    /// sole `EffectCtx` window. The returned response identities are what the
+    /// caller folds into the CONSUMER's demand key, so an effect participates in
+    /// content-addressed memoization exactly like a value argument.
+    fn resolve_effects(
+        &mut self,
+        bindings: &[EffectInputBinding],
+        effects: &[EffectDemand<'_>],
+    ) -> Result<Vec<Evaluation>, Box<MachineError>> {
+        if bindings.len() != effects.len() {
+            return Err(Box::new(MachineError::runtime(
+                MachineOperation::Effect,
+                RuntimeFault::EffectInputCardinality {
+                    expected: bindings.len(),
+                    actual: effects.len(),
+                },
+                None,
+                None,
+            )));
+        }
+        let mut resolved = Vec::with_capacity(bindings.len());
+        for (binding, demand) in bindings.iter().zip(effects) {
+            // Step 1 — the request island is a pure demand. Evaluate it through
+            // the canonical memo path; chaos does not cascade into a nested
+            // demand (matching the wire path).
+            let request = self.evaluate(
+                demand.request_island,
+                demand.request_location,
+                demand.request_lowered,
+                demand.request_attribution,
+                IslandInputs {
+                    arguments: demand.request_arguments,
+                    wires: demand.request_wires,
+                    effects: &[],
+                },
+                ChaosPolicy::default(),
+            )?;
+            // Step 2 — a failed request short-circuits: no dispatch. The failed
+            // value flows on as the effect's result; its identity folds into the
+            // consumer key and the consumer's failed-argument scan trips.
+            if request.failure.is_some() {
+                resolved.push(request);
+                continue;
+            }
+            // Step 3 — resolve the effect id to a registered primitive at the
+            // runtime boundary. `vir`/`lowering` never see a `PrimitiveId`.
+            let Some(primitive) = self.primitives.by_effect_id(binding.primitive).cloned() else {
+                return Err(Box::new(MachineError::runtime(
+                    MachineOperation::Effect,
+                    RuntimeFault::UnregisteredEffect {
+                        effect: binding.primitive,
+                    },
+                    None,
+                    None,
+                )));
+            };
+            // Step 4 — gate on memo policy. v1 implements Volatile + Hermetic;
+            // Pinned/Observed are an honest typed error, never silently treated
+            // as Hermetic. Copy the Copy facts out so the descriptor borrow of
+            // the owned Arc ends before the store is re-borrowed.
+            let descriptor = primitive.descriptor();
+            let primitive_id = descriptor.id;
+            let policy = descriptor.policy;
+            match policy {
+                MemoPolicy::Hermetic | MemoPolicy::Volatile => {}
+                MemoPolicy::Pinned | MemoPolicy::Observed => {
+                    return Err(Box::new(MachineError::runtime(
+                        MachineOperation::Effect,
+                        RuntimeFault::UnsupportedEffectPolicy {
+                            effect: binding.primitive,
+                        },
+                        None,
+                        None,
+                    )));
+                }
+            }
+            // Step 5 — the effect's own content-addressed demand key. Its recipe
+            // lives under a domain distinct from pure vir recipes, so it can
+            // never collide structurally with a pure demand.
+            let recipe = RecipeId::from_primitive_digest(primitive_id.0);
+            let effect_preimage = DemandPreimage {
+                closure: recipe,
+                arguments: vec![request.identity],
+            };
+            let effect_key = DemandKey::from_preimage(&effect_preimage);
+            // Step 6 — Hermetic effects consult the dedicated effect memo; a hit
+            // rebuilds the response `Evaluation` from the stored handle and does
+            // NOT dispatch or spawn. Volatile skips the lookup entirely.
+            if matches!(policy, MemoPolicy::Hermetic)
+                && let Some(entry) = self.effect_memo.get(&effect_key)
+            {
+                let handle = entry.result;
+                let stored = self.store.entry(handle).ok_or_else(|| {
+                    Box::new(MachineError::runtime(
+                        MachineOperation::Effect,
+                        RuntimeFault::MissingMemoStoreHandle,
+                        None,
+                        Some(effect_key),
+                    ))
+                })?;
+                let identity = stored.identity;
+                let failure = stored.failure().cloned();
+                resolved.push(Evaluation {
+                    handle,
+                    identity,
+                    passed: failure.is_none(),
+                    memo: MemoVerdict::Exact,
+                    failure,
+                    failure_context: None,
+                });
+                continue;
+            }
+            // Step 7 — a miss dispatches the primitive. Clone the request's frozen
+            // replay tree out of the store first so the primitive's `&mut Store`
+            // window (via `EffectCtx`) never aliases it or the owned primitive
+            // Arc. A missing frozen tree is a machine invariant.
+            let Some(frozen) = self.store.frozen_for(request.handle).cloned() else {
+                return Err(Box::new(MachineError::runtime(
+                    MachineOperation::Effect,
+                    RuntimeFault::MissingEffectRequestFrozen {
+                        effect: binding.primitive,
+                    },
+                    None,
+                    Some(effect_key),
+                )));
+            };
+            let request_identity = request.identity;
+            let (completion, receipt) = {
+                let mut ctx = EffectCtx::new(&mut self.store);
+                let request_ref = RequestRef {
+                    identity: request_identity,
+                    frozen: &frozen,
+                };
+                // v1 primitives complete inline before `begin` returns; the ticket
+                // is owned by this demand and needs no clock/poll.
+                match primitive.begin(request_ref, &mut ctx) {
+                    Ok(_ticket) => match ctx.finish(effect_key) {
+                        Ok((completion, receipt, _events)) => (completion, receipt),
+                        Err(error) => {
+                            return Err(Box::new(MachineError::runtime(
+                                MachineOperation::Effect,
+                                RuntimeFault::EffectProtocol {
+                                    effect: binding.primitive,
+                                    error,
+                                },
+                                None,
+                                Some(effect_key),
+                            )));
+                        }
+                    },
+                    Err(error) => {
+                        return Err(Box::new(MachineError::runtime(
+                            MachineOperation::Effect,
+                            RuntimeFault::EffectProtocol {
+                                effect: binding.primitive,
+                                error,
+                            },
+                            None,
+                            Some(effect_key),
+                        )));
+                    }
+                }
+            };
+            // Step 8 — a real dispatch happened: count the spawn and emit the one
+            // generic dispatch event (a memo hit does neither).
+            self.counters.effect_spawns += 1;
+            self.emit(EventKind::EffectDispatched {
+                key: effect_key,
+                recipe,
+            });
+            // Step 9 — bind the completion. Ok memoizes the interned response;
+            // Failed interns a generic language-failure value keyed by the effect
+            // recipe. Under Hermetic both memoize into the effect memo; under
+            // Volatile neither does.
+            let evaluation = match completion {
+                Completion::Ok(interned) => {
+                    self.observe_interned(interned);
+                    if matches!(policy, MemoPolicy::Hermetic) {
+                        self.effect_memo.insert(
+                            effect_key,
+                            EffectMemoEntry {
+                                result: interned.handle,
+                                receipt,
+                            },
+                        );
+                    }
+                    Evaluation {
+                        handle: interned.handle,
+                        identity: interned.identity,
+                        passed: true,
+                        memo: MemoVerdict::Miss,
+                        failure: None,
+                        failure_context: None,
+                    }
+                }
+                Completion::Failed(_failure) => {
+                    let failure = FailureValue::Primitive { recipe, site: 0 };
+                    let interned = self.store.intern_failure(failure.clone(), &[]);
+                    self.observe_interned(interned);
+                    if matches!(policy, MemoPolicy::Hermetic) {
+                        self.effect_memo.insert(
+                            effect_key,
+                            EffectMemoEntry {
+                                result: interned.handle,
+                                receipt,
+                            },
+                        );
+                    }
+                    Evaluation {
+                        handle: interned.handle,
+                        identity: interned.identity,
+                        passed: false,
+                        memo: MemoVerdict::Miss,
+                        failure: Some(failure),
+                        failure_context: None,
+                    }
+                }
+            };
+            resolved.push(evaluation);
+        }
+        Ok(resolved)
+    }
+
     fn materialize_constants(&mut self, lowered: &LoweringArtifact) -> Vec<Handle> {
         lowered
             .constants
@@ -1495,6 +1800,11 @@ impl<S: EventSink> Runtime<S> {
     /// preserve it exactly: [`EntryBindError::WriteFault`] both lanes terminate;
     /// [`EntryBindError::Raw`] both return raw; [`EntryBindError::Invariant`] the
     /// value-island lane terminates and the generator lane returns raw.
+    // `EntryBindError` carries an unboxed `MachineError` in two of its variants so
+    // the three consumer match arms stay flat; the entry-binding path is cold
+    // (a rare machine fault), so the large-Err cost is irrelevant. Boxing every
+    // variant is a mechanical follow-up if the lint tightens further.
+    #[allow(clippy::result_large_err)]
     fn bind_realized_entry(
         &self,
         task: &mut weavy::exec::ExecTask<'_>,
@@ -2812,7 +3122,10 @@ fn failure_context(
         | FailureValue::MissingDelimiter { .. }
         | FailureValue::InvalidInteger { .. }
         | FailureValue::IntegerOverflow { .. }
-        | FailureValue::DivisionByZero { .. } => None,
+        | FailureValue::DivisionByZero { .. }
+        // A primitive failure names no source site in the consuming artifact; its
+        // report context is rebuilt at the folded-effect scan, not here.
+        | FailureValue::Primitive { .. } => None,
     }
 }
 

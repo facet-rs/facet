@@ -3,8 +3,9 @@ use weavy::exec::TaskFault;
 use weavy::task::FnId;
 
 use crate::support::Span;
-use crate::vir::{FunctionId, NodeId};
+use crate::vir::{EffectId, FunctionId, NodeId};
 
+use super::primitive::EffectProtocolError;
 use super::{DemandKey, ValueId};
 
 /// The production machine failure plane. Language diagnostics and Vix Failure
@@ -37,6 +38,9 @@ pub enum MachineOperation {
     DemandTransition,
     TaskTransition,
     TraceAttribution,
+    /// Resolving a registered effect primitive at the demand layer. One generic
+    /// operation for every primitive (r[machine.primitive.registered]).
+    Effect,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -81,6 +85,41 @@ pub enum RuntimeFault {
         site: u32,
         index: i64,
         length: i64,
+    },
+    /// An artifact named an effect id no registered primitive claims. Generic,
+    /// keyed by the effect id data (r[machine.primitive.registered]).
+    UnregisteredEffect {
+        effect: EffectId,
+    },
+    /// A registered primitive declared a memo policy v1 does not implement
+    /// (Pinned/Observed ship with fetch/exec). Honest typed error, never
+    /// silently treated as Hermetic (design constraint 4).
+    UnsupportedEffectPolicy {
+        effect: EffectId,
+    },
+    /// A registered primitive violated the begin/complete protocol. Lifts the
+    /// phase-02 [`EffectProtocolError`] onto the machine-error plane.
+    EffectProtocol {
+        effect: EffectId,
+        error: EffectProtocolError,
+    },
+    /// The request island produced no frozen replay tree to hand the primitive —
+    /// a machine invariant (the request record always realizes structurally).
+    MissingEffectRequestFrozen {
+        effect: EffectId,
+    },
+    /// An effect reached a position v1 does not wire (e.g. a generator island).
+    /// A primitive is callable only from a test-body value expression in v1.
+    UnsupportedEffectPosition {
+        effect: EffectId,
+    },
+    /// The caller-supplied effect demands and the consumer artifact's effect
+    /// bindings disagreed in count. A machine invariant: they are built together.
+    /// Guarded so a dropped effect can never silently produce a colliding
+    /// consumer demand key.
+    EffectInputCardinality {
+        expected: usize,
+        actual: usize,
     },
 }
 

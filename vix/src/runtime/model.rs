@@ -78,6 +78,19 @@ pub enum FailureValue {
         recipe: RecipeId,
         site: u32,
     },
+    /// A registered effect primitive reported a typed language failure
+    /// ([`Completion::Failed`]). One generic variant for every primitive, keyed by
+    /// the effect closure recipe (r[machine.primitive.registered]). The
+    /// [`PrimitiveFailure`] `code`/`message` are contextual reporting fields, not
+    /// part of value identity (consistent with `FailureContext` not being
+    /// resident), so v1 keeps only the recipe + site here.
+    ///
+    /// [`Completion::Failed`]: super::primitive::Completion::Failed
+    /// [`PrimitiveFailure`]: super::primitive::PrimitiveFailure
+    Primitive {
+        recipe: RecipeId,
+        site: u32,
+    },
 }
 
 /// Context rebuilt while reporting a language failure. It is deliberately not
