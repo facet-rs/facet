@@ -501,6 +501,7 @@ impl TraceSnapshot {
 pub struct SuiteRun {
     pub checks: Vec<CheckRun>,
     pub values: Vec<ValuePublicationRun>,
+    pub realized_wire_demands: Vec<RealizedWireDemand>,
     pub counters: Counters,
     pub events: Vec<Event>,
     pub receipt_count: u64,
@@ -1563,6 +1564,13 @@ fn run_lane(
                         Location::for_test_value(&partitioned.name, &value.id.stable_segment()),
                         source_revision,
                     );
+                    let realized_as = value.wire.as_ref().map(|wire| RealizedWireDemand {
+                        function: wire.function,
+                        arguments: wire.arguments.as_ref().map(|arguments| {
+                            arguments.iter().map(wire_arg_identity).collect::<Vec<_>>()
+                        }),
+                        preimage: module.invocation_preimage(value.id.function, value.id.node),
+                    });
                     let submission = if value.island.purpose == crate::vir::IslandPurpose::Effect {
                         if matches!(
                             value.island.effect_output().map(|node| &node.op),
@@ -1572,7 +1580,13 @@ fn run_lane(
                                 .first()
                                 .cloned()
                                 .expect("exec effect island has its declared capability input");
-                            runtime.submit_exec(&value.island, &location, &capability, chaos)?
+                            runtime.submit_exec(
+                                &value.island,
+                                &location,
+                                &capability,
+                                chaos,
+                                realized_as,
+                            )?
                         } else {
                             let fingerprint = value
                                 .effect_fingerprint
@@ -1592,13 +1606,6 @@ fn run_lane(
                             RootSubmission::Ready(evaluation)
                         }
                     } else {
-                        let realized_as = value.wire.as_ref().map(|wire| RealizedWireDemand {
-                            function: wire.function,
-                            arguments: wire.arguments.as_ref().map(|arguments| {
-                                arguments.iter().map(wire_arg_identity).collect::<Vec<_>>()
-                            }),
-                            preimage: module.invocation_preimage(value.id.function, value.id.node),
-                        });
                         runtime.submit_value(ValueRootRequest {
                             island: value.island.id,
                             location,
@@ -2016,6 +2023,7 @@ fn run_lane(
     Ok(SuiteRun {
         checks,
         values,
+        realized_wire_demands: snapshot.wire_demands,
         counters,
         events,
         receipt_count,

@@ -359,6 +359,7 @@ struct ExecPending {
     function: FunctionId,
     node: NodeId,
     span: Span,
+    realized_as: Option<RealizedWireDemand>,
 }
 
 /// One island demand submission: everything needed to resolve it from memo,
@@ -397,7 +398,7 @@ enum SubmitOutcome {
 /// preimage. Recorded only when a demand actually computes (a memo miss that
 /// ran), so the log counts realizations, never re-demands of an
 /// already-memoized key.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct RealizedWireDemand {
     pub function: FunctionId,
     /// Canonical scalar argument identities for a literal-selectable
@@ -1283,6 +1284,7 @@ impl<S: EventSink> Runtime<S> {
                         Some(demand_key),
                     )));
                 }
+                self.counters.demand_joins += 1;
                 self.counters.memo_hits_exact += 1;
                 self.emit(EventKind::Memo {
                     location: location.id,
@@ -3743,6 +3745,7 @@ impl<S: EventSink> Runtime<S> {
             function,
             node,
             span,
+            realized_as,
         } = pending;
         let output = output.map_err(|detail| {
             Box::new(MachineError::runtime(
@@ -3778,6 +3781,9 @@ impl<S: EventSink> Runtime<S> {
                 key: demand,
                 identity: interned.identity.clone(),
             });
+            if let Some(realized) = realized_as {
+                self.wire_demands.push(realized);
+            }
             self.root_results.insert(
                 demand,
                 Evaluation {
@@ -3842,6 +3848,9 @@ impl<S: EventSink> Runtime<S> {
             key: demand,
             failure: failure.clone(),
         });
+        if let Some(realized) = realized_as {
+            self.wire_demands.push(realized);
+        }
         self.root_results.insert(
             demand,
             Evaluation {
@@ -4727,7 +4736,7 @@ impl<S: EventSink> Runtime<S> {
         capability: &Evaluation,
         chaos: ChaosPolicy,
     ) -> Result<Evaluation, Box<MachineError>> {
-        let evaluation = match self.submit_exec(island, location, capability, chaos)? {
+        let evaluation = match self.submit_exec(island, location, capability, chaos, None)? {
             RootSubmission::Ready(evaluation) => evaluation,
             RootSubmission::Pending(root) => self.run_until_root(root)?,
         };
@@ -4745,6 +4754,7 @@ impl<S: EventSink> Runtime<S> {
         location: &Location,
         capability: &Evaluation,
         chaos: ChaosPolicy,
+        realized_as: Option<RealizedWireDemand>,
     ) -> Result<RootSubmission, Box<MachineError>> {
         let malformed = || {
             Box::new(MachineError::runtime(
@@ -4823,6 +4833,7 @@ impl<S: EventSink> Runtime<S> {
                     }
                 }
                 DemandState::Running | DemandState::Queued => {
+                    self.counters.demand_joins += 1;
                     self.counters.memo_hits_exact += 1;
                     self.emit(EventKind::Memo {
                         location: location.id,
@@ -4929,6 +4940,7 @@ impl<S: EventSink> Runtime<S> {
                     function: island.function,
                     node: node.id,
                     span: node.span,
+                    realized_as,
                 },
             );
             self.observe_effect_frontier();

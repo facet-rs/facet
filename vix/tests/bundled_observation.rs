@@ -7,6 +7,7 @@
 //! `demanded_once` distinguishes exact preimages while equal preimages share.
 
 use vix::ratchet::run_source;
+use vix::runtime::EventKind;
 
 const COSTLY: &str = "fn costly(n: Int) -> Int { n * 1000 }\n";
 
@@ -43,6 +44,53 @@ fn equal_preimages_share_one_observation() {
     );
     let report = run_source(&source).expect("runs");
     assert!(report.passed() && report.agrees(), "{report:?}");
+}
+
+/// Two identity-equal exec value roots enter the production frontier together.
+/// The second root joins the first demand: one process begins, one
+/// realized-demand entry is published, and both root publications receive the
+/// same value identity.
+#[test]
+fn concurrent_roots_join_one_suspended_demand_and_record_one_realization() {
+    let source = r#"
+#[test]
+fn t(echo: Echo) -> Stream<Check> {
+    let a = exec echo`"shared"`;
+    let b = exec echo`"shared"`;
+    yield expect_eq(a.stdout, b.stdout);
+    yield ran_processes(1);
+}
+"#;
+    let report = run_source(source).expect("shared exec demand runs");
+    assert!(report.passed() && report.agrees());
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.demand_joins, 1);
+        assert_eq!(lane.counters.effect_spawns, 1);
+        let exec_key = lane
+            .events
+            .iter()
+            .find_map(|event| match &event.kind {
+                EventKind::EffectSpawned { key, .. } => Some(*key),
+                _ => None,
+            })
+            .expect("the one exec owner has a demand key");
+        assert_eq!(
+            lane.events
+                .iter()
+                .filter(|event| {
+                    matches!(
+                        event.kind,
+                        EventKind::Completed { key, .. } if key == exec_key
+                    )
+                })
+                .count(),
+            1,
+        );
+        assert_eq!(lane.values.len(), 2);
+        assert_eq!(lane.values[0].identity, lane.values[1].identity);
+        assert_eq!(lane.checks.len(), 2);
+        assert!(lane.checks.iter().all(|check| check.passed));
+    }
 }
 
 /// A binding selector names a let-bound invocation with composite arguments —

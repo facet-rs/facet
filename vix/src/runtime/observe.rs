@@ -20,6 +20,9 @@ pub struct Counters {
     /// Generic registered-primitive dispatches that actually began. Joined or
     /// memoized demands do not increment this counter.
     pub primitive_invocations: u64,
+    /// Requests that found an identical non-ancestor demand already queued or
+    /// running and joined its single owner instead of spawning a duplicate.
+    pub demand_joins: u64,
     pub store_interns: u64,
     pub store_dedups: u64,
     pub bytes_hashed: u64,
