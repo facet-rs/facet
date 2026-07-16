@@ -79,3 +79,7 @@ callgrind.out.*
 # Deliberately untracked here so agents cannot accidentally publish them.
 /RESURRECTION.md
 /vix/docs-internal/
+
+# nix build result symlinks
+/result
+/result-*
