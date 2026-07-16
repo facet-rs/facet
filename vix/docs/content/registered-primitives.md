@@ -216,21 +216,34 @@ effect is that they share a claim head: a `refresh` reconciles against the
 Splitting them into two `PrimitiveId`s would fork that shared state and force a
 back-channel to reunite it.
 
-Ergonomic aliases are therefore **vix functions**, not primitives:
+Ergonomic aliases are therefore **vix functions**, not primitives — where the
+alias is expressible as one:
 
 ```
-fn refresh(x) = observe(x, refresh: true)
-fn json_decode<T>(text) = decode<T>(text, format: Json)
+fn refresh(origin) = observe(origin, refresh: true)
 ```
 
 This is already the house pattern for the ergonomic layer (`n`, `toml_n`,
-`json_n`, `crate_archive` are vix wrappers in the corpus); `refresh` and
-`json_decode`/`toml_decode` are the outliers that were promoted to compiler
-intrinsics instead of written as ordinary vix functions. The binding layer
-retires those intrinsics: the single primitive binding exposes the mode as a
-real argument, and the alias is a vix function over it. A vix function so bound
-is effectful exactly when its body invokes an effectful primitive; effect
+`json_n`, `crate_archive` are vix wrappers in the corpus); `refresh` is the
+outlier that was promoted to a compiler intrinsic instead of written as an
+ordinary vix function. Retiring it means the single `observe` binding exposes
+its mode as a real argument, `refresh` becomes a vix function over it (registered
+in `crate::stdlib`), and the `refresh` intrinsic is deleted. A vix function so
+bound is effectful exactly when its body invokes an effectful primitive; effect
 tracking flows through the call as for any wrapper.
+
+**Constraint — generic aliases cannot be vix functions until monomorphization
+lands.** `json_decode` / `toml_decode` (and the `try_*` forms) are *generic*:
+`decode<T>` needs its target type at the call site (`compiler.rs`,
+`lower_decode`/`lower_try_decode`). A vix wrapper
+`fn json_decode<T>(text) = decode<T>(text, format: Json)` would be a generic
+function. vix has generic *types* and generic type *application*, but a generic
+*function* is checked and then rejected at lowering — instantiating one raises
+`GenericLoweringUnsupported` "until monomorphization lands"
+(`tests/checker-corpus/reject/generic-lowering-unsupported.vix`). So the "alias
+is a vix function" rule holds today only for **non-generic** aliases (`refresh`).
+The decode aliases remain compiler intrinsics until monomorphization lands, at
+which point they become vix functions like any other and the intrinsics retire.
 
 ### Placement
 
