@@ -12965,7 +12965,7 @@ mod tests {
         Mutex,
         atomic::{AtomicUsize, Ordering},
     };
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
     use weavy::mem::Layout;
     use weavy::mem::declared as declared_mem;
     use weavy::task::{ArgCopy, Fn as TaskFn, Op};
@@ -13906,18 +13906,17 @@ mod tests {
             delay: Duration::from_millis(150),
         })));
 
-        let started = Instant::now();
         let value = driver.demand(FnRef::new(0), args).unwrap();
-        let wall = started.elapsed();
 
         assert_eq!(
             driver.store.borrow().string_value(value, "String").unwrap(),
             "a.o;b.o;"
         );
-        assert!(
-            wall < Duration::from_millis(250),
-            "independent 150ms exec waits serialized instead of overlapping: {wall:?}"
-        );
+        // Overlap is proven structurally by the trace: both runs start before
+        // either completes. A wall-clock bound (was `wall < 250ms`) flakes on
+        // loaded CI runners, where even genuinely-overlapped 150ms sleeps can
+        // measure ~260ms — see the two `RunStarted` before any `RunCompleted`
+        // below, which is the load-independent signal.
         assert!(
             has_two_run_starts_before_completion(&driver.trace),
             "{:?}",
