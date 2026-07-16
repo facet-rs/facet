@@ -731,6 +731,60 @@ mod tests {
     }
 
     #[test]
+    fn record_response_frames_as_an_identity_tree_with_empty_resident_bytes() {
+        // The `probe_version -> Version` response shape: an all-scalar record
+        // still frames as an aggregate identity tree, never phon-serialized into
+        // resident bytes (the weavy ABI constraint). Its frozen is a `Product` of
+        // inline scalar leaves, and its canonical resident bytes are empty.
+        #[derive(facet::Facet)]
+        struct Version {
+            major: i64,
+            minor: i64,
+            patch: i64,
+        }
+        let ty = Type::Record(crate::vir::RecordType {
+            name: "Version@0000000000000009".into(),
+            fields: vec![
+                crate::vir::RecordField {
+                    name: "major".into(),
+                    ty: Type::Int,
+                },
+                crate::vir::RecordField {
+                    name: "minor".into(),
+                    ty: Type::Int,
+                },
+                crate::vir::RecordField {
+                    name: "patch".into(),
+                    ty: Type::Int,
+                },
+            ],
+        });
+        let encoded = encode_value(
+            facet::Peek::new(&Version {
+                major: 1,
+                minor: 2,
+                patch: 3,
+            }),
+            &ty,
+        )
+        .unwrap();
+        assert!(
+            encoded.resident.is_empty(),
+            "an aggregate response carries no resident bytes (weavy ABI)"
+        );
+        let FrozenValue::Product(fields) = &encoded.frozen else {
+            panic!("a record freezes as a Product");
+        };
+        assert_eq!(fields.len(), 3);
+        assert!(
+            fields
+                .iter()
+                .all(|field| matches!(field, FrozenValue::Inline(_))),
+            "scalar fields inline"
+        );
+    }
+
+    #[test]
     fn interning_twice_dedupes() {
         let ty = sample_type();
         let schema = test_registered_schema(ty);

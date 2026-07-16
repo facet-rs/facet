@@ -35,9 +35,23 @@ struct TextRequest {
     text: String,
 }
 
+/// `probe_version where { text: String } -> Version`. A record response frames as
+/// an aggregate FramedNode identity tree with EMPTY resident bytes (the weavy ABI
+/// constraint); the consumer projects a scalar field off the realized record
+/// input (phase 06 Task 2).
+#[derive(facet::Facet)]
+struct Version {
+    major: i64,
+    minor: i64,
+    patch: i64,
+}
+
 const EFFECT_SOURCE: &str = "#[test]\nfn t() -> Stream<Check> {\n    let v = probe where { n: 5 };\n    yield expect_eq(v, \"9\");\n}\n";
 
 const TEXT_SOURCE: &str = "#[test]\nfn t() -> Stream<Check> {\n    let v = probe where { text: \"1.2.3\" };\n    yield expect_eq(v, \"1.2.3\");\n}\n";
+
+/// The consumer projects `v.major` off the realized record response.
+const VERSION_PROJECT_SOURCE: &str = "#[test]\nfn t() -> Stream<Check> {\n    let v = probe_version where { text: \"1.2.3\" };\n    yield expect_eq(v.major, 1);\n}\n";
 
 /// A run of one effectful test source through the real value-island lane: the
 /// consumer island evaluated `evaluations` times against a runtime carrying the
@@ -86,6 +100,31 @@ fn run_text_probe(
     })
     .expect("probe registers");
     drive(set, begins, TEXT_SOURCE, evaluations)
+}
+
+/// Register `probe_version` under `policy` returning a `Version` record, then
+/// drive `source`. The response is an aggregate: the request `String` field
+/// resolves through the Task-1 reference resolver, and the record response frames
+/// as an identity tree the consumer reads back as a realized record input.
+fn run_version_probe(
+    policy: MemoPolicy,
+    source: &str,
+    responder: impl Fn(String) -> Result<Version, PrimitiveFailure> + Send + Sync + 'static,
+    evaluations: usize,
+) -> Outcome {
+    let begins = Arc::new(AtomicUsize::new(0));
+    let begins_in_closure = begins.clone();
+    let mut set = PrimitiveSet::new();
+    set.register_function::<Version, TextRequest, _>(
+        "probe_version",
+        policy,
+        move |req: TextRequest| {
+            begins_in_closure.fetch_add(1, Ordering::SeqCst);
+            responder(req.text)
+        },
+    )
+    .expect("probe_version registers");
+    drive(set, begins, source, evaluations)
 }
 
 /// Derive the compiler manifest from `set` (so effect ids match by construction),
@@ -196,6 +235,43 @@ fn string_request_resolves_store_reference() {
         "the primitive was begun once with the decoded string request"
     );
     assert_eq!(outcome.effect_spawns, 1, "one real dispatch");
+}
+
+/// A registered primitive returns a `Version` record. It frames as an aggregate
+/// identity tree (empty resident bytes); the consumer reads it back as a realized
+/// record input and projects `v.major`. Two Hermetic demands fold the same
+/// aggregate response identity into the same consumer key, so the primitive is
+/// begun exactly once.
+#[test]
+fn record_response_is_projected_by_the_consumer() {
+    let outcome = run_version_probe(
+        MemoPolicy::Hermetic,
+        VERSION_PROJECT_SOURCE,
+        |_| {
+            Ok(Version {
+                major: 1,
+                minor: 2,
+                patch: 3,
+            })
+        },
+        2,
+    );
+    for result in &outcome.results {
+        let evaluation = result
+            .as_ref()
+            .expect("the record response resolves and the projection evaluates");
+        assert!(
+            evaluation.failure.is_none(),
+            "v.major == 1 passes, got {:?}",
+            evaluation.failure
+        );
+    }
+    assert_eq!(
+        outcome.begins, 1,
+        "the aggregate response folds into the consumer key — one dispatch across two demands"
+    );
+    assert_eq!(outcome.effect_spawns, 1, "one real dispatch");
+    assert_eq!(outcome.dispatched, 1, "one dispatch event; the second demand is a memo hit");
 }
 
 /// One Hermetic effect dispatches exactly once; a second demand of the same
