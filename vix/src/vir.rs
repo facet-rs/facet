@@ -1866,10 +1866,10 @@ impl Module {
         // is returned unchanged. When splicing renumbers the function's nodes, the
         // test's generator references move through the same map so the shared
         // node-id space stays consistent.
-        let (function, mixed_remap) =
-            self.inline_mixed_primitive_calls(&self.functions[test.function.0 as usize])?;
+        let (function, effect_remap) =
+            self.inline_effectful_calls(&self.functions[test.function.0 as usize])?;
         let (function, map_remap) = self.expand_effectful_array_maps(&function)?;
-        let remap = compose_node_remaps(mixed_remap, map_remap);
+        let remap = compose_node_remaps(effect_remap, map_remap);
         let function = &function;
         let remapped_test;
         let test = if let Some(remap) = &remap {
@@ -2524,33 +2524,10 @@ impl Module {
         result.nodes.splice(position..=position, expanded);
     }
 
-    /// Whether `function` transitively invokes a registered primitive. A callee
-    /// that both `function_contains_effect` and `function_contains_primitive`
-    /// would be routed wholesale into a machine-plane effect island, so its
-    /// primitive would reach the legacy interpreter that has no primitive
-    /// authority. Such calls are cut by [`Self::inline_mixed_primitive_calls`].
-    fn function_contains_primitive(
-        &self,
-        function: FunctionId,
-        seen: &mut BTreeSet<FunctionId>,
-    ) -> bool {
-        if !seen.insert(function) {
-            return false;
-        }
-        self.functions
-            .get(function.0 as usize)
-            .is_some_and(|function| {
-                function.nodes.iter().any(|node| {
-                    matches!(node.op, Op::InvokePrimitive { .. })
-                        || matches!(node.op, Op::Call(callee) if self.function_contains_primitive(callee, seen))
-                })
-            })
-    }
-
     /// Whether `function` reaches `target` through any call edge (including
-    /// itself when `function == target`). Used to reject inlining a mixed
-    /// primitive/effect callee that participates in a recursive cycle, where
-    /// call-site specialization would not terminate.
+    /// itself when `function == target`). Used to reject inlining an effectful
+    /// callee that participates in a recursive cycle, where call-site
+    /// specialization would not terminate.
     fn function_reaches(
         &self,
         function: FunctionId,
@@ -2575,21 +2552,17 @@ impl Module {
             })
     }
 
-    /// A `Call` whose callee mixes effect roots and a registered primitive must
-    /// be cut so the primitive is never absorbed into an effect island. This
-    /// specializes each such call site by splicing the callee's authored graph
-    /// into the caller with fresh, call-context-distinct node identities, so the
-    /// existing effect-root/primitive publication rules produce the required
-    /// dependency-ordered stages: the effect publications that build the request,
-    /// the verified-Weavy primitive publication, then the pure continuation.
+    /// An effectful `Call` is specialized before island cutting so its
+    /// machine-plane roots become scheduler-owned publications and the
+    /// remaining computation stays in verified Weavy. This includes helpers
+    /// that mix fixture/tree effects with ordinary control or collections, and
+    /// helpers that build a registered-primitive request from effectful inputs.
     ///
-    /// Non-mixed calls are untouched: a pure-effect callee keeps its effect
-    /// island, and a pure-primitive callee already lowers to a host call. The
-    /// spliced graph preserves each node's authored span (attribution) and type
-    /// (ABI); structural recipe identity remains derived from the resulting
-    /// authored graph, so distinct arguments keep distinct identities and equal
-    /// spellings still collapse.
-    fn inline_mixed_primitive_calls(
+    /// Pure calls are untouched. The spliced graph preserves each node's
+    /// authored span (attribution) and type (ABI); structural recipe identity
+    /// remains derived from the resulting authored graph, so distinct arguments
+    /// keep distinct identities and equal spellings still collapse.
+    fn inline_effectful_calls(
         &self,
         function: &Function,
     ) -> Result<(Function, Option<BTreeMap<NodeId, NodeId>>), Diagnostics> {
@@ -2600,9 +2573,8 @@ impl Module {
                 let Op::Call(callee) = node.op else {
                     return None;
                 };
-                let mixed = self.function_contains_effect(callee, &mut BTreeSet::new())
-                    && self.function_contains_primitive(callee, &mut BTreeSet::new());
-                mixed.then_some((node.id, node.span, callee))
+                self.function_contains_effect(callee, &mut BTreeSet::new())
+                    .then_some((node.id, node.span, callee))
             });
             let Some((call_id, call_span, callee_id)) = target else {
                 break;
@@ -2610,15 +2582,14 @@ impl Module {
             if self.function_reaches(callee_id, callee_id, &mut BTreeSet::new()) {
                 return Err(Diagnostics::one(Diagnostic::unsupported(
                     call_span,
-                    "a recursive helper that mixes effect reads and a registered \
-                     primitive cannot be call-site specialized in this milestone",
+                    "a recursive effectful helper cannot be call-site specialized",
                 )));
             }
             if node_within_control_region(&result, call_id) {
                 return Err(Diagnostics::one(Diagnostic::unsupported(
                     call_span,
-                    "a registered primitive reached through effect reads inside a \
-                     conditional helper is not yet call-site specialized",
+                    "an effectful helper call inside conditional control is not yet \
+                     call-site specialized",
                 )));
             }
             self.splice_call_site(&mut result, call_id, callee_id);
