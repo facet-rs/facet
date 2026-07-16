@@ -50,6 +50,11 @@ pub struct CompilerConfig {
     /// as value inputs, so downstream demand keys are over `ValueId`s rather
     /// than recompute-and-compare results.
     pub force_scalar_call_boundaries: bool,
+    /// Merge the registered standard-library prelude functions (`crate::stdlib`)
+    /// into the compilation as ordinary top-level items. Off by default so
+    /// existing compilations — and the golden/ratchet module-set hashes — are
+    /// unperturbed; callers opt in.
+    pub stdlib: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -106,7 +111,10 @@ impl Compiler {
         for module in modules {
             parsed.push((module.name.to_owned(), self.parser.parse(module.source)?));
         }
-        let merged = crate::modules::merge_module_set(root, &parsed)?;
+        let mut merged = crate::modules::merge_module_set(root, &parsed)?;
+        if self.config.stdlib {
+            crate::stdlib::inject_prelude(&self.parser, &mut merged)?;
+        }
         let module = lower_module(&merged, self.config)?;
         let warnings = lint_module(&module);
         Ok(Compilation { module, warnings })

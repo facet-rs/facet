@@ -41,6 +41,7 @@ pub mod reloc_selection;
 pub mod rpc_process;
 pub mod runtime;
 pub mod schema;
+pub mod stdlib;
 pub mod surface;
 pub mod value;
 pub mod vir;
