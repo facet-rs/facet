@@ -118,6 +118,49 @@ pub struct EffectInputBinding {
     pub publication_schemas: Vec<(Type, WeavySchemaRef)>,
 }
 
+/// A borrowed view over the binding facts the scheduler needs to write a realized
+/// value into a task entry — the shared subset of [`ValueInputBinding`] and
+/// [`EffectInputBinding`]. One binding path, so a resolved effect response binds
+/// through the exact same code as any value input of its type
+/// (r[machine.primitive.registered]).
+#[derive(Clone, Copy)]
+pub struct RealizedBinding<'a> {
+    pub entry: usize,
+    pub schema: Option<WeavySchemaRef>,
+    pub store_schema: SchemaId,
+    pub payload_element_schema: Option<WeavySchemaRef>,
+    pub ty: &'a Type,
+    pub publication_schemas: &'a [(Type, WeavySchemaRef)],
+}
+
+impl ValueInputBinding {
+    #[must_use]
+    pub fn realized(&self) -> RealizedBinding<'_> {
+        RealizedBinding {
+            entry: self.entry,
+            schema: self.schema,
+            store_schema: self.store_schema,
+            payload_element_schema: self.payload_element_schema,
+            ty: &self.ty,
+            publication_schemas: &self.publication_schemas,
+        }
+    }
+}
+
+impl EffectInputBinding {
+    #[must_use]
+    pub fn realized(&self) -> RealizedBinding<'_> {
+        RealizedBinding {
+            entry: self.entry,
+            schema: self.schema,
+            store_schema: self.store_schema,
+            payload_element_schema: self.payload_element_schema,
+            ty: &self.ty,
+            publication_schemas: &self.publication_schemas,
+        }
+    }
+}
+
 /// The internal result ABI carried by every function in an array-bearing
 /// island. It is metadata for the verified artifact, not a source-level type.
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]

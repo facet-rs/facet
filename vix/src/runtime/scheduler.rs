@@ -8,7 +8,7 @@ use weavy::exec::{
 };
 use weavy::task::{FnId, TaskEvent as WeavyTaskEvent, TaskStep};
 
-use crate::lowering::{LoweringArtifact, LoweringAttribution, ValueInputBinding};
+use crate::lowering::{LoweringArtifact, LoweringAttribution, RealizedBinding};
 use crate::vir::{FunctionId, IslandId, Type, VariantPayload};
 
 use super::identity::{
@@ -33,6 +33,20 @@ struct MemoEntry {
     preimage: DemandPreimage,
     result: Handle,
     receipt: Option<Receipt>,
+}
+
+/// The failure of one realized-entry bind, tagged by the per-lane policy the two
+/// scheduler lanes historically applied so [`Runtime::bind_realized_entry`]'s
+/// callers preserve their exact behavior. See the helper's doc comment.
+enum EntryBindError {
+    /// A machine invariant (schema mismatch / missing value-input handle). The
+    /// value-island lane terminates the task/demand; the generator lane returns
+    /// the raw error.
+    Invariant(MachineError),
+    /// A Weavy entry write fault — both lanes terminate.
+    WriteFault(MachineError),
+    /// A frozen conversion or missing binding schema — both lanes return raw.
+    Raw(Box<MachineError>),
 }
 
 struct DemandExecution<'a> {
@@ -426,106 +440,27 @@ impl<S: EventSink> Runtime<S> {
                     )));
                 }
             }
+            let mut value_memory_overrides = Vec::new();
             for (binding, argument) in lowered.value_inputs.iter().zip(arguments) {
-                if binding.store_schema != argument.identity.schema {
-                    let error = MachineError::runtime(
-                        MachineOperation::EntryBinding,
-                        RuntimeFault::ValueInputSchemaMismatch,
-                        None,
-                        Some(lowered.demand_key),
-                    );
-                    return Err(Box::new(self.terminate_machine_fault(
-                        task_id,
-                        lowered.demand_key,
-                        error,
-                    )));
-                }
-                let frozen = self
-                    .store
-                    .entry(argument.handle)
-                    .and_then(StoreEntry::frozen)
-                    .map(|frozen| frozen_to_weavy(frozen, &binding.ty, binding, &self.store))
-                    .transpose()
-                    .map_err(|()| {
-                        Box::new(MachineError::runtime(
-                            MachineOperation::EntryBinding,
-                            RuntimeFault::ValueInputSchemaMismatch,
-                            None,
-                            Some(lowered.demand_key),
-                        ))
-                    })?;
-                let result = if let Some(frozen) = &frozen {
-                    task.write_entry_frozen(binding.entry, frozen)
-                } else {
-                    let Some(handle) = self.store.weavy_handle(argument.handle) else {
-                        let error = MachineError::runtime(
-                            MachineOperation::EntryBinding,
-                            RuntimeFault::MissingValueInputStoreHandle,
-                            None,
-                            Some(lowered.demand_key),
-                        );
+                match self.bind_realized_entry(
+                    &mut task,
+                    binding.realized(),
+                    argument.handle,
+                    argument.identity,
+                    lowered,
+                    attribution,
+                ) {
+                    Ok(Some(override_)) => value_memory_overrides.push(override_),
+                    Ok(None) => {}
+                    Err(EntryBindError::Invariant(error) | EntryBindError::WriteFault(error)) => {
                         return Err(Box::new(self.terminate_machine_fault(
                             task_id,
                             lowered.demand_key,
                             error,
                         )));
-                    };
-                    task.write_entry_store_handle(
-                        binding.entry,
-                        binding.schema.ok_or_else(|| {
-                            Box::new(MachineError::runtime(
-                                MachineOperation::EntryBinding,
-                                RuntimeFault::ValueInputSchemaMismatch,
-                                None,
-                                Some(lowered.demand_key),
-                            ))
-                        })?,
-                        handle,
-                    )
-                };
-                if let Err(fault) = result {
-                    let error = self.task_fault(
-                        MachineOperation::EntryBinding,
-                        fault,
-                        lowered,
-                        attribution,
-                        None,
-                    );
-                    return Err(Box::new(self.terminate_machine_fault(
-                        task_id,
-                        lowered.demand_key,
-                        error,
-                    )));
+                    }
+                    Err(EntryBindError::Raw(error)) => return Err(error),
                 }
-            }
-            let mut value_memory_overrides = Vec::new();
-            for (binding, argument) in lowered.value_inputs.iter().zip(arguments) {
-                let Some(element_schema) = binding.payload_element_schema else {
-                    continue;
-                };
-                let resident = self
-                    .store
-                    .entry(argument.handle)
-                    .and_then(StoreEntry::resident_bytes)
-                    .ok_or_else(|| {
-                        Box::new(MachineError::runtime(
-                            MachineOperation::EntryBinding,
-                            RuntimeFault::MissingValueInputStoreHandle,
-                            None,
-                            Some(lowered.demand_key),
-                        ))
-                    })?;
-                let mut abi_view = resident.to_vec();
-                let schema_bytes = abi_view.get_mut(8..16).ok_or_else(|| {
-                    Box::new(MachineError::runtime(
-                        MachineOperation::EntryBinding,
-                        RuntimeFault::ValueInputSchemaMismatch,
-                        None,
-                        Some(lowered.demand_key),
-                    ))
-                })?;
-                schema_bytes.copy_from_slice(&i64::from(element_schema.0).to_le_bytes());
-                value_memory_overrides.push((argument.handle, abi_view));
             }
             // Demand wires start unresolved. The task drives until it parks on a
             // wire it actually consumes; only then does the scheduler evaluate
@@ -1122,96 +1057,28 @@ impl<S: EventSink> Runtime<S> {
                     )));
                 }
             }
-            for (binding, argument) in lowered.value_inputs.iter().zip(arguments) {
-                if binding.store_schema != argument.identity.schema {
-                    return Err(Box::new(MachineError::runtime(
-                        MachineOperation::EntryBinding,
-                        RuntimeFault::ValueInputSchemaMismatch,
-                        None,
-                        Some(lowered.demand_key),
-                    )));
-                }
-                let frozen = self
-                    .store
-                    .entry(argument.handle)
-                    .and_then(StoreEntry::frozen)
-                    .map(|frozen| frozen_to_weavy(frozen, &binding.ty, binding, &self.store))
-                    .transpose()
-                    .map_err(|()| {
-                        Box::new(MachineError::runtime(
-                            MachineOperation::EntryBinding,
-                            RuntimeFault::ValueInputSchemaMismatch,
-                            None,
-                            Some(lowered.demand_key),
-                        ))
-                    })?;
-                let result = if let Some(frozen) = &frozen {
-                    task.write_entry_frozen(binding.entry, frozen)
-                } else {
-                    let handle = self.store.weavy_handle(argument.handle).ok_or_else(|| {
-                        Box::new(MachineError::runtime(
-                            MachineOperation::EntryBinding,
-                            RuntimeFault::MissingValueInputStoreHandle,
-                            None,
-                            Some(lowered.demand_key),
-                        ))
-                    })?;
-                    task.write_entry_store_handle(
-                        binding.entry,
-                        binding.schema.ok_or_else(|| {
-                            Box::new(MachineError::runtime(
-                                MachineOperation::EntryBinding,
-                                RuntimeFault::ValueInputSchemaMismatch,
-                                None,
-                                Some(lowered.demand_key),
-                            ))
-                        })?,
-                        handle,
-                    )
-                };
-                if let Err(fault) = result {
-                    let error = self.task_fault(
-                        MachineOperation::EntryBinding,
-                        fault,
-                        lowered,
-                        attribution,
-                        None,
-                    );
-                    return Err(Box::new(self.terminate_machine_fault(
-                        task_id,
-                        lowered.demand_key,
-                        error,
-                    )));
-                }
-            }
             let mut value_memory_overrides = Vec::new();
             for (binding, argument) in lowered.value_inputs.iter().zip(arguments) {
-                let Some(element_schema) = binding.payload_element_schema else {
-                    continue;
-                };
-                let resident = self
-                    .store
-                    .entry(argument.handle)
-                    .and_then(StoreEntry::resident_bytes)
-                    .ok_or_else(|| {
-                        Box::new(MachineError::runtime(
-                            MachineOperation::EntryBinding,
-                            RuntimeFault::MissingValueInputStoreHandle,
-                            None,
-                            Some(lowered.demand_key),
-                        ))
-                    })?;
-                let mut abi_view = resident.to_vec();
-                let schema_bytes = abi_view.get_mut(8..16).ok_or_else(|| {
-                    Box::new(MachineError::runtime(
-                        MachineOperation::EntryBinding,
-                        RuntimeFault::ValueInputSchemaMismatch,
-                        None,
-                        Some(lowered.demand_key),
-                    ))
-                })?;
-                schema_bytes.copy_from_slice(&i64::from(element_schema.0).to_le_bytes());
-                value_memory_overrides.push((argument.handle, abi_view));
+                match self.bind_realized_entry(
+                    &mut task,
+                    binding.realized(),
+                    argument.handle,
+                    argument.identity,
+                    lowered,
+                    attribution,
+                ) {
+                    Ok(Some(override_)) => value_memory_overrides.push(override_),
+                    Ok(None) => {}
+                    Err(EntryBindError::Invariant(error)) => return Err(Box::new(error)),
+                    Err(EntryBindError::WriteFault(error)) => {
+                        return Err(Box::new(self.terminate_machine_fault(
+                            task_id,
+                            lowered.demand_key,
+                            error,
+                        )));
+                    }
+                    Err(EntryBindError::Raw(error)) => return Err(error),
+                }
             }
             let step = match self.store.with_value_memory_overrides(
                 &value_memory_overrides,
@@ -1568,6 +1435,105 @@ impl<S: EventSink> Runtime<S> {
         task.state = to;
         self.emit(EventKind::TaskTransition { task: id, from, to });
         Ok(())
+    }
+
+    /// Write one realized value (a value input or a resolved effect response) into
+    /// its task entry through the store-handle/frozen channel, and, when the
+    /// binding carries a payload element schema, compute the invocation-local ABI
+    /// override for that entry. This is the single binding path shared by both
+    /// scheduler lanes and by effect resolution (r[machine.primitive.registered]).
+    ///
+    /// Errors are typed by the two lanes' historical policy so each caller can
+    /// preserve it exactly: [`EntryBindError::WriteFault`] both lanes terminate;
+    /// [`EntryBindError::Raw`] both return raw; [`EntryBindError::Invariant`] the
+    /// value-island lane terminates and the generator lane returns raw.
+    fn bind_realized_entry(
+        &self,
+        task: &mut weavy::exec::ExecTask<'_>,
+        binding: RealizedBinding<'_>,
+        handle: Handle,
+        identity: ValueId,
+        lowered: &DemandExecution<'_>,
+        attribution: &LoweringAttribution,
+    ) -> Result<Option<(Handle, Vec<u8>)>, EntryBindError> {
+        if binding.store_schema != identity.schema {
+            return Err(EntryBindError::Invariant(MachineError::runtime(
+                MachineOperation::EntryBinding,
+                RuntimeFault::ValueInputSchemaMismatch,
+                None,
+                Some(lowered.demand_key),
+            )));
+        }
+        let frozen = self
+            .store
+            .entry(handle)
+            .and_then(StoreEntry::frozen)
+            .map(|frozen| frozen_to_weavy(frozen, binding.ty, binding, &self.store))
+            .transpose()
+            .map_err(|()| {
+                EntryBindError::Raw(Box::new(MachineError::runtime(
+                    MachineOperation::EntryBinding,
+                    RuntimeFault::ValueInputSchemaMismatch,
+                    None,
+                    Some(lowered.demand_key),
+                )))
+            })?;
+        let result = if let Some(frozen) = &frozen {
+            task.write_entry_frozen(binding.entry, frozen)
+        } else {
+            let Some(store_handle) = self.store.weavy_handle(handle) else {
+                return Err(EntryBindError::Invariant(MachineError::runtime(
+                    MachineOperation::EntryBinding,
+                    RuntimeFault::MissingValueInputStoreHandle,
+                    None,
+                    Some(lowered.demand_key),
+                )));
+            };
+            let schema = binding.schema.ok_or_else(|| {
+                EntryBindError::Raw(Box::new(MachineError::runtime(
+                    MachineOperation::EntryBinding,
+                    RuntimeFault::ValueInputSchemaMismatch,
+                    None,
+                    Some(lowered.demand_key),
+                )))
+            })?;
+            task.write_entry_store_handle(binding.entry, schema, store_handle)
+        };
+        if let Err(fault) = result {
+            return Err(EntryBindError::WriteFault(self.task_fault(
+                MachineOperation::EntryBinding,
+                fault,
+                lowered,
+                attribution,
+                None,
+            )));
+        }
+        let Some(element_schema) = binding.payload_element_schema else {
+            return Ok(None);
+        };
+        let resident = self
+            .store
+            .entry(handle)
+            .and_then(StoreEntry::resident_bytes)
+            .ok_or_else(|| {
+                EntryBindError::Raw(Box::new(MachineError::runtime(
+                    MachineOperation::EntryBinding,
+                    RuntimeFault::MissingValueInputStoreHandle,
+                    None,
+                    Some(lowered.demand_key),
+                )))
+            })?;
+        let mut abi_view = resident.to_vec();
+        let schema_bytes = abi_view.get_mut(8..16).ok_or_else(|| {
+            EntryBindError::Raw(Box::new(MachineError::runtime(
+                MachineOperation::EntryBinding,
+                RuntimeFault::ValueInputSchemaMismatch,
+                None,
+                Some(lowered.demand_key),
+            )))
+        })?;
+        schema_bytes.copy_from_slice(&i64::from(element_schema.0).to_le_bytes());
+        Ok(Some((handle, abi_view)))
     }
 
     fn emit_weavy(
@@ -2587,7 +2553,7 @@ impl FrozenInline {
 fn frozen_to_weavy(
     frozen: &FrozenValue,
     ty: &Type,
-    binding: &ValueInputBinding,
+    binding: RealizedBinding<'_>,
     store: &Store,
 ) -> Result<weavy::exec::FrozenValue, ()> {
     match (frozen, ty) {
@@ -2657,7 +2623,7 @@ fn frozen_to_weavy(
 fn frozen_inline(
     frozen: &FrozenValue,
     ty: &Type,
-    binding: &ValueInputBinding,
+    binding: RealizedBinding<'_>,
     store: &Store,
 ) -> Result<FrozenInline, ()> {
     match ty {
@@ -2717,7 +2683,7 @@ fn frozen_inline(
 fn frozen_product<'a>(
     fields: &[FrozenValue],
     field_types: impl Iterator<Item = &'a Type>,
-    binding: &ValueInputBinding,
+    binding: RealizedBinding<'_>,
     store: &Store,
     base: usize,
 ) -> Result<FrozenInline, ()> {
@@ -2746,7 +2712,7 @@ fn frozen_product<'a>(
     Ok(FrozenInline { bytes, references })
 }
 
-fn publication_schema(binding: &ValueInputBinding, ty: &Type) -> Result<weavy::SchemaRef, ()> {
+fn publication_schema(binding: RealizedBinding<'_>, ty: &Type) -> Result<weavy::SchemaRef, ()> {
     binding
         .publication_schemas
         .iter()
