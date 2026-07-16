@@ -31,6 +31,9 @@
 //! boundary"). Until then this module must not be presented as the live binding
 //! path.
 
+use std::collections::BTreeSet;
+use std::sync::LazyLock;
+
 use crate::runtime::PrimitiveId;
 
 /// A non-empty `::`-separated module path (`caps`, `some::ns::inner`).
@@ -242,6 +245,25 @@ pub fn builtin_bindings() -> BindingRegistry {
     ));
 
     reg
+}
+
+/// The set of prelude-placed binding names, derived once from
+/// [`builtin_bindings`] so the binding set stays the single source of truth.
+static PRELUDE_NAMES: LazyLock<BTreeSet<String>> = LazyLock::new(|| {
+    builtin_bindings()
+        .bindings()
+        .iter()
+        .filter(|binding| binding.placement == Placement::Prelude)
+        .map(|binding| binding.name.clone())
+        .collect()
+});
+
+/// Is `name` a prelude-placed surface binding? The binder consults this to
+/// resolve prelude names (`fetch`, `observe`, …) rather than leaving them in
+/// its `unresolved` bucket — the "prelude layer" its module docs describe.
+#[must_use]
+pub fn is_prelude_name(name: &str) -> bool {
+    PRELUDE_NAMES.contains(name)
 }
 
 #[cfg(test)]

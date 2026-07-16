@@ -398,6 +398,12 @@ impl Binder {
                 return;
             }
         }
+        // Prelude bindings (`fetch`, `observe`, …) resolve silently, like
+        // BUILTIN_TYPES above: there is no in-file def site to record a ref to.
+        // Checked after scopes so a local binding still shadows the prelude.
+        if crate::binding::is_prelude_name(&name.value) {
+            return;
+        }
         self.out.unresolved.push(name.clone());
     }
 
