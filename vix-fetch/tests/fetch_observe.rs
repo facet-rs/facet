@@ -43,11 +43,15 @@ fn pinned_fetch_falls_through_to_verified_origin() -> Stream<Check> {
 "#;
 
 const FETCH_STORE_THEN_REDEMAND: &str = r#"
+fn after_first(first: Blob) -> String {
+    "second.crate/" + first.len().to_string()
+}
+
 #[test]
 fn pinned_fetch_local_store_hit_never_contacts_provider_or_origin() -> Stream<Check> {
     let first = fetch(fixture_registry().url("first.crate"));
     yield expect_eq(first.len(), 4096);
-    let second = fetch(fixture_registry().url("second.crate"));
+    let second = fetch(fixture_registry().url(after_first(first)));
     yield expect_eq(second.len(), 4096);
     yield fetched(1);
 }
@@ -62,11 +66,15 @@ fn pinned_fetch_must_fail_before_publishing() -> Stream<Check> {
 "#;
 
 const FETCH_STORE_THEN_UPSTREAM_CONTRADICTION: &str = r#"
+fn after_first(first: Blob) -> String {
+    "second.crate/" + first.len().to_string()
+}
+
 #[test]
 fn pinned_fetch_store_checks_upstream_digest() -> Stream<Check> {
     let first = fetch(fixture_registry().url("first.crate"));
     yield expect_eq(first.len(), 4096);
-    let second = fetch(fixture_registry().url("second.crate"));
+    let second = fetch(fixture_registry().url(after_first(first)));
     yield expect_eq(second.len(), 4096);
 }
 "#;
@@ -389,7 +397,7 @@ fn pinned_fetch_local_store_hit_never_contacts_provider_or_origin() {
     let server = BlobServer::start(bytes);
     let fixtures = TempDir::new().expect("create fixture root");
     let manifest = format!(
-        "first.crate {} {} {upstream}\nsecond.crate {} {} {upstream}\n",
+        "first.crate {} {} {upstream}\nsecond.crate/4096 {} {} {upstream}\n",
         server.url_for("/first"),
         identity.content.hex(),
         server.url_for("/must-not-be-contacted"),
@@ -467,7 +475,7 @@ fn pinned_fetch_rejects_upstream_digest_mismatch_at_every_tier() {
     let store_server = BlobServer::start(bytes.clone());
     let store_fixtures = TempDir::new().expect("create Store-tier fixture root");
     let store_manifest = format!(
-        "first.crate {} {}\nsecond.crate {} {} {wrong_upstream}\n",
+        "first.crate {} {}\nsecond.crate/4096 {} {} {wrong_upstream}\n",
         store_server.url_for("/first"),
         identity.content.hex(),
         store_server.url_for("/must-not-be-contacted"),
