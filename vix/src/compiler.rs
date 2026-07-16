@@ -1029,7 +1029,7 @@ impl<'a> TypeResolver<'a> {
 /// project one — it can only receive it and tag a command template with it.
 ///
 /// r[impl machine.primitive.capabilities-by-identity]
-pub const CAPABILITY_TYPE_NAMES: &[&str] = &["Echo", "Sh"];
+pub const CAPABILITY_TYPE_NAMES: &[&str] = &["Echo", "Sh", "ProgressiveSh"];
 
 /// The single opaque field carrying a capability's executable identity.
 pub const CAPABILITY_PROGRAM_FIELD: &str = "$program";

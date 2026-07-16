@@ -1649,6 +1649,25 @@ pub struct PartitionedValue {
     pub effect_fingerprint: Option<String>,
 }
 
+/// One protocol-authorized projection of an exec result that may publish
+/// before the aggregate [`ExecOutcome`](crate::compiler::exec_outcome_type)
+/// exists. The producer remains an ordinary exec value island; this edge names
+/// the demanded immutable product independently, so the runner can subscribe
+/// to it without treating the whole outcome as a prerequisite.
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct PartitionedProgressiveValue {
+    pub id: ValueIslandId,
+    pub producer: ValueIslandId,
+    pub projection: ProgressiveProjection,
+    pub ty: Type,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ProgressiveProjection {
+    ExecTreeText { path: String },
+}
+
 /// The described invocation a hoisted value or wire island realizes: the callee
 /// user function and, when every argument is a closed scalar literal, the exact
 /// argument literals. Recorded so a described-wire trace check can select this
@@ -1709,6 +1728,10 @@ pub struct PartitionedTest {
     /// Harness-supplied capability inputs, published before `values`.
     pub capabilities: Vec<PartitionedCapability>,
     pub values: Vec<PartitionedValue>,
+    /// Partial dependencies whose values can publish before their aggregate
+    /// producer. These share the ordinary [`ValueIslandId`] namespace so
+    /// downstream islands consume the eventual value without a second graph.
+    pub progressive_values: Vec<PartitionedProgressiveValue>,
     /// `?` catches, constructed after `values` publish and before any site runs.
     pub catches: Vec<PartitionedCatch>,
     /// Argument islands demanded lazily through force-on-park, keyed by their
@@ -1939,6 +1962,15 @@ impl Module {
                 )
             })
             .collect::<BTreeMap<_, _>>();
+        let progressive_values = progressive_exec_tree_text_values(function);
+        let progressive_ids = progressive_values
+            .iter()
+            .map(|value| (value.id.node, value.id))
+            .collect::<BTreeMap<_, _>>();
+        let progressive_effect_nodes = progressive_values
+            .iter()
+            .flat_map(|value| progressive_projection_effect_nodes(function, value.id.node))
+            .collect::<BTreeSet<_>>();
         // Every effect root is an island boundary regardless of consumer count:
         // a machine-plane primitive can never be lowered into a Weavy island, so
         // it is hoisted into its own Effect island and consumed as a published
@@ -1949,7 +1981,9 @@ impl Module {
         let effect_nodes = function
             .nodes
             .iter()
-            .filter(|node| self.is_effect_root(node))
+            .filter(|node| {
+                self.is_effect_root(node) && !progressive_effect_nodes.contains(&node.id)
+            })
             .collect::<Vec<_>>();
         let effect_ids = effect_nodes
             .iter()
@@ -2114,6 +2148,7 @@ impl Module {
             let mut map = shared_ids.clone();
             map.extend(capability_ids.iter().map(|(node, value)| (*node, *value)));
             map.extend(effect_ids.iter().map(|(node, value)| (*node, *value)));
+            map.extend(progressive_ids.iter().map(|(node, value)| (*node, *value)));
             map.extend(
                 catch_operand_ids
                     .iter()
@@ -2322,6 +2357,7 @@ impl Module {
             name: test.name.clone(),
             capabilities,
             values,
+            progressive_values,
             catches,
             wire_islands,
             generator,
@@ -3167,8 +3203,98 @@ impl PartitionedTest {
                 );
             }
         }
+        for value in &self.progressive_values {
+            let _ = writeln!(
+                out,
+                "progressive f{} n{} <- f{} n{} {:?}",
+                value.id.function.0,
+                value.id.node.0,
+                value.producer.function.0,
+                value.producer.node.0,
+                value.projection,
+            );
+        }
         out
     }
+}
+
+fn progressive_exec_tree_text_values(function: &Function) -> Vec<PartitionedProgressiveValue> {
+    function
+        .nodes
+        .iter()
+        .filter_map(|node| {
+            let Op::TreeEntryText = node.op else {
+                return None;
+            };
+            let (exec, path) = progressive_exec_tree_path(function, node.inputs[0])?;
+            Some(PartitionedProgressiveValue {
+                id: ValueIslandId {
+                    function: function.id,
+                    node: node.id,
+                },
+                producer: ValueIslandId {
+                    function: function.id,
+                    node: exec,
+                },
+                projection: ProgressiveProjection::ExecTreeText { path },
+                ty: node.ty.clone(),
+            })
+        })
+        .collect()
+}
+
+fn progressive_exec_tree_path(function: &Function, mut node: NodeId) -> Option<(NodeId, String)> {
+    let mut segments = Vec::new();
+    loop {
+        let current = function.nodes.get(node.0 as usize)?;
+        match &current.op {
+            Op::TreeProject => {
+                let segment = function.nodes.get(current.inputs[1].0 as usize)?;
+                match &segment.op {
+                    Op::String(value) | Op::Path(value) => segments.push(value.clone()),
+                    _ => return None,
+                }
+                node = current.inputs[0];
+            }
+            Op::Project { index: 0 } => {
+                let exec = function.nodes.get(current.inputs[0].0 as usize)?;
+                if !matches!(exec.op, Op::Exec { .. }) {
+                    return None;
+                }
+                let capability = function.nodes.get(exec.inputs[0].0 as usize)?;
+                let Type::Record(capability) = &capability.ty else {
+                    return None;
+                };
+                if capability.name != "ProgressiveSh" {
+                    return None;
+                }
+                segments.reverse();
+                return Some((exec.id, segments.join("/")));
+            }
+            _ => return None,
+        }
+    }
+}
+
+fn progressive_projection_effect_nodes(function: &Function, output: NodeId) -> Vec<NodeId> {
+    let mut nodes = vec![output];
+    let Some(output) = function.nodes.get(output.0 as usize) else {
+        return nodes;
+    };
+    let Some(mut node) = output.inputs.first().copied() else {
+        return nodes;
+    };
+    while let Some(current) = function.nodes.get(node.0 as usize) {
+        match current.op {
+            Op::TreeProject => {
+                nodes.push(current.id);
+                node = current.inputs[0];
+            }
+            Op::Project { index: 0 } => break,
+            _ => break,
+        }
+    }
+    nodes
 }
 
 /// The parameter positions of `callee` that are demand wires, in declaration

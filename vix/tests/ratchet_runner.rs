@@ -6383,6 +6383,40 @@ fn completed_exec_tree(sh: Sh) -> Stream<Check> {
     assert!(report.agrees());
 }
 
+#[test]
+fn progressive_exec_tree_text_is_a_partial_dependency_not_a_whole_outcome_input() {
+    const SOURCE: &str = r#"
+#[test]
+fn progressive_tree(sh: ProgressiveSh) -> Stream<Check> {
+    let producer = exec sh`-c "mkdir -p out; echo ready > out/early.txt"`;
+    yield expect_eq((producer.tree / "out" / "early.txt").text(), "ready");
+}
+"#;
+    let module = Compiler::new()
+        .compile(SOURCE)
+        .expect("progressive exec projection source compiles");
+    let partitioned = module.partition_test(&module.tests[0]);
+    let [projection] = partitioned.progressive_values.as_slice() else {
+        panic!("one exec tree text projection is partial");
+    };
+    assert_eq!(projection.producer.node.0, 1);
+    assert_eq!(
+        projection.projection,
+        vix::vir::ProgressiveProjection::ExecTreeText {
+            path: "out/early.txt".to_owned(),
+        }
+    );
+    assert!(
+        partitioned.values.iter().all(|value| {
+            !matches!(
+                value.island.effect_output().map(|node| &node.op),
+                Some(VirOp::TreeProject | VirOp::TreeEntryText)
+            )
+        }),
+        "the projection chain is not serialized as whole-value effect islands",
+    );
+}
+
 /// A nonzero exit is retained as `ProcessFailure` in the effect demand and
 /// becomes `Result::Err` only at the scheduler-owned postfix-catch boundary.
 ///
