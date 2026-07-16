@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::ops::Deref;
+use std::sync::Arc;
 
 use weavy::exec::{
     FallbackReason, FaultSite, LaneKind, ResolvedTaskValue, TaskFault, TaskStructuralValue,
@@ -23,6 +24,7 @@ use super::observe::{
     Counters, Event, EventKind, EventSink, ExecutionFacts, ExecutionFallbackFact,
     ExecutionLaneFact, SafePointClass,
 };
+use super::primitive::PrimitiveSet;
 use super::store::{FrozenValue, Handle, Interned, Store, StoreEntry};
 use super::{MachineAttribution, MachineError, MachineOperation, RuntimeFault};
 
@@ -91,6 +93,29 @@ pub struct ChaosPolicy {
 pub struct IslandInputs<'a> {
     pub arguments: &'a [Evaluation],
     pub wires: &'a [WireDemand<'a>],
+    /// The effect edges this island consumes, one per `LoweringArtifact`
+    /// effect binding, in the same order. Each carries the request island
+    /// (a pure demand) whose realized value is the primitive's request; the
+    /// scheduler resolves it at the demand layer. Empty for an effect-free
+    /// island, so no pure hot path is touched (r[machine.primitive.registered]).
+    pub effects: &'a [EffectDemand<'a>],
+}
+
+/// One registered effect an island consumes. Parallel to [`WireDemand`] but for
+/// an effect: it carries the request-producing island's ordinary pure demand
+/// (recipe artifact, cost-model location, realized arguments, nested wires) so
+/// the scheduler evaluates it to the request value, then dispatches the
+/// primitive named by the consumer artifact's positionally-matching
+/// `EffectInputBinding`. One generic shape for every primitive
+/// (r[machine.primitive.registered]).
+#[derive(Clone, Copy)]
+pub struct EffectDemand<'a> {
+    pub request_island: IslandId,
+    pub request_location: &'a Location,
+    pub request_lowered: &'a LoweringArtifact,
+    pub request_attribution: &'a LoweringAttribution,
+    pub request_arguments: &'a [Evaluation],
+    pub request_wires: &'a [WireDemand<'a>],
 }
 
 /// One demand wire an island may force: the canonical argument demand the
@@ -161,6 +186,12 @@ pub struct Runtime<S> {
     /// log counts realizations. It backs the described-wire trace checks and
     /// retains only the callee/argument selectors a descriptor can name.
     wire_demands: Vec<(FunctionId, Vec<ValueId>)>,
+    /// The registered effect primitives this runtime may dispatch. An OPTIONAL
+    /// slot, empty by default: every existing runtime is built with no
+    /// primitives, so an effect-free island resolves nothing and hits zero new
+    /// code (r[machine.execution.no-pure-hostcalls]). Shared behind an `Arc` so
+    /// the same registry can back many runtimes.
+    primitives: Arc<PrimitiveSet>,
 }
 
 impl<S: EventSink> Runtime<S> {
@@ -176,7 +207,19 @@ impl<S: EventSink> Runtime<S> {
             counters: Counters::default(),
             next_task: 0,
             wire_demands: Vec::new(),
+            primitives: Arc::new(PrimitiveSet::new()),
         }
+    }
+
+    /// Install the effect-primitive registry the effect path dispatches through.
+    /// The `EffectId` an artifact carries is resolved back to a `PrimitiveId`
+    /// here (`PrimitiveSet::by_effect_id`); `vir`/`lowering` stay identity-
+    /// agnostic (r[machine.ir.vix-level]). Default runtimes carry an empty
+    /// registry and never enter the effect path.
+    #[must_use]
+    pub fn with_primitives(mut self, primitives: Arc<PrimitiveSet>) -> Self {
+        self.primitives = primitives;
+        self
     }
 
     /// The frozen log of realized wire demands: each callee invocation the memo
@@ -214,7 +257,11 @@ impl<S: EventSink> Runtime<S> {
         inputs: IslandInputs<'_>,
         chaos: ChaosPolicy,
     ) -> Result<Evaluation, Box<MachineError>> {
-        let IslandInputs { arguments, wires } = inputs;
+        let IslandInputs {
+            arguments,
+            wires,
+            effects: _,
+        } = inputs;
         let invocation = DemandExecution::new(
             lowered,
             arguments.iter().map(|argument| argument.identity).collect(),
@@ -545,6 +592,7 @@ impl<S: EventSink> Runtime<S> {
                             IslandInputs {
                                 arguments: wire.arguments,
                                 wires: wire.wires,
+                                effects: &[],
                             },
                             ChaosPolicy::default(),
                         )?;
@@ -3365,6 +3413,7 @@ fn duplicate_key() -> Stream<Check> {
                     IslandInputs {
                         arguments: &[],
                         wires: &[],
+                        effects: &[],
                     },
                     ChaosPolicy::default(),
                 )
@@ -3407,6 +3456,7 @@ fn duplicate_key() -> Stream<Check> {
                     IslandInputs {
                         arguments: &[],
                         wires: &[],
+                        effects: &[],
                     },
                     ChaosPolicy::default(),
                 )
@@ -3481,6 +3531,7 @@ fn duplicate_key() -> Stream<Check> {
                     IslandInputs {
                         arguments: &[],
                         wires: &[],
+                        effects: &[],
                     },
                     ChaosPolicy::default(),
                 )
@@ -3554,6 +3605,7 @@ fn passing() -> Stream<Check> {
                 IslandInputs {
                     arguments: &[],
                     wires: &[],
+                    effects: &[],
                 },
                 ChaosPolicy::default(),
             )

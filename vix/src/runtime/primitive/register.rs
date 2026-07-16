@@ -108,6 +108,17 @@ impl PrimitiveSet {
             .find(|primitive| primitive.descriptor().id == id)
     }
 
+    /// Resolve the `vir::EffectId` an artifact carries back to its registered
+    /// primitive. This is the `EffectId -> PrimitiveId` conversion at the runtime
+    /// boundary (r[machine.ir.vix-level]): `vir`/`lowering` stay identity-agnostic,
+    /// the scheduler converts here. One generic scan keyed by the id data, no
+    /// per-primitive arms (r[machine.primitive.registered]).
+    pub(crate) fn by_effect_id(&self, effect: crate::vir::EffectId) -> Option<&Arc<dyn Primitive>> {
+        self.entries
+            .values()
+            .find(|primitive| primitive.descriptor().id.effect_id() == effect)
+    }
+
     /// The registered descriptors — the compiler manifest (phase 03).
     pub fn descriptors(&self) -> impl Iterator<Item = &PrimitiveDescriptor> {
         self.entries.values().map(|primitive| primitive.descriptor())
@@ -259,6 +270,30 @@ mod tests {
             .clone();
         let response: AddResponse = decode_value(&response_frozen, &response_type).unwrap();
         assert_eq!(response.sum, 42);
+    }
+
+    #[test]
+    fn by_effect_id_resolves_the_registered_primitive() {
+        let mut set = PrimitiveSet::new();
+        let id = set
+            .register_function::<AddResponse, AddRequest, _>(
+                "add_numbers",
+                MemoPolicy::Hermetic,
+                |r| Ok(AddResponse { sum: r.left + r.right }),
+            )
+            .unwrap();
+        assert!(
+            set.by_effect_id(id.effect_id()).is_some(),
+            "the effect id resolves back to the primitive at the runtime boundary"
+        );
+        assert!(
+            set.by_effect_id(crate::vir::EffectId([0u8; 32])).is_none(),
+            "an unknown effect id resolves to nothing"
+        );
+        // The effect recipe is stable and can never collide with a pure recipe.
+        let recipe = crate::runtime::RecipeId::from_primitive_digest(id.0);
+        assert_eq!(recipe, crate::runtime::RecipeId::from_primitive_digest(id.0));
+        assert_ne!(recipe, crate::runtime::RecipeId::from_canonical_vir(&id.0.0));
     }
 
     #[test]

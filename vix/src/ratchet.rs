@@ -832,6 +832,7 @@ fn evaluate_value_site(
         IslandInputs {
             arguments: &arguments,
             wires: &wires,
+            effects: &[],
         },
         chaos,
     )?;
@@ -903,6 +904,7 @@ fn evaluate_snapshot_site(
         IslandInputs {
             arguments: &arguments,
             wires: &wires,
+            effects: &[],
         },
         chaos,
     )?;
@@ -1018,6 +1020,7 @@ fn run_lane(
                 IslandInputs {
                     arguments: &arguments,
                     wires: &[],
+                    effects: &[],
                 },
                 ChaosPolicy {
                     kill_first_running_task: kill_available,

@@ -26,6 +26,16 @@ impl RecipeId {
     pub fn from_canonical_vir(bytes: &[u8]) -> Self {
         Self(hash_framed(b"vix.recipe.v1", &[bytes]))
     }
+
+    /// The effect recipe for a registered primitive: its 32 content bytes under a
+    /// domain distinct from pure vir recipes, so an effect demand can never
+    /// collide structurally with a pure demand (design §2,
+    /// r[machine.arch.reuse-axes-distinct]). One generic derivation for every
+    /// primitive, keyed by the id digest (r[machine.primitive.registered]).
+    #[must_use]
+    pub fn from_primitive_digest(digest: Digest) -> Self {
+        Self(hash_framed(b"vix.recipe.effect.v1", &[&digest.0]))
+    }
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

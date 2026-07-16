@@ -132,6 +132,7 @@ fn await_wire_parks_resolves_and_resumes() {
             IslandInputs {
                 arguments: &[],
                 wires: &wires,
+                effects: &[],
             },
             ChaosPolicy::default(),
         )
@@ -190,6 +191,7 @@ fn forced_division_by_zero_wire_propagates_the_typed_failure() {
             IslandInputs {
                 arguments: &[],
                 wires: &wires,
+                effects: &[],
             },
             ChaosPolicy::default(),
         )
@@ -247,6 +249,7 @@ fn repeated_force_of_one_wire_evaluates_once() {
             IslandInputs {
                 arguments: &[],
                 wires: &wires,
+                effects: &[],
             },
             ChaosPolicy::default(),
         )
@@ -311,6 +314,7 @@ fn reentrant_wire_demand_is_a_typed_fault() {
             IslandInputs {
                 arguments: &[],
                 wires: &wires,
+                effects: &[],
             },
             ChaosPolicy::default(),
         )
