@@ -15,13 +15,15 @@ list:
 
 precommit: gen
 
+# capn runs the pre-commit / pre-push checks. The nix dev shell (flake.nix)
+# provides it on PATH; this recipe is an escape hatch for non-nix setups.
 capn:
     cargo install --git https://github.com/bearcove/capn capn
 
-gen *args: capn
+gen *args:
     capn pre-commit -- {{ args }}
 
-prepush: capn
+prepush:
     capn pre-push
 
 ci: precommit prepush docs msrv miri

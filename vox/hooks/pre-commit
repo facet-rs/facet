@@ -1,2 +1,2 @@
-#!/bin/bash
-captain
+#!/usr/bin/env bash
+exec capn
