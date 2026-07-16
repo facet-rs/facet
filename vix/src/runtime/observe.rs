@@ -70,6 +70,12 @@ pub struct Counters {
     /// Demand-owned effect tickets cancelled after their final obligation was
     /// explicitly abandoned. Cancellation never publishes a memo or value.
     pub effect_cancellations: u64,
+    /// Progressive exec products published from an explicit command-protocol
+    /// readiness message while the aggregate process outcome was still pending.
+    pub progressive_exec_protocol_publications: u64,
+    /// Progressive exec projections served at the safe protocol-less fallback:
+    /// successful process exit and the completed immutable workspace tree.
+    pub progressive_exec_exit_publications: u64,
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]

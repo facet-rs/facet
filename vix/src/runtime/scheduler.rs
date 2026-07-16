@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
+use std::io::{BufRead, BufReader, Read};
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -17,7 +18,8 @@ use crate::schema::SchemaRef;
 use crate::support::Span;
 use crate::vir::{
     CommandPiece, ExternKind, Function, FunctionId, Island, IslandId, MiniSolveRequirements,
-    NodeId, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT, Op, Type, VariantPayload,
+    NodeId, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT, Op, ProgressiveProjection, Type,
+    VariantPayload,
 };
 
 use super::fixture::{FixtureEntryKind, FixtureReadError, FixtureStore, TarMember, parse_ustar};
@@ -145,6 +147,18 @@ enum DeliveredCompletion {
         demand: DemandKey,
         output: Result<std::process::Output, String>,
     },
+    /// One command-grammar-authorized immutable exec product. The worker
+    /// snapshots the announced file immediately; only these bytes cross to the
+    /// scheduler, never a filesystem readiness guess.
+    ExecProgress {
+        demand: DemandKey,
+        product: Result<ExecProgress, String>,
+    },
+}
+
+struct ExecProgress {
+    path: String,
+    bytes: Vec<u8>,
 }
 
 /// The unified inbox was closed — every completion sender dropped — while work
@@ -373,6 +387,30 @@ struct ExecPending {
     workspace: ExecWorkspace,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ExecProtocol {
+    ExitOnly,
+    ProgressiveLinesV1,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ExecProjectionAuthority {
+    Protocol,
+    ProcessExit,
+}
+
+struct ExecProjectionPending {
+    task_id: TaskId,
+    location: Location,
+    demand_preimage: DemandPreimage,
+    execution: DemandKey,
+    capability: ValueId,
+    path: String,
+    function: FunctionId,
+    node: NodeId,
+    span: Span,
+}
+
 struct ExecWorkspace {
     path: PathBuf,
 }
@@ -460,6 +498,23 @@ pub enum RootSubmission {
     Pending(DemandKey),
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecSubmission {
+    pub demand: DemandKey,
+    pub root: RootSubmission,
+}
+
+pub struct ExecProjectionRequest {
+    pub execution: DemandKey,
+    pub capability: ValueId,
+    pub completed: Option<Evaluation>,
+    pub projection: ProgressiveProjection,
+    pub location: Location,
+    pub function: FunctionId,
+    pub node: NodeId,
+    pub span: Span,
+}
+
 /// One top-level pure/value demand submitted by the runner. The request owns
 /// every frame input so the scheduler may retain it across suspension.
 pub struct ValueRootRequest {
@@ -535,6 +590,10 @@ pub struct Runtime<S> {
     /// Exec demands in flight at the isolated worker-thread boundary, keyed by
     /// the exec demand. The scheduler thread performs no synchronous wait.
     exec_pending: BTreeMap<DemandKey, ExecPending>,
+    /// Progressive exec product roots waiting on a command-protocol event.
+    exec_projection_pending: BTreeMap<DemandKey, ExecProjectionPending>,
+    /// Products that arrived before their projection root was submitted.
+    exec_progress_ready: BTreeMap<(DemandKey, String), Vec<u8>>,
 }
 
 #[derive(Clone, Default)]
@@ -693,6 +752,8 @@ impl<S: EventSink> Runtime<S> {
             root_results: BTreeMap::new(),
             primitive_pending: BTreeMap::new(),
             exec_pending: BTreeMap::new(),
+            exec_projection_pending: BTreeMap::new(),
+            exec_progress_ready: BTreeMap::new(),
         }
     }
 
@@ -729,6 +790,8 @@ impl<S: EventSink> Runtime<S> {
             root_results: BTreeMap::new(),
             primitive_pending: BTreeMap::new(),
             exec_pending: BTreeMap::new(),
+            exec_projection_pending: BTreeMap::new(),
+            exec_progress_ready: BTreeMap::new(),
         }
     }
 
@@ -775,6 +838,8 @@ impl<S: EventSink> Runtime<S> {
                 root_results: BTreeMap::new(),
                 primitive_pending: BTreeMap::new(),
                 exec_pending: BTreeMap::new(),
+                exec_projection_pending: BTreeMap::new(),
+                exec_progress_ready: BTreeMap::new(),
             },
             PersistentRuntimeJournalLoadReport {
                 store: store_report,
@@ -859,16 +924,21 @@ impl<S: EventSink> Runtime<S> {
                 && self.wire_waiters.is_empty()
                 && self.root_results.is_empty()
                 && self.primitive_pending.is_empty()
-                && self.exec_pending.is_empty(),
+                && self.exec_pending.is_empty()
+                && self.exec_projection_pending.is_empty()
+                && self.exec_progress_ready.is_empty(),
             "scheduler is not quiescent at persistent-state extraction: \
              runnable={}, parked={}, wire_waiters={}, root_results={}, \
-             primitive_pending={}, exec_pending={}",
+             primitive_pending={}, exec_pending={}, exec_projection_pending={}, \
+             exec_progress_ready={}",
             self.runnable.len(),
             self.parked.len(),
             self.wire_waiters.len(),
             self.root_results.len(),
             self.primitive_pending.len(),
             self.exec_pending.len(),
+            self.exec_projection_pending.len(),
+            self.exec_progress_ready.len(),
         );
     }
 
@@ -929,6 +999,7 @@ impl<S: EventSink> Runtime<S> {
                                 == *observed;
                         }
                     }
+                    ReadProjection::ExecTreePath { .. } => {}
                     ReadProjection::Whole
                     | ReadProjection::Document
                     | ReadProjection::RegistryManifest
@@ -1841,16 +1912,20 @@ impl<S: EventSink> Runtime<S> {
                 && self.parked.is_empty()
                 && self.wire_waiters.is_empty()
                 && self.primitive_pending.is_empty()
-                && self.exec_pending.is_empty(),
+                && self.exec_pending.is_empty()
+                && self.exec_projection_pending.is_empty(),
             "root batch finished with live scheduler work: \
-             runnable={}, parked={}, wire_waiters={}, primitive_pending={}, exec_pending={}",
+             runnable={}, parked={}, wire_waiters={}, primitive_pending={}, exec_pending={}, \
+             exec_projection_pending={}",
             self.runnable.len(),
             self.parked.len(),
             self.wire_waiters.len(),
             self.primitive_pending.len(),
             self.exec_pending.len(),
+            self.exec_projection_pending.len(),
         );
         self.root_results.clear();
+        self.exec_progress_ready.clear();
     }
 
     /// Explicitly abandon one unresolved island demand. Every retained frame
@@ -1998,6 +2073,8 @@ impl<S: EventSink> Runtime<S> {
             self.primitive_dispatcher.retire(demand);
         }
         self.exec_pending.clear();
+        self.exec_projection_pending.clear();
+        self.exec_progress_ready.clear();
     }
 
     /// Observe the scheduler-owned effect frontier after admitting a fresh
@@ -3751,7 +3828,40 @@ impl<S: EventSink> Runtime<S> {
             DeliveredCompletion::Exec { demand, output } => {
                 self.apply_exec_completion(demand, output)
             }
+            DeliveredCompletion::ExecProgress { demand, product } => {
+                self.apply_exec_progress(demand, product)
+            }
         }
+    }
+
+    fn apply_exec_progress(
+        &mut self,
+        execution: DemandKey,
+        product: Result<ExecProgress, String>,
+    ) -> Result<(), Box<MachineError>> {
+        let product = product.map_err(|detail| {
+            Box::new(MachineError::runtime(
+                MachineOperation::Effect,
+                RuntimeFault::EffectHostFailure { detail },
+                None,
+                Some(execution),
+            ))
+        })?;
+        let key = self
+            .exec_projection_pending
+            .iter()
+            .find_map(|(key, pending)| {
+                (pending.execution == execution && pending.path == product.path).then_some(*key)
+            });
+        if let Some(key) = key {
+            self.publish_exec_projection(key, product.bytes, ExecProjectionAuthority::Protocol)?;
+        } else if self.exec_pending.contains_key(&execution) {
+            self.exec_progress_ready
+                .insert((execution, product.path), product.bytes);
+        } else {
+            self.counters.stale_completions_ignored += 1;
+        }
+        Ok(())
     }
 
     /// Apply a registered-primitive completion: admit the value once, then
@@ -3908,6 +4018,7 @@ impl<S: EventSink> Runtime<S> {
         // inline wait did.
         self.transition_task(task_id, TaskState::Running)?;
         if output.status.success() {
+            self.publish_completed_exec_projections(demand, &workspace.path)?;
             let tree = archive_directory(&workspace.path).map_err(|detail| {
                 Box::new(MachineError::runtime(
                     MachineOperation::Result,
@@ -4019,6 +4130,36 @@ impl<S: EventSink> Runtime<S> {
                 failure_context: report_context,
             },
         );
+        Ok(())
+    }
+
+    fn publish_completed_exec_projections(
+        &mut self,
+        execution: DemandKey,
+        workspace: &Path,
+    ) -> Result<(), Box<MachineError>> {
+        let projections = self
+            .exec_projection_pending
+            .iter()
+            .filter_map(|(demand, pending)| {
+                (pending.execution == execution).then(|| (*demand, pending.path.clone()))
+            })
+            .collect::<Vec<_>>();
+        for (demand, path) in projections {
+            let bytes = std::fs::read(workspace.join(&path)).map_err(|error| {
+                Box::new(MachineError::runtime(
+                    MachineOperation::Result,
+                    RuntimeFault::EffectHostFailure {
+                        detail: format!(
+                            "read exec product `{path}` at process completion: {error}"
+                        ),
+                    },
+                    None,
+                    Some(demand),
+                ))
+            })?;
+            self.publish_exec_projection(demand, bytes, ExecProjectionAuthority::ProcessExit)?;
+        }
         Ok(())
     }
 
@@ -4893,13 +5034,16 @@ impl<S: EventSink> Runtime<S> {
         capability: &Evaluation,
         chaos: ChaosPolicy,
     ) -> Result<Evaluation, Box<MachineError>> {
-        let evaluation = match self.submit_exec(
-            island,
-            location,
-            core::slice::from_ref(capability),
-            chaos,
-            None,
-        )? {
+        let evaluation = match self
+            .submit_exec(
+                island,
+                location,
+                core::slice::from_ref(capability),
+                chaos,
+                None,
+            )?
+            .root
+        {
             RootSubmission::Ready(evaluation) => evaluation,
             RootSubmission::Pending(root) => self.run_until_root(root)?,
         };
@@ -4918,7 +5062,7 @@ impl<S: EventSink> Runtime<S> {
         arguments: &[Evaluation],
         chaos: ChaosPolicy,
         realized_as: Option<RealizedWireDemand>,
-    ) -> Result<RootSubmission, Box<MachineError>> {
+    ) -> Result<ExecSubmission, Box<MachineError>> {
         let malformed = || {
             Box::new(MachineError::runtime(
                 MachineOperation::Drive,
@@ -4953,7 +5097,13 @@ impl<S: EventSink> Runtime<S> {
                 .ok_or_else(malformed)?;
             resolved_inputs.push((ty, value));
         }
-        let (_, capability) = resolved_inputs.first().ok_or_else(malformed)?;
+        let (capability_ty, capability) = resolved_inputs.first().ok_or_else(malformed)?;
+        let protocol = match capability_ty {
+            Type::Record(record) if record.name == "ProgressiveSh" => {
+                ExecProtocol::ProgressiveLinesV1
+            }
+            _ => ExecProtocol::ExitOnly,
+        };
         let mut materialized_argv = Vec::with_capacity(argv.len());
         for argument in argv {
             let mut rendered = String::new();
@@ -5015,11 +5165,14 @@ impl<S: EventSink> Runtime<S> {
             && self.exact_memo_replayable(entry)
         {
             let handle = entry.result;
-            return Ok(RootSubmission::Ready(self.effect_memo_hit(
-                location.id,
-                handle,
-                &effect_context,
-            )?));
+            return Ok(ExecSubmission {
+                demand: demand_key,
+                root: RootSubmission::Ready(self.effect_memo_hit(
+                    location.id,
+                    handle,
+                    &effect_context,
+                )?),
+            });
         }
         // Same-run demand-key reuse: the same plan under the same capability at
         // a DIFFERENT source location is the same demand. The memo path serves
@@ -5043,7 +5196,10 @@ impl<S: EventSink> Runtime<S> {
                                 current_receipt: false,
                             },
                         );
-                        return Ok(RootSubmission::Ready(evaluation));
+                        return Ok(ExecSubmission {
+                            demand: demand_key,
+                            root: RootSubmission::Ready(evaluation),
+                        });
                     }
                 }
                 DemandState::Running | DemandState::Queued => {
@@ -5054,7 +5210,10 @@ impl<S: EventSink> Runtime<S> {
                         verdict: MemoVerdict::Exact,
                         verified: 0,
                     });
-                    return Ok(RootSubmission::Pending(demand_key));
+                    return Ok(ExecSubmission {
+                        demand: demand_key,
+                        root: RootSubmission::Pending(demand_key),
+                    });
                 }
                 _ => {}
             }
@@ -5130,7 +5289,7 @@ impl<S: EventSink> Runtime<S> {
                 ))
             };
             let workspace = ExecWorkspace::create().map_err(host_fault)?;
-            let child = std::process::Command::new(&program)
+            let mut child = std::process::Command::new(&program)
                 .args(&materialized_argv)
                 .current_dir(&workspace.path)
                 .stdin(std::process::Stdio::null())
@@ -5138,6 +5297,15 @@ impl<S: EventSink> Runtime<S> {
                 .stderr(std::process::Stdio::piped())
                 .spawn()
                 .map_err(|error| host_fault(format!("spawn `{program}`: {error}")))?;
+            let stdout = child
+                .stdout
+                .take()
+                .ok_or_else(|| host_fault(format!("`{program}` stdout was not piped")))?;
+            let stderr = child
+                .stderr
+                .take()
+                .ok_or_else(|| host_fault(format!("`{program}` stderr was not piped")))?;
+            let workspace_path = workspace.path.clone();
             self.transition_task(task_id, TaskState::Parked)?;
             self.exec_pending.insert(
                 demand_key,
@@ -5161,9 +5329,40 @@ impl<S: EventSink> Runtime<S> {
             let exec_sender = self.completion_inbox.exec_sender();
             let worker_program = program.clone();
             std::thread::spawn(move || {
-                let output = child
-                    .wait_with_output()
-                    .map_err(|error| format!("wait `{worker_program}`: {error}"));
+                let progress_sender = exec_sender.clone();
+                let stdout_reader = std::thread::spawn(move || {
+                    read_exec_stdout(
+                        stdout,
+                        protocol,
+                        &workspace_path,
+                        demand_key,
+                        &progress_sender,
+                    )
+                });
+                let stderr_reader = std::thread::spawn(move || {
+                    let mut bytes = Vec::new();
+                    let mut stderr = stderr;
+                    stderr
+                        .read_to_end(&mut bytes)
+                        .map_err(|error| format!("read `{worker_program}` stderr: {error}"))?;
+                    Ok::<_, String>(bytes)
+                });
+                let output = (|| {
+                    let status = child
+                        .wait()
+                        .map_err(|error| format!("wait `{program}`: {error}"))?;
+                    let stdout = stdout_reader
+                        .join()
+                        .map_err(|_| format!("read `{program}` stdout worker panicked"))??;
+                    let stderr = stderr_reader
+                        .join()
+                        .map_err(|_| format!("read `{program}` stderr worker panicked"))??;
+                    Ok(std::process::Output {
+                        status,
+                        stdout,
+                        stderr,
+                    })
+                })();
                 let _ = exec_sender.send(DeliveredCompletion::Exec {
                     demand: demand_key,
                     output,
@@ -5171,7 +5370,254 @@ impl<S: EventSink> Runtime<S> {
             });
             break;
         }
-        Ok(RootSubmission::Pending(demand_key))
+        Ok(ExecSubmission {
+            demand: demand_key,
+            root: RootSubmission::Pending(demand_key),
+        })
+    }
+
+    /// Submit one immutable product projection of a running exec demand. The
+    /// projection has its own demand identity and memo location, but its
+    /// readiness comes only from the producer command grammar (or, as the safe
+    /// fallback, completed process output), never from filesystem polling.
+    pub fn submit_exec_projection(
+        &mut self,
+        request: ExecProjectionRequest,
+    ) -> Result<RootSubmission, Box<MachineError>> {
+        let ExecProjectionRequest {
+            execution,
+            capability,
+            completed,
+            projection,
+            location,
+            function,
+            node,
+            span,
+        } = request;
+        let ProgressiveProjection::ExecTreeText { path } = projection;
+        validate_exec_product_path(&path).map_err(|detail| {
+            Box::new(MachineError::runtime(
+                MachineOperation::Effect,
+                RuntimeFault::EffectHostFailure { detail },
+                None,
+                Some(execution),
+            ))
+        })?;
+        let fingerprint = format!("exec-tree-text:{}:{path}", execution.0.hex());
+        let demand_preimage = DemandPreimage {
+            closure: RecipeId::from_effect_fingerprint(&fingerprint),
+            arguments: Vec::new(),
+        };
+        let demand = DemandKey::from_preimage(&demand_preimage);
+        self.emit(EventKind::Demanded { key: demand });
+        if let Some(entry) = self.memo.get(&location.id)
+            && entry.location == location
+            && entry.key == demand
+            && entry.preimage == demand_preimage
+            && self.exact_memo_replayable(entry)
+        {
+            return Ok(RootSubmission::Ready(self.effect_memo_hit(
+                location.id,
+                entry.result,
+                &|_| None,
+            )?));
+        }
+        if let Some(record) = self.demands.get(&demand) {
+            match record.state {
+                DemandState::Ready | DemandState::Failed => {
+                    if let Some(handle) = record.result {
+                        return Ok(RootSubmission::Ready(self.effect_memo_hit(
+                            location.id,
+                            handle,
+                            &|_| None,
+                        )?));
+                    }
+                }
+                DemandState::Queued | DemandState::Running => {
+                    self.counters.demand_joins += 1;
+                    return Ok(RootSubmission::Pending(demand));
+                }
+                DemandState::Absent | DemandState::MachineFailed => {}
+            }
+        }
+
+        self.counters.memo_misses += 1;
+        self.emit(EventKind::Memo {
+            location: location.id,
+            verdict: MemoVerdict::Miss,
+            verified: 0,
+        });
+        self.demands.insert(
+            demand,
+            DemandRecord {
+                key: demand,
+                state: DemandState::Queued,
+                result: None,
+            },
+        );
+        self.emit(EventKind::DemandTransition {
+            key: demand,
+            from: DemandState::Absent,
+            to: DemandState::Queued,
+        });
+        self.counters.scheduler_requests += 1;
+        let task_id = self.spawn_task(demand);
+        self.transition_demand(demand, DemandState::Running)?;
+        self.transition_task(task_id, TaskState::Running)?;
+        self.transition_task(task_id, TaskState::Parked)?;
+        self.exec_projection_pending.insert(
+            demand,
+            ExecProjectionPending {
+                task_id,
+                location,
+                demand_preimage,
+                execution,
+                capability,
+                path: path.clone(),
+                function,
+                node,
+                span,
+            },
+        );
+
+        let ready = self
+            .exec_progress_ready
+            .remove(&(execution, path.clone()))
+            .map(|bytes| (bytes, ExecProjectionAuthority::Protocol))
+            .or_else(|| {
+                completed.as_ref().and_then(|evaluation| {
+                    self.exec_tree_text_from_outcome(evaluation.handle, &path)
+                        .ok()
+                        .map(|bytes| (bytes, ExecProjectionAuthority::ProcessExit))
+                })
+            });
+        if let Some((bytes, authority)) = ready {
+            self.publish_exec_projection(demand, bytes, authority)?;
+            return Ok(RootSubmission::Ready(
+                self.root_results
+                    .remove(&demand)
+                    .expect("published progressive root has a result"),
+            ));
+        }
+        Ok(RootSubmission::Pending(demand))
+    }
+
+    fn publish_exec_projection(
+        &mut self,
+        demand: DemandKey,
+        bytes: Vec<u8>,
+        authority: ExecProjectionAuthority,
+    ) -> Result<(), Box<MachineError>> {
+        let pending = self
+            .exec_projection_pending
+            .remove(&demand)
+            .ok_or_else(|| {
+                Box::new(MachineError::runtime(
+                    MachineOperation::Effect,
+                    RuntimeFault::QuiescentUnresolvedDemand { key: demand },
+                    None,
+                    Some(demand),
+                ))
+            })?;
+        core::str::from_utf8(&bytes).map_err(|_| {
+            Box::new(MachineError::runtime(
+                MachineOperation::Effect,
+                RuntimeFault::EffectHostFailure {
+                    detail: format!("progressive exec product `{}` was not UTF-8", pending.path),
+                },
+                Some(MachineAttribution {
+                    function: pending.function,
+                    node: pending.node,
+                    span: pending.span,
+                    weavy_function: None,
+                    weavy_pc: None,
+                }),
+                Some(demand),
+            ))
+        })?;
+        self.transition_task(pending.task_id, TaskState::Running)?;
+        let node = FramedNode::leaf(semantic_schema_ref(&Type::String), bytes.clone());
+        let interned = self.store.intern_tree(&node, &bytes);
+        self.store
+            .attach_frozen(interned.handle, FrozenValue::Opaque(bytes));
+        self.observe_interned(&interned);
+        let receipt = Receipt {
+            demand,
+            reads: vec![ReadWitness {
+                source: pending.capability,
+                projection: ReadProjection::ExecTreePath {
+                    execution: pending.execution,
+                    path: pending.path,
+                },
+                observation: ReadObservation::Value(interned.identity.clone()),
+            }],
+        };
+        self.memo.insert(
+            pending.location.id,
+            MemoEntry {
+                location: pending.location,
+                key: demand,
+                preimage: pending.demand_preimage,
+                result: interned.handle,
+                receipt: Some(receipt),
+                current_receipt: true,
+            },
+        );
+        if let Some(record) = self.demands.get_mut(&demand) {
+            record.result = Some(interned.handle);
+        }
+        self.transition_task(pending.task_id, TaskState::Completed)?;
+        self.transition_demand(demand, DemandState::Ready)?;
+        self.emit(EventKind::Completed {
+            key: demand,
+            identity: interned.identity.clone(),
+        });
+        match authority {
+            ExecProjectionAuthority::Protocol => {
+                self.counters.progressive_exec_protocol_publications += 1;
+            }
+            ExecProjectionAuthority::ProcessExit => {
+                self.counters.progressive_exec_exit_publications += 1;
+            }
+        }
+        self.root_results.insert(
+            demand,
+            Evaluation {
+                handle: interned.handle,
+                identity: interned.identity,
+                passed: true,
+                memo: MemoVerdict::Miss,
+                failure: None,
+                failure_context: None,
+            },
+        );
+        Ok(())
+    }
+
+    fn exec_tree_text_from_outcome(&self, handle: Handle, path: &str) -> Result<Vec<u8>, String> {
+        let frozen = self
+            .store
+            .entry(handle)
+            .and_then(StoreEntry::frozen)
+            .ok_or_else(|| "completed exec outcome had no frozen value".to_owned())?;
+        let FrozenValue::Product(fields) = frozen else {
+            return Err("completed exec outcome was not a frozen product".to_owned());
+        };
+        let Some(FrozenValue::Opaque(tree)) = fields.first() else {
+            return Err("completed exec outcome had no frozen Tree".to_owned());
+        };
+        parse_ustar(tree)
+            .map_err(|_| "completed exec Tree was not plain ustar".to_owned())?
+            .into_iter()
+            .find_map(|member| match member {
+                TarMember::File {
+                    path: candidate,
+                    bytes,
+                    ..
+                } if candidate == path => Some(bytes),
+                _ => None,
+            })
+            .ok_or_else(|| format!("completed exec Tree had no file `{path}`"))
     }
 
     /// Serve one effect demand from an existing store result: the shared exact-
@@ -7462,6 +7908,71 @@ fn split_tree_entry(bytes: &[u8]) -> Result<(&[u8], &[u8]), Box<MachineError>> {
 fn fixture_tree_name(bytes: &[u8]) -> Option<&[u8]> {
     let name = bytes.strip_prefix(b"fixture-tree\0")?;
     Some(name.split(|byte| *byte == 0).next().unwrap_or(name))
+}
+
+fn read_exec_stdout(
+    stdout: impl Read,
+    protocol: ExecProtocol,
+    workspace: &Path,
+    demand: DemandKey,
+    sender: &std::sync::mpsc::Sender<DeliveredCompletion>,
+) -> Result<Vec<u8>, String> {
+    const READY_PREFIX: &[u8] = b"vix-ready\t";
+    let mut reader = BufReader::new(stdout);
+    let mut output = Vec::new();
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        let read = reader
+            .read_until(b'\n', &mut line)
+            .map_err(|error| format!("read exec stdout: {error}"))?;
+        if read == 0 {
+            break;
+        }
+        if protocol == ExecProtocol::ProgressiveLinesV1 && line.starts_with(READY_PREFIX) {
+            let mut path = &line[READY_PREFIX.len()..];
+            if path.ends_with(b"\n") {
+                path = &path[..path.len() - 1];
+            }
+            if path.ends_with(b"\r") {
+                path = &path[..path.len() - 1];
+            }
+            let path = core::str::from_utf8(path)
+                .map_err(|_| "progressive exec path was not UTF-8".to_owned())?;
+            validate_exec_product_path(path)?;
+            let bytes = std::fs::read(workspace.join(path)).map_err(|error| {
+                format!("read progressive exec product `{path}` after readiness: {error}")
+            });
+            let _ = sender.send(DeliveredCompletion::ExecProgress {
+                demand,
+                product: bytes.map(|bytes| ExecProgress {
+                    path: path.to_owned(),
+                    bytes,
+                }),
+            });
+        } else {
+            output.extend_from_slice(&line);
+        }
+    }
+    Ok(output)
+}
+
+fn validate_exec_product_path(path: &str) -> Result<(), String> {
+    if path.is_empty() {
+        return Err("progressive exec product path was empty".to_owned());
+    }
+    let path = Path::new(path);
+    if path.is_absolute()
+        || path
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(format!(
+            "progressive exec product `{}` was not a relative normal path",
+            path.display()
+        ));
+    }
+    Ok(())
 }
 
 fn archive_directory(root: &Path) -> Result<Vec<u8>, String> {

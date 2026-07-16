@@ -212,8 +212,19 @@ pub enum ReadProjection {
     Document,
     RegistryManifest,
     CapabilityProgram,
-    TreePath { path: String },
-    Origin { coordinate: String },
+    TreePath {
+        path: String,
+    },
+    /// A product published progressively by a still-running exec demand. The
+    /// exec demand key names the plan/capability execution; `path` names the
+    /// immutable product authorized by its command grammar.
+    ExecTreePath {
+        execution: DemandKey,
+        path: String,
+    },
+    Origin {
+        coordinate: String,
+    },
 }
 
 impl ReadProjection {
@@ -221,6 +232,7 @@ impl ReadProjection {
     pub fn trace_path(&self) -> Option<&str> {
         match self {
             Self::TreePath { path } => Some(path),
+            Self::ExecTreePath { path, .. } => Some(path),
             Self::Origin { coordinate } => Some(coordinate),
             Self::Whole | Self::Document | Self::RegistryManifest | Self::CapabilityProgram => None,
         }
