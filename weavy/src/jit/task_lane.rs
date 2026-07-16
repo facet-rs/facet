@@ -150,6 +150,16 @@ struct Ctx {
         i64,
         *mut i64,
     ) -> i64,
+    string_lines: unsafe extern "C" fn(
+        *const crate::task::RawValueMemory,
+        usize,
+        *const crate::task::RawValueMemory,
+        usize,
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        *mut i64,
+    ) -> i64,
     string_contains: unsafe extern "C" fn(
         *const crate::task::RawValueMemory,
         usize,
@@ -598,6 +608,10 @@ fn compile_fn(
                 task_stencils::STRING_TRIM,
                 Continuations::Fallthrough(task_stencils::STRING_TRIM_CONT),
             ),
+            Op::StringLines { .. } => (
+                task_stencils::STRING_LINES,
+                Continuations::Fallthrough(task_stencils::STRING_LINES_CONT),
+            ),
             Op::StringContains { .. } => (
                 task_stencils::STRING_CONTAINS,
                 Continuations::Fallthrough(task_stencils::STRING_CONTAINS_CONT),
@@ -770,6 +784,7 @@ fn compile_fn(
             Op::CompareValueBytes { .. } => 4,
             Op::StringConcat { .. } => 4,
             Op::StringTrim { .. } => 3,
+            Op::StringLines { .. } => 4,
             Op::StringContains { .. } | Op::StringParseInt { .. } => 4,
             Op::StringIsNumeric { .. } => 3,
             Op::StringStatusIs { .. } => 4,
@@ -1377,6 +1392,16 @@ fn compile_fn(
                 }
                 layout.push_prog_word(root.prog_index, i as u64);
             }
+            Op::StringLines {
+                dst,
+                text,
+                element_schema_ref,
+            } => {
+                layout.push_prog_word(root.prog_index, u64::from(*dst));
+                layout.push_prog_word(root.prog_index, u64::from(*text));
+                layout.push_prog_word(root.prog_index, *element_schema_ref as u64);
+                layout.push_prog_word(root.prog_index, i as u64);
+            }
             Op::StringContains { dst, text, needle } => {
                 for value in [dst, text, needle] {
                     layout.push_prog_word(root.prog_index, u64::from(*value));
@@ -1777,6 +1802,7 @@ impl JitTask {
                 ordered_len: crate::task::ordered_len_abi,
                 string_concat: crate::task::string_concat_abi,
                 string_trim: crate::task::string_trim_abi,
+                string_lines: crate::task::string_lines_abi,
                 int_to_string: crate::task::int_to_string_abi,
                 string_contains: crate::task::string_contains_abi,
                 string_is_numeric: crate::task::string_is_numeric_abi,

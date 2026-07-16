@@ -12,7 +12,8 @@ use crate::decode::{self, DecodeFormat, DecodedValue};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics, Label};
 use crate::runtime::{
     observe_primitive_id, observe_request_type, origin_hint_type, pinned_blob_ref_type,
-    pinned_fetch_primitive_id, pinned_fetch_request_type,
+    pinned_fetch_primitive_id, pinned_fetch_request_type, tree_read_primitive_id,
+    tree_read_request_type,
 };
 use crate::schema::{SchemaBatch, SchemaRef, SchemaSet};
 use crate::support::{Span, Spanned};
@@ -3750,6 +3751,155 @@ fn lower_uniform_call(
     })
 }
 
+fn tree_projection_syntax(expression: &ast::Expr) -> Option<(&ast::Expr, Vec<&ast::Expr>)> {
+    fn collect<'a>(expression: &'a ast::Expr, segments: &mut Vec<&'a ast::Expr>) -> &'a ast::Expr {
+        if let ast::Expr::Paren(paren) = expression {
+            return collect(&paren.inner, segments);
+        }
+        let ast::Expr::Binary(binary) = expression else {
+            return expression;
+        };
+        if binary.op.value != "/" {
+            return expression;
+        }
+        let base = collect(&binary.left, segments);
+        segments.push(&binary.right);
+        base
+    }
+
+    let mut segments = Vec::new();
+    let base = collect(expression, &mut segments);
+    (!segments.is_empty()).then_some((base, segments))
+}
+
+fn progressive_exec_tree_root(nodes: &[Node], node: NodeId) -> bool {
+    let Some(project) = nodes.get(node.0 as usize) else {
+        return false;
+    };
+    let Op::Project { index: 0 } = project.op else {
+        return false;
+    };
+    let Some(exec) = project
+        .inputs
+        .first()
+        .and_then(|input| nodes.get(input.0 as usize))
+    else {
+        return false;
+    };
+    if !matches!(exec.op, Op::Exec { .. }) {
+        return false;
+    }
+    let Some(capability) = exec
+        .inputs
+        .first()
+        .and_then(|input| nodes.get(input.0 as usize))
+    else {
+        return false;
+    };
+    matches!(&capability.ty, Type::Record(record) if record.name == "ProgressiveSh")
+}
+
+fn lower_tree_text_projection(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    call: &ast::MethodCall,
+    base: &ast::Expr,
+    segments: &[&ast::Expr],
+) -> Result<LoweredValue, Diagnostics> {
+    let tree = lower_value(nodes, bindings, context, base)?;
+    require_type(&tree, &Type::Extern(ExternKind::Tree), expr_span(base))?;
+
+    let mut paths = Vec::with_capacity(segments.len());
+    for segment in segments {
+        let path = match segment {
+            ast::Expr::Str(segment) => LoweredValue {
+                node: push_node(
+                    nodes,
+                    segment.span,
+                    Type::Path,
+                    EffectFacts::PURE,
+                    Vec::new(),
+                    Op::Path(segment.value.clone()),
+                ),
+                ty: Type::Path,
+            },
+            expression => {
+                let path = lower_value(nodes, bindings, context, expression)?;
+                require_type(&path, &Type::Path, expr_span(expression))?;
+                path
+            }
+        };
+        paths.push(path);
+    }
+
+    if progressive_exec_tree_root(nodes, tree.node) {
+        let mut entry = tree.node;
+        for path in paths {
+            entry = push_node(
+                nodes,
+                call.span,
+                Type::Extern(ExternKind::TreeEntry),
+                EffectFacts::EFFECT,
+                vec![entry, path.node],
+                Op::TreeProject,
+            );
+        }
+        return Ok(LoweredValue {
+            node: push_node(
+                nodes,
+                call.span,
+                Type::String,
+                EffectFacts::EFFECT,
+                vec![entry],
+                Op::TreeEntryText,
+            ),
+            ty: Type::String,
+        });
+    }
+
+    let mut paths = paths.into_iter();
+    let mut path = paths
+        .next()
+        .expect("tree text projection has at least one segment");
+    for suffix in paths {
+        path = LoweredValue {
+            node: push_node(
+                nodes,
+                call.span,
+                Type::Path,
+                EffectFacts::PURE,
+                vec![path.node, suffix.node],
+                Op::PathJoin,
+            ),
+            ty: Type::Path,
+        };
+    }
+
+    let request_ty = tree_read_request_type();
+    let request = push_node(
+        nodes,
+        call.span,
+        request_ty,
+        EffectFacts::PURE,
+        vec![tree.node, path.node],
+        Op::Record,
+    );
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            call.span,
+            Type::String,
+            EffectFacts::PURE,
+            vec![request],
+            Op::InvokePrimitive {
+                primitive: tree_read_primitive_id(),
+            },
+        ),
+        ty: Type::String,
+    })
+}
+
 fn lower_method_call(
     nodes: &mut Vec<Node>,
     bindings: &BTreeMap<String, LoweredValue>,
@@ -3757,6 +3907,13 @@ fn lower_method_call(
     call: &ast::MethodCall,
     expected: Option<&Type>,
 ) -> Result<LoweredValue, Diagnostics> {
+    if call.name.value == "text"
+        && method_positional_args(call).is_empty()
+        && call.named_args.is_none()
+        && let Some((base, segments)) = tree_projection_syntax(&call.receiver)
+    {
+        return lower_tree_text_projection(nodes, bindings, context, call, base, &segments);
+    }
     let receiver = lower_value(nodes, bindings, context, &call.receiver)?;
     let Some(entry) = PreludeMethodRegistry::STANDARD.resolve(&receiver.ty, &call.name.value)
     else {
@@ -4903,12 +5060,16 @@ fn lower_effect_intrinsic(
     let (ty, op, inputs) = match call.callee.value.as_str() {
         "fixture_tree" => {
             check_arity(call, 1)?;
-            let name = lower_value(nodes, bindings, context, &call.args.args[0])?;
-            require_type(&name, &Type::String, expr_span(&call.args.args[0]))?;
+            let ast::Expr::Str(name) = &call.args.args[0] else {
+                return Err(Diagnostics::one(Diagnostic::unsupported(
+                    expr_span(&call.args.args[0]),
+                    "a fixture_tree string literal",
+                )));
+            };
             (
                 Type::Extern(ExternKind::Tree),
-                Op::FixtureTree,
-                vec![name.node],
+                Op::FixtureTree(name.value.clone()),
+                Vec::new(),
             )
         }
         "fixture_registry" => {

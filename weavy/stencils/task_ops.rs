@@ -170,6 +170,10 @@ pub struct Ctx {
         *const RawValueMemory, usize, *const RawValueMemory, usize,
         *mut core::ffi::c_void, i64, *mut i64,
     ) -> i64,
+    string_lines: unsafe extern "C" fn(
+        *const RawValueMemory, usize, *const RawValueMemory, usize,
+        *mut core::ffi::c_void, i64, i64, *mut i64,
+    ) -> i64,
     string_contains: unsafe extern "C" fn(
         *const RawValueMemory, usize, *const RawValueMemory, usize,
         *mut core::ffi::c_void, i64, i64, *mut i64,
@@ -1220,6 +1224,39 @@ pub unsafe extern "C" fn weavy_task_string_trim(cx: *mut Ctx) {
         c.lent_molten_value_memory_count,
         c.molten,
         text_handle,
+        &raw mut handle,
+    );
+    if result == 0 {
+        write_i64(c.frame, dst, handle);
+        cont!(cx);
+    }
+    *c.await_index = pc;
+    *c.resume = text_handle as u64;
+    *c.exit = if result == 1 {
+        EXIT_STRING_CONCAT_LEFT_UNRESIDENT
+    } else {
+        EXIT_STRING_CONCAT_ALLOCATION
+    };
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_string_lines(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog;
+    let text = *c.prog.add(1);
+    let element_schema_ref = *c.prog.add(2) as i64;
+    let pc = *c.prog.add(3);
+    c.prog = c.prog.add(4);
+    let text_handle = read_i64(c.frame, text);
+    let mut handle = i64::MIN;
+    let result = (c.string_lines)(
+        c.store_value_memories,
+        c.store_value_memory_count,
+        c.lent_molten_value_memories,
+        c.lent_molten_value_memory_count,
+        c.molten,
+        text_handle,
+        element_schema_ref,
         &raw mut handle,
     );
     if result == 0 {

@@ -1599,6 +1599,78 @@ impl MoltenArena {
         self.alloc_string_bytes(&text[start..end])
     }
 
+    fn string_lines(
+        &mut self,
+        memories: MemoryView<'_>,
+        text: i64,
+        element_schema_ref: i64,
+    ) -> Result<i64, StringConcatFault> {
+        let text = handle_bytes(memories, self, text)
+            .map_err(|_| StringConcatFault::LeftUnresident(text))?
+            .to_vec();
+        let mut ranges = Vec::new();
+        let mut start = 0usize;
+        for (index, byte) in text.iter().copied().enumerate() {
+            if byte != b'\n' {
+                continue;
+            }
+            let end = if index > start && text[index - 1] == b'\r' {
+                index - 1
+            } else {
+                index
+            };
+            ranges
+                .try_reserve_exact(1)
+                .map_err(|_| StringConcatFault::AllocationFailed)?;
+            ranges.push(start..end);
+            start = index + 1;
+        }
+        if start < text.len() {
+            ranges
+                .try_reserve_exact(1)
+                .map_err(|_| StringConcatFault::AllocationFailed)?;
+            ranges.push(start..text.len());
+        }
+
+        let mut handles = Vec::new();
+        handles
+            .try_reserve_exact(ranges.len())
+            .map_err(|_| StringConcatFault::AllocationFailed)?;
+        for range in ranges {
+            handles.push(self.alloc_string_bytes(&text[range])?);
+        }
+        let count =
+            i64::try_from(handles.len()).map_err(|_| StringConcatFault::AllocationFailed)?;
+        let array = self
+            .alloc_array(count, core::mem::size_of::<i64>(), element_schema_ref)
+            .map_err(|_| StringConcatFault::AllocationFailed)?;
+        let buffer = self
+            .buffer_mut(array)
+            .ok_or(StringConcatFault::AllocationFailed)?;
+        for (index, handle) in handles.into_iter().enumerate() {
+            let offset = ARRAY_ELEMENTS_HEADER_SIZE
+                .checked_add(
+                    index
+                        .checked_mul(core::mem::size_of::<i64>())
+                        .ok_or(StringConcatFault::AllocationFailed)?,
+                )
+                .ok_or(StringConcatFault::AllocationFailed)?;
+            let end = offset
+                .checked_add(core::mem::size_of::<i64>())
+                .ok_or(StringConcatFault::AllocationFailed)?;
+            buffer
+                .bytes
+                .get_mut(offset..end)
+                .ok_or(StringConcatFault::AllocationFailed)?
+                .copy_from_slice(&handle.to_le_bytes());
+            *buffer
+                .initialized
+                .get_mut(index)
+                .ok_or(StringConcatFault::AllocationFailed)? = true;
+        }
+        Ok(array)
+    }
+
     fn split_once_value_bytes(
         &mut self,
         memories: MemoryView<'_>,
@@ -2696,6 +2768,49 @@ pub(crate) unsafe extern "C" fn string_trim_abi(
 }
 
 #[cfg_attr(not(feature = "jit"), allow(dead_code))]
+pub(crate) unsafe extern "C" fn string_lines_abi(
+    store: *const RawValueMemory,
+    store_len: usize,
+    lent: *const RawValueMemory,
+    lent_len: usize,
+    arena: *mut core::ffi::c_void,
+    text: i64,
+    element_schema_ref: i64,
+    out: *mut i64,
+) -> i64 {
+    if out.is_null()
+        || arena.is_null()
+        || (store.is_null() && store_len != 0)
+        || (lent.is_null() && lent_len != 0)
+    {
+        return StringConcatFault::ALLOCATION_STATUS;
+    }
+    unsafe { *out = ARRAY_POISON_HANDLE };
+    let store = if store_len == 0 {
+        &[]
+    } else {
+        unsafe { core::slice::from_raw_parts(store, store_len) }
+    };
+    let lent = if lent_len == 0 {
+        &[]
+    } else {
+        unsafe { core::slice::from_raw_parts(lent, lent_len) }
+    };
+    let memories = MemoryView::Raw(RawValueMemories {
+        store,
+        molten: lent,
+    });
+    let arena = unsafe { &mut *arena.cast::<MoltenArena>() };
+    match arena.string_lines(memories, text, element_schema_ref) {
+        Ok(handle) => {
+            unsafe { *out = handle };
+            StringConcatFault::OK_STATUS
+        }
+        Err(fault) => fault.status(),
+    }
+}
+
+#[cfg_attr(not(feature = "jit"), allow(dead_code))]
 pub(crate) unsafe extern "C" fn string_contains_abi(
     store: *const RawValueMemory,
     store_len: usize,
@@ -3293,6 +3408,12 @@ pub enum Op {
     StringConcat { dst: u32, a: u32, b: u32 },
     /// Copy a string without its leading and trailing ASCII whitespace.
     StringTrim { dst: u32, text: u32 },
+    /// Split a resident string into a dense array of line strings.
+    StringLines {
+        dst: u32,
+        text: u32,
+        element_schema_ref: i64,
+    },
     /// Search two resident string byte runs without exposing their handles.
     StringContains { dst: u32, text: u32, needle: u32 },
     /// Split a resident string at its first delimiter occurrence.
@@ -4279,6 +4400,31 @@ impl Task {
                         Err(fault) => {
                             let Some(verified) = verified else {
                                 panic!("legacy raw StringTrim operand is not resident");
+                            };
+                            return Err(string_concat_fault(
+                                fault_site(verified, fn_id, pc)?,
+                                fault,
+                            ));
+                        }
+                    };
+                    write_i64_at(&mut self.arena, base + dst as usize, handle);
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::StringLines {
+                    dst,
+                    text,
+                    element_schema_ref,
+                } => {
+                    let text = read_i64_at(&self.arena, base + text as usize);
+                    let handle = match self.molten.string_lines(
+                        MemoryView::from(value_memories),
+                        text,
+                        element_schema_ref,
+                    ) {
+                        Ok(handle) => handle,
+                        Err(fault) => {
+                            let Some(verified) = verified else {
+                                panic!("legacy raw StringLines operand is not resident");
                             };
                             return Err(string_concat_fault(
                                 fault_site(verified, fn_id, pc)?,

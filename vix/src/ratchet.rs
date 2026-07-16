@@ -346,9 +346,10 @@ struct TraceSnapshot {
     peak_molten_nodes: u64,
     /// Fetch effects actually performed during the run.
     fetches_performed: u64,
-    /// The union of external read projections across every demand receipt.
-    /// Reads go through the recording fixture-store accessors, so this set is
-    /// complete by construction; `never_read` is absence in this set.
+    /// External read projections physically performed during this run. A memo
+    /// hit remaps its cached receipt into its caller to preserve dependency
+    /// completeness, but it does not add an entry here; `never_read` therefore
+    /// proves the backing authority was not consulted again.
     reads: BTreeSet<String>,
     function_calls: BTreeMap<FunctionId, u64>,
     /// One entry per realized wire demand (a computation the memo path actually
@@ -2082,11 +2083,7 @@ fn run_lane(
         peak_molten_bytes: counters.peak_molten_bytes,
         peak_molten_nodes: counters.peak_molten_nodes,
         fetches_performed: counters.fetches_performed,
-        reads: runtime
-            .receipts()
-            .flat_map(|receipt| receipt.reads.iter())
-            .filter_map(|read| read.projection.trace_path().map(str::to_owned))
-            .collect(),
+        reads: runtime.performed_read_paths().map(str::to_owned).collect(),
         function_calls,
         wire_demands: runtime.realized_wire_demands().to_vec(),
     };

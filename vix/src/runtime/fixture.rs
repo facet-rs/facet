@@ -198,6 +198,12 @@ impl FixtureStore {
     }
 }
 
+#[must_use]
+pub fn fixture_tree_name(bytes: &[u8]) -> Option<&[u8]> {
+    let name = bytes.strip_prefix(b"fixture-tree\0")?;
+    Some(name.split(|byte| *byte == 0).next().unwrap_or(name))
+}
+
 impl super::OriginAdapter for FixtureStore {
     fn read(
         &self,

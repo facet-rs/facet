@@ -92,8 +92,8 @@ fn persistent_journal_changed_witnessed_value_invalidates() {
         "changed witnessed file rejects loaded claims: {report:#?}",
     );
     assert!(
-        report.second.counters.effect_spawns > 0,
-        "changed witnessed file recomputes the effect: {report:#?}",
+        report.second.counters.primitive_invocations > 0,
+        "changed witnessed file recomputes the tree-read primitive: {report:#?}",
     );
 }
 
@@ -137,9 +137,9 @@ fn persistent_journal_unrelated_projection_change_retains_reuse() {
         report.load.rejected_claims.is_empty(),
         "unchanged claims should not be rejected after journal revalidation: {report:#?}",
     );
-    assert!(
-        report.second.counters.memo_hits_projection > 0,
-        "unrelated projection change keeps the projected claim warm: {report:#?}",
+    assert_eq!(
+        report.second.counters.primitive_invocations, 0,
+        "unrelated projection change reuses the exact receipt-backed tree read: {report:#?}",
     );
     assert!(
         report.second.counters.memo_hits_exact > 0,

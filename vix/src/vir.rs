@@ -471,15 +471,16 @@ pub enum TraceCheck {
     /// pending, or two effects were simultaneously in flight. This is derived
     /// from scheduler ownership state, never elapsed-time coincidence.
     Overlapped,
-    /// The named external path was read during the run: it appears in at least
-    /// one demand receipt.
+    /// The named external path was physically read during the run. A memo hit
+    /// still remaps its cached receipt into the caller, but does not satisfy
+    /// this execution-observability check.
     Read {
         path: String,
     },
-    /// The named external path was never read during the run: it appears in no
-    /// demand receipt. Read-recording is complete by construction — external
-    /// reads go through the recording fixture-store accessors — so absence in
-    /// the receipts is absence of the read.
+    /// The named external path was not physically read during the run.
+    /// Read-recording is complete by construction because external reads cross
+    /// the authority boundary; cached receipt remapping does not count as a
+    /// fresh read.
     NeverRead {
         path: String,
     },
@@ -1343,10 +1344,11 @@ pub enum Op {
     /// demand publishes and `Result::Err(failure)` when it language-fails —
     /// the failure participates as an ordinary value, address intact.
     Try,
-    /// Open the named harness fixture tree as a lazy `Tree` value. Reads
-    /// nothing: the value's identity is the pending fixture-tree reference;
-    /// projections resolve — and record reads — only where demanded.
-    FixtureTree,
+    /// Open one compiler-validated harness fixture tree as a lazy `Tree`
+    /// constant. Reads nothing: the value's identity is the pending
+    /// fixture-tree reference; projections resolve — and record reads — only
+    /// where demanded.
+    FixtureTree(String),
     /// Project one segment (String) or a segment path (Path) through a Tree
     /// or a Dir TreeEntry. Resolves lazily: it reads directory listings along
     /// the projected path only, never sibling entries or file contents.
@@ -2005,7 +2007,7 @@ impl Module {
         } else {
             Vec::new()
         };
-        let forced_eager_scalar_ids = forced_scalar_calls
+        let mut forced_eager_scalar_ids = forced_scalar_calls
             .iter()
             .filter(|candidate| {
                 function.nodes.iter().any(|consumer| {
@@ -2014,11 +2016,33 @@ impl Module {
             })
             .map(|candidate| candidate.id)
             .collect::<BTreeSet<_>>();
+        let primitive_call_boundaries = function
+            .nodes
+            .iter()
+            .filter(|node| {
+                matches!(
+                    node.op,
+                    Op::Call(callee)
+                        if self.function_contains_primitive(callee, &mut BTreeSet::new())
+                )
+            })
+            .collect::<Vec<_>>();
+        forced_eager_scalar_ids.extend(
+            primitive_call_boundaries
+                .iter()
+                .filter(|node| is_scalar_call_candidate(node))
+                .map(|node| node.id),
+        );
         for node in forced_scalar_calls
             .iter()
             .copied()
             .filter(|node| forced_eager_scalar_ids.contains(&node.id))
         {
+            if !shared.iter().any(|candidate| candidate.id == node.id) {
+                shared.push(node);
+            }
+        }
+        for node in primitive_call_boundaries {
             if !shared.iter().any(|candidate| candidate.id == node.id) {
                 shared.push(node);
             }
@@ -2371,10 +2395,50 @@ impl Module {
         self.functions
             .get(function.0 as usize)
             .is_some_and(|function| {
-                function.nodes.iter().any(|node| {
+                let mut reachable = BTreeSet::new();
+                if let Some(output) = function.output {
+                    collect_dependencies(function, output, &mut reachable);
+                    reachable.insert(output);
+                }
+                function
+                    .nodes
+                    .iter()
+                    .filter(|node| reachable.contains(&node.id))
+                    .any(|node| {
                     is_effect_root(node)
                         || matches!(node.op, Op::Call(callee) if self.function_contains_effect(callee, seen))
-                })
+                    })
+            })
+    }
+
+    fn function_contains_primitive(
+        &self,
+        function: FunctionId,
+        seen: &mut BTreeSet<FunctionId>,
+    ) -> bool {
+        if !seen.insert(function) {
+            return false;
+        }
+        self.functions
+            .get(function.0 as usize)
+            .is_some_and(|function| {
+                let mut reachable = BTreeSet::new();
+                if let Some(output) = function.output {
+                    collect_dependencies(function, output, &mut reachable);
+                    reachable.insert(output);
+                }
+                function
+                    .nodes
+                    .iter()
+                    .filter(|node| reachable.contains(&node.id))
+                    .any(|node| {
+                        matches!(node.op, Op::InvokePrimitive { .. })
+                            || matches!(
+                                node.op,
+                                Op::Call(callee)
+                                    if self.function_contains_primitive(callee, seen)
+                            )
+                    })
             })
     }
 
@@ -3851,7 +3915,6 @@ fn is_effect_root(node: &Node) -> bool {
     matches!(
         node.op,
         Op::Exec { .. }
-            | Op::FixtureTree
             | Op::TreeProject
             | Op::TreeEntryText
             | Op::FixtureRegistry
@@ -4384,7 +4447,10 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
             }
         }
         Op::Try => op.push(86),
-        Op::FixtureTree => op.push(90),
+        Op::FixtureTree(name) => {
+            op.push(90);
+            frame(&mut op, name.as_bytes());
+        }
         Op::TreeProject => op.push(91),
         Op::TreeEntryText => op.push(92),
         Op::TreeGlob => op.push(93),
