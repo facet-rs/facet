@@ -418,3 +418,217 @@ fn effect_free_test_touches_no_effect_machinery() {
         "no EffectDispatched event on the pure path"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Phase 06 perf gate (report deliverable). This is a micro-benchmark, not a
+// pass/fail assertion, so it is `#[ignore]`d out of the suite and run
+// explicitly:
+//
+//   cargo test -p vix --test primitive_scheduler -- --ignored --nocapture
+//
+// It measures the marginal overhead a registered primitive adds over the pure
+// demand machinery every island already pays. The claim it substantiates
+// (design §Testing, "primitive-call overhead dominated by the demand machinery
+// already paid by pure islands; conversion cost linear in value size") is that
+// a Hermetic dispatch is the same order as a pure island evaluate plus a
+// conversion cost that grows with the response value, and that a fully-memoized
+// effectful demand is far cheaper than a dispatch.
+
+/// Wall-time per op of evaluating `source` with a FRESH runtime each iteration,
+/// so every effect demand is a real dispatch (never a memo hit): request eval +
+/// reference resolution + decode + closure + response encode/intern + memo
+/// insert + consumer eval.
+fn bench_effect_dispatch(set: PrimitiveSet, source: &str, iterations: usize) -> f64 {
+    let arc = Arc::new(set);
+    let manifest = arc.compiler_manifest();
+    let compilation = Compiler::new()
+        .with_primitives(manifest)
+        .compile(source)
+        .expect("bench source compiles");
+    let partitioned = compilation
+        .module
+        .partition_test(&compilation.module.tests[0]);
+    let consumer = partitioned.islands[0].clone();
+    let request = partitioned.effect_islands[0].island.clone();
+    let mut request_cache = LoweringCache::default();
+    let mut consumer_cache = LoweringCache::default();
+    let request_lowered = request_cache.get_or_lower(&request).expect("request lowers");
+    let consumer_lowered = consumer_cache
+        .get_or_lower(&consumer)
+        .expect("consumer lowers");
+    let request_attr = attribution_for(&request);
+    let consumer_attr = attribution_for(&consumer);
+    let request_loc = Location::for_test_value("perf", "request");
+    let consumer_loc = Location::for_test_value("perf", "consumer");
+    let start = std::time::Instant::now();
+    for _ in 0..iterations {
+        let mut runtime = Runtime::new(EventLog::default()).with_primitives(arc.clone());
+        let effects = [EffectDemand {
+            request_island: request.id,
+            request_location: &request_loc,
+            request_lowered,
+            request_attribution: &request_attr,
+            request_arguments: &[],
+            request_wires: &[],
+        }];
+        runtime
+            .evaluate(
+                consumer.id,
+                &consumer_loc,
+                consumer_lowered,
+                &consumer_attr,
+                IslandInputs {
+                    arguments: &[],
+                    wires: &[],
+                    effects: &effects,
+                },
+                ChaosPolicy::default(),
+            )
+            .expect("bench dispatch evaluates");
+    }
+    start.elapsed().as_nanos() as f64 / iterations as f64
+}
+
+/// Wall-time per op of a fully-memoized effectful demand: ONE Hermetic runtime,
+/// warmed once, then `iterations` more evaluates that all hit the effect memo
+/// (no `begin`) and then the consumer memo.
+fn bench_effect_memo_hits(set: PrimitiveSet, source: &str, iterations: usize) -> f64 {
+    let arc = Arc::new(set);
+    let manifest = arc.compiler_manifest();
+    let compilation = Compiler::new()
+        .with_primitives(manifest)
+        .compile(source)
+        .expect("bench source compiles");
+    let partitioned = compilation
+        .module
+        .partition_test(&compilation.module.tests[0]);
+    let consumer = partitioned.islands[0].clone();
+    let request = partitioned.effect_islands[0].island.clone();
+    let mut request_cache = LoweringCache::default();
+    let mut consumer_cache = LoweringCache::default();
+    let request_lowered = request_cache.get_or_lower(&request).expect("request lowers");
+    let consumer_lowered = consumer_cache
+        .get_or_lower(&consumer)
+        .expect("consumer lowers");
+    let request_attr = attribution_for(&request);
+    let consumer_attr = attribution_for(&consumer);
+    let request_loc = Location::for_test_value("perf", "request");
+    let consumer_loc = Location::for_test_value("perf", "consumer");
+    let mut runtime = Runtime::new(EventLog::default()).with_primitives(arc);
+    let evaluate = |runtime: &mut Runtime<EventLog>| {
+        let effects = [EffectDemand {
+            request_island: request.id,
+            request_location: &request_loc,
+            request_lowered,
+            request_attribution: &request_attr,
+            request_arguments: &[],
+            request_wires: &[],
+        }];
+        runtime
+            .evaluate(
+                consumer.id,
+                &consumer_loc,
+                consumer_lowered,
+                &consumer_attr,
+                IslandInputs {
+                    arguments: &[],
+                    wires: &[],
+                    effects: &effects,
+                },
+                ChaosPolicy::default(),
+            )
+            .expect("bench memo-hit evaluates");
+    };
+    evaluate(&mut runtime); // warm: the single real dispatch
+    let start = std::time::Instant::now();
+    for _ in 0..iterations {
+        evaluate(&mut runtime);
+    }
+    start.elapsed().as_nanos() as f64 / iterations as f64
+}
+
+/// Wall-time per op of a pure island evaluate with a FRESH runtime each
+/// iteration — the baseline demand machinery every island pays, with no effect.
+fn bench_pure_island(source: &str, iterations: usize) -> f64 {
+    let compilation = Compiler::new().compile(source).expect("pure source compiles");
+    let partitioned = compilation
+        .module
+        .partition_test(&compilation.module.tests[0]);
+    let island = partitioned.islands[0].clone();
+    let mut cache = LoweringCache::default();
+    let lowered = cache.get_or_lower(&island).expect("island lowers");
+    let attribution = attribution_for(&island);
+    let location = Location::for_test_value("perf", "pure");
+    let start = std::time::Instant::now();
+    for _ in 0..iterations {
+        let mut runtime = Runtime::new(EventLog::default());
+        runtime
+            .evaluate(
+                island.id,
+                &location,
+                lowered,
+                &attribution,
+                IslandInputs {
+                    arguments: &[],
+                    wires: &[],
+                    effects: &[],
+                },
+                ChaosPolicy::default(),
+            )
+            .expect("bench pure evaluates");
+    }
+    start.elapsed().as_nanos() as f64 / iterations as f64
+}
+
+fn hermetic_string_probe_set() -> PrimitiveSet {
+    let mut set = PrimitiveSet::new();
+    set.register_function::<String, ProbeRequest, _>("probe", MemoPolicy::Hermetic, |_| {
+        Ok("9".to_owned())
+    })
+    .expect("probe registers");
+    set
+}
+
+fn hermetic_record_probe_set() -> PrimitiveSet {
+    let mut set = PrimitiveSet::new();
+    set.register_function::<Version, TextRequest, _>(
+        "probe_version",
+        MemoPolicy::Hermetic,
+        |_| {
+            Ok(Version {
+                major: 1,
+                minor: 2,
+                patch: 3,
+            })
+        },
+    )
+    .expect("probe_version registers");
+    set
+}
+
+#[test]
+#[ignore = "perf micro-benchmark; run explicitly with --ignored --nocapture"]
+fn primitive_call_overhead_micro_benchmark() {
+    const ITERATIONS: usize = 4000;
+    let pure_source = "#[test]\nfn t() -> Stream<Check> {\n    yield expect_eq(1 + 1, 2);\n}\n";
+
+    let pure = bench_pure_island(pure_source, ITERATIONS);
+    let dispatch_scalar = bench_effect_dispatch(hermetic_string_probe_set(), EFFECT_SOURCE, ITERATIONS);
+    let dispatch_record =
+        bench_effect_dispatch(hermetic_record_probe_set(), VERSION_PROJECT_SOURCE, ITERATIONS);
+    let memo_hit = bench_effect_memo_hits(hermetic_string_probe_set(), EFFECT_SOURCE, ITERATIONS);
+
+    println!("PERF (ns/op over {ITERATIONS} iterations):");
+    println!("  pure_island_evaluate      = {pure:>9.0}");
+    println!("  hermetic_dispatch_scalar  = {dispatch_scalar:>9.0}  (Int req / String resp)");
+    println!("  hermetic_dispatch_record  = {dispatch_record:>9.0}  (String req / Version resp)");
+    println!("  effectful_memo_hit        = {memo_hit:>9.0}");
+    println!(
+        "  dispatch_overhead_scalar  = {:>9.0}  (dispatch - pure)",
+        dispatch_scalar - pure
+    );
+    println!(
+        "  conversion_delta_record   = {:>9.0}  (record - scalar dispatch)",
+        dispatch_record - dispatch_scalar
+    );
+}
