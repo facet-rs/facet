@@ -26,7 +26,18 @@ struct ProbeRequest {
     n: i64,
 }
 
+/// `probe where { text: String } -> String`. A `String` request field realizes as
+/// a store-resident `FrozenValue::Reference`; the scheduler must resolve it
+/// against the store before decode (phase 06 Task 1), else the adapter's decode
+/// rejects the reference as a machine-plane protocol violation.
+#[derive(facet::Facet)]
+struct TextRequest {
+    text: String,
+}
+
 const EFFECT_SOURCE: &str = "#[test]\nfn t() -> Stream<Check> {\n    let v = probe where { n: 5 };\n    yield expect_eq(v, \"9\");\n}\n";
+
+const TEXT_SOURCE: &str = "#[test]\nfn t() -> Stream<Check> {\n    let v = probe where { text: \"1.2.3\" };\n    yield expect_eq(v, \"1.2.3\");\n}\n";
 
 /// A run of one effectful test source through the real value-island lane: the
 /// consumer island evaluated `evaluations` times against a runtime carrying the
@@ -39,10 +50,8 @@ struct Outcome {
     events_first: Vec<EventKind>,
 }
 
-/// Register `probe` under `policy` with a begin-counting responder, derive the
-/// compiler manifest from that registered set (so effect ids match by
-/// construction), compile the effectful source, and evaluate the consumer island
-/// `evaluations` times.
+/// Register `probe` under `policy` with a begin-counting `Int`-request responder,
+/// then drive `EFFECT_SOURCE` (`probe where { n: 5 } -> String`).
 fn run_probe(
     policy: MemoPolicy,
     responder: impl Fn(i64) -> Result<String, PrimitiveFailure> + Send + Sync + 'static,
@@ -56,11 +65,45 @@ fn run_probe(
         responder(req.n)
     })
     .expect("probe registers");
+    drive(set, begins, EFFECT_SOURCE, evaluations)
+}
+
+/// Register `probe` under `policy` with a begin-counting `String`-request
+/// responder, then drive `TEXT_SOURCE` (`probe where { text: "1.2.3" } -> String`).
+/// This is the load-bearing reference-resolution path: the request record's
+/// `String` field is a store reference the scheduler must resolve before decode.
+fn run_text_probe(
+    policy: MemoPolicy,
+    responder: impl Fn(String) -> Result<String, PrimitiveFailure> + Send + Sync + 'static,
+    evaluations: usize,
+) -> Outcome {
+    let begins = Arc::new(AtomicUsize::new(0));
+    let begins_in_closure = begins.clone();
+    let mut set = PrimitiveSet::new();
+    set.register_function::<String, TextRequest, _>("probe", policy, move |req: TextRequest| {
+        begins_in_closure.fetch_add(1, Ordering::SeqCst);
+        responder(req.text)
+    })
+    .expect("probe registers");
+    drive(set, begins, TEXT_SOURCE, evaluations)
+}
+
+/// Derive the compiler manifest from `set` (so effect ids match by construction),
+/// compile `source`, lower the request + consumer islands, and evaluate the
+/// consumer island `evaluations` times against a runtime carrying `set`. Shared
+/// by every effect-primitive certificate so each varies only the registration
+/// and the source.
+fn drive(
+    set: PrimitiveSet,
+    begins: Arc<AtomicUsize>,
+    source: &str,
+    evaluations: usize,
+) -> Outcome {
     let manifest = set.compiler_manifest();
 
     let compilation = Compiler::new()
         .with_primitives(manifest)
-        .compile(EFFECT_SOURCE)
+        .compile(source)
         .expect("effect source compiles");
     let partitioned = compilation
         .module
@@ -129,6 +172,30 @@ fn run_probe(
         results,
         events_first,
     }
+}
+
+/// A `String` request field realizes as a store-resident `FrozenValue::Reference`.
+/// The scheduler resolves that reference against the store before decode, so the
+/// primitive sees a reference-free request tree, decodes the `String`, and echoes
+/// it — the consumer's `expect_eq(v, "1.2.3")` resolves cleanly. Without the
+/// resolver the adapter's `decode_value` rejects the reference and the effect
+/// fails on the machine plane (an `Err` from `evaluate`).
+#[test]
+fn string_request_resolves_store_reference() {
+    let outcome = run_text_probe(MemoPolicy::Hermetic, Ok, 1);
+    let evaluation = outcome.results[0]
+        .as_ref()
+        .expect("the resolved string request decodes and dispatches, never a machine error");
+    assert!(
+        evaluation.failure.is_none(),
+        "the echoed \"1.2.3\" matches, so the consumer passes, got {:?}",
+        evaluation.failure
+    );
+    assert_eq!(
+        outcome.begins, 1,
+        "the primitive was begun once with the decoded string request"
+    );
+    assert_eq!(outcome.effect_spawns, 1, "one real dispatch");
 }
 
 /// One Hermetic effect dispatches exactly once; a second demand of the same

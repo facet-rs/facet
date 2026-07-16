@@ -1599,26 +1599,45 @@ impl<S: EventSink> Runtime<S> {
                 });
                 continue;
             }
-            // Step 7 — a miss dispatches the primitive. Clone the request's frozen
-            // replay tree out of the store first so the primitive's `&mut Store`
-            // window (via `EffectCtx`) never aliases it or the owned primitive
-            // Arc. A missing frozen tree is a machine invariant.
-            let Some(frozen) = self.store.frozen_for(request.handle).cloned() else {
-                return Err(Box::new(MachineError::runtime(
-                    MachineOperation::Effect,
-                    RuntimeFault::MissingEffectRequestFrozen {
-                        effect: binding.primitive,
-                    },
-                    None,
-                    Some(effect_key),
-                )));
+            // Step 7 — a miss dispatches the primitive. Take the request's frozen
+            // replay tree, resolve any store references in it (a `String` field
+            // realizes as a `FrozenValue::Reference` to a resident string; it
+            // resolves to an `Opaque` leaf), and own the reference-free tree out of
+            // the store — all while `&self.store` is borrowed, BEFORE the
+            // primitive's `&mut Store` window (via `EffectCtx`) opens, so the ctx
+            // never aliases it or the owned primitive Arc. A missing or
+            // unresolvable frozen tree is a machine invariant. Resolving here keeps
+            // decode's reference rejection as the honest backstop.
+            let resolved_frozen = {
+                let Some(raw) = self.store.frozen_for(request.handle) else {
+                    return Err(Box::new(MachineError::runtime(
+                        MachineOperation::Effect,
+                        RuntimeFault::MissingEffectRequestFrozen {
+                            effect: binding.primitive,
+                        },
+                        None,
+                        Some(effect_key),
+                    )));
+                };
+                let Some(resolved) = crate::runtime::primitive::resolve_references(raw, &self.store)
+                else {
+                    return Err(Box::new(MachineError::runtime(
+                        MachineOperation::Effect,
+                        RuntimeFault::MissingEffectRequestFrozen {
+                            effect: binding.primitive,
+                        },
+                        None,
+                        Some(effect_key),
+                    )));
+                };
+                resolved
             };
             let request_identity = request.identity;
             let (completion, receipt) = {
                 let mut ctx = EffectCtx::new(&mut self.store);
                 let request_ref = RequestRef {
                     identity: request_identity,
-                    frozen: &frozen,
+                    frozen: &resolved_frozen,
                 };
                 // v1 primitives complete inline before `begin` returns; the ticket
                 // is owned by this demand and needs no clock/poll.

@@ -404,13 +404,73 @@ pub(crate) fn intern_rust_value<'f, T: facet::Facet<'f>>(
     Ok(interned)
 }
 
+/// Resolve every [`FrozenValue::Reference`] in a request tree against the store,
+/// substituting each referent's concrete frozen structure. A store-resident
+/// string leaf resolves to [`FrozenValue::Opaque`] (its resident bytes); a nested
+/// aggregate resolves to its own frozen tree, itself resolved so the result is
+/// reference-free at every depth. `Inline`/`Opaque` pass through unchanged;
+/// products/variants/collections recurse structurally.
+///
+/// The scheduler calls this on a request frozen taken from `&Store` BEFORE the
+/// `&mut Store` window ([`EffectCtx`](super::EffectCtx)) opens, so
+/// [`decode_value`] never sees a reference — its reference rejection stays the
+/// honest backstop. Reads reuse the store's `by_identity` index via
+/// `handle_for_identity` (the same O(log n) lookup `render_frozen`'s leaf/deref
+/// helpers use), so no linear scan is introduced.
+///
+/// Returns `None` when a reference names a value with neither a frozen tree nor
+/// resident bytes in the store — a machine invariant the caller lifts onto the
+/// machine-error plane.
+pub(crate) fn resolve_references(frozen: &FrozenValue, store: &Store) -> Option<FrozenValue> {
+    Some(match frozen {
+        FrozenValue::Inline(bytes) => FrozenValue::Inline(bytes.clone()),
+        FrozenValue::Opaque(bytes) => FrozenValue::Opaque(bytes.clone()),
+        FrozenValue::Reference(id) => {
+            let entry = store.entry(store.handle_for_identity(*id)?)?;
+            if let Some(inner) = entry.frozen() {
+                // An aggregate (or a string that already carries an Opaque frozen)
+                // resolves to its own structure — recursively reference-free.
+                resolve_references(inner, store)?
+            } else {
+                // A resident leaf with no frozen tree is a string constant; its
+                // canonical resident bytes are the opaque payload decode expects.
+                FrozenValue::Opaque(entry.resident_bytes()?.to_vec())
+            }
+        }
+        FrozenValue::Product(fields) => FrozenValue::Product(resolve_each(fields, store)?),
+        FrozenValue::Variant { tag, fields } => FrozenValue::Variant {
+            tag: *tag,
+            fields: resolve_each(fields, store)?,
+        },
+        FrozenValue::DenseArray(items) => FrozenValue::DenseArray(resolve_each(items, store)?),
+        FrozenValue::OrderedSet(items) => FrozenValue::OrderedSet(resolve_each(items, store)?),
+        FrozenValue::OrderedMap(rows) => {
+            let mut resolved = Vec::with_capacity(rows.len());
+            for (key, value) in rows {
+                resolved.push((
+                    resolve_references(key, store)?,
+                    resolve_references(value, store)?,
+                ));
+            }
+            FrozenValue::OrderedMap(resolved)
+        }
+    })
+}
+
+fn resolve_each(items: &[FrozenValue], store: &Store) -> Option<Vec<FrozenValue>> {
+    items
+        .iter()
+        .map(|item| resolve_references(item, store))
+        .collect()
+}
+
 /// Decode a fully-frozen value tree back into a Rust value, driven by the vir
 /// type through facet's typed [`facet::Partial`] builder.
 ///
 /// v1 takes the frozen tree only: a [`FrozenValue::Reference`] (which appears for
 /// store-resident strings in real scheduler output) is a [`ConvertError`] here.
-/// Phase 05 wiring resolves references against the `&Store` before calling this,
-/// so decode never sees one.
+/// Phase 05/06 wiring resolves references against the `&Store` (via
+/// [`resolve_references`]) before calling this, so decode never sees one.
 pub(crate) fn decode_value<'f, T: facet::Facet<'f>>(
     frozen: &FrozenValue,
     ty: &Type,
