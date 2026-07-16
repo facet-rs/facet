@@ -2950,7 +2950,12 @@ fn constant_closures(island: &Island) -> BTreeMap<FunctionId, BTreeSet<NodeRef>>
             function,
             nodes
                 .iter()
-                .filter(|node| matches!(node.op, Op::String(_) | Op::Path(_) | Op::Schema(_)))
+                .filter(|node| {
+                    matches!(
+                        node.op,
+                        Op::String(_) | Op::Path(_) | Op::Schema(_) | Op::FixtureTree(_)
+                    )
+                })
                 .map(|node| NodeRef {
                     function,
                     node: node.id,
@@ -3801,7 +3806,10 @@ impl FunctionLayout {
                     .ok_or_else(|| {
                         lowering_diagnostic(span, "closure names a missing local constant")
                     })?;
-                if !matches!(node.op, Op::String(_) | Op::Path(_) | Op::Schema(_)) {
+                if !matches!(
+                    node.op,
+                    Op::String(_) | Op::Path(_) | Op::Schema(_) | Op::FixtureTree(_)
+                ) {
                     return Err(lowering_diagnostic(
                         node.span,
                         "closure constant is not a realized byte-value node",
@@ -4887,6 +4895,7 @@ fn lower_node_sequence(
             )?,
             Op::StringContains => lower_string_contains_node(node, dst, values, outputs)?,
             Op::StringTrim => lower_string_trim_node(node, dst, values, outputs)?,
+            Op::StringLines => lower_string_lines_node(node, dst, values, sequence, outputs)?,
             Op::StringIsNumeric => lower_string_is_numeric_node(node, dst, values, outputs)?,
             Op::StringSplitOnce | Op::StringParseInt => {
                 lower_checked_string_node(node, dst, values, sequence, outputs)?
@@ -5015,6 +5024,34 @@ fn lower_string_trim_node(
     outputs.code.push(WeavyOp::StringTrim {
         dst: dst.start().byte_offset(),
         text: text.region.start().byte_offset(),
+    });
+    Ok(ValueRepresentation::RealizedHandle)
+}
+
+fn lower_string_lines_node(
+    node: &Node,
+    dst: FrameRegion,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    require_node_type(node, Type::array(Type::String))?;
+    require_input_count(node, 1)?;
+    let text = input_value(node, values, 0)?;
+    require_value(
+        node,
+        &text,
+        &Type::String,
+        ValueRepresentation::RealizedHandle,
+    )?;
+    let element_schema_ref = sequence
+        .lowering
+        .schemas
+        .schema_for(&Type::String, node.span)?;
+    outputs.code.push(WeavyOp::StringLines {
+        dst: dst.start().byte_offset(),
+        text: text.region.start().byte_offset(),
+        element_schema_ref: i64::from(element_schema_ref.0),
     });
     Ok(ValueRepresentation::RealizedHandle)
 }
@@ -6054,15 +6091,12 @@ fn lower_node(
                  frame",
             ));
         }
-        Op::FixtureTree
-        | Op::TreeProject
+        Op::TreeProject
         | Op::TreeEntryText
         | Op::TreeGlob
         | Op::FixtureRegistry
         | Op::RegistryUrl
         | Op::RegistryCoordinate
-        | Op::Fetch
-        | Op::MiniSolve { .. }
         | Op::Untar
         | Op::BlobLen => {
             return Err(lowering_diagnostic(
@@ -6215,6 +6249,55 @@ fn lower_node(
             let root_slot = root_layout.constant_slot(constant, node.span)?;
             let store_schema = Type::Extern(crate::vir::ExternKind::Schema).schema_ref();
             let bytes = reference.canonical_bytes();
+            let pending = PendingValueConstant {
+                node: constant,
+                root_slot,
+                owner_slot: dst_slot,
+                store_schema: store_schema.clone(),
+                bytes: bytes.clone(),
+                span: node.span,
+            };
+            if let Some(previous) = lowering.constants.insert(constant, pending)
+                && (previous.root_slot != root_slot
+                    || previous.owner_slot != dst_slot
+                    || previous.store_schema != store_schema
+                    || previous.bytes != bytes)
+            {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "constant NodeRef was lowered with conflicting metadata",
+                ));
+            }
+            (Vec::new(), ValueRepresentation::RealizedHandle)
+        }
+        Op::FixtureTree(name) => {
+            require_input_count(node, 0)?;
+            let tree_ty = Type::Extern(crate::vir::ExternKind::Tree);
+            require_node_type(node, tree_ty.clone())?;
+            let constant = NodeRef {
+                function: lowering.function.id,
+                node: node.id,
+            };
+            if lowering
+                .function
+                .layout
+                .constant_slot(constant, node.span)?
+                != dst_slot
+            {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "FixtureTree node does not occupy its local closure slot",
+                ));
+            }
+            let root_layout = lowering
+                .context
+                .layouts
+                .get(&lowering.context.root_function)
+                .ok_or_else(|| lowering_diagnostic(node.span, "missing island root layout"))?;
+            let root_slot = root_layout.constant_slot(constant, node.span)?;
+            let store_schema = tree_ty.schema_ref();
+            let mut bytes = b"fixture-tree\0".to_vec();
+            bytes.extend(name.as_bytes());
             let pending = PendingValueConstant {
                 node: constant,
                 root_slot,

@@ -471,15 +471,16 @@ pub enum TraceCheck {
     /// pending, or two effects were simultaneously in flight. This is derived
     /// from scheduler ownership state, never elapsed-time coincidence.
     Overlapped,
-    /// The named external path was read during the run: it appears in at least
-    /// one demand receipt.
+    /// The named external path was physically read during the run. A memo hit
+    /// still remaps its cached receipt into the caller, but does not satisfy
+    /// this execution-observability check.
     Read {
         path: String,
     },
-    /// The named external path was never read during the run: it appears in no
-    /// demand receipt. Read-recording is complete by construction — external
-    /// reads go through the recording fixture-store accessors — so absence in
-    /// the receipts is absence of the read.
+    /// The named external path was not physically read during the run.
+    /// Read-recording is complete by construction because external reads cross
+    /// the authority boundary; cached receipt remapping does not count as a
+    /// fresh read.
     NeverRead {
         path: String,
     },
@@ -1123,13 +1124,6 @@ pub fn decode_error_type() -> Type {
     ))
 }
 
-#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
-#[repr(u8)]
-pub enum MiniSolveRequirements {
-    Static { packages: Vec<String> },
-    FixtureWorkspace,
-}
-
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EffectFacts {
     pub kind: EffectKind,
@@ -1350,10 +1344,11 @@ pub enum Op {
     /// demand publishes and `Result::Err(failure)` when it language-fails —
     /// the failure participates as an ordinary value, address intact.
     Try,
-    /// Open the named harness fixture tree as a lazy `Tree` value. Reads
-    /// nothing: the value's identity is the pending fixture-tree reference;
-    /// projections resolve — and record reads — only where demanded.
-    FixtureTree,
+    /// Open one compiler-validated harness fixture tree as a lazy `Tree`
+    /// constant. Reads nothing: the value's identity is the pending
+    /// fixture-tree reference; projections resolve — and record reads — only
+    /// where demanded.
+    FixtureTree(String),
     /// Project one segment (String) or a segment path (Path) through a Tree
     /// or a Dir TreeEntry. Resolves lazily: it reads directory listings along
     /// the projected path only, never sibling entries or file contents.
@@ -1375,19 +1370,6 @@ pub enum Op {
     /// identity, because an observation names its value only after the bytes
     /// arrive (`machine.primitive.fetch-is-pinned`, the `observe` counterpart).
     RegistryCoordinate,
-    /// Fetch a pinned Blob by content identity: resolve the store first, only
-    /// then the (fixture) origin; verify the bytes against the pinned hash.
-    ///
-    /// r[impl machine.primitive.fetch-returns-a-blob]
-    /// r[impl machine.primitive.fetch-integrity-vs-identity]
-    Fetch,
-    /// Resolve the canonical package solver fixture lazily through visited
-    /// package-row reads. Inputs are the authored universe value and the
-    /// requirements map; receipts carry the package rows actually read.
-    MiniSolve {
-        function: FunctionId,
-        requirements: MiniSolveRequirements,
-    },
     /// Extract an archive Blob into a Tree whose identity is the canonical
     /// tree encoding — never the archive bytes' ContentHash.
     ///
@@ -1886,10 +1868,10 @@ impl Module {
         // is returned unchanged. When splicing renumbers the function's nodes, the
         // test's generator references move through the same map so the shared
         // node-id space stays consistent.
-        let (function, mixed_remap) =
-            self.inline_mixed_primitive_calls(&self.functions[test.function.0 as usize])?;
+        let (function, effect_remap) =
+            self.inline_effectful_calls(&self.functions[test.function.0 as usize])?;
         let (function, map_remap) = self.expand_effectful_array_maps(&function)?;
-        let remap = compose_node_remaps(mixed_remap, map_remap);
+        let remap = compose_node_remaps(effect_remap, map_remap);
         let function = &function;
         let remapped_test;
         let test = if let Some(remap) = &remap {
@@ -2025,7 +2007,7 @@ impl Module {
         } else {
             Vec::new()
         };
-        let forced_eager_scalar_ids = forced_scalar_calls
+        let mut forced_eager_scalar_ids = forced_scalar_calls
             .iter()
             .filter(|candidate| {
                 function.nodes.iter().any(|consumer| {
@@ -2034,11 +2016,33 @@ impl Module {
             })
             .map(|candidate| candidate.id)
             .collect::<BTreeSet<_>>();
+        let primitive_call_boundaries = function
+            .nodes
+            .iter()
+            .filter(|node| {
+                matches!(
+                    node.op,
+                    Op::Call(callee)
+                        if self.function_contains_primitive(callee, &mut BTreeSet::new())
+                )
+            })
+            .collect::<Vec<_>>();
+        forced_eager_scalar_ids.extend(
+            primitive_call_boundaries
+                .iter()
+                .filter(|node| is_scalar_call_candidate(node))
+                .map(|node| node.id),
+        );
         for node in forced_scalar_calls
             .iter()
             .copied()
             .filter(|node| forced_eager_scalar_ids.contains(&node.id))
         {
+            if !shared.iter().any(|candidate| candidate.id == node.id) {
+                shared.push(node);
+            }
+        }
+        for node in primitive_call_boundaries {
             if !shared.iter().any(|candidate| candidate.id == node.id) {
                 shared.push(node);
             }
@@ -2391,10 +2395,50 @@ impl Module {
         self.functions
             .get(function.0 as usize)
             .is_some_and(|function| {
-                function.nodes.iter().any(|node| {
+                let mut reachable = BTreeSet::new();
+                if let Some(output) = function.output {
+                    collect_dependencies(function, output, &mut reachable);
+                    reachable.insert(output);
+                }
+                function
+                    .nodes
+                    .iter()
+                    .filter(|node| reachable.contains(&node.id))
+                    .any(|node| {
                     is_effect_root(node)
                         || matches!(node.op, Op::Call(callee) if self.function_contains_effect(callee, seen))
-                })
+                    })
+            })
+    }
+
+    fn function_contains_primitive(
+        &self,
+        function: FunctionId,
+        seen: &mut BTreeSet<FunctionId>,
+    ) -> bool {
+        if !seen.insert(function) {
+            return false;
+        }
+        self.functions
+            .get(function.0 as usize)
+            .is_some_and(|function| {
+                let mut reachable = BTreeSet::new();
+                if let Some(output) = function.output {
+                    collect_dependencies(function, output, &mut reachable);
+                    reachable.insert(output);
+                }
+                function
+                    .nodes
+                    .iter()
+                    .filter(|node| reachable.contains(&node.id))
+                    .any(|node| {
+                        matches!(node.op, Op::InvokePrimitive { .. })
+                            || matches!(
+                                node.op,
+                                Op::Call(callee)
+                                    if self.function_contains_primitive(callee, seen)
+                            )
+                    })
             })
     }
 
@@ -2544,33 +2588,10 @@ impl Module {
         result.nodes.splice(position..=position, expanded);
     }
 
-    /// Whether `function` transitively invokes a registered primitive. A callee
-    /// that both `function_contains_effect` and `function_contains_primitive`
-    /// would be routed wholesale into a machine-plane effect island, so its
-    /// primitive would reach the legacy interpreter that has no primitive
-    /// authority. Such calls are cut by [`Self::inline_mixed_primitive_calls`].
-    fn function_contains_primitive(
-        &self,
-        function: FunctionId,
-        seen: &mut BTreeSet<FunctionId>,
-    ) -> bool {
-        if !seen.insert(function) {
-            return false;
-        }
-        self.functions
-            .get(function.0 as usize)
-            .is_some_and(|function| {
-                function.nodes.iter().any(|node| {
-                    matches!(node.op, Op::InvokePrimitive { .. })
-                        || matches!(node.op, Op::Call(callee) if self.function_contains_primitive(callee, seen))
-                })
-            })
-    }
-
     /// Whether `function` reaches `target` through any call edge (including
-    /// itself when `function == target`). Used to reject inlining a mixed
-    /// primitive/effect callee that participates in a recursive cycle, where
-    /// call-site specialization would not terminate.
+    /// itself when `function == target`). Used to reject inlining an effectful
+    /// callee that participates in a recursive cycle, where call-site
+    /// specialization would not terminate.
     fn function_reaches(
         &self,
         function: FunctionId,
@@ -2586,9 +2607,6 @@ impl Module {
                 function.nodes.iter().any(|node| {
                     let callee = match node.op {
                         Op::Call(callee) | Op::Closure(callee) => Some(callee),
-                        Op::MiniSolve {
-                            function: callee, ..
-                        } => Some(callee),
                         _ => None,
                     };
                     callee.is_some_and(|callee| {
@@ -2598,21 +2616,17 @@ impl Module {
             })
     }
 
-    /// A `Call` whose callee mixes effect roots and a registered primitive must
-    /// be cut so the primitive is never absorbed into an effect island. This
-    /// specializes each such call site by splicing the callee's authored graph
-    /// into the caller with fresh, call-context-distinct node identities, so the
-    /// existing effect-root/primitive publication rules produce the required
-    /// dependency-ordered stages: the effect publications that build the request,
-    /// the verified-Weavy primitive publication, then the pure continuation.
+    /// An effectful `Call` is specialized before island cutting so its
+    /// machine-plane roots become scheduler-owned publications and the
+    /// remaining computation stays in verified Weavy. This includes helpers
+    /// that mix fixture/tree effects with ordinary control or collections, and
+    /// helpers that build a registered-primitive request from effectful inputs.
     ///
-    /// Non-mixed calls are untouched: a pure-effect callee keeps its effect
-    /// island, and a pure-primitive callee already lowers to a host call. The
-    /// spliced graph preserves each node's authored span (attribution) and type
-    /// (ABI); structural recipe identity remains derived from the resulting
-    /// authored graph, so distinct arguments keep distinct identities and equal
-    /// spellings still collapse.
-    fn inline_mixed_primitive_calls(
+    /// Pure calls are untouched. The spliced graph preserves each node's
+    /// authored span (attribution) and type (ABI); structural recipe identity
+    /// remains derived from the resulting authored graph, so distinct arguments
+    /// keep distinct identities and equal spellings still collapse.
+    fn inline_effectful_calls(
         &self,
         function: &Function,
     ) -> Result<(Function, Option<BTreeMap<NodeId, NodeId>>), Diagnostics> {
@@ -2623,9 +2637,8 @@ impl Module {
                 let Op::Call(callee) = node.op else {
                     return None;
                 };
-                let mixed = self.function_contains_effect(callee, &mut BTreeSet::new())
-                    && self.function_contains_primitive(callee, &mut BTreeSet::new());
-                mixed.then_some((node.id, node.span, callee))
+                self.function_contains_effect(callee, &mut BTreeSet::new())
+                    .then_some((node.id, node.span, callee))
             });
             let Some((call_id, call_span, callee_id)) = target else {
                 break;
@@ -2633,15 +2646,14 @@ impl Module {
             if self.function_reaches(callee_id, callee_id, &mut BTreeSet::new()) {
                 return Err(Diagnostics::one(Diagnostic::unsupported(
                     call_span,
-                    "a recursive helper that mixes effect reads and a registered \
-                     primitive cannot be call-site specialized in this milestone",
+                    "a recursive effectful helper cannot be call-site specialized",
                 )));
             }
             if node_within_control_region(&result, call_id) {
                 return Err(Diagnostics::one(Diagnostic::unsupported(
                     call_span,
-                    "a registered primitive reached through effect reads inside a \
-                     conditional helper is not yet call-site specialized",
+                    "an effectful helper call inside conditional control is not yet \
+                     call-site specialized",
                 )));
             }
             self.splice_call_site(&mut result, call_id, callee_id);
@@ -3755,7 +3767,6 @@ fn island_reachable(nodes: &[Node], output: NodeId) -> BTreeSet<NodeId> {
 fn direct_callee(node: &Node) -> Option<FunctionId> {
     match node.op {
         Op::Call(callee) | Op::Closure(callee) => Some(callee),
-        Op::MiniSolve { function, .. } => Some(function),
         _ => None,
     }
 }
@@ -3848,10 +3859,7 @@ fn is_scalar_call_candidate(node: &Node) -> bool {
 /// (a lazy argument expression) carries no invocation provenance.
 fn invocation_provenance(function: &Function, node: &Node) -> Option<WireProvenance> {
     let callee = match node.op {
-        Op::Call(callee)
-        | Op::MiniSolve {
-            function: callee, ..
-        } => callee,
+        Op::Call(callee) => callee,
         _ => return None,
     };
     let mut literals = Vec::with_capacity(node.inputs.len());
@@ -3907,14 +3915,11 @@ fn is_effect_root(node: &Node) -> bool {
     matches!(
         node.op,
         Op::Exec { .. }
-            | Op::FixtureTree
             | Op::TreeProject
             | Op::TreeEntryText
             | Op::FixtureRegistry
             | Op::RegistryUrl
             | Op::RegistryCoordinate
-            | Op::Fetch
-            | Op::MiniSolve { .. }
             | Op::Untar
             | Op::BlobLen
     ) || (node.effect.kind == EffectKind::Effect
@@ -4442,36 +4447,16 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
             }
         }
         Op::Try => op.push(86),
-        Op::FixtureTree => op.push(90),
+        Op::FixtureTree(name) => {
+            op.push(90);
+            frame(&mut op, name.as_bytes());
+        }
         Op::TreeProject => op.push(91),
         Op::TreeEntryText => op.push(92),
         Op::TreeGlob => op.push(93),
         Op::FixtureRegistry => op.push(94),
         Op::RegistryUrl => op.push(95),
         Op::RegistryCoordinate => op.push(102),
-        Op::Fetch => op.push(96),
-        Op::MiniSolve {
-            function,
-            requirements,
-        } => {
-            op.push(99);
-            op.extend_from_slice(
-                &function_ids
-                    .get(function)
-                    .expect("mini_solve function belongs to the island closure")
-                    .to_le_bytes(),
-            );
-            match requirements {
-                MiniSolveRequirements::Static { packages } => {
-                    op.push(0);
-                    frame(&mut op, &(packages.len() as u64).to_le_bytes());
-                    for package in packages {
-                        frame(&mut op, package.as_bytes());
-                    }
-                }
-                MiniSolveRequirements::FixtureWorkspace => op.push(1),
-            }
-        }
         Op::Untar => op.push(97),
         Op::BlobLen => op.push(98),
     }

@@ -7325,15 +7325,20 @@ fn rung_080_early_cutoff_reuses_downstream_render() {
 }
 
 #[test]
-fn rung_081_projection_reuses_build_step_when_unread_path_changes() {
+fn rung_081_receipt_reuses_build_step_when_unread_path_changes() {
     let audit = run_source_rerun_audit(RUNG_081).expect("rung 081 rerun audit executes");
     assert!(
         audit.second.checks.iter().all(|check| check.passed),
         "second run trace checks pass: {audit:#?}",
     );
     assert!(
-        audit.second.counters.memo_hits_projection > 0,
-        "changed tree outside witnessed read projection is a projection hit: {:?}",
+        audit.second.counters.memo_hits_exact > 0,
+        "changed tree outside the witnessed read reuses the receipt-verified helper result: {:?}",
+        audit.second.counters,
+    );
+    assert_eq!(
+        audit.second.counters.primitive_invocations, 0,
+        "receipt revalidation serves the helper without invoking its primitive again: {:?}",
         audit.second.counters,
     );
 }

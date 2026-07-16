@@ -10607,6 +10607,7 @@ fn op_name(op: &Op) -> &'static str {
         Op::CompareValueBytes { .. } => "CompareValueBytes",
         Op::StringConcat { .. } => "StringConcat",
         Op::StringTrim { .. } => "StringTrim",
+        Op::StringLines { .. } => "StringLines",
         Op::StringContains { .. } => "StringContains",
         Op::StringIsNumeric { .. } => "StringIsNumeric",
         Op::StringSplitOnce { .. } => "StringSplitOnce",

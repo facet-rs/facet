@@ -383,13 +383,18 @@ pub struct StagedEffectAuthority {
     persistence: Option<Arc<dyn ValuePersistence>>,
     origin: Option<Arc<dyn OriginAdapter>>,
     claims: Option<Arc<dyn ClaimHistory>>,
+    fixture_store: Option<super::FixtureStore>,
 }
 
 impl StagedEffectAuthority {
     #[must_use]
     pub fn new(inputs: impl IntoIterator<Item = (ValueId, PrimitiveValue)>) -> Self {
+        let mut indexed = BTreeMap::new();
+        for (identity, value) in inputs {
+            index_primitive_value(&mut indexed, identity, value);
+        }
         Self {
-            inputs: inputs.into_iter().collect(),
+            inputs: indexed,
             ..Self::default()
         }
     }
@@ -419,6 +424,12 @@ impl StagedEffectAuthority {
     }
 
     #[must_use]
+    pub fn with_fixture_store(mut self, fixture_store: super::FixtureStore) -> Self {
+        self.fixture_store = Some(fixture_store);
+        self
+    }
+
+    #[must_use]
     pub fn staged_value(&self, identity: &ValueId) -> Option<PrimitiveValue> {
         self.staged
             .lock()
@@ -442,17 +453,35 @@ impl StagedEffectAuthority {
     }
 }
 
+fn index_primitive_value(
+    indexed: &mut BTreeMap<ValueId, PrimitiveValue>,
+    identity: ValueId,
+    value: PrimitiveValue,
+) {
+    match &value.body {
+        PrimitiveValueBody::Bytes(_) => {}
+        PrimitiveValueBody::Product(fields) | PrimitiveValueBody::Variant { fields, .. } => {
+            for field in fields {
+                if let PrimitiveFieldValue::Child(child) = &field.value {
+                    index_primitive_value(indexed, child.identity(), child.as_ref().clone());
+                }
+            }
+        }
+        PrimitiveValueBody::Sequence { elements, .. } => {
+            for element in elements {
+                index_primitive_value(indexed, element.identity(), element.clone());
+            }
+        }
+    }
+    indexed.insert(identity, value);
+}
+
 impl EffectAuthority for StagedEffectAuthority {
     fn read(
         &self,
         source: &ValueId,
         projection: &ReadProjection,
     ) -> Result<WitnessedValue, PrimitiveMachineError> {
-        if !matches!(projection, ReadProjection::Whole) {
-            return Err(PrimitiveMachineError::AuthorityViolation {
-                detail: "staged authority only admits whole-value reads".to_owned(),
-            });
-        }
         let value = if let Some(value) = self.inputs.get(source) {
             value.clone()
         } else {
@@ -465,6 +494,54 @@ impl EffectAuthority for StagedEffectAuthority {
                     detail: "staged effect input is absent".to_owned(),
                 })?
         };
+        if let ReadProjection::TreePath { path } = projection {
+            if value.schema != Type::Extern(crate::vir::ExternKind::Tree).schema_ref() {
+                return Err(PrimitiveMachineError::AuthorityViolation {
+                    detail: "tree-path read source was not a Tree".to_owned(),
+                });
+            }
+            let bytes = if super::fixture_tree_name(value.resident_bytes()).is_some() {
+                self.fixture_store
+                    .as_ref()
+                    .ok_or_else(|| PrimitiveMachineError::Unavailable {
+                        detail: "no fixture store is installed for this effect snapshot".to_owned(),
+                    })?
+                    .tree_file_bytes(path)
+                    .map_err(|_| PrimitiveMachineError::Unavailable {
+                        detail: format!("fixture tree path {path} is unavailable"),
+                    })?
+            } else {
+                super::parse_ustar(value.resident_bytes())
+                    .map_err(|_| PrimitiveMachineError::InvalidRequest {
+                        request: source.clone(),
+                    })?
+                    .into_iter()
+                    .find_map(|member| match member {
+                        super::TarMember::File {
+                            path: candidate,
+                            bytes,
+                            ..
+                        } if candidate == *path => Some(bytes),
+                        _ => None,
+                    })
+                    .ok_or_else(|| PrimitiveMachineError::Unavailable {
+                        detail: format!("archive tree path {path} is unavailable"),
+                    })?
+            };
+            let value = PrimitiveValue::bytes(Type::String.schema_ref(), bytes.clone());
+            let identity = value.identity();
+            return Ok(WitnessedValue {
+                identity: identity.clone(),
+                bytes,
+                value,
+                observation: ReadObservation::Value(identity),
+            });
+        }
+        if !matches!(projection, ReadProjection::Whole) {
+            return Err(PrimitiveMachineError::AuthorityViolation {
+                detail: "staged authority does not admit this projected read".to_owned(),
+            });
+        }
         Ok(WitnessedValue {
             identity: source.clone(),
             bytes: value.resident_bytes().to_vec(),
@@ -972,6 +1049,11 @@ impl PrimitiveDispatcher {
         let ticket = self.registry.begin(id, request, ctx)?;
         in_flight.insert(demand, ticket.clone());
         Ok(ticket)
+    }
+
+    #[must_use]
+    pub fn descriptor(&self, id: &PrimitiveId) -> Option<&PrimitiveDescriptor> {
+        self.registry.descriptor(id)
     }
 
     pub fn retire(&self, demand: DemandKey) -> Option<EffectTicket> {

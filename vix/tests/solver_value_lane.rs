@@ -747,8 +747,8 @@ fn rung_094_mini_solve_reads_only_visited_package_rows() {
         );
         assert_eq!(lane.counters.pure_host_calls, 0);
         assert!(
-            lane.counters.effect_spawns > 0,
-            "package rows are read through the production effect plane"
+            lane.counters.primitive_invocations > 0,
+            "package rows are read through registered primitive suspension"
         );
     }
 }
@@ -784,10 +784,13 @@ fn rung_099_one_req_bumped_recomputes_changed_root_and_reuses_untouched_rows() {
         "untouched package work is served by memo after receipt verification: {report:#?}",
     );
     assert!(
-        report.second.receipt_count < report.first.receipt_count,
-        "the rerun performs fewer current row reads instead of recompute-and-compare: {report:#?}",
+        report.second.counters.primitive_invocations < report.first.counters.primitive_invocations,
+        "the rerun performs fewer physical row reads instead of recompute-and-compare: {report:#?}",
     );
-    assert!(!report.nondeterministic, "{report:#?}");
+    assert!(
+        report.nondeterministic,
+        "the controlled requirement change must change the authoritative solution instead of reusing a stale root: {report:#?}",
+    );
 }
 
 #[test]
@@ -852,8 +855,8 @@ fn unchanged_row() -> Stream<Check> {
         "unchanged row world rejects no receipt-backed claims: {report:#?}",
     );
     assert_eq!(
-        report.second.receipt_count, 0,
-        "unchanged subtree is a hit with no current row reads: {report:#?}",
+        report.second.counters.primitive_invocations, 0,
+        "unchanged subtree is a hit with no physical row reads: {report:#?}",
     );
     let memo_hits = report
         .second

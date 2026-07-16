@@ -139,6 +139,14 @@ impl Location {
         Self::from_segments(segments)
     }
 
+    #[must_use]
+    pub fn for_primitive(parent: &Self, site: &str) -> Self {
+        let mut segments = parent.segments.clone();
+        segments.push("primitive".to_owned());
+        segments.push(site.to_owned());
+        Self::from_segments(segments)
+    }
+
     /// Provenance-keyed location of one evaluated check: the site's check
     /// location extended by the identities of its dynamic iteration keys. With no
     /// dynamic keys (the zero-dynamic-key base case, and every flat island) this

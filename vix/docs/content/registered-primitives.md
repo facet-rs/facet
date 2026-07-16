@@ -10,11 +10,12 @@ to be easier to write in Rust.
 The classification rule comes first:
 
 - A deterministic transformation of its arguments belongs in Vix and Weavy.
-  String splitting, version parsing, collection transforms, tree projections,
-  and format-independent validation are examples of pure work.
+  String splitting, version parsing, collection transforms, tree-path
+  construction, and format-independent validation are examples of pure work.
 - A primitive crosses an authority boundary: fetching pinned bytes, observing a
-  coordinate, executing a command, reading a capability-controlled service, or
-  performing another operation whose inputs must be witnessed.
+  coordinate, executing a command, reading content from a
+  capability-controlled tree or service, or performing another operation whose
+  inputs must be witnessed.
 
 Moving pure work into a primitive would hide demand structure, add a host-call
 boundary, and violate `machine.execution.no-pure-hostcalls`.
@@ -173,7 +174,7 @@ as a typed stale completion.
 
 `PrimitiveRegistry` and generic dispatcher lookup are implemented. The
 production runtime currently assembles the built-in registry for decode,
-pinned fetch, and observe during runtime construction.
+pinned fetch, observe, and tree text reads during runtime construction.
 
 The public manifest-driven extension surface is not implemented yet. In
 particular, external code cannot currently:
@@ -199,7 +200,8 @@ The production examples are:
 - `DecodePrimitive`: synchronous typed document decoding;
 - `PinnedFetchPrimitive`: asynchronous identity-first value retrieval;
 - `ObservePrimitive`: asynchronous coordinate observation and append-only
-  claim publication.
+  claim publication;
+- `TreeReadPrimitive`: witnessed text reads from capability-controlled trees.
 
 They all implement the same trait and cross the same Weavy yield, ticket,
 completion-inbox, and frame-resume path.

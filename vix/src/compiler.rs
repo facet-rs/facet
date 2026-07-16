@@ -12,7 +12,8 @@ use crate::decode::{self, DecodeFormat, DecodedValue};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics, Label};
 use crate::runtime::{
     observe_primitive_id, observe_request_type, origin_hint_type, pinned_blob_ref_type,
-    pinned_fetch_primitive_id, pinned_fetch_request_type,
+    pinned_fetch_primitive_id, pinned_fetch_request_type, tree_read_primitive_id,
+    tree_read_request_type,
 };
 use crate::schema::{SchemaBatch, SchemaRef, SchemaSet};
 use crate::support::{Span, Spanned};
@@ -21,12 +22,12 @@ use crate::vir::DescribedWire;
 use crate::vir::{
     ArrayMapGrain, ArrayMapGrainKey, Budget, CheckRecipe, CommandArgument, CommandPiece,
     ControlRegion, EffectFacts, EffectKind, EnumType, EnumVariant, ExternKind, Function,
-    FunctionId, GeneratorArm, GeneratorBody, GeneratorStep, MatchArm as VirMatchArm,
-    MiniSolveRequirements, Module, Node, NodeId, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT,
-    ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, OrderedMatchArm, Parameter, ParameterId,
-    ParameterKind, RESULT_ERR_VARIANT, RESULT_OK_VARIANT, RecordField, RecordType, Test,
-    TestMetadata, TraceCheck, Type, VariantPayload, WireArg, WireSelector, YieldSite, YieldSiteId,
-    decode_error_type, decode_primitive_id, decode_request_type,
+    FunctionId, GeneratorArm, GeneratorBody, GeneratorStep, MatchArm as VirMatchArm, Module, Node,
+    NodeId, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT, ORDERING_GREATER_VARIANT,
+    ORDERING_LESS_VARIANT, Op, OrderedMatchArm, Parameter, ParameterId, ParameterKind,
+    RESULT_ERR_VARIANT, RESULT_OK_VARIANT, RecordField, RecordType, Test, TestMetadata, TraceCheck,
+    Type, VariantPayload, WireArg, WireSelector, YieldSite, YieldSiteId, decode_error_type,
+    decode_primitive_id, decode_request_type,
 };
 
 pub struct Compiler {
@@ -2690,7 +2691,7 @@ fn described_wire(
     if let ast::Expr::Identifier(identifier) = &call.args.args[0] {
         let bound = lookup_binding(bindings, &identifier.value, identifier.span)?;
         let function = match nodes[bound.node.0 as usize].op {
-            Op::Call(function) | Op::MiniSolve { function, .. } => function,
+            Op::Call(function) => function,
             _ => {
                 return Err(Diagnostics::one(Diagnostic::unsupported(
                     identifier.span,
@@ -3750,6 +3751,155 @@ fn lower_uniform_call(
     })
 }
 
+fn tree_projection_syntax(expression: &ast::Expr) -> Option<(&ast::Expr, Vec<&ast::Expr>)> {
+    fn collect<'a>(expression: &'a ast::Expr, segments: &mut Vec<&'a ast::Expr>) -> &'a ast::Expr {
+        if let ast::Expr::Paren(paren) = expression {
+            return collect(&paren.inner, segments);
+        }
+        let ast::Expr::Binary(binary) = expression else {
+            return expression;
+        };
+        if binary.op.value != "/" {
+            return expression;
+        }
+        let base = collect(&binary.left, segments);
+        segments.push(&binary.right);
+        base
+    }
+
+    let mut segments = Vec::new();
+    let base = collect(expression, &mut segments);
+    (!segments.is_empty()).then_some((base, segments))
+}
+
+fn progressive_exec_tree_root(nodes: &[Node], node: NodeId) -> bool {
+    let Some(project) = nodes.get(node.0 as usize) else {
+        return false;
+    };
+    let Op::Project { index: 0 } = project.op else {
+        return false;
+    };
+    let Some(exec) = project
+        .inputs
+        .first()
+        .and_then(|input| nodes.get(input.0 as usize))
+    else {
+        return false;
+    };
+    if !matches!(exec.op, Op::Exec { .. }) {
+        return false;
+    }
+    let Some(capability) = exec
+        .inputs
+        .first()
+        .and_then(|input| nodes.get(input.0 as usize))
+    else {
+        return false;
+    };
+    matches!(&capability.ty, Type::Record(record) if record.name == "ProgressiveSh")
+}
+
+fn lower_tree_text_projection(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    call: &ast::MethodCall,
+    base: &ast::Expr,
+    segments: &[&ast::Expr],
+) -> Result<LoweredValue, Diagnostics> {
+    let tree = lower_value(nodes, bindings, context, base)?;
+    require_type(&tree, &Type::Extern(ExternKind::Tree), expr_span(base))?;
+
+    let mut paths = Vec::with_capacity(segments.len());
+    for segment in segments {
+        let path = match segment {
+            ast::Expr::Str(segment) => LoweredValue {
+                node: push_node(
+                    nodes,
+                    segment.span,
+                    Type::Path,
+                    EffectFacts::PURE,
+                    Vec::new(),
+                    Op::Path(segment.value.clone()),
+                ),
+                ty: Type::Path,
+            },
+            expression => {
+                let path = lower_value(nodes, bindings, context, expression)?;
+                require_type(&path, &Type::Path, expr_span(expression))?;
+                path
+            }
+        };
+        paths.push(path);
+    }
+
+    if progressive_exec_tree_root(nodes, tree.node) {
+        let mut entry = tree.node;
+        for path in paths {
+            entry = push_node(
+                nodes,
+                call.span,
+                Type::Extern(ExternKind::TreeEntry),
+                EffectFacts::EFFECT,
+                vec![entry, path.node],
+                Op::TreeProject,
+            );
+        }
+        return Ok(LoweredValue {
+            node: push_node(
+                nodes,
+                call.span,
+                Type::String,
+                EffectFacts::EFFECT,
+                vec![entry],
+                Op::TreeEntryText,
+            ),
+            ty: Type::String,
+        });
+    }
+
+    let mut paths = paths.into_iter();
+    let mut path = paths
+        .next()
+        .expect("tree text projection has at least one segment");
+    for suffix in paths {
+        path = LoweredValue {
+            node: push_node(
+                nodes,
+                call.span,
+                Type::Path,
+                EffectFacts::PURE,
+                vec![path.node, suffix.node],
+                Op::PathJoin,
+            ),
+            ty: Type::Path,
+        };
+    }
+
+    let request_ty = tree_read_request_type();
+    let request = push_node(
+        nodes,
+        call.span,
+        request_ty,
+        EffectFacts::PURE,
+        vec![tree.node, path.node],
+        Op::Record,
+    );
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            call.span,
+            Type::String,
+            EffectFacts::PURE,
+            vec![request],
+            Op::InvokePrimitive {
+                primitive: tree_read_primitive_id(),
+            },
+        ),
+        ty: Type::String,
+    })
+}
+
 fn lower_method_call(
     nodes: &mut Vec<Node>,
     bindings: &BTreeMap<String, LoweredValue>,
@@ -3757,6 +3907,13 @@ fn lower_method_call(
     call: &ast::MethodCall,
     expected: Option<&Type>,
 ) -> Result<LoweredValue, Diagnostics> {
+    if call.name.value == "text"
+        && method_positional_args(call).is_empty()
+        && call.named_args.is_none()
+        && let Some((base, segments)) = tree_projection_syntax(&call.receiver)
+    {
+        return lower_tree_text_projection(nodes, bindings, context, call, base, &segments);
+    }
     let receiver = lower_value(nodes, bindings, context, &call.receiver)?;
     let Some(entry) = PreludeMethodRegistry::STANDARD.resolve(&receiver.ty, &call.name.value)
     else {
@@ -4903,12 +5060,16 @@ fn lower_effect_intrinsic(
     let (ty, op, inputs) = match call.callee.value.as_str() {
         "fixture_tree" => {
             check_arity(call, 1)?;
-            let name = lower_value(nodes, bindings, context, &call.args.args[0])?;
-            require_type(&name, &Type::String, expr_span(&call.args.args[0]))?;
+            let ast::Expr::Str(name) = &call.args.args[0] else {
+                return Err(Diagnostics::one(Diagnostic::unsupported(
+                    expr_span(&call.args.args[0]),
+                    "a fixture_tree string literal",
+                )));
+            };
             (
                 Type::Extern(ExternKind::Tree),
-                Op::FixtureTree,
-                vec![name.node],
+                Op::FixtureTree(name.value.clone()),
+                Vec::new(),
             )
         }
         "fixture_registry" => {
@@ -8494,10 +8655,6 @@ fn lower_direct_call(
         )));
     }
 
-    if let Some(value) = lower_lazy_mini_solve_call(nodes, bindings, context, call, signature)? {
-        return Ok(value);
-    }
-
     let positional = signature
         .parameters
         .iter()
@@ -8578,155 +8735,6 @@ fn lower_direct_call(
         ),
         ty: signature.return_type.clone(),
     })
-}
-
-fn lower_lazy_mini_solve_call(
-    nodes: &mut Vec<Node>,
-    bindings: &BTreeMap<String, LoweredValue>,
-    context: &ModuleContext<'_>,
-    call: &ast::Call,
-    signature: &FunctionSignature,
-) -> Result<Option<LoweredValue>, Diagnostics> {
-    if call.callee.value != "mini_solve" || !is_lazy_solver_signature(signature) {
-        return Ok(None);
-    }
-    let positional = signature
-        .parameters
-        .iter()
-        .find(|parameter| parameter.kind == ParameterKind::Positional)
-        .expect("lazy mini_solve signature has one positional parameter");
-    if call.args.args.len() != 1 {
-        return Err(invalid_arity(call.span, 1, call.args.args.len()));
-    }
-    let universe = lower_value_expected(
-        nodes,
-        bindings,
-        context,
-        &call.args.args[0],
-        Some(&positional.ty),
-    )?;
-    require_type(&universe, &positional.ty, expr_span(&call.args.args[0]))?;
-
-    let named_args = call.named_args.as_ref().ok_or_else(|| {
-        invalid_arity(call.span, signature.parameters.len(), call.args.args.len())
-    })?;
-    if named_args.fields.len() != 1 {
-        return Err(invalid_arity(
-            named_args.span,
-            signature.parameters.len(),
-            call.args.args.len() + named_args.fields.len(),
-        ));
-    }
-    let field = &named_args.fields[0];
-    if field.name.value != "requirements" {
-        return Err(Diagnostics::one(Diagnostic {
-            code: DiagnosticCode::UnknownName,
-            primary: field.name.span,
-            labels: Vec::new(),
-            payload: DiagnosticPayload::Name {
-                name: field.name.value.clone(),
-            },
-        }));
-    }
-    let parameter = signature
-        .parameters
-        .iter()
-        .find(|parameter| {
-            parameter.kind == ParameterKind::Named && parameter.name == "requirements"
-        })
-        .expect("lazy mini_solve signature has a requirements parameter");
-    let (descriptor, _requirements) = if field
-        .value
-        .as_ref()
-        .is_some_and(is_fixture_requirements_call)
-    {
-        (MiniSolveRequirements::FixtureWorkspace, None)
-    } else {
-        let requirements = if let Some(expression) = &field.value {
-            lower_value_expected(nodes, bindings, context, expression, Some(&parameter.ty))?
-        } else {
-            lookup_binding(bindings, &field.name.value, field.name.span)?
-        };
-        require_type(&requirements, &parameter.ty, field.span)?;
-        (
-            mini_solve_requirements_descriptor(nodes, requirements.node, field.span)?,
-            Some(requirements),
-        )
-    };
-
-    Ok(Some(LoweredValue {
-        node: push_node(
-            nodes,
-            call.span,
-            signature.return_type.clone(),
-            EffectFacts::EFFECT,
-            Vec::new(),
-            Op::MiniSolve {
-                function: signature.id,
-                requirements: descriptor,
-            },
-        ),
-        ty: signature.return_type.clone(),
-    }))
-}
-
-fn is_fixture_requirements_call(expression: &ast::Expr) -> bool {
-    matches!(expression, ast::Expr::MethodCall(call) if call.name.value == "requirements")
-}
-
-fn mini_solve_requirements_descriptor(
-    nodes: &[Node],
-    node: NodeId,
-    span: Span,
-) -> Result<MiniSolveRequirements, Diagnostics> {
-    let map = &nodes[node.0 as usize];
-    let Op::Map = map.op else {
-        return Err(Diagnostics::one(Diagnostic::unsupported(
-            span,
-            "mini_solve lazy requirements descriptor",
-        )));
-    };
-    let mut packages = Vec::with_capacity(map.inputs.len() / 2);
-    for pair in map.inputs.chunks_exact(2) {
-        let key = &nodes[pair[0].0 as usize];
-        let Op::String(package) = &key.op else {
-            return Err(Diagnostics::one(Diagnostic::unsupported(
-                key.span,
-                "mini_solve lazy requirements use literal package names",
-            )));
-        };
-        packages.push(package.clone());
-    }
-    packages.sort();
-    packages.dedup();
-    Ok(MiniSolveRequirements::Static { packages })
-}
-
-fn is_lazy_solver_signature(signature: &FunctionSignature) -> bool {
-    if signature.parameters.len() != 2 {
-        return false;
-    }
-    let Some(universe) = signature
-        .parameters
-        .iter()
-        .find(|parameter| parameter.kind == ParameterKind::Positional)
-    else {
-        return false;
-    };
-    let Type::Record(record) = &universe.ty else {
-        return false;
-    };
-    if record.name != "PackageUniverse" {
-        return false;
-    }
-    if !matches!(record.fields.as_slice(), [field] if field.name == "marker" && field.ty == Type::Int)
-    {
-        return false;
-    }
-    signature
-        .parameters
-        .iter()
-        .any(|parameter| parameter.kind == ParameterKind::Named && parameter.name == "requirements")
 }
 
 fn lower_value_call(

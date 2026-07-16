@@ -13,6 +13,7 @@ mod observe_primitive;
 mod primitive;
 mod scheduler;
 mod store;
+mod tree_read_primitive;
 
 pub use abi::*;
 pub use blob_persistence::*;
@@ -27,3 +28,4 @@ pub use observe_primitive::*;
 pub use primitive::*;
 pub use scheduler::*;
 pub use store::*;
+pub use tree_read_primitive::*;

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::io::{BufRead, BufReader, Read};
 use std::ops::Deref;
@@ -17,12 +17,13 @@ use crate::lowering::{LoweringArtifact, LoweringAttribution, ValueInputBinding};
 use crate::schema::SchemaRef;
 use crate::support::Span;
 use crate::vir::{
-    CommandPiece, ExternKind, Function, FunctionId, Island, IslandId, MiniSolveRequirements,
-    NodeId, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT, Op, ProgressiveProjection, Type,
-    VariantPayload,
+    CommandPiece, ExternKind, Function, FunctionId, Island, IslandId, NodeId, OPTION_NONE_VARIANT,
+    OPTION_SOME_VARIANT, Op, ProgressiveProjection, Type, VariantPayload,
 };
 
-use super::fixture::{FixtureEntryKind, FixtureReadError, FixtureStore, TarMember, parse_ustar};
+use super::fixture::{
+    FixtureEntryKind, FixtureReadError, FixtureStore, TarMember, fixture_tree_name, parse_ustar,
+};
 use super::identity::{
     DemandKey, DemandPreimage, Digest, Location, LocationId, RecipeId, ValueId, hash_framed,
 };
@@ -42,8 +43,9 @@ use super::store::{
 use super::{
     DecodePrimitive, EffectCtx, EffectTicket, ObservePrimitive, PinnedFetchPrimitive,
     PrimitiveCompletion, PrimitiveDispatcher, PrimitiveField, PrimitiveFieldValue,
-    PrimitiveMachineError, PrimitiveRegistry, PrimitiveValue, PrimitiveValueBody,
-    StagedEffectAuthority, TicketSubscription, blob_id_type, origin_hint_type,
+    PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveRegistry, PrimitiveValue,
+    PrimitiveValueBody, StagedEffectAuthority, TicketSubscription, TreeReadPrimitive, blob_id_type,
+    origin_hint_type,
 };
 use super::{MachineAttribution, MachineError, MachineOperation, RuntimeFault};
 
@@ -360,6 +362,9 @@ struct PrimitivePending {
     /// FIFO of parked tasks awaiting this completion, each with its own ABI
     /// plan describing the output frame region it materializes into.
     waiters: Vec<PrimitiveWaiter>,
+    memo_location: Location,
+    memo_preimage: DemandPreimage,
+    memo_policy: PrimitiveMemoPolicy,
 }
 
 /// One task parked on a registered-primitive completion, plus the ABI plan the
@@ -565,6 +570,7 @@ pub struct Runtime<S> {
     /// backs the described-wire trace checks and retains only the
     /// callee/argument/preimage selectors a descriptor can name.
     wire_demands: Vec<RealizedWireDemand>,
+    performed_read_paths: BTreeSet<String>,
     fixture_store: FixtureStore,
     primitive_dispatcher: PrimitiveDispatcher,
     primitive_services: super::PrimitiveServices,
@@ -724,6 +730,9 @@ fn default_primitive_dispatcher() -> PrimitiveDispatcher {
     registry
         .register(Arc::new(ObservePrimitive::default()))
         .expect("the built-in observe primitive is registered once");
+    registry
+        .register(Arc::new(TreeReadPrimitive::default()))
+        .expect("the built-in tree-read primitive is registered once");
     PrimitiveDispatcher::new(Arc::new(registry))
 }
 
@@ -741,6 +750,7 @@ impl<S: EventSink> Runtime<S> {
             counters: Counters::default(),
             next_task: 0,
             wire_demands: Vec::new(),
+            performed_read_paths: BTreeSet::new(),
             fixture_store: FixtureStore::default(),
             primitive_dispatcher: default_primitive_dispatcher(),
             primitive_services: super::PrimitiveServices::default(),
@@ -779,6 +789,7 @@ impl<S: EventSink> Runtime<S> {
             counters: Counters::default(),
             next_task: 0,
             wire_demands: Vec::new(),
+            performed_read_paths: BTreeSet::new(),
             fixture_store: FixtureStore::default(),
             primitive_dispatcher: default_primitive_dispatcher(),
             primitive_services: super::PrimitiveServices::default(),
@@ -827,6 +838,7 @@ impl<S: EventSink> Runtime<S> {
                 counters: Counters::default(),
                 next_task: 0,
                 wire_demands: Vec::new(),
+                performed_read_paths: BTreeSet::new(),
                 fixture_store: FixtureStore::default(),
                 primitive_dispatcher: default_primitive_dispatcher(),
                 primitive_services: super::PrimitiveServices::default(),
@@ -976,7 +988,10 @@ impl<S: EventSink> Runtime<S> {
     fn reverify_read_witness(&self, read: &ReadWitness) -> bool {
         match &read.observation {
             ReadObservation::Value(observed) => {
-                if matches!(read.projection, ReadProjection::Document) {
+                if matches!(
+                    read.projection,
+                    ReadProjection::Whole | ReadProjection::Document
+                ) {
                     return observed == &read.source;
                 }
                 if matches!(read.projection, ReadProjection::RegistryManifest) {
@@ -1070,168 +1085,6 @@ impl<S: EventSink> Runtime<S> {
                     && entry.preimage == *preimage
                     && self.exact_memo_replayable(entry)
             })
-    }
-
-    fn solver_row_location(projection: &str) -> Location {
-        let segments = vec![
-            "fixture".to_owned(),
-            "solver-row".to_owned(),
-            projection.to_owned(),
-        ];
-        let fields = segments.iter().map(String::as_bytes).collect::<Vec<_>>();
-        Location {
-            id: LocationId(hash_framed(b"vix.location.v1", &fields)),
-            segments,
-        }
-    }
-
-    fn solver_row_preimage(projection: &str) -> DemandPreimage {
-        DemandPreimage {
-            closure: RecipeId::from_canonical_vir(
-                format!("vix.mini-solve.row.v1:{projection}").as_bytes(),
-            ),
-            arguments: Vec::new(),
-        }
-    }
-
-    fn solver_row_text(
-        &mut self,
-        projection: &str,
-        validation_reads: &mut Vec<ReadWitness>,
-    ) -> Result<String, Box<MachineError>> {
-        let location = Self::solver_row_location(projection);
-        let preimage = Self::solver_row_preimage(projection);
-        let key = DemandKey::from_preimage(&preimage);
-        self.emit(EventKind::Demanded { key });
-
-        if let Some(entry) = self.memo.get(&location.id).cloned()
-            && entry.location == location
-            && entry.key == key
-            && entry.preimage == preimage
-            && self.exact_memo_replayable(&entry)
-        {
-            let stored = self.store.entry(entry.result).ok_or_else(|| {
-                Box::new(MachineError::runtime(
-                    MachineOperation::MemoRead,
-                    RuntimeFault::MissingMemoStoreHandle,
-                    None,
-                    Some(key),
-                ))
-            })?;
-            let bytes = stored
-                .resident_bytes()
-                .ok_or_else(|| effect_machine_error("solver row memo entry was not resident text"))?
-                .to_vec();
-            self.counters.memo_hits_exact += 1;
-            self.emit(EventKind::Memo {
-                location: location.id,
-                verdict: MemoVerdict::Exact,
-                verified: entry
-                    .receipt
-                    .as_ref()
-                    .map_or(0, |receipt| receipt.reads.len() as u32),
-            });
-            if let Some(receipt) = &entry.receipt {
-                validation_reads.extend(receipt.reads.iter().cloned());
-            }
-            return String::from_utf8(bytes)
-                .map_err(|_| effect_machine_error("solver row memo entry was not UTF-8"));
-        }
-
-        self.counters.memo_misses += 1;
-        self.emit(EventKind::Memo {
-            location: location.id,
-            verdict: MemoVerdict::Miss,
-            verified: 0,
-        });
-        let bytes = self
-            .fixture_store
-            .tree_file_bytes(projection)
-            .map_err(|_| effect_machine_error("solver row was unavailable"))?;
-        let value = effect_leaf(&Type::String, bytes);
-        let read = ReadWitness {
-            source: effect_leaf(&Type::String, b"fixture-index".to_vec()).identity,
-            projection: ReadProjection::TreePath {
-                path: projection.to_owned(),
-            },
-            observation: ReadObservation::Value(value.identity.clone()),
-        };
-        validation_reads.push(read.clone());
-        let interned = self
-            .store
-            .intern_realized(semantic_schema_ref(&Type::String), &value.resident);
-        self.store
-            .attach_frozen(interned.handle, FrozenValue::Opaque(value.resident.clone()));
-        self.observe_interned(&interned);
-        self.insert_memo(MemoEntry {
-            location,
-            key,
-            preimage,
-            result: interned.handle,
-            receipt: Some(Receipt {
-                demand: key,
-                reads: vec![read],
-            }),
-            current_receipt: true,
-        });
-        String::from_utf8(value.resident)
-            .map_err(|_| effect_machine_error("solver row was not UTF-8"))
-    }
-
-    fn mini_solve_value(
-        &mut self,
-        output_ty: &Type,
-        requirements: &MiniSolveRequirements,
-        validation_reads: &mut Vec<ReadWitness>,
-    ) -> Result<EffectValue, Box<MachineError>> {
-        let mut pending = self.mini_solve_requirements(requirements, validation_reads)?;
-        let mut visited = Vec::new();
-        while let Some(package) = pending.pop() {
-            if visited.iter().any(|name| name == &package) {
-                continue;
-            }
-            let projection = format!("index/{package}");
-            let row = self.solver_row_text(&projection, validation_reads)?;
-            if row.contains("-> libb") && !visited.iter().any(|name| name == "libb") {
-                pending.push("libb".to_owned());
-            }
-            visited.push(package);
-        }
-        visited.sort();
-        let frozen = frozen_solver_solution(output_ty, &visited)?;
-        effect_value_from_frozen(output_ty, frozen)
-    }
-
-    fn mini_solve_requirements(
-        &self,
-        requirements: &MiniSolveRequirements,
-        validation_reads: &mut Vec<ReadWitness>,
-    ) -> Result<Vec<String>, Box<MachineError>> {
-        match requirements {
-            MiniSolveRequirements::Static { packages } => Ok(packages.clone()),
-            MiniSolveRequirements::FixtureWorkspace => {
-                let projection = "kitchen-sink/requirements.txt";
-                let bytes = self
-                    .fixture_store
-                    .tree_file_bytes(projection)
-                    .map_err(|_| effect_machine_error("workspace requirements were unavailable"))?;
-                let value = effect_leaf(&Type::String, bytes);
-                validation_reads.push(ReadWitness {
-                    source: effect_leaf(&Type::String, b"fixture-workspace".to_vec()).identity,
-                    projection: ReadProjection::TreePath {
-                        path: projection.to_owned(),
-                    },
-                    observation: ReadObservation::Value(value.identity),
-                });
-                let text = String::from_utf8(value.resident)
-                    .map_err(|_| effect_machine_error("workspace requirements were not UTF-8"))?;
-                if text.contains("libd") {
-                    Ok(vec!["liba".to_owned(), "libd".to_owned()])
-                } else {
-                    Ok(vec!["liba".to_owned(), "libc".to_owned()])
-                }
-            }
-        }
     }
 
     /// The scalar result word of a resolved wire demand, read from its interned
@@ -2682,19 +2535,13 @@ impl<S: EventSink> Runtime<S> {
                     Some(key),
                 ))
             })?;
-        let allows_projection = !matches!(effect_output.op, Op::MiniSolve { .. });
-        let force_miss = self.effect_fixture_overlay_active(effect);
-        let memo_handle = (!force_miss)
-            .then(|| {
-                self.memo.get(&location.id).and_then(|entry| {
-                    (entry.location == *location
-                        && entry.key == key
-                        && entry.preimage == preimage
-                        && self.exact_memo_replayable(entry))
-                    .then_some(entry.result)
-                })
-            })
-            .flatten();
+        let memo_handle = self.memo.get(&location.id).and_then(|entry| {
+            (entry.location == *location
+                && entry.key == key
+                && entry.preimage == preimage
+                && self.exact_memo_replayable(entry))
+            .then_some(entry.result)
+        });
         if let Some(handle) = memo_handle {
             let (identity, failure) = match self.store.entry(handle) {
                 Some(stored) => (stored.identity.clone(), stored.failure().cloned()),
@@ -2722,9 +2569,7 @@ impl<S: EventSink> Runtime<S> {
                 failure_context: None,
             });
         }
-        if !force_miss
-            && allows_projection
-            && let Some(entry) = self.memo.get(&location.id).cloned()
+        if let Some(entry) = self.memo.get(&location.id).cloned()
             && entry.location == *location
             && entry
                 .receipt
@@ -2830,6 +2675,11 @@ impl<S: EventSink> Runtime<S> {
                 self.store.attach_frozen(interned.handle, frozen);
             }
             self.observe_interned(&interned);
+            let receipt = Receipt {
+                demand: key,
+                reads: reads.clone(),
+            };
+            self.record_performed_reads(&receipt);
             self.memo.insert(
                 location.id,
                 MemoEntry {
@@ -2837,11 +2687,8 @@ impl<S: EventSink> Runtime<S> {
                     key,
                     preimage: preimage.clone(),
                     result: interned.handle,
-                    receipt: Some(Receipt {
-                        demand: key,
-                        reads: reads.clone(),
-                    }),
-                    current_receipt: !matches!(effect_output.op, Op::MiniSolve { .. }),
+                    receipt: Some(receipt),
+                    current_receipt: true,
                 },
             );
             if let Some(demand) = self.demands.get_mut(&key) {
@@ -2853,9 +2700,6 @@ impl<S: EventSink> Runtime<S> {
                 key,
                 identity: interned.identity.clone(),
             });
-            if let Op::MiniSolve { function, .. } = effect_output.op {
-                self.record_wire_demand(function, None, fingerprint.to_owned());
-            }
             return Ok(Evaluation {
                 handle: interned.handle,
                 identity: interned.identity,
@@ -2916,26 +2760,6 @@ impl<S: EventSink> Runtime<S> {
                     callee.output,
                 )
             })
-    }
-
-    fn effect_fixture_overlay_active(&self, effect: &Island) -> bool {
-        let Some(overlay) = self.fixture_store.rerun_overlay() else {
-            return false;
-        };
-        let Some(output) = effect.nodes.iter().find(|node| node.id == effect.output) else {
-            return false;
-        };
-        if !matches!(output.op, Op::FixtureTree) {
-            return false;
-        }
-        let Some(name_node) = output
-            .inputs
-            .first()
-            .and_then(|input| effect.nodes.iter().find(|node| node.id == *input))
-        else {
-            return false;
-        };
-        matches!(&name_node.op, Op::String(name) if name == overlay)
     }
 
     fn evaluate_effect_node(
@@ -3012,6 +2836,11 @@ impl<S: EventSink> Runtime<S> {
                 &node.ty,
                 reference.canonical_bytes(),
             ))),
+            Op::FixtureTree(name) => {
+                let mut resident = b"fixture-tree\0".to_vec();
+                resident.extend(name.as_bytes());
+                Ok(EffectTerm::Value(effect_leaf(&node.ty, resident)))
+            }
             Op::Call(callee) => {
                 let (_, _, output) = Self::effect_function(island, *callee).ok_or_else(|| {
                     Box::new(MachineError::runtime(
@@ -3136,20 +2965,6 @@ impl<S: EventSink> Runtime<S> {
                     &node.ty,
                     frozen.clone(),
                 )?))
-            }
-            Op::FixtureTree => {
-                let EffectTerm::Value(name) = input(0, self)? else {
-                    return effect_fault("fixture_tree name was codata");
-                };
-                let mut resident = b"fixture-tree\0".to_vec();
-                resident.extend(&name.resident);
-                if let Ok(name_text) = core::str::from_utf8(&name.resident)
-                    && self.fixture_store.rerun_overlay() == Some(name_text)
-                {
-                    resident.extend(b"\0rerun");
-                    resident.extend(name_text.as_bytes());
-                }
-                Ok(EffectTerm::Value(effect_leaf(&node.ty, resident)))
             }
             Op::FixtureRegistry => Ok(EffectTerm::Value(effect_leaf(
                 &node.ty,
@@ -3366,37 +3181,6 @@ impl<S: EventSink> Runtime<S> {
                 )
                 .map(EffectTerm::Value)
             }
-            Op::Fetch => {
-                let EffectTerm::Value(pinned) = input(0, self)? else {
-                    return effect_fault("fetch URL was codata");
-                };
-                let pinned_identity = pinned.identity;
-                let pinned = String::from_utf8(pinned.resident)
-                    .map_err(|_| effect_machine_error("pinned URL payload was not UTF-8"))?;
-                let (url, expected) = pinned
-                    .split_once('\n')
-                    .ok_or_else(|| effect_machine_error("pinned URL payload was malformed"))?;
-                let bytes = self
-                    .fixture_store
-                    .fetch_url(url)
-                    .map_err(|_| effect_machine_error("fixture fetch origin was unavailable"))?;
-                let blob = effect_leaf(&node.ty, bytes);
-                if blob.identity.content.hex() != expected {
-                    return effect_fault("fixture fetch did not match its pinned content identity");
-                }
-                reads.push(super::model::ReadWitness {
-                    source: pinned_identity,
-                    projection: ReadProjection::Origin {
-                        coordinate: url.to_owned(),
-                    },
-                    observation: ReadObservation::Value(blob.identity.clone()),
-                });
-                self.counters.fetches_performed += 1;
-                Ok(EffectTerm::Value(blob))
-            }
-            Op::MiniSolve { requirements, .. } => self
-                .mini_solve_value(&node.ty, requirements, reads)
-                .map(EffectTerm::Value),
             Op::Untar => {
                 let EffectTerm::Value(blob) = input(0, self)? else {
                     return effect_fault("untar input was codata");
@@ -3713,7 +3497,66 @@ impl<S: EventSink> Runtime<S> {
             }
         };
         let request_id = request_value.identity();
-        let primitive_demand = primitive_demand_key(&plan.primitive, &request_id);
+        let primitive_preimage = primitive_demand_preimage(&plan.primitive, &request_id);
+        let primitive_demand = DemandKey::from_preimage(&primitive_preimage);
+        let memo_policy = self
+            .primitive_dispatcher
+            .descriptor(&plan.primitive)
+            .map(|descriptor| descriptor.memo_policy)
+            .ok_or_else(|| {
+                self.terminate_primitive(
+                    task_id,
+                    demand_key,
+                    PrimitiveHostFailure::Abi(format!(
+                        "registered primitive descriptor is absent for {:?}",
+                        plan.primitive
+                    )),
+                )
+            })?;
+        let memo_site = format!(
+            "{}:{}:v{}:f{}:n{}",
+            plan.primitive.namespace,
+            plan.primitive.name,
+            plan.primitive.version,
+            site.function.0,
+            site.node.0,
+        );
+        let memo_location = Location::for_primitive(&ctx.location, &memo_site);
+        if memo_policy != PrimitiveMemoPolicy::Volatile
+            && let Some(entry) = self.memo.get(&memo_location.id).cloned()
+            && entry.location == memo_location
+            && entry.key == primitive_demand
+            && entry.preimage == primitive_preimage
+            && self.exact_memo_replayable(&entry)
+            && let Some(receipt) = entry.receipt.clone()
+            && let Some(stored) = self.store.entry(entry.result)
+        {
+            let value = if let Some(bytes) = stored.resident_bytes() {
+                PrimitiveValue::bytes(stored.identity.schema.clone(), bytes.to_vec())
+            } else if let Some(frozen) = stored.frozen() {
+                primitive_value_from_frozen(&plan.response, frozen)?
+            } else {
+                return Err(self.terminate_primitive(
+                    task_id,
+                    demand_key,
+                    PrimitiveHostFailure::Abi(
+                        "memoized primitive result was not materializable".to_owned(),
+                    ),
+                ));
+            };
+            self.counters.memo_hits_exact += 1;
+            self.emit(EventKind::Memo {
+                location: memo_location.id,
+                verdict: MemoVerdict::Exact,
+                verified: u32::try_from(receipt.reads.len()).unwrap_or(u32::MAX),
+            });
+            return self.resume_primitive_waiter(
+                PrimitiveWaiter { ctx, plan, site },
+                primitive_demand,
+                &value,
+                &receipt,
+            );
+        }
         if let Some(pending) = self.primitive_pending.get_mut(&primitive_demand) {
             // Join an in-flight primitive demand: reuse the first caller's single
             // authority and subscription; only add this frame as a waiter.
@@ -3733,8 +3576,9 @@ impl<S: EventSink> Runtime<S> {
                     PrimitiveValue::bytes(entry.identity.schema.clone(), bytes.to_vec()),
                 ))
             }));
-            let mut authority =
-                StagedEffectAuthority::new(authority_inputs).with_schema_types(catalog);
+            let mut authority = StagedEffectAuthority::new(authority_inputs)
+                .with_schema_types(catalog)
+                .with_fixture_store(self.fixture_store.clone());
             if let Some(persistence) = self.primitive_services.value_persistence() {
                 authority = authority.with_value_persistence(persistence);
             }
@@ -3773,6 +3617,9 @@ impl<S: EventSink> Runtime<S> {
                     authority,
                     subscription,
                     waiters: vec![PrimitiveWaiter { ctx, plan, site }],
+                    memo_location,
+                    memo_preimage: primitive_preimage,
+                    memo_policy,
                 },
             );
             self.observe_effect_frontier();
@@ -3878,11 +3725,15 @@ impl<S: EventSink> Runtime<S> {
             self.counters.stale_completions_ignored += 1;
             return Ok(());
         };
+        self.record_performed_reads(&publication.receipt);
         let PrimitivePending {
             ticket: _,
             authority,
             subscription,
             waiters,
+            memo_location,
+            memo_preimage,
+            memo_policy,
         } = pending;
         drop(subscription);
         self.primitive_dispatcher.retire(demand);
@@ -3916,66 +3767,88 @@ impl<S: EventSink> Runtime<S> {
                 )),
             ));
         };
-        for PrimitiveWaiter {
+        for waiter in waiters {
+            self.resume_primitive_waiter(waiter, demand, &value, &publication.receipt)?;
+        }
+        if memo_policy != PrimitiveMemoPolicy::Volatile
+            && let Some(result) = self.store.handle_for_identity(&identity)
+        {
+            self.insert_memo(MemoEntry {
+                location: memo_location,
+                key: demand,
+                preimage: memo_preimage,
+                result,
+                receipt: Some(publication.receipt),
+                current_receipt: true,
+            });
+        }
+        Ok(())
+    }
+
+    fn resume_primitive_waiter(
+        &mut self,
+        waiter: PrimitiveWaiter,
+        demand: DemandKey,
+        value: &PrimitiveValue,
+        receipt: &Receipt,
+    ) -> Result<(), Box<MachineError>> {
+        let PrimitiveWaiter {
             mut ctx,
             plan,
             site,
-        } in waiters
-        {
-            if value.schema != plan.response.schema_ref() {
-                let failure = PrimitiveHostFailure::Abi(format!(
-                    "primitive result schema {} disagrees with response schema {}",
-                    value.schema,
-                    plan.response.schema_ref()
-                ));
-                return Err(self.terminate_primitive(ctx.task_id, ctx.demand_key, failure));
-            }
-            let mut clear = Ok(());
-            for index in 0..plan.output.words().as_usize() {
-                let Some(slot) = plan.output.word(index) else {
-                    clear = Err("primitive output region overflowed".to_owned());
-                    break;
-                };
-                if let Err(fault) = ctx.task.write_host_word(slot.byte_offset(), 0) {
-                    clear = Err(format!("primitive output clear failed: {fault:?}"));
-                    break;
-                }
-            }
-            if let Err(detail) = clear {
-                return Err(self.terminate_primitive(
-                    ctx.task_id,
-                    ctx.demand_key,
-                    PrimitiveHostFailure::Abi(detail),
-                ));
-            }
-            let mut interned = Vec::new();
-            if let Err(detail) = write_primitive_value(
-                &mut ctx.task,
-                plan.output,
-                0,
-                &plan.response,
-                &value,
-                &mut self.store,
-                &mut interned,
-            ) {
-                return Err(self.terminate_primitive(
-                    ctx.task_id,
-                    ctx.demand_key,
-                    PrimitiveHostFailure::Abi(detail),
-                ));
-            }
-            for value in &interned {
-                self.observe_interned(value);
-            }
-            ctx.primitive_reads
-                .extend(publication.receipt.reads.iter().cloned());
-            self.emit(EventKind::PrimitiveResumed {
-                task: ctx.task_id,
-                key: demand,
-                site,
-            });
-            self.runnable.push(ctx);
+        } = waiter;
+        if value.schema != plan.response.schema_ref() {
+            let failure = PrimitiveHostFailure::Abi(format!(
+                "primitive result schema {} disagrees with response schema {}",
+                value.schema,
+                plan.response.schema_ref()
+            ));
+            return Err(self.terminate_primitive(ctx.task_id, ctx.demand_key, failure));
         }
+        let mut clear = Ok(());
+        for index in 0..plan.output.words().as_usize() {
+            let Some(slot) = plan.output.word(index) else {
+                clear = Err("primitive output region overflowed".to_owned());
+                break;
+            };
+            if let Err(fault) = ctx.task.write_host_word(slot.byte_offset(), 0) {
+                clear = Err(format!("primitive output clear failed: {fault:?}"));
+                break;
+            }
+        }
+        if let Err(detail) = clear {
+            return Err(self.terminate_primitive(
+                ctx.task_id,
+                ctx.demand_key,
+                PrimitiveHostFailure::Abi(detail),
+            ));
+        }
+        let mut interned = Vec::new();
+        if let Err(detail) = write_primitive_value(
+            &mut ctx.task,
+            plan.output,
+            0,
+            &plan.response,
+            value,
+            &mut self.store,
+            &mut interned,
+        ) {
+            return Err(self.terminate_primitive(
+                ctx.task_id,
+                ctx.demand_key,
+                PrimitiveHostFailure::Abi(detail),
+            ));
+        }
+        for value in &interned {
+            self.observe_interned(value);
+        }
+        ctx.primitive_reads.extend(receipt.reads.iter().cloned());
+        self.emit(EventKind::PrimitiveResumed {
+            task: ctx.task_id,
+            key: demand,
+            site,
+        });
+        self.runnable.push(ctx);
         Ok(())
     }
 
@@ -4974,6 +4847,19 @@ impl<S: EventSink> Runtime<S> {
             .filter_map(|entry| entry.receipt.as_ref())
     }
 
+    pub fn performed_read_paths(&self) -> impl Iterator<Item = &str> {
+        self.performed_read_paths.iter().map(String::as_str)
+    }
+
+    fn record_performed_reads(&mut self, receipt: &Receipt) {
+        self.performed_read_paths.extend(
+            receipt
+                .reads
+                .iter()
+                .filter_map(|read| read.projection.trace_path().map(str::to_owned)),
+        );
+    }
+
     #[must_use]
     pub fn store(&self) -> &Store {
         &self.store
@@ -5551,6 +5437,7 @@ impl<S: EventSink> Runtime<S> {
                 observation: ReadObservation::Value(interned.identity.clone()),
             }],
         };
+        self.record_performed_reads(&receipt);
         self.memo.insert(
             pending.location.id,
             MemoEntry {
@@ -6926,7 +6813,7 @@ fn effect_leaf(ty: &Type, resident: Vec<u8>) -> EffectValue {
     }
 }
 
-fn primitive_demand_key(primitive: &super::PrimitiveId, request: &ValueId) -> DemandKey {
+fn primitive_demand_preimage(primitive: &super::PrimitiveId, request: &ValueId) -> DemandPreimage {
     let version = primitive.version.to_le_bytes();
     let recipe = RecipeId(hash_framed(
         b"vix.primitive.recipe.v1",
@@ -6936,10 +6823,10 @@ fn primitive_demand_key(primitive: &super::PrimitiveId, request: &ValueId) -> De
             &version,
         ],
     ));
-    DemandKey::from_preimage(&DemandPreimage {
+    DemandPreimage {
         closure: recipe,
         arguments: vec![request.clone()],
-    })
+    }
 }
 
 fn primitive_value_from_frame(
@@ -7844,26 +7731,6 @@ fn effect_value_from_frozen(
     }
 }
 
-fn frozen_solver_solution(
-    ty: &Type,
-    packages: &[String],
-) -> Result<FrozenValue, Box<MachineError>> {
-    let Some(solution_ty) = ty.option_inner() else {
-        return effect_fault("mini_solve result type was not Option<_>");
-    };
-    let Type::Map { key, value } = solution_ty else {
-        return effect_fault("mini_solve result payload was not a map");
-    };
-    if **key != Type::String {
-        return effect_fault("mini_solve result map key was not String");
-    }
-    let _ = (packages, value);
-    Ok(FrozenValue::Variant {
-        tag: OPTION_SOME_VARIANT,
-        fields: vec![FrozenValue::OrderedMap(Vec::new())],
-    })
-}
-
 fn read_i64(bytes: &[u8]) -> Option<i64> {
     Some(i64::from_le_bytes(bytes.get(..8)?.try_into().ok()?))
 }
@@ -7902,11 +7769,6 @@ fn split_tree_entry(bytes: &[u8]) -> Result<(&[u8], &[u8]), Box<MachineError>> {
         .filter(|end| *end <= bytes.len())
         .ok_or_else(|| effect_machine_error("tree entry payload was truncated"))?;
     Ok((&bytes[header..tree_end], &bytes[tree_end..]))
-}
-
-fn fixture_tree_name(bytes: &[u8]) -> Option<&[u8]> {
-    let name = bytes.strip_prefix(b"fixture-tree\0")?;
-    Some(name.split(|byte| *byte == 0).next().unwrap_or(name))
 }
 
 fn read_exec_stdout(
@@ -8206,7 +8068,9 @@ fn decode_result(
         // manufacturing an array-outcome envelope.
         return Ok(if lowered.publishes_value {
             match lowered.output_type {
-                Type::Int | Type::Bool => DecodedResult::OkScalarValue(task.result_i64()?),
+                Type::Int | Type::Bool if !lowered.publishes_snapshot => {
+                    DecodedResult::OkScalarValue(task.result_i64()?)
+                }
                 _ => DecodedResult::OkValue,
             }
         } else {
@@ -8224,6 +8088,12 @@ fn decode_result(
     })?;
     if selector == abi.ok_variant {
         if lowered.publishes_value {
+            if matches!(lowered.output_type, Type::Int | Type::Bool) && !lowered.publishes_snapshot
+            {
+                return Ok(DecodedResult::OkScalarValue(
+                    result.enum_scalar_field(selector, 0)?,
+                ));
+            }
             return Ok(DecodedResult::OkValue);
         }
         return Ok(DecodedResult::OkScalar(
