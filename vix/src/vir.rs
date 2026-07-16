@@ -1123,13 +1123,6 @@ pub fn decode_error_type() -> Type {
     ))
 }
 
-#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
-#[repr(u8)]
-pub enum MiniSolveRequirements {
-    Static { packages: Vec<String> },
-    FixtureWorkspace,
-}
-
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EffectFacts {
     pub kind: EffectKind,
@@ -1375,13 +1368,6 @@ pub enum Op {
     /// identity, because an observation names its value only after the bytes
     /// arrive (`machine.primitive.fetch-is-pinned`, the `observe` counterpart).
     RegistryCoordinate,
-    /// Resolve the canonical package solver fixture lazily through visited
-    /// package-row reads. Inputs are the authored universe value and the
-    /// requirements map; receipts carry the package rows actually read.
-    MiniSolve {
-        function: FunctionId,
-        requirements: MiniSolveRequirements,
-    },
     /// Extract an archive Blob into a Tree whose identity is the canonical
     /// tree encoding — never the archive bytes' ContentHash.
     ///
@@ -2580,9 +2566,6 @@ impl Module {
                 function.nodes.iter().any(|node| {
                     let callee = match node.op {
                         Op::Call(callee) | Op::Closure(callee) => Some(callee),
-                        Op::MiniSolve {
-                            function: callee, ..
-                        } => Some(callee),
                         _ => None,
                     };
                     callee.is_some_and(|callee| {
@@ -3749,7 +3732,6 @@ fn island_reachable(nodes: &[Node], output: NodeId) -> BTreeSet<NodeId> {
 fn direct_callee(node: &Node) -> Option<FunctionId> {
     match node.op {
         Op::Call(callee) | Op::Closure(callee) => Some(callee),
-        Op::MiniSolve { function, .. } => Some(function),
         _ => None,
     }
 }
@@ -3842,10 +3824,7 @@ fn is_scalar_call_candidate(node: &Node) -> bool {
 /// (a lazy argument expression) carries no invocation provenance.
 fn invocation_provenance(function: &Function, node: &Node) -> Option<WireProvenance> {
     let callee = match node.op {
-        Op::Call(callee)
-        | Op::MiniSolve {
-            function: callee, ..
-        } => callee,
+        Op::Call(callee) => callee,
         _ => return None,
     };
     let mut literals = Vec::with_capacity(node.inputs.len());
@@ -3907,7 +3886,6 @@ fn is_effect_root(node: &Node) -> bool {
             | Op::FixtureRegistry
             | Op::RegistryUrl
             | Op::RegistryCoordinate
-            | Op::MiniSolve { .. }
             | Op::Untar
             | Op::BlobLen
     ) || (node.effect.kind == EffectKind::Effect
@@ -4442,28 +4420,6 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::FixtureRegistry => op.push(94),
         Op::RegistryUrl => op.push(95),
         Op::RegistryCoordinate => op.push(102),
-        Op::MiniSolve {
-            function,
-            requirements,
-        } => {
-            op.push(99);
-            op.extend_from_slice(
-                &function_ids
-                    .get(function)
-                    .expect("mini_solve function belongs to the island closure")
-                    .to_le_bytes(),
-            );
-            match requirements {
-                MiniSolveRequirements::Static { packages } => {
-                    op.push(0);
-                    frame(&mut op, &(packages.len() as u64).to_le_bytes());
-                    for package in packages {
-                        frame(&mut op, package.as_bytes());
-                    }
-                }
-                MiniSolveRequirements::FixtureWorkspace => op.push(1),
-            }
-        }
         Op::Untar => op.push(97),
         Op::BlobLen => op.push(98),
     }

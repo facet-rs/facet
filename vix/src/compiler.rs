@@ -21,12 +21,12 @@ use crate::vir::DescribedWire;
 use crate::vir::{
     ArrayMapGrain, ArrayMapGrainKey, Budget, CheckRecipe, CommandArgument, CommandPiece,
     ControlRegion, EffectFacts, EffectKind, EnumType, EnumVariant, ExternKind, Function,
-    FunctionId, GeneratorArm, GeneratorBody, GeneratorStep, MatchArm as VirMatchArm,
-    MiniSolveRequirements, Module, Node, NodeId, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT,
-    ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, OrderedMatchArm, Parameter, ParameterId,
-    ParameterKind, RESULT_ERR_VARIANT, RESULT_OK_VARIANT, RecordField, RecordType, Test,
-    TestMetadata, TraceCheck, Type, VariantPayload, WireArg, WireSelector, YieldSite, YieldSiteId,
-    decode_error_type, decode_primitive_id, decode_request_type,
+    FunctionId, GeneratorArm, GeneratorBody, GeneratorStep, MatchArm as VirMatchArm, Module, Node,
+    NodeId, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT, ORDERING_GREATER_VARIANT,
+    ORDERING_LESS_VARIANT, Op, OrderedMatchArm, Parameter, ParameterId, ParameterKind,
+    RESULT_ERR_VARIANT, RESULT_OK_VARIANT, RecordField, RecordType, Test, TestMetadata, TraceCheck,
+    Type, VariantPayload, WireArg, WireSelector, YieldSite, YieldSiteId, decode_error_type,
+    decode_primitive_id, decode_request_type,
 };
 
 pub struct Compiler {
@@ -2690,7 +2690,7 @@ fn described_wire(
     if let ast::Expr::Identifier(identifier) = &call.args.args[0] {
         let bound = lookup_binding(bindings, &identifier.value, identifier.span)?;
         let function = match nodes[bound.node.0 as usize].op {
-            Op::Call(function) | Op::MiniSolve { function, .. } => function,
+            Op::Call(function) => function,
             _ => {
                 return Err(Diagnostics::one(Diagnostic::unsupported(
                     identifier.span,
@@ -8494,10 +8494,6 @@ fn lower_direct_call(
         )));
     }
 
-    if let Some(value) = lower_lazy_mini_solve_call(nodes, bindings, context, call, signature)? {
-        return Ok(value);
-    }
-
     let positional = signature
         .parameters
         .iter()
@@ -8578,155 +8574,6 @@ fn lower_direct_call(
         ),
         ty: signature.return_type.clone(),
     })
-}
-
-fn lower_lazy_mini_solve_call(
-    nodes: &mut Vec<Node>,
-    bindings: &BTreeMap<String, LoweredValue>,
-    context: &ModuleContext<'_>,
-    call: &ast::Call,
-    signature: &FunctionSignature,
-) -> Result<Option<LoweredValue>, Diagnostics> {
-    if call.callee.value != "mini_solve" || !is_lazy_solver_signature(signature) {
-        return Ok(None);
-    }
-    let positional = signature
-        .parameters
-        .iter()
-        .find(|parameter| parameter.kind == ParameterKind::Positional)
-        .expect("lazy mini_solve signature has one positional parameter");
-    if call.args.args.len() != 1 {
-        return Err(invalid_arity(call.span, 1, call.args.args.len()));
-    }
-    let universe = lower_value_expected(
-        nodes,
-        bindings,
-        context,
-        &call.args.args[0],
-        Some(&positional.ty),
-    )?;
-    require_type(&universe, &positional.ty, expr_span(&call.args.args[0]))?;
-
-    let named_args = call.named_args.as_ref().ok_or_else(|| {
-        invalid_arity(call.span, signature.parameters.len(), call.args.args.len())
-    })?;
-    if named_args.fields.len() != 1 {
-        return Err(invalid_arity(
-            named_args.span,
-            signature.parameters.len(),
-            call.args.args.len() + named_args.fields.len(),
-        ));
-    }
-    let field = &named_args.fields[0];
-    if field.name.value != "requirements" {
-        return Err(Diagnostics::one(Diagnostic {
-            code: DiagnosticCode::UnknownName,
-            primary: field.name.span,
-            labels: Vec::new(),
-            payload: DiagnosticPayload::Name {
-                name: field.name.value.clone(),
-            },
-        }));
-    }
-    let parameter = signature
-        .parameters
-        .iter()
-        .find(|parameter| {
-            parameter.kind == ParameterKind::Named && parameter.name == "requirements"
-        })
-        .expect("lazy mini_solve signature has a requirements parameter");
-    let (descriptor, _requirements) = if field
-        .value
-        .as_ref()
-        .is_some_and(is_fixture_requirements_call)
-    {
-        (MiniSolveRequirements::FixtureWorkspace, None)
-    } else {
-        let requirements = if let Some(expression) = &field.value {
-            lower_value_expected(nodes, bindings, context, expression, Some(&parameter.ty))?
-        } else {
-            lookup_binding(bindings, &field.name.value, field.name.span)?
-        };
-        require_type(&requirements, &parameter.ty, field.span)?;
-        (
-            mini_solve_requirements_descriptor(nodes, requirements.node, field.span)?,
-            Some(requirements),
-        )
-    };
-
-    Ok(Some(LoweredValue {
-        node: push_node(
-            nodes,
-            call.span,
-            signature.return_type.clone(),
-            EffectFacts::EFFECT,
-            Vec::new(),
-            Op::MiniSolve {
-                function: signature.id,
-                requirements: descriptor,
-            },
-        ),
-        ty: signature.return_type.clone(),
-    }))
-}
-
-fn is_fixture_requirements_call(expression: &ast::Expr) -> bool {
-    matches!(expression, ast::Expr::MethodCall(call) if call.name.value == "requirements")
-}
-
-fn mini_solve_requirements_descriptor(
-    nodes: &[Node],
-    node: NodeId,
-    span: Span,
-) -> Result<MiniSolveRequirements, Diagnostics> {
-    let map = &nodes[node.0 as usize];
-    let Op::Map = map.op else {
-        return Err(Diagnostics::one(Diagnostic::unsupported(
-            span,
-            "mini_solve lazy requirements descriptor",
-        )));
-    };
-    let mut packages = Vec::with_capacity(map.inputs.len() / 2);
-    for pair in map.inputs.chunks_exact(2) {
-        let key = &nodes[pair[0].0 as usize];
-        let Op::String(package) = &key.op else {
-            return Err(Diagnostics::one(Diagnostic::unsupported(
-                key.span,
-                "mini_solve lazy requirements use literal package names",
-            )));
-        };
-        packages.push(package.clone());
-    }
-    packages.sort();
-    packages.dedup();
-    Ok(MiniSolveRequirements::Static { packages })
-}
-
-fn is_lazy_solver_signature(signature: &FunctionSignature) -> bool {
-    if signature.parameters.len() != 2 {
-        return false;
-    }
-    let Some(universe) = signature
-        .parameters
-        .iter()
-        .find(|parameter| parameter.kind == ParameterKind::Positional)
-    else {
-        return false;
-    };
-    let Type::Record(record) = &universe.ty else {
-        return false;
-    };
-    if record.name != "PackageUniverse" {
-        return false;
-    }
-    if !matches!(record.fields.as_slice(), [field] if field.name == "marker" && field.ty == Type::Int)
-    {
-        return false;
-    }
-    signature
-        .parameters
-        .iter()
-        .any(|parameter| parameter.kind == ParameterKind::Named && parameter.name == "requirements")
 }
 
 fn lower_value_call(
