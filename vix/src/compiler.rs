@@ -224,7 +224,18 @@ struct PendingMonomorph {
     id: FunctionId,
     name: String,
     arguments: Vec<Type>,
+    /// The concrete type environment for the body — base types plus the
+    /// generic's type parameters bound to `arguments`. Computed once when the
+    /// instance is registered and reused when its body is drained.
+    types: BTreeMap<String, Type>,
 }
+
+/// Upper bound on the number of distinct monomorphized instances a single
+/// module may produce. A generic that recurses at an ever-growing type (`fn
+/// f<T>(x: T) { f([x]) }`) instantiates without limit; this turns the resulting
+/// non-termination into a loud diagnostic instead of an OOM. Config modules
+/// realistically need a handful of instances, so the ceiling is generous.
+const MONOMORPHIZATION_INSTANCE_LIMIT: usize = 1024;
 
 struct ClosureScope {
     path: String,
@@ -333,6 +344,7 @@ impl<'a> ModuleContext<'a> {
         &self,
         name: &str,
         arguments: Vec<Type>,
+        span: Span,
     ) -> Result<(FunctionId, FunctionSignature), Diagnostics> {
         if let Some((id, signature)) = self
             .generated
@@ -349,6 +361,15 @@ impl<'a> ModuleContext<'a> {
             })
         {
             return Ok((id, signature));
+        }
+        if self.generated.monomorphs.borrow().instances.len() >= MONOMORPHIZATION_INSTANCE_LIMIT {
+            return Err(Diagnostics::one(Diagnostic::unsupported(
+                span,
+                format!(
+                    "generic instantiation limit reached ({MONOMORPHIZATION_INSTANCE_LIMIT}); a \
+                     generic function likely recurses at an ever-growing type"
+                ),
+            )));
         }
         let template = *self
             .generics
@@ -368,6 +389,7 @@ impl<'a> ModuleContext<'a> {
             id,
             name: name.to_owned(),
             arguments,
+            types,
         });
         Ok((id, signature))
     }
@@ -1293,9 +1315,9 @@ fn lower_module(source: &ast::SourceFile, config: CompilerConfig) -> Result<Modu
                 },
             }));
         }
-        // A generic `#[test]` still flows through `declare_function` so its
-        // invalid signature is reported; only generic value functions become
-        // monomorphization templates.
+        // Only generic *value* functions become monomorphization templates. A
+        // generic `#[test]` has no instantiation surface, so it flows through
+        // `declare_function`, which rejects it as a generic function.
         let is_test = function
             .attributes
             .iter()
@@ -1377,8 +1399,7 @@ fn lower_module(source: &ast::SourceFile, config: CompilerConfig) -> Result<Modu
             .get(&pending.name)
             .expect("pending monomorph names a known generic template");
         let signature = generated.monomorphs.borrow().signatures[&pending.id].clone();
-        let types = context.monomorph_types(template, &pending.arguments)?;
-        let mono_context = context.monomorph_context(types);
+        let mono_context = context.monomorph_context(pending.types);
         mono_context.enter_function(monomorph_symbol(&pending.name, &pending.arguments));
         let lowered = lower_function(&signature, template, &mono_context)
             .map_err(|diagnostics| anchor_function_diagnostics(template, diagnostics));
@@ -1487,6 +1508,17 @@ fn declare_function(
     function: &ast::FnItem,
     types: &BTreeMap<String, Type>,
 ) -> Result<FunctionSignature, Diagnostics> {
+    // A generic value function is a monomorphization template and never reaches
+    // here (`lower_module` routes it out of the declare loop). Any generic that
+    // does reach `declare_function` is a generic `#[test]`, which has no
+    // monomorphization surface — reject it as a generic function up front rather
+    // than only when a type parameter happens to appear in the signature.
+    if let Some(generics) = &function.generics {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            generics.span,
+            "generic function",
+        )));
+    }
     let is_test = function
         .attributes
         .iter()
@@ -1513,12 +1545,6 @@ fn declare_function(
             return_type: Type::StreamCheck,
             metadata: parse_test_metadata(function)?,
         });
-    }
-    if let Some(generics) = &function.generics {
-        return Err(Diagnostics::one(Diagnostic::unsupported(
-            generics.span,
-            "generic function",
-        )));
     }
     declare_value_signature(id, function, types)
 }
@@ -7523,7 +7549,7 @@ fn lower_named_constructor(
         .collect::<Vec<_>>()
         .join("::");
     let enumeration = context
-        .types
+        .types()
         .get(&enumeration_name)
         .ok_or_else(|| unknown_name(expression.ty.span, &qualified_name))?;
     let Type::Enum(enumeration) = enumeration else {
@@ -7612,7 +7638,7 @@ fn lower_variant(
         enumeration
     } else {
         let ty = context
-            .types
+            .types()
             .get(&expression.path.type_name.value)
             .ok_or_else(|| {
                 unknown_name(
@@ -8873,8 +8899,10 @@ fn lower_call(
 }
 
 /// Lower a call to a generic function by monomorphizing it for the concrete
-/// type arguments — inferred from the positional argument types, or taken from
-/// an explicit turbofish. Each distinct type-argument set lowers one body.
+/// type arguments, inferred from the positional argument types. Type arguments
+/// are never written explicitly — the surface rejects turbofish generic calls
+/// (`id<Int>(1)`) at parse — so inference is the only instantiation path. Each
+/// distinct type-argument set lowers one body.
 ///
 /// r[impl lang.types.generic-function-monomorphized]
 fn lower_generic_call(
@@ -8915,30 +8943,14 @@ fn lower_generic_call(
         .map(|parameter| parameter.value.clone())
         .collect::<BTreeSet<_>>();
     let mut inferred = BTreeMap::new();
-    if let Some(type_args) = &call.type_args {
-        if type_args.args.len() != generics.params.len() {
-            return Err(invalid_arity(
-                type_args.span,
-                generics.params.len(),
-                type_args.args.len(),
-            ));
-        }
-        for (parameter, argument) in generics.params.iter().zip(&type_args.args) {
-            inferred.insert(
-                parameter.value.clone(),
-                lower_declared_type(argument, context.types())?,
-            );
-        }
-    } else {
-        for (parameter, value) in positional.iter().zip(&lowered_positional) {
-            infer_type_argument(
-                &parameter.ty,
-                &value.ty,
-                &parameter_names,
-                &mut inferred,
-                call.callee.span,
-            )?;
-        }
+    for (parameter, value) in positional.iter().zip(&lowered_positional) {
+        infer_type_argument(
+            &parameter.ty,
+            &value.ty,
+            &parameter_names,
+            &mut inferred,
+            call.callee.span,
+        )?;
     }
 
     let mut arguments = Vec::with_capacity(generics.params.len());
@@ -8952,7 +8964,8 @@ fn lower_generic_call(
         arguments.push(argument);
     }
 
-    let (id, signature) = context.instantiate_monomorph(&call.callee.value, arguments)?;
+    let (id, signature) =
+        context.instantiate_monomorph(&call.callee.value, arguments, call.span)?;
 
     let mut inputs = Vec::with_capacity(signature.parameters.len());
     let positional_signature = signature
@@ -9032,6 +9045,14 @@ fn lower_generic_call(
 /// each type parameter's binding. Shapes that do not structurally correspond
 /// contribute no binding; a parameter that stays unbound is reported at the
 /// call site.
+///
+/// Inference descends through the shapes whose type arguments survive in the
+/// concrete [`Type`]: tuples, function types, and the builtin generics
+/// (`[T]`/`Array<T>`, `Set<T>`, `Map<K, V>`, `Option<T>`, `Result<T, E>`).
+/// User-defined generic types (e.g. `Box<T>`) monomorphize their fields, so the
+/// concrete value no longer carries the argument list and cannot be inferred
+/// through here; such a parameter stays unbound and is reported at the call
+/// site.
 fn infer_type_argument(
     declared: &ast::Type,
     concrete: &Type,
@@ -9083,6 +9104,17 @@ fn infer_type_argument(
             ("Map", Type::Map { key, value }) if generic.args.len() == 2 => {
                 infer_type_argument(&generic.args[0], key, parameters, inferred, span)?;
                 infer_type_argument(&generic.args[1], value, parameters, inferred, span)?;
+            }
+            ("Option", _) if generic.args.len() == 1 => {
+                if let Some(inner) = concrete.option_inner() {
+                    infer_type_argument(&generic.args[0], inner, parameters, inferred, span)?;
+                }
+            }
+            ("Result", _) if generic.args.len() == 2 => {
+                if let Some((ok, err)) = concrete.result_inner() {
+                    infer_type_argument(&generic.args[0], ok, parameters, inferred, span)?;
+                    infer_type_argument(&generic.args[1], err, parameters, inferred, span)?;
+                }
             }
             _ => {}
         },
