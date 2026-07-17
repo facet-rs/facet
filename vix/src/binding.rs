@@ -23,8 +23,9 @@
 //! This is the representable model plus the intended projection of the
 //! built-ins as data. It is **not yet wired**: today the binder defers prelude
 //! names (see `binder.rs` module docs, which name `fetch` as the example) and
-//! `compiler::lower_value` dispatches intrinsics by hardcoded callee strings
-//! (`effect_intrinsic` / `decode_format`). Routing the binder's prelude/module
+//! `compiler::lower_value` dispatches bindings by hardcoded callee strings
+//! (`effect_intrinsic`, the `decode`/`observe` name matches and their
+//! `decode_format_arg`/`observe_mode_arg` selector readers). Routing the binder's prelude/module
 //! resolution and `lower_value` through a [`BindingRegistry`] — replacing those
 //! string matches — is the next step, and is what closes the three gaps named
 //! in `docs/content/registered-primitives.md` ("Current registration

@@ -39,8 +39,10 @@ use crate::surface::{SurfaceParser, ast};
 
 /// Registered prelude items: pure vix source, one top-level item each (`fn`,
 /// `enum`, or `struct`). They travel the same front end as user code and are
-/// injected into every module (an unused item is demand-pruned, so it costs a
-/// module nothing it doesn't call).
+/// injected into every module. An uninstantiated *generic* fn costs nothing (it
+/// lowers only per call), but a non-generic fn (`is_blank`) and the enums
+/// (`Format`, `Mode`) are always emitted into the module — there is no
+/// reachability pruning — so they perturb module counts even when unused.
 ///
 /// `json_decode`/`toml_decode` are the retired decode intrinsics, now ordinary
 /// vix functions over the single `decode(document, Format)` binding: the format

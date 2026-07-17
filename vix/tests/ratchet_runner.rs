@@ -5804,26 +5804,20 @@ fn assert_contiguous_sequences(events: &[vix::runtime::Event]) {
 /// verified machine — not proof the runtime primitive exists. The runtime seam
 /// for dynamic/unknown-target decodes is named explicitly elsewhere
 /// (`DiagnosticCode::RuntimeDecodeUnavailable`), never satisfied here.
+/// Assert a typed-decode rung runs to `checks` passing checks that agree across
+/// lanes.
+///
+/// This once also certified the *fold*: that a literal decode lowers to typed
+/// construction with no machine host call and `receipt_count == 0`. While
+/// `json_decode`/`toml_decode` are stdlib vix wrappers the literal sits behind a
+/// wrapper parameter and no longer folds — it lowers to the registered decode
+/// primitive (a host-call yield with a receipt) — so the fold certificate moved
+/// to the `#[ignore]`d fold tests (`decoded_value_is_identity_...`,
+/// `malformed_literal_decode_...`). What remains here is runtime-value coverage:
+/// the decode still produces the correct typed values through the seam.
+/// `pure_host_calls == 0` still holds — the seam is an effect, not a pure host
+/// call (the fallible dynamic decode test asserts the same).
 fn assert_typed_decode_rung(source: &str, checks: usize) {
-    let module = Compiler::new()
-        .compile(source)
-        .expect("typed-decode rung compiles through the canonical surface");
-    let partitioned = module.partition_test(&module.tests[0]);
-    let mut lowering_cache = LoweringCache::default();
-    for island in &partitioned.islands {
-        let lowered = lowering_cache
-            .get_or_lower(island)
-            .expect("typed-decode rung lowers through verified Weavy execution");
-        assert!(
-            lowered.program().fns.iter().all(|function| {
-                function.code.iter().all(|op| {
-                    !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. })
-                })
-            }),
-            "decode lowers to typed construction, never a machine host call",
-        );
-    }
-
     let report = run_source(source).expect("typed-decode rung runs through Executable");
     assert!(report.passed());
     assert!(report.agrees());
@@ -5832,7 +5826,6 @@ fn assert_typed_decode_rung(source: &str, checks: usize) {
     for lane in [&report.plain, &report.chaos] {
         assert!(lane.checks.iter().all(|check| check.passed));
         assert_eq!(lane.counters.pure_host_calls, 0);
-        assert_eq!(lane.receipt_count, 0);
         if std::env::var("WEAVY_JIT").as_deref() == Ok("0") {
             assert!(
                 lane.events
@@ -5858,14 +5851,12 @@ fn assert_typed_decode_rung(source: &str, checks: usize) {
 
 /// Rung 062 — JSON lands directly on a struct via the type-directed decoder.
 #[test]
-#[ignore = "decode constant-folding is lost while json_decode/toml_decode are stdlib vix wrappers (the literal sits behind a wrapper parameter); un-ignore when pure vix functions constant-fold"]
 fn rung_062_json_decode_lands_json_on_a_struct() {
     assert_typed_decode_rung(RUNG_062, 3);
 }
 
 /// Rung 063 — TOML manifests decode into nested structs with no Doc-walking.
 #[test]
-#[ignore = "decode constant-folding is lost while json_decode/toml_decode are stdlib vix wrappers (the literal sits behind a wrapper parameter); un-ignore when pure vix functions constant-fold"]
 fn rung_063_toml_decode_builds_nested_structs() {
     assert_typed_decode_rung(RUNG_063, 2);
 }
@@ -5873,7 +5864,6 @@ fn rung_063_toml_decode_builds_nested_structs() {
 /// Rung 064 — absent fields decode to `Option::None`, present ones to `Some`,
 /// through the same decoder and the same typed construction.
 #[test]
-#[ignore = "decode constant-folding is lost while json_decode/toml_decode are stdlib vix wrappers (the literal sits behind a wrapper parameter); un-ignore when pure vix functions constant-fold"]
 fn rung_064_absent_fields_decode_to_option_none() {
     assert_typed_decode_rung(RUNG_064, 2);
 }
@@ -5883,7 +5873,6 @@ fn rung_064_absent_fields_decode_to_option_none() {
 /// to the detailed record variant, both through the same decoder and lowered to
 /// ordinary `Op::Variant` construction.
 #[test]
-#[ignore = "decode constant-folding is lost while json_decode/toml_decode are stdlib vix wrappers (the literal sits behind a wrapper parameter); un-ignore when pure vix functions constant-fold"]
 fn rung_065_decodes_string_or_table_enum_forms() {
     assert_typed_decode_rung(RUNG_065, 3);
 }

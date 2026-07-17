@@ -12,7 +12,7 @@
 //! shape (arity, mode parsing, origin-type enforcement) rather than a full
 //! observe-and-run — there is no way to spell a valid origin in vix yet.
 
-use vix::compiler::Compiler;
+use vix::compiler::{Compiler, CompilerConfig};
 
 fn error(src: &str) -> String {
     format!(
@@ -55,4 +55,34 @@ fn observe_rejects_a_non_mode_argument() {
         err.contains("observe mode `Mode::Observe` or `Mode::Refresh`"),
         "{err}"
     );
+}
+
+#[test]
+fn refresh_resolves_to_the_stdlib_wrapper_and_forwards_into_observe() {
+    // `refresh` is no longer an intrinsic: it resolves to the stdlib vix wrapper
+    // `refresh<Origin>(origin) -> Blob { observe(origin, Mode::Refresh) }`. A
+    // String origin reaches observe's origin-type check, so the OriginHint
+    // mismatch proves refresh both resolved (no unknown-name error) and forwarded
+    // into the observe binding with the origin type still enforced.
+    let err = error("fn go(origin: String) -> Blob { refresh(origin) }\n");
+    assert!(err.contains("TypeMismatch"), "{err}");
+    assert!(err.contains("OriginHint"), "{err}");
+}
+
+#[test]
+fn refresh_lives_in_the_stdlib_not_as_a_builtin() {
+    // Without the prelude, `refresh` is an unknown name — the retirement moved it
+    // out of the compiler's intrinsic set into stdlib vix source. The error is
+    // then unknown-name resolution, never the forwarded observe origin-type check.
+    let without_stdlib = Compiler::with_config(CompilerConfig {
+        stdlib: false,
+        ..CompilerConfig::default()
+    });
+    let err = format!(
+        "{:?}",
+        without_stdlib
+            .compile("fn go(origin: String) -> Blob { refresh(origin) }\n")
+            .expect_err("refresh is not a builtin")
+    );
+    assert!(!err.contains("OriginHint"), "{err}");
 }

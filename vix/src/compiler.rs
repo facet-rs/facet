@@ -52,9 +52,12 @@ pub struct CompilerConfig {
     pub force_scalar_call_boundaries: bool,
     /// Merge the registered standard-library prelude (`crate::stdlib`) into the
     /// compilation as ordinary top-level items. On by default: the stdlib holds
-    /// the surface `json_decode`/`toml_decode` functions (the retired decode
-    /// intrinsics), so a compilation needs it to resolve them. Unused items are
-    /// demand-pruned, so this costs a module nothing it doesn't call. Off only
+    /// the surface `json_decode`/`toml_decode`/`refresh` functions (the retired
+    /// intrinsics), so a compilation needs it to resolve them. An uninstantiated
+    /// *generic* prelude fn costs nothing (it only lowers per call), but a
+    /// non-generic fn (`is_blank`) and the prelude enums (`Format`, `Mode`) are
+    /// always emitted into the module — there is no reachability pruning — so
+    /// turning this on perturbs module counts and the module-set hash. Off only
     /// for tests that isolate the bare surface.
     pub stdlib: bool,
 }
@@ -5669,9 +5672,10 @@ fn lower_decode_binding(
 }
 
 /// Read the `Format::Json` / `Format::Toml` selector of a decode binding. The
-/// argument is a `Format` variant whose name selects the decoder; the checker
-/// separately validates it against the `Format` enum, so an unknown variant is
-/// rejected both here and there.
+/// argument is a `Format` variant whose name selects the decoder. It is read
+/// here at lower time and never lowered as a value, so an unknown or non-decode
+/// variant is rejected only here — not by the checker (which never sees it in a
+/// value position).
 fn decode_format_arg(arg: &ast::Expr) -> Result<DecodeFormat, Diagnostics> {
     let ast::Expr::Variant(variant) = arg else {
         return Err(Diagnostics::one(Diagnostic::unsupported(
@@ -5698,8 +5702,9 @@ fn decode_format_arg(arg: &ast::Expr) -> Result<DecodeFormat, Diagnostics> {
 /// Read the `Mode::Observe` / `Mode::Refresh` selector of an `observe` call,
 /// returning the refresh flag the primitive folds into its request record. The
 /// twin of `decode_format_arg`: the observe mode is a surface argument, not a
-/// second primitive and not a `refresh` compiler intrinsic. The checker
-/// separately validates the variant against the `Mode` enum.
+/// second primitive and not a `refresh` compiler intrinsic. Like the format
+/// selector it is read at lower time and never lowered as a value, so an unknown
+/// mode is rejected only here, not by the checker.
 fn observe_mode_arg(arg: &ast::Expr) -> Result<bool, Diagnostics> {
     let ast::Expr::Variant(variant) = arg else {
         return Err(Diagnostics::one(Diagnostic::unsupported(
