@@ -5400,10 +5400,15 @@ fn runtime_decode_unavailable(
 }
 
 /// The fallible decode surface: `try_json_decode<T>(doc)`. Unlike the infallible
-/// [`decode_format`] fold (062–065), this returns a first-class
+/// `decode` binding (`lower_decode_binding`), this returns a first-class
 /// `Result<T, DecodeError>` — a decode that fails is a *value*, not a compile
 /// error (`r[lang.failure.typed]`). The target schema is named by the call-site
 /// turbofish, not inferred from a `let` annotation.
+///
+/// The `try_*` forms are still name-recognized intrinsics: retiring the
+/// infallible `json_decode`/`toml_decode` into stdlib vix wrappers over
+/// `decode(doc, Format)` deliberately left these untouched — there is no
+/// fallible surface binding yet.
 fn try_decode_format(name: &str) -> Option<DecodeFormat> {
     match name {
         "try_json_decode" => Some(DecodeFormat::Json),
@@ -5690,11 +5695,13 @@ fn decode_format_arg(arg: &ast::Expr) -> Result<DecodeFormat, Diagnostics> {
     }
 }
 
-/// The decode fold/seam shared by the retiring `json_decode`/`toml_decode`
-/// intrinsics and the `decode` binding. A constant document literal folds at
-/// compile time; a dynamic document lowers to the registered doc-parse
-/// primitive. Either way the target type is required — a missing one names the
-/// runtime seam rather than a host-evaluation of a dynamic string.
+/// The decode fold/seam behind the `decode` binding (`lower_decode_binding`
+/// splits off the `Format` selector and calls in here). A constant document
+/// literal *at this call site* folds at compile time; anything else — including
+/// a document that arrives through a `json_decode`/`toml_decode` wrapper
+/// parameter — lowers to the registered doc-parse primitive. Either way the
+/// target type is required: a missing one names the runtime seam rather than
+/// host-evaluating a dynamic string.
 fn lower_decode_core(
     nodes: &mut Vec<Node>,
     bindings: &BTreeMap<String, LoweredValue>,
