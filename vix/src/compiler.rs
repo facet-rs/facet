@@ -3517,6 +3517,9 @@ fn lower_value_expected(
         ast::Expr::Call(call) if try_decode_format(&call.callee.value).is_some() => {
             lower_try_decode(nodes, bindings, context, call)
         }
+        ast::Expr::Call(call) if call.callee.value == "decode" => {
+            lower_decode_binding(nodes, bindings, context, call, expected)
+        }
         ast::Expr::Call(call) if decode_format(&call.callee.value).is_some() => {
             lower_decode(nodes, bindings, context, call, expected)
         }
@@ -5641,25 +5644,102 @@ fn lower_decode(
         )));
     }
     check_arity(call, 1)?;
-    // The fold's precondition: a known target type and a constant document
-    // literal. Either missing names the runtime doc-parse seam — never a
-    // host-evaluation of a dynamic string.
-    let Some(target) = expected else {
-        return Err(runtime_decode_unavailable(call.span, format, None));
+    lower_decode_core(
+        nodes,
+        bindings,
+        context,
+        &call.args.args[0],
+        call.span,
+        format,
+        expected,
+    )
+}
+
+/// The single decode binding: `decode(document, Format::Json)`. The format is a
+/// `Format` enum value read at lower time (like a fixture name — the selector
+/// never lowers to a runtime value); the target type comes from the expected
+/// type, so `fn json_decode<T>(s: String) -> T { decode(s, Format::Json) }`
+/// forwards `T` here via return-position inference. This is the primitive
+/// binding the json_decode/toml_decode vix functions wrap: json vs toml is a
+/// request field the DecodePrimitive reads, not a distinct compiler intrinsic.
+fn lower_decode_binding(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    call: &ast::Call,
+    expected: Option<&Type>,
+) -> Result<LoweredValue, Diagnostics> {
+    if call.named_args.is_some() {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            call.span,
+            "named arguments on a decode call",
+        )));
+    }
+    check_arity(call, 2)?;
+    let format = decode_format_arg(&call.args.args[1])?;
+    lower_decode_core(
+        nodes,
+        bindings,
+        context,
+        &call.args.args[0],
+        call.span,
+        format,
+        expected,
+    )
+}
+
+/// Read the `Format::Json` / `Format::Toml` selector of a decode binding. The
+/// argument is a `Format` variant whose name selects the decoder; the checker
+/// separately validates it against the `Format` enum, so an unknown variant is
+/// rejected both here and there.
+fn decode_format_arg(arg: &ast::Expr) -> Result<DecodeFormat, Diagnostics> {
+    let ast::Expr::Variant(variant) = arg else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            expr_span(arg),
+            "a decode format `Format::Json` or `Format::Toml`",
+        )));
     };
-    let ast::Expr::Str(document) = &call.args.args[0] else {
-        let document = lower_value_expected(
-            nodes,
-            bindings,
-            context,
-            &call.args.args[0],
-            Some(&Type::String),
-        )?;
-        require_type(&document, &Type::String, expr_span(&call.args.args[0]))?;
+    if variant.path.type_name.value != "Format" {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            variant.path.span,
+            "a decode format `Format::Json` or `Format::Toml`",
+        )));
+    }
+    match variant.path.variant.value.as_str() {
+        "Json" => Ok(DecodeFormat::Json),
+        "Toml" => Ok(DecodeFormat::Toml),
+        other => Err(Diagnostics::one(Diagnostic::unsupported(
+            variant.path.variant.span,
+            format!("an unknown decode format `Format::{other}`"),
+        ))),
+    }
+}
+
+/// The decode fold/seam shared by the retiring `json_decode`/`toml_decode`
+/// intrinsics and the `decode` binding. A constant document literal folds at
+/// compile time; a dynamic document lowers to the registered doc-parse
+/// primitive. Either way the target type is required — a missing one names the
+/// runtime seam rather than a host-evaluation of a dynamic string.
+fn lower_decode_core(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    document_expr: &ast::Expr,
+    span: Span,
+    format: DecodeFormat,
+    expected: Option<&Type>,
+) -> Result<LoweredValue, Diagnostics> {
+    let Some(target) = expected else {
+        return Err(runtime_decode_unavailable(span, format, None));
+    };
+    let ast::Expr::Str(document) = document_expr else {
+        let document =
+            lower_value_expected(nodes, bindings, context, document_expr, Some(&Type::String))?;
+        require_type(&document, &Type::String, expr_span(document_expr))?;
         return Ok(LoweredValue {
             node: lower_registered_decode_request(
                 nodes,
-                call.span,
+                span,
                 format,
                 target,
                 false,
@@ -5670,8 +5750,8 @@ fn lower_decode(
         });
     };
     let decoded = decode::decode(format, &document.value, target)
-        .map_err(|error| decode_failed_diagnostic(call.span, format, target, &error))?;
-    lower_decoded_value(nodes, &decoded, target, call.span)
+        .map_err(|error| decode_failed_diagnostic(span, format, target, &error))?;
+    lower_decoded_value(nodes, &decoded, target, span)
 }
 
 fn lower_registered_decode_request(
