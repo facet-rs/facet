@@ -242,8 +242,11 @@ at the call site. Before monomorphization a generic vix *function* was rejected
 at lowering (`GenericLoweringUnsupported`); it now lowers per concrete
 instantiation, so the decode aliases are ordinary stdlib vix functions over the
 `decode(document, Format)` binding, with `T` recovered by return-position
-inference. The `try_*` forms remain compiler intrinsics — there is no fallible
-surface binding yet.
+inference. The fallible `try_json_decode` / `try_toml_decode` are the same shape
+over a `try_decode(document, Format)` binding, returning `Result<T, DecodeError>`
+with `T` recovered from the expected `Result` — no call-site turbofish, matching
+the language's inference-only instantiation. Turbofish is now rejected on every
+call (the decode intrinsics were the last surface that allowed it).
 
 ### Placement
 

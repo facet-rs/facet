@@ -3,7 +3,7 @@ struct PkgRow { name: String, vers: String }
 
 #[test]
 fn decode_failure() -> Stream<Check> {
-    let bad = try_json_decode<PkgRow>("{\"name\": 42}");
+    let bad: Result<PkgRow, DecodeError> = try_json_decode("{\"name\": 42}");
     yield match bad {
         Ok(_) => expect(false),
         Err(e) => expect(e.message.contains("name")),

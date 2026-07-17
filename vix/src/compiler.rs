@@ -3529,8 +3529,8 @@ fn lower_value_expected(
         ast::Expr::Call(call) if call.callee.value == "Some" => {
             lower_some(nodes, bindings, context, call, expected)
         }
-        ast::Expr::Call(call) if try_decode_format(&call.callee.value).is_some() => {
-            lower_try_decode(nodes, bindings, context, call)
+        ast::Expr::Call(call) if call.callee.value == "try_decode" => {
+            lower_try_decode_binding(nodes, bindings, context, call, expected)
         }
         ast::Expr::Call(call) if call.callee.value == "decode" => {
             lower_decode_binding(nodes, bindings, context, call, expected)
@@ -5402,24 +5402,6 @@ fn runtime_decode_unavailable(
     })
 }
 
-/// The fallible decode surface: `try_json_decode<T>(doc)`. Unlike the infallible
-/// `decode` binding (`lower_decode_binding`), this returns a first-class
-/// `Result<T, DecodeError>` — a decode that fails is a *value*, not a compile
-/// error (`r[lang.failure.typed]`). The target schema is named by the call-site
-/// turbofish, not inferred from a `let` annotation.
-///
-/// The `try_*` forms are still name-recognized intrinsics: retiring the
-/// infallible `json_decode`/`toml_decode` into stdlib vix wrappers over
-/// `decode(doc, Format)` deliberately left these untouched — there is no
-/// fallible surface binding yet.
-fn try_decode_format(name: &str) -> Option<DecodeFormat> {
-    match name {
-        "try_json_decode" => Some(DecodeFormat::Json),
-        "try_toml_decode" => Some(DecodeFormat::Toml),
-        _ => None,
-    }
-}
-
 /// The `DecodeError` value surfaced as the `Err` payload of a decode `Result`.
 /// Its stored fields are the STRUCTURAL identity of the failure: a stable
 /// machine `kind` discriminant (never rendered prose) and the dotted field
@@ -5559,52 +5541,73 @@ fn lower_decode_error_message(
     }
 }
 
-/// Lower `try_json_decode<T>(doc)` to a `Result<T, DecodeError>`. On a
-/// compile-time-constant document this is the **constant fold** of the runtime
-/// doc-parse primitive: the decode is run once at compile time and its success
-/// or typed-failure value is emitted as ordinary typed construction, provably
-/// the same value the runtime primitive produces for that document.
-fn lower_try_decode(
+/// The single fallible decode binding: `try_decode(document, Format::Json)`,
+/// returning a first-class `Result<T, DecodeError>` — a decode that fails is a
+/// *value*, not a compile error (`r[lang.failure.typed]`). Like the infallible
+/// `decode` binding the format is a `Format` selector read at lower time; the
+/// target `T` comes from the expected type — here the `Ok` arm of the expected
+/// `Result<T, DecodeError>`, forwarded from a `try_json_decode`/`try_toml_decode`
+/// stdlib wrapper by return-position inference. No call-site turbofish: the
+/// target flows in from the binding it lands on, like every other generic.
+fn lower_try_decode_binding(
     nodes: &mut Vec<Node>,
     bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
     call: &ast::Call,
+    expected: Option<&Type>,
 ) -> Result<LoweredValue, Diagnostics> {
-    let format = try_decode_format(&call.callee.value).expect("try-decode intrinsic name");
     if call.named_args.is_some() {
         return Err(Diagnostics::one(Diagnostic::unsupported(
             call.span,
             "named arguments on a decode call",
         )));
     }
-    check_arity(call, 1)?;
-    let Some(type_args) = &call.type_args else {
+    check_arity(call, 2)?;
+    let format = decode_format_arg(&call.args.args[1])?;
+    let Some((target, _)) = expected.and_then(Type::result_inner) else {
         return Err(Diagnostics::one(Diagnostic::unsupported(
             call.span,
-            "try_json_decode without a target type application",
+            "try_decode without an expected `Result<T, DecodeError>` target type",
         )));
     };
-    if type_args.args.len() != 1 {
-        return Err(invalid_arity(type_args.span, 1, type_args.args.len()));
-    }
-    let target = lower_declared_type(&type_args.args[0], context.types())?;
+    let target = target.clone();
+    lower_try_decode_core(
+        nodes,
+        bindings,
+        context,
+        &call.args.args[0],
+        call.span,
+        format,
+        &target,
+    )
+}
+
+/// The fallible decode fold/seam behind the `try_decode` binding. A constant
+/// document literal *at this call site* folds to an `Ok`/`Err` value at compile
+/// time; anything else — including a document that arrives through a
+/// `try_json_decode`/`try_toml_decode` wrapper parameter — lowers to the
+/// registered decode primitive as a `Result<T, DecodeError>` value.
+fn lower_try_decode_core(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    document_expr: &ast::Expr,
+    span: Span,
+    format: DecodeFormat,
+    target: &Type,
+) -> Result<LoweredValue, Diagnostics> {
     let result_ty = Type::result(target.clone(), decode_error_type());
 
-    let ast::Expr::Str(document) = &call.args.args[0] else {
-        let document = lower_value_expected(
-            nodes,
-            bindings,
-            context,
-            &call.args.args[0],
-            Some(&Type::String),
-        )?;
-        require_type(&document, &Type::String, expr_span(&call.args.args[0]))?;
+    let ast::Expr::Str(document) = document_expr else {
+        let document =
+            lower_value_expected(nodes, bindings, context, document_expr, Some(&Type::String))?;
+        require_type(&document, &Type::String, expr_span(document_expr))?;
         return Ok(LoweredValue {
             node: lower_registered_decode_request(
                 nodes,
-                call.span,
+                span,
                 format,
-                &target,
+                target,
                 true,
                 document.node,
                 result_ty.clone(),
@@ -5614,25 +5617,25 @@ fn lower_try_decode(
     };
 
     // Constant fold: decode the literal once and emit the resulting Result value.
-    match decode::decode(format, &document.value, &target) {
+    match decode::decode(format, &document.value, target) {
         Ok(decoded) => {
-            let value = lower_decoded_value(nodes, &decoded, &target, call.span)?;
+            let value = lower_decoded_value(nodes, &decoded, target, span)?;
             Ok(lower_result_variant(
                 nodes,
                 value,
                 RESULT_OK_VARIANT,
                 &result_ty,
-                call.span,
+                span,
             ))
         }
         Err(error) => {
-            let value = lower_decode_error_value(nodes, &error, call.span);
+            let value = lower_decode_error_value(nodes, &error, span);
             Ok(lower_result_variant(
                 nodes,
                 value,
                 RESULT_ERR_VARIANT,
                 &result_ty,
-                call.span,
+                span,
             ))
         }
     }

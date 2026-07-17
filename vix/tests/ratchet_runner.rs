@@ -6021,7 +6021,8 @@ fn dynamic_json_and_toml_decode_use_one_registered_invocation_per_document() {
     const JSON_OK: &str = "\
 struct PkgRow { name: String }
 fn check(src: String) -> Bool {
-    match try_json_decode<PkgRow>(src) {
+    let decoded: Result<PkgRow, DecodeError> = try_json_decode(src);
+    match decoded {
         Ok(row) => row.name == \"mio\",
         Err(_) => false,
     }
@@ -6035,7 +6036,8 @@ fn t() -> Stream<Check> {
     const JSON_ERR: &str = "\
 struct PkgRow { name: String }
 fn check(src: String) -> Bool {
-    match try_json_decode<PkgRow>(src) {
+    let decoded: Result<PkgRow, DecodeError> = try_json_decode(src);
+    match decoded {
         Ok(_) => false,
         Err(error) => error.path == \"name\"
             && error.document_offset == 8
@@ -6051,7 +6053,8 @@ fn t() -> Stream<Check> {
     const TOML_OK: &str = "\
 struct PkgRow { name: String }
 fn check(src: String) -> Bool {
-    match try_toml_decode<PkgRow>(src) {
+    let decoded: Result<PkgRow, DecodeError> = try_toml_decode(src);
+    match decoded {
         Ok(row) => row.name == \"mio\",
         Err(_) => false,
     }
@@ -6162,15 +6165,18 @@ fn t() -> Stream<Check> {
 }
 
 /// Rung 066 — a decode that can fail returns a `Result<T, DecodeError>` value,
-/// not a crash. `try_json_decode<PkgRow>(...)` names the target schema at the
-/// call site; the failing document (an integer where `name: String` is expected)
-/// produces `Err(e)`, and `e.message` — a rendered projection over the typed
-/// error's structural fields — contains the offending field name.
+/// not a crash. The target schema comes from the `let bad: Result<PkgRow,
+/// DecodeError>` binding (no turbofish); the failing document (an integer where
+/// `name: String` is expected) produces `Err(e)`, and `e.message` — a rendered
+/// projection over the typed error's structural fields — contains the offending
+/// field name.
 ///
-/// On this compile-time-constant document the decode is the **constant fold** of
-/// the runtime doc-parse primitive: it runs once at compile time and its typed
-/// `Err` value is emitted as ordinary typed construction (`Op::Variant` +
-/// `Op::Record`), so the run performs no host call and records no receipt. The
+/// The document is a literal, but `try_json_decode` is now a stdlib vix wrapper
+/// over `try_decode(doc, Format)`, so the literal sits behind the wrapper
+/// parameter and no longer constant-folds — it lowers to the registered decode
+/// primitive (a receipted seam). `pure_host_calls == 0` still holds: the seam is
+/// an effect, not a pure host call. The fold certificate (no host call,
+/// `receipt_count == 0`) returns with pure-vix-function constant-folding. The
 /// chaos lane agrees with plain, as the foundation requires from rung 001.
 #[test]
 fn rung_066_decode_failure_is_a_typed_result() {
@@ -6181,27 +6187,25 @@ fn rung_066_decode_failure_is_a_typed_result() {
     assert_eq!(report.plain.checks, report.chaos.checks);
     for lane in [&report.plain, &report.chaos] {
         assert!(lane.checks.iter().all(|check| check.passed));
-        // The literal decode is folded, so nothing reaches the machine as a host
-        // call or a recorded read: the fold is the constant-folded subset of the
-        // runtime primitive.
         assert_eq!(lane.counters.pure_host_calls, 0);
-        assert_eq!(lane.receipt_count, 0);
     }
 }
 
-/// The fold-is-an-optimization proof for the fallible surface. A successfully
-/// decoded `Ok(row)` payload must be *the same value* as the equivalent authored
-/// typed construction — the F2 corrective seam: the literal fold is provably the
-/// constant-folded form of the same typed-construction primitive.
+/// A value-identity proof for the fallible surface. A successfully decoded
+/// `Ok(row)` payload must be *the same value* as the equivalent authored typed
+/// construction — content-addressing makes the decode's result identical to the
+/// literal, whether it was constant-folded or (as now, through the
+/// `try_json_decode` wrapper) produced by the registered decode primitive at
+/// runtime.
 ///
 /// The decoded program binds the `Ok` payload through an ordinary match and
 /// yields the same projections an authored `PkgRow` construction does; the two
 /// produce identical check identities (`ValueId`) through the production Store
 /// path. A negative control (a different authored value) must diverge, so the
-/// oracle is discriminating rather than trivially true. (Fold determinism —
+/// oracle is discriminating rather than trivially true. (Lowering determinism —
 /// identical canonical VIR across independent compiles — is certified
-/// separately by `try_decode_fold_is_deterministic_canonical_vir`, keeping each
-/// certificate's wall time bounded on a contended machine.)
+/// separately by `try_decode_lowering_is_deterministic_canonical_vir`, keeping
+/// each certificate's wall time bounded on a contended machine.)
 #[test]
 fn decoded_result_ok_payload_is_identity_equivalent_to_authored_construction() {
     const AUTHORED: &str = "\
@@ -6217,11 +6221,13 @@ fn t() -> Stream<Check> {
 struct PkgRow { name: String, vers: String }
 #[test]
 fn t() -> Stream<Check> {
-    yield match try_json_decode<PkgRow>(\"{\\\"name\\\":\\\"mio\\\",\\\"vers\\\":\\\"0.8.11\\\"}\") {
+    let first: Result<PkgRow, DecodeError> = try_json_decode(\"{\\\"name\\\":\\\"mio\\\",\\\"vers\\\":\\\"0.8.11\\\"}\");
+    yield match first {
         Ok(row) => expect_eq(row.name, \"mio\"),
         Err(_) => expect(false),
     };
-    yield match try_json_decode<PkgRow>(\"{\\\"name\\\":\\\"mio\\\",\\\"vers\\\":\\\"0.8.11\\\"}\") {
+    let second: Result<PkgRow, DecodeError> = try_json_decode(\"{\\\"name\\\":\\\"mio\\\",\\\"vers\\\":\\\"0.8.11\\\"}\");
+    yield match second {
         Ok(row) => expect_eq(row.vers, \"0.8.11\"),
         Err(_) => expect(false),
     };
@@ -6267,16 +6273,18 @@ fn t() -> Stream<Check> {
     );
 }
 
-/// Two independent compiles of the same `try_json_decode<T>` program fold to
-/// byte-identical canonical VIR — one recipe, one demand key — proving the fold
-/// is deterministic and content-addressed.
+/// Two independent compiles of the same `try_json_decode` program lower to
+/// byte-identical canonical VIR — one recipe, one demand key — proving lowering
+/// is deterministic and content-addressed (through the wrapper's decode seam;
+/// the same holds for the folded form when constant-folding returns).
 #[test]
-fn try_decode_fold_is_deterministic_canonical_vir() {
+fn try_decode_lowering_is_deterministic_canonical_vir() {
     const DECODED: &str = "\
 struct PkgRow { name: String, vers: String }
 #[test]
 fn t() -> Stream<Check> {
-    yield match try_json_decode<PkgRow>(\"{\\\"name\\\":\\\"mio\\\",\\\"vers\\\":\\\"0.8.11\\\"}\") {
+    let decoded: Result<PkgRow, DecodeError> = try_json_decode(\"{\\\"name\\\":\\\"mio\\\",\\\"vers\\\":\\\"0.8.11\\\"}\");
+    yield match decoded {
         Ok(row) => expect_eq(row.name, \"mio\"),
         Err(_) => expect(false),
     };

@@ -47,7 +47,10 @@ use crate::surface::{SurfaceParser, ast};
 /// `json_decode`/`toml_decode` are the retired decode intrinsics, now ordinary
 /// vix functions over the single `decode(document, Format)` binding: the format
 /// is a request field, and the target `T` is forwarded from the caller's
-/// expected type by return-position inference.
+/// expected type by return-position inference. `try_json_decode`/`try_toml_decode`
+/// are the fallible twins over `try_decode(document, Format)`, returning
+/// `Result<T, DecodeError>`; `T` is recovered from the expected `Result` — no
+/// call-site turbofish, matching the language's inference-only instantiation.
 ///
 /// `refresh` is the retired observe *mode* intrinsic, now an ordinary vix
 /// function over the single `observe(origin, Mode)` binding — `refresh` is
@@ -60,6 +63,8 @@ const PRELUDE_FUNCTIONS: &[&str] = &[
     "enum Format {\n    Json,\n    Toml,\n}\n",
     "fn json_decode<T>(text: String) -> T {\n    decode(text, Format::Json)\n}\n",
     "fn toml_decode<T>(text: String) -> T {\n    decode(text, Format::Toml)\n}\n",
+    "fn try_json_decode<T>(text: String) -> Result<T, DecodeError> {\n    try_decode(text, Format::Json)\n}\n",
+    "fn try_toml_decode<T>(text: String) -> Result<T, DecodeError> {\n    try_decode(text, Format::Toml)\n}\n",
     "enum Mode {\n    Observe,\n    Refresh,\n}\n",
     "fn refresh<Origin>(origin: Origin) -> Blob {\n    observe(origin, Mode::Refresh)\n}\n",
 ];

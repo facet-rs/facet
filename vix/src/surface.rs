@@ -127,9 +127,9 @@ fn unsupported_generic_call_span(source: &str) -> Option<Span> {
                 // `name<…>(` shape with a turbofish *call*; only the latter is
                 // outside the surface. Monomorphization instantiates generic
                 // functions from inferred type arguments, so the declaration is
-                // admitted and the call stays turbofish-free.
+                // admitted and every call stays turbofish-free — including the
+                // decode bindings, whose target flows in from the expected type.
                 if bytes.get(index) == Some(&b'<')
-                    && !is_allowed_type_application(&bytes[start..index])
                     && !preceded_by_keyword(bytes, start, b"fn")
                     && let Some(end) = generic_call_end(bytes, index)
                 {
@@ -143,10 +143,6 @@ fn unsupported_generic_call_span(source: &str) -> Option<Span> {
         }
     }
     None
-}
-
-fn is_allowed_type_application(identifier: &[u8]) -> bool {
-    matches!(identifier, b"try_json_decode" | b"try_toml_decode")
 }
 
 /// Whether the identifier starting at `start` is immediately preceded (ignoring
