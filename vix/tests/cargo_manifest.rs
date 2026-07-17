@@ -580,8 +580,16 @@ fn real_workspace_metadata_baseline_is_counted() -> Result<(), String> {
     // pinned-fetch observers write into). It contributes one direct
     // workspace-member dependency edge, and being workspace-inherited it also
     // adds one to the legacy workspace-allowlist baseline.
+    //
+    // `cargo: unblock the pre-commit hook` (0c6c52437) then converts three
+    // internal dev-dependencies from workspace-inherited form to path form so
+    // release-plz accepts them — `facet-testhelpers` in `facet-lsp` and
+    // `vix-lsp`, and `facet-styx` in `snark`. A path dependency is not a
+    // workspace-allowlist entry, so each conversion removes one, taking the
+    // legacy baseline from 780 to 777. It leaves the oracle dependency total
+    // unchanged.
     assert_eq!(total_oracle_deps, 1151);
-    assert_eq!(before_workspace_allowlist_failures, 780);
+    assert_eq!(before_workspace_allowlist_failures, 777);
     assert_eq!(target_cfg_represented, 55);
 
     Ok(())
