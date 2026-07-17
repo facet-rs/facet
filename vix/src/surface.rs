@@ -123,8 +123,14 @@ fn unsupported_generic_call_span(source: &str) -> Option<Span> {
                 {
                     index += 1;
                 }
+                // A generic function *declaration* (`fn id<T>(…)`) shares the
+                // `name<…>(` shape with a turbofish *call*; only the latter is
+                // outside the surface. Monomorphization instantiates generic
+                // functions from inferred type arguments, so the declaration is
+                // admitted and the call stays turbofish-free.
                 if bytes.get(index) == Some(&b'<')
                     && !is_allowed_type_application(&bytes[start..index])
+                    && !preceded_by_keyword(bytes, start, b"fn")
                     && let Some(end) = generic_call_end(bytes, index)
                 {
                     return Some(Span {
@@ -141,6 +147,20 @@ fn unsupported_generic_call_span(source: &str) -> Option<Span> {
 
 fn is_allowed_type_application(identifier: &[u8]) -> bool {
     matches!(identifier, b"try_json_decode" | b"try_toml_decode")
+}
+
+/// Whether the identifier starting at `start` is immediately preceded (ignoring
+/// ASCII whitespace) by the given keyword on a word boundary.
+fn preceded_by_keyword(bytes: &[u8], start: usize, keyword: &[u8]) -> bool {
+    let mut index = start;
+    while index > 0 && bytes[index - 1].is_ascii_whitespace() {
+        index -= 1;
+    }
+    if index < keyword.len() || &bytes[index - keyword.len()..index] != keyword {
+        return false;
+    }
+    index -= keyword.len();
+    index == 0 || !is_identifier_continue(bytes[index - 1])
 }
 
 fn generic_call_end(bytes: &[u8], lt: usize) -> Option<usize> {
