@@ -57,6 +57,33 @@ test-i686:
     rustup target add i686-unknown-linux-gnu
     cargo nextest run --target i686-unknown-linux-gnu --tests --lib < /dev/null
 
+# --- Windows-in-QEMU test harness (scripts/winvm) ---------------------------
+# Cross-compiles a nextest archive for x86_64-pc-windows-msvc on this host
+# (via cargo-xwin), ships it to a cached, unattended-installed Windows 11 VM
+# over SSH, and runs the suite there. All toolchain deps come from the flake.
+
+# Ensure the Windows VM exists (installing it, ~20-40 min the first time) and
+# is running. Idempotent; leaves the VM up.
+win-vm-up:
+    nix develop --command bash scripts/winvm/build-image.sh
+
+# Cross-build the archive, ship it to the VM, and run the tests there.
+# Extra args are forwarded to `nextest run` (default = the CI exclusion set).
+test-windows *args: win-vm-up
+    nix develop --command bash scripts/winvm/run-tests.sh {{ args }}
+
+# Open an interactive SSH shell on the Windows VM.
+win-vm-ssh:
+    nix develop --command bash -c 'source scripts/winvm/lib.sh && ssh_win'
+
+# Stop the VM (the installed image is preserved for next time).
+win-vm-down:
+    nix develop --command bash -c 'source scripts/winvm/lib.sh; if vm_running; then kill "$(cat "$QEMU_PIDFILE")" || true; fi; stop_swtpm; echo "Windows VM stopped (image preserved)"'
+
+# Delete the entire cached VM state (image, ISO, keys) to rebuild from scratch.
+win-vm-clean:
+    nix develop --command bash -c 'source scripts/winvm/lib.sh; if vm_running; then kill "$(cat "$QEMU_PIDFILE")" 2>/dev/null || true; fi; stop_swtpm; rm -rf "$CACHE"; echo "removed $CACHE"'
+
 valgrind *args:
     cargo nextest run --profile valgrind {{ args }}
 

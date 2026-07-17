@@ -34,6 +34,32 @@ Common workflows:
 - **LLDB on macOS**: `cargo nextest run --profile lldb <filters>`
 - **Miri**: `just miri` runs a curated subset of the workspace under Miri (strict provenance). Use this when changing unsafe boundaries or anything that “should be impossible”.
 
+## Running the tests on Windows (QEMU)
+
+The Windows CI lane (`.github/workflows/test-platforms.yml`) can be reproduced
+locally against a cached Windows 11 VM, without a Windows machine. The harness
+lives in `scripts/winvm/` and is driven from the `Justfile`:
+
+- `just win-vm-up` — first run downloads the Windows 11 Enterprise Evaluation
+  ISO, performs a fully unattended install (`scripts/winvm/autounattend.xml.template`),
+  enables OpenSSH, and installs `cargo-nextest.exe` + Node on the guest. Takes
+  ~20-40 min the first time; afterwards it just boots the cached image and
+  **leaves it running**.
+- `just test-windows [nextest args]` — cross-compiles a nextest archive for
+  `x86_64-pc-windows-msvc` on this host (via `cargo-xwin`), ships it plus the
+  workspace source to the VM over SSH, and runs the suite there with the same
+  exclusions as CI. Extra args are forwarded to `nextest run`.
+- `just win-vm-ssh` — interactive shell on the VM.
+- `just win-vm-down` — stop the VM (image preserved).
+- `just win-vm-clean` — delete the cached image/ISO/keys to rebuild from scratch.
+
+All toolchain and VM dependencies (the `windows-msvc` Rust target, `cargo-xwin`,
+`qemu`, `swtpm`, `OVMF`, `xorriso`, …) are provided by the flake dev shell, so
+the recipes run themselves through `nix develop`. Cached VM state lives under
+`~/.cache/facet-winvm` (override with `FACET_WINVM_CACHE`); KVM (`/dev/kvm`) is
+required. If the eval ISO fwlink rotates, set `FACET_WINVM_ISO_URL` or drop your
+own ISO at `~/.cache/facet-winvm/windows.iso`.
+
 ## Generated files
 
 Some `README.md` files are generated from crate rustdoc using `cargo reedme`.
