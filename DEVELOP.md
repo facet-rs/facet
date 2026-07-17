@@ -19,21 +19,6 @@ The `Justfile` is the source of truth for local/CI commands. Start with:
 - `just docs` / `just doc-tests`
 - `just nostd` (catches accidental `std` usage in core crates)
 
-## Git hooks (Captain)
-
-This repo uses [Captain](https://github.com/bearcove/capn) (the `capn` binary) for pre-commit/pre-push automation.
-
-- Hook scripts live in `hooks/` and invoke `capn` / `capn pre-push`.
-- Configuration lives in `.config/captain/config.styx`.
-- `capn` is provided by the nix dev shell (`flake.nix`) — it is fetched as a
-  pinned, `autoPatchelf`ed release binary, so the hooks are fully nix-native and
-  run on NixOS. Outside nix, run `just capn` to install it from source.
-- Install the hooks with `hooks/install.sh` (also wired via `conductor.json`).
-  It sets `core.hooksPath` to the tracked `hooks/` directory, which covers the
-  main checkout and every git worktree with no copying.
-
-If you bypass hooks with `--no-verify`, CI will still enforce the checks.
-
 ## Testing and debugging
 
 Do yourself a favor and run tests with [cargo-nextest](https://nexte.st). `cargo test` is not the supported default workflow in this repo.
