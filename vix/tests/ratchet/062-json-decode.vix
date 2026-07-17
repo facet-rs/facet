@@ -2,7 +2,7 @@
 struct PkgRow { name: String, vers: String, yanked: Bool }
 
 #[test]
-fn json_decode() -> Stream<Check> {
+fn typed_json_decode() -> Stream<Check> {
     let row: PkgRow = json_decode("{\"name\":\"mio\",\"vers\":\"0.8.11\",\"yanked\":false}");
     yield expect_eq(row.name, "mio");
     yield expect_eq(row.vers, "0.8.11");
