@@ -42,11 +42,20 @@ use crate::surface::{SurfaceParser, ast};
 /// vix functions over the single `decode(document, Format)` binding: the format
 /// is a request field, and the target `T` is forwarded from the caller's
 /// expected type by return-position inference.
+///
+/// `refresh` is the retired observe *mode* intrinsic, now an ordinary vix
+/// function over the single `observe(origin, Mode)` binding — `refresh` is
+/// `observe` with `Mode::Refresh`, exactly as `refresh` and `observe` already
+/// share one primitive (`observe_primitive_id`). The origin type (`OriginHint`)
+/// is not surface-nameable, so — like `json_decode`'s `T` — the parameter is
+/// generic and the `observe` binding enforces the real origin type at the call.
 const PRELUDE_FUNCTIONS: &[&str] = &[
     "fn is_blank(text: String) -> Bool {\n    text == \"\"\n}\n",
     "enum Format {\n    Json,\n    Toml,\n}\n",
     "fn json_decode<T>(text: String) -> T {\n    decode(text, Format::Json)\n}\n",
     "fn toml_decode<T>(text: String) -> T {\n    decode(text, Format::Toml)\n}\n",
+    "enum Mode {\n    Observe,\n    Refresh,\n}\n",
+    "fn refresh<Origin>(origin: Origin) -> Blob {\n    observe(origin, Mode::Refresh)\n}\n",
 ];
 
 fn item_name(item: &ast::Item) -> Option<&str> {

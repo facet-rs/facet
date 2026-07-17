@@ -220,30 +220,30 @@ Ergonomic aliases are therefore **vix functions**, not primitives — where the
 alias is expressible as one:
 
 ```
-fn refresh(origin) = observe(origin, refresh: true)
+fn refresh<Origin>(origin: Origin) -> Blob { observe(origin, Mode::Refresh) }
 ```
 
-This is already the house pattern for the ergonomic layer (`n`, `toml_n`,
-`json_n`, `crate_archive` are vix wrappers in the corpus); `refresh` is the
-outlier that was promoted to a compiler intrinsic instead of written as an
-ordinary vix function. Retiring it means the single `observe` binding exposes
-its mode as a real argument, `refresh` becomes a vix function over it (registered
-in `crate::stdlib`), and the `refresh` intrinsic is deleted. A vix function so
-bound is effectful exactly when its body invokes an effectful primitive; effect
-tracking flows through the call as for any wrapper.
+This is the house pattern for the ergonomic layer (`n`, `toml_n`, `json_n`,
+`crate_archive` are vix wrappers in the corpus). `refresh` was the outlier —
+promoted to a compiler intrinsic instead of written as a vix function — and is
+now **retired**: the single `observe` binding takes its mode as a surface
+argument (`observe(origin, Mode::Observe | Mode::Refresh)`, read by
+`observe_mode_arg` in `compiler.rs`, the twin of `decode_format_arg`), `refresh`
+is a stdlib vix function over it (`crate::stdlib`), and the `refresh` intrinsic
+is deleted. The wrapper is generic in the origin because the `OriginHint` origin
+type is not surface-nameable — the same reason `json_decode`'s target is a type
+parameter — so the `observe` binding enforces the real origin type at the call.
+A vix function so bound is effectful exactly when its body invokes an effectful
+primitive; effect tracking flows through the call as for any wrapper.
 
-**Constraint — generic aliases cannot be vix functions until monomorphization
-lands.** `json_decode` / `toml_decode` (and the `try_*` forms) are *generic*:
-`decode<T>` needs its target type at the call site (`compiler.rs`,
-`lower_decode`/`lower_try_decode`). A vix wrapper
-`fn json_decode<T>(text) = decode<T>(text, format: Json)` would be a generic
-function. vix has generic *types* and generic type *application*, but a generic
-*function* is checked and then rejected at lowering — instantiating one raises
-`GenericLoweringUnsupported` "until monomorphization lands"
-(`tests/checker-corpus/reject/generic-lowering-unsupported.vix`). So the "alias
-is a vix function" rule holds today only for **non-generic** aliases (`refresh`).
-The decode aliases remain compiler intrinsics until monomorphization lands, at
-which point they become vix functions like any other and the intrinsics retire.
+**Generic aliases became vix functions when monomorphization landed.**
+`json_decode` / `toml_decode` are *generic*: `decode<T>` needs its target type
+at the call site. Before monomorphization a generic vix *function* was rejected
+at lowering (`GenericLoweringUnsupported`); it now lowers per concrete
+instantiation, so the decode aliases are ordinary stdlib vix functions over the
+`decode(document, Format)` binding, with `T` recovered by return-position
+inference. The `try_*` forms remain compiler intrinsics — there is no fallible
+surface binding yet.
 
 ### Placement
 
@@ -272,9 +272,11 @@ and `BindingRegistry`, with `builtin_bindings()` encoding the intended
 projection of the built-ins. It is **not yet wired**: the binder still defers
 prelude names and `lower_value` still dispatches intrinsics by hardcoded
 strings. Routing binder resolution and `lower_value` through a `BindingRegistry`
-— and moving `refresh`/`json_decode`/`toml_decode` into vix source over
-mode-taking primitive bindings — is the remaining work. Until then this layer
-must not be presented as the live binding path.
+— in place of the hardcoded `effect_intrinsic` string matches — is the remaining
+work. The mode retirements it describes are done: `refresh`, `json_decode`, and
+`toml_decode` are stdlib vix functions over the mode-taking `observe` / `decode`
+bindings. Until the registry is wired, this layer must not be presented as the
+live binding path.
 
 ## Existing implementations
 

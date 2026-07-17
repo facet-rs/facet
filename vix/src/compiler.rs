@@ -5243,7 +5243,7 @@ fn lower_some(
 fn effect_intrinsic(name: &str) -> bool {
     matches!(
         name,
-        "fixture_tree" | "fixture_registry" | "fetch" | "observe" | "refresh" | "untar"
+        "fixture_tree" | "fixture_registry" | "fetch" | "observe" | "untar"
     )
 }
 
@@ -5287,9 +5287,9 @@ fn lower_effect_intrinsic(
             ty,
         });
     }
-    if call.callee.value == "observe" || call.callee.value == "refresh" {
-        check_arity(call, 1)?;
-        let refresh = call.callee.value == "refresh";
+    if call.callee.value == "observe" {
+        check_arity(call, 2)?;
+        let refresh = observe_mode_arg(&call.args.args[1])?;
         let origin = lower_value(nodes, bindings, context, &call.args.args[0])?;
         require_type(&origin, &origin_hint_type(), expr_span(&call.args.args[0]))?;
         let flag = push_node(
@@ -5348,7 +5348,7 @@ fn lower_effect_intrinsic(
             )
         }
         "fetch" => unreachable!("registered fetch returned above"),
-        "observe" | "refresh" => unreachable!("registered observe returned above"),
+        "observe" => unreachable!("registered observe returned above"),
         "untar" => {
             check_arity(call, 1)?;
             let blob = lower_value(nodes, bindings, context, &call.args.args[0])?;
@@ -5691,6 +5691,34 @@ fn decode_format_arg(arg: &ast::Expr) -> Result<DecodeFormat, Diagnostics> {
         other => Err(Diagnostics::one(Diagnostic::unsupported(
             variant.path.variant.span,
             format!("an unknown decode format `Format::{other}`"),
+        ))),
+    }
+}
+
+/// Read the `Mode::Observe` / `Mode::Refresh` selector of an `observe` call,
+/// returning the refresh flag the primitive folds into its request record. The
+/// twin of `decode_format_arg`: the observe mode is a surface argument, not a
+/// second primitive and not a `refresh` compiler intrinsic. The checker
+/// separately validates the variant against the `Mode` enum.
+fn observe_mode_arg(arg: &ast::Expr) -> Result<bool, Diagnostics> {
+    let ast::Expr::Variant(variant) = arg else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            expr_span(arg),
+            "an observe mode `Mode::Observe` or `Mode::Refresh`",
+        )));
+    };
+    if variant.path.type_name.value != "Mode" {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            variant.path.span,
+            "an observe mode `Mode::Observe` or `Mode::Refresh`",
+        )));
+    }
+    match variant.path.variant.value.as_str() {
+        "Observe" => Ok(false),
+        "Refresh" => Ok(true),
+        other => Err(Diagnostics::one(Diagnostic::unsupported(
+            variant.path.variant.span,
+            format!("an unknown observe mode `Mode::{other}`"),
         ))),
     }
 }
