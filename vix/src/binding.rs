@@ -20,22 +20,24 @@
 //!
 //! # Status
 //!
-//! This is the representable model plus the intended projection of the
-//! built-ins as data. It is **not yet wired**: today the binder defers prelude
-//! names (see `binder.rs` module docs, which name `fetch` as the example) and
-//! `compiler::lower_value` dispatches bindings by hardcoded callee strings
-//! (`effect_intrinsic`, the `decode`/`observe` name matches and their
-//! `decode_format_arg`/`observe_mode_arg` selector readers). Routing the binder's prelude/module
-//! resolution and `lower_value` through a [`BindingRegistry`] — replacing those
-//! string matches — is the next step, and is what closes the three gaps named
-//! in `docs/content/registered-primitives.md` ("Current registration
-//! boundary"). Until then this module must not be presented as the live binding
-//! path.
+//! **Primitive dispatch is wired.** `compiler::lower_value` recognizes built-in
+//! primitives through [`prelude_primitive`] — the callee name maps to a
+//! [`PrimitiveKind`] here, in data, instead of scattered `== "decode"` /
+//! `effect_intrinsic` string matches. The genuinely per-primitive request
+//! construction (the `Format`/`Mode` selector reads, expected-type-derived
+//! targets, constant folding) stays in the compiler's typed builders, dispatched
+//! from that one kind; only the *name → primitive* map lives here.
+//!
+//! Still on the compiler side: the binder consults [`is_prelude_name`] (a name
+//! set derived from these bindings) but does not yet route full prelude/module
+//! *resolution* through [`BindingRegistry::prelude`]/[`BindingRegistry::qualified`],
+//! and the vix-fn `source` strings here are documentation — the actual injection
+//! is `crate::stdlib`'s `PRELUDE_FUNCTIONS`. Language constructs (`Some`, `None`,
+//! `by_key`, `range`, the `expect*`/trace checks) and the `.text()` method
+//! surface are deliberately outside this registry.
 
 use std::collections::BTreeSet;
 use std::sync::LazyLock;
-
-use crate::runtime::PrimitiveId;
 
 /// A non-empty `::`-separated module path (`caps`, `some::ns::inner`).
 ///
@@ -81,29 +83,36 @@ pub enum Placement {
     Module(ModulePath),
 }
 
-/// How a bound primitive builds its request from surface arguments.
+/// Which built-in primitive a prelude name lowers to.
 ///
-/// This is the piece the compiler hardcodes today (the `Op::Bool(refresh)` and
-/// `format => 0 | 1` discriminators). Modelling it as data is what lets an
-/// arbitrarily registered primitive be compiled without compiler-side surgery
-/// for its request. It is deliberately minimal here: the mode-carrying cases
-/// are expressed as [`BindingTarget::VixFunction`] aliases, not as extra
-/// shapes, keeping one primitive to one binding.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RequestShape {
-    /// The surface arguments become the primitive's request record fields, in
-    /// declaration order.
-    Direct,
+/// The compiler dispatches the (genuinely per-primitive) request construction on
+/// this: selector reads (`Format`/`Mode`), expected-type-derived targets, and
+/// constant folding do not reduce to a single data shape. What the registry owns
+/// is the mapping from surface name to primitive — the set of primitive names
+/// lives here as data, not as scattered string matches in `lower_value`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PrimitiveKind {
+    /// `fetch(pin)` — pinned-blob fetch.
+    Fetch,
+    /// `observe(origin, Mode)` — observe/refresh over one primitive.
+    Observe,
+    /// `decode(document, Format)` — infallible typed decode to `T`.
+    Decode,
+    /// `try_decode(document, Format)` — fallible decode to `Result<T, DecodeError>`.
+    TryDecode,
+    /// `fixture_tree(name)` — a named fixture tree (a dedicated machine op).
+    FixtureTree,
+    /// `fixture_registry()` — the fixture registry (a dedicated machine op).
+    FixtureRegistry,
+    /// `untar(blob)` — expand a blob to a tree (a dedicated machine op).
+    Untar,
 }
 
 /// What a surface name resolves to.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BindingTarget {
-    /// A registered Rust primitive, one-to-one with this name.
-    Primitive {
-        id: PrimitiveId,
-        request: RequestShape,
-    },
+    /// A built-in primitive, one-to-one with this name.
+    Primitive(PrimitiveKind),
     /// A vix-source function bound under a placement. This is the sanctioned way
     /// to add an alias or convenience wrapper (`refresh` over `observe`) and to
     /// "nicely add a pure vix function" to the prelude or a namespace. The
@@ -121,18 +130,17 @@ pub struct Binding {
 }
 
 impl Binding {
-    /// Bind a registered primitive to a surface name. One primitive, one name.
+    /// Bind a built-in primitive to a surface name. One primitive, one name.
     #[must_use]
     pub fn primitive(
         placement: Placement,
         name: impl Into<String>,
-        id: PrimitiveId,
-        request: RequestShape,
+        kind: PrimitiveKind,
     ) -> Self {
         Self {
             placement,
             name: name.into(),
-            target: BindingTarget::Primitive { id, request },
+            target: BindingTarget::Primitive(kind),
         }
     }
 
@@ -187,71 +195,85 @@ impl BindingRegistry {
     }
 }
 
-/// The intended projection of the built-ins, encoded as data.
+/// The built-in prelude bindings, encoded as data.
 ///
 /// Each built-in primitive projects **one** prelude name; the behavioural modes
-/// (`refresh`, `json_decode`, `toml_decode`) are vix functions over the single
-/// primitive rather than extra primitives or intrinsics. This is the target
-/// shape the binder and compiler are meant to consume in place of the hardcoded
-/// intrinsic string matches — see this module's status note. It intentionally
-/// describes the *target* signatures (e.g. `observe` taking a `refresh` arg,
-/// `decode` taking a `format` arg), which is the projection the design calls
-/// for, not a mirror of today's not-yet-refactored compiler.
+/// (`refresh` over `observe`; `json_decode`/`toml_decode`/`try_json_decode`/
+/// `try_toml_decode` over `decode`/`try_decode`) are vix functions over the
+/// single primitive rather than extra primitives or intrinsics. The compiler
+/// consumes this in place of hardcoded name matches: [`prelude_primitive`] maps
+/// a name to its [`PrimitiveKind`] for lowering, and [`is_prelude_name`] gates
+/// binder resolution. The vix-fn `source` strings mirror `crate::stdlib`'s
+/// `PRELUDE_FUNCTIONS`, which is what actually injects them.
 ///
 /// Tree text reads (`.text()`) are a *method* binding surface, orthogonal to
 /// free-function placement, and are intentionally omitted here.
 #[must_use]
 pub fn builtin_bindings() -> BindingRegistry {
-    use crate::runtime::{observe_primitive_id, pinned_fetch_primitive_id};
-    use crate::vir::decode_primitive_id;
-
     let mut reg = BindingRegistry::default();
 
     // One primitive : one binding : one name.
-    reg.insert(Binding::primitive(
-        Placement::Prelude,
-        "fetch",
-        pinned_fetch_primitive_id(),
-        RequestShape::Direct,
-    ));
-    reg.insert(Binding::primitive(
-        Placement::Prelude,
-        "observe",
-        observe_primitive_id(),
-        RequestShape::Direct,
-    ));
-    reg.insert(Binding::primitive(
-        Placement::Prelude,
-        "decode",
-        decode_primitive_id(),
-        RequestShape::Direct,
-    ));
+    for (name, kind) in [
+        ("fetch", PrimitiveKind::Fetch),
+        ("observe", PrimitiveKind::Observe),
+        ("decode", PrimitiveKind::Decode),
+        ("try_decode", PrimitiveKind::TryDecode),
+        ("fixture_tree", PrimitiveKind::FixtureTree),
+        ("fixture_registry", PrimitiveKind::FixtureRegistry),
+        ("untar", PrimitiveKind::Untar),
+    ] {
+        reg.insert(Binding::primitive(Placement::Prelude, name, kind));
+    }
 
     // Modes-as-aliases: vix functions over the single primitive, not new
-    // primitives and not new compiler intrinsics.
-    reg.insert(Binding::vix_fn(
-        Placement::Prelude,
-        "refresh",
-        "fn refresh(x) = observe(x, refresh: true)",
-    ));
-    reg.insert(Binding::vix_fn(
-        Placement::Prelude,
-        "json_decode",
-        "fn json_decode<T>(text) = decode<T>(text, format: Json)",
-    ));
-    reg.insert(Binding::vix_fn(
-        Placement::Prelude,
-        "toml_decode",
-        "fn toml_decode<T>(text) = decode<T>(text, format: Toml)",
-    ));
+    // primitives and not new compiler intrinsics (mirroring `stdlib`).
+    for (name, source) in [
+        (
+            "refresh",
+            "fn refresh<Origin>(origin: Origin) -> Blob { observe(origin, Mode::Refresh) }",
+        ),
+        (
+            "json_decode",
+            "fn json_decode<T>(text: String) -> T { decode(text, Format::Json) }",
+        ),
+        (
+            "toml_decode",
+            "fn toml_decode<T>(text: String) -> T { decode(text, Format::Toml) }",
+        ),
+        (
+            "try_json_decode",
+            "fn try_json_decode<T>(text: String) -> Result<T, DecodeError> { try_decode(text, Format::Json) }",
+        ),
+        (
+            "try_toml_decode",
+            "fn try_toml_decode<T>(text: String) -> Result<T, DecodeError> { try_decode(text, Format::Toml) }",
+        ),
+    ] {
+        reg.insert(Binding::vix_fn(Placement::Prelude, name, source));
+    }
 
     reg
+}
+
+/// The built-in bindings, built once. The single source of truth for which
+/// surface names are prelude primitives / vix-fn aliases.
+static BUILTIN_BINDINGS: LazyLock<BindingRegistry> = LazyLock::new(builtin_bindings);
+
+/// The [`PrimitiveKind`] a prelude name lowers to, or `None` if the name is not
+/// a built-in primitive (a vix-fn alias, a user name, or unknown). The compiler
+/// calls this to dispatch primitive lowering instead of matching callee strings.
+#[must_use]
+pub fn prelude_primitive(name: &str) -> Option<PrimitiveKind> {
+    match BUILTIN_BINDINGS.prelude(name)?.target {
+        BindingTarget::Primitive(kind) => Some(kind),
+        BindingTarget::VixFunction { .. } => None,
+    }
 }
 
 /// The set of prelude-placed binding names, derived once from
 /// [`builtin_bindings`] so the binding set stays the single source of truth.
 static PRELUDE_NAMES: LazyLock<BTreeSet<String>> = LazyLock::new(|| {
-    builtin_bindings()
+    BUILTIN_BINDINGS
         .bindings()
         .iter()
         .filter(|binding| binding.placement == Placement::Prelude)
@@ -283,16 +305,33 @@ mod tests {
     fn builtins_project_one_prelude_name_per_primitive() {
         let reg = builtin_bindings();
 
-        // The three free-function primitives are in the prelude, one name each.
-        for name in ["fetch", "observe", "decode"] {
+        // The built-in primitives are in the prelude, one name each, and
+        // `prelude_primitive` maps each to its lowering kind.
+        for (name, kind) in [
+            ("fetch", PrimitiveKind::Fetch),
+            ("observe", PrimitiveKind::Observe),
+            ("decode", PrimitiveKind::Decode),
+            ("try_decode", PrimitiveKind::TryDecode),
+            ("fixture_tree", PrimitiveKind::FixtureTree),
+            ("fixture_registry", PrimitiveKind::FixtureRegistry),
+            ("untar", PrimitiveKind::Untar),
+        ] {
             let binding = reg.prelude(name).expect("prelude primitive");
-            assert!(matches!(binding.target, BindingTarget::Primitive { .. }));
+            assert!(matches!(binding.target, BindingTarget::Primitive(_)));
+            assert_eq!(prelude_primitive(name), Some(kind));
         }
 
         // The mode aliases are vix functions, not primitives.
-        for alias in ["refresh", "json_decode", "toml_decode"] {
+        for alias in [
+            "refresh",
+            "json_decode",
+            "toml_decode",
+            "try_json_decode",
+            "try_toml_decode",
+        ] {
             let binding = reg.prelude(alias).expect("prelude alias");
             assert!(matches!(binding.target, BindingTarget::VixFunction { .. }));
+            assert_eq!(prelude_primitive(alias), None);
         }
     }
 
@@ -303,7 +342,7 @@ mod tests {
         reg.insert(Binding::vix_fn(
             Placement::Module(path.clone()),
             "cool_function",
-            "fn cool_function(x) = observe(x, refresh: false)",
+            "fn cool_function<Origin>(origin: Origin) -> Blob { observe(origin, Mode::Observe) }",
         ));
 
         // Reachable by its qualified path...

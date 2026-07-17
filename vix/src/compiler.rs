@@ -3529,14 +3529,12 @@ fn lower_value_expected(
         ast::Expr::Call(call) if call.callee.value == "Some" => {
             lower_some(nodes, bindings, context, call, expected)
         }
-        ast::Expr::Call(call) if call.callee.value == "try_decode" => {
-            lower_try_decode_binding(nodes, bindings, context, call, expected)
-        }
-        ast::Expr::Call(call) if call.callee.value == "decode" => {
-            lower_decode_binding(nodes, bindings, context, call, expected)
-        }
-        ast::Expr::Call(call) if effect_intrinsic(&call.callee.value) => {
-            lower_effect_intrinsic(nodes, bindings, context, call)
+        ast::Expr::Call(call)
+            if crate::binding::prelude_primitive(&call.callee.value).is_some() =>
+        {
+            let kind = crate::binding::prelude_primitive(&call.callee.value)
+                .expect("guard confirmed the callee is a built-in primitive");
+            lower_primitive(nodes, bindings, context, call, kind, expected)
         }
         ast::Expr::Call(call) => lower_call(nodes, bindings, context, call, expected),
         ast::Expr::WhereCall(call) => lower_where_call(nodes, bindings, context, call),
@@ -5240,29 +5238,51 @@ fn lower_some(
 /// primitive lands, this fold must become the constant-folded case *of* it, not
 /// a replacement — nonliteral sources are rejected at a named runtime seam
 /// ([`DiagnosticCode::RuntimeDecodeUnavailable`]) rather than host-evaluated.
+/// Lower a call to a built-in primitive, dispatched on the [`PrimitiveKind`] the
+/// binding registry (`crate::binding`) resolved the callee name to — no callee
+/// string matching here. The request construction is genuinely per-primitive
+/// (selector reads, expected-type targets, folding), so the registry owns the
+/// *name → primitive* map while each builder owns its request shape.
+fn lower_primitive(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    call: &ast::Call,
+    kind: crate::binding::PrimitiveKind,
+    expected: Option<&Type>,
+) -> Result<LoweredValue, Diagnostics> {
+    use crate::binding::PrimitiveKind;
+    match kind {
+        PrimitiveKind::Decode => lower_decode_binding(nodes, bindings, context, call, expected),
+        PrimitiveKind::TryDecode => {
+            lower_try_decode_binding(nodes, bindings, context, call, expected)
+        }
+        PrimitiveKind::Fetch
+        | PrimitiveKind::Observe
+        | PrimitiveKind::FixtureTree
+        | PrimitiveKind::FixtureRegistry
+        | PrimitiveKind::Untar => lower_effect_intrinsic(nodes, bindings, context, call, kind),
+    }
+}
+
 /// The machine-plane primitive constructors of the tree/fetch band. Each
 /// lowers to an [`EffectKind::Effect`] node the partitioner hoists into its
 /// own effect island; nothing here is a Weavy-lowerable pure operation.
-fn effect_intrinsic(name: &str) -> bool {
-    matches!(
-        name,
-        "fixture_tree" | "fixture_registry" | "fetch" | "observe" | "untar"
-    )
-}
-
 fn lower_effect_intrinsic(
     nodes: &mut Vec<Node>,
     bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
     call: &ast::Call,
+    kind: crate::binding::PrimitiveKind,
 ) -> Result<LoweredValue, Diagnostics> {
+    use crate::binding::PrimitiveKind;
     if call.named_args.is_some() {
         return Err(Diagnostics::one(Diagnostic::unsupported(
             call.span,
             "named arguments on a primitive constructor",
         )));
     }
-    if call.callee.value == "fetch" {
+    if kind == PrimitiveKind::Fetch {
         check_arity(call, 1)?;
         let pin = lower_value(nodes, bindings, context, &call.args.args[0])?;
         require_type(&pin, &pinned_blob_ref_type(), expr_span(&call.args.args[0]))?;
@@ -5290,7 +5310,7 @@ fn lower_effect_intrinsic(
             ty,
         });
     }
-    if call.callee.value == "observe" {
+    if kind == PrimitiveKind::Observe {
         check_arity(call, 2)?;
         let refresh = observe_mode_arg(&call.args.args[1])?;
         let origin = lower_value(nodes, bindings, context, &call.args.args[0])?;
@@ -5327,8 +5347,8 @@ fn lower_effect_intrinsic(
             ty,
         });
     }
-    let (ty, op, inputs) = match call.callee.value.as_str() {
-        "fixture_tree" => {
+    let (ty, op, inputs) = match kind {
+        PrimitiveKind::FixtureTree => {
             check_arity(call, 1)?;
             let ast::Expr::Str(name) = &call.args.args[0] else {
                 return Err(Diagnostics::one(Diagnostic::unsupported(
@@ -5342,7 +5362,7 @@ fn lower_effect_intrinsic(
                 Vec::new(),
             )
         }
-        "fixture_registry" => {
+        PrimitiveKind::FixtureRegistry => {
             check_arity(call, 0)?;
             (
                 Type::Extern(ExternKind::Registry),
@@ -5350,9 +5370,7 @@ fn lower_effect_intrinsic(
                 Vec::new(),
             )
         }
-        "fetch" => unreachable!("registered fetch returned above"),
-        "observe" => unreachable!("registered observe returned above"),
-        "untar" => {
+        PrimitiveKind::Untar => {
             check_arity(call, 1)?;
             let blob = lower_value(nodes, bindings, context, &call.args.args[0])?;
             require_type(
@@ -5362,7 +5380,12 @@ fn lower_effect_intrinsic(
             )?;
             (Type::Extern(ExternKind::Tree), Op::Untar, vec![blob.node])
         }
-        other => unreachable!("effect intrinsic dispatch matched `{other}`"),
+        PrimitiveKind::Fetch | PrimitiveKind::Observe => {
+            unreachable!("fetch/observe returned above")
+        }
+        PrimitiveKind::Decode | PrimitiveKind::TryDecode => {
+            unreachable!("decode/try_decode do not route through lower_effect_intrinsic")
+        }
     };
     Ok(LoweredValue {
         node: push_node(
