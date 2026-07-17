@@ -193,6 +193,89 @@ explicit trait objects. A typed Facet adapter may derive request and response
 schemas and perform structural conversion, but it should not revive
 `register_function(name, policy, closure)` as an environment-smuggling API.
 
+## Surface bindings
+
+The gap "project registered descriptors into compiler-visible names" is
+resolved by a **binding layer** that is deliberately separate from both the
+registry and the compiler. Three concerns are kept apart:
+
+- **registry identity** — a primitive is a `PrimitiveId` matched by schema. It
+  carries no surface name and never learns one.
+- **surface name and placement** — what a primitive is *called* in vix source,
+  and where that name lives in resolution.
+- **request construction** — how surface arguments fold into the primitive's
+  request record.
+
+The rule is **one primitive, one binding, one name**. A primitive does not get
+two spellings. Behavioural variants that must share identity, claim, and memo
+state — `observe`/`refresh`, `json`/`toml` decode — are *modes of a single
+effect*, carried as **request fields the primitive reads**, not as extra
+primitives and not as extra compiler intrinsics. The evidence that they are one
+effect is that they share a claim head: a `refresh` reconciles against the
+`observe` claim on the same coordinate (`PrimitiveMachineError::RefreshConflict`).
+Splitting them into two `PrimitiveId`s would fork that shared state and force a
+back-channel to reunite it.
+
+Ergonomic aliases are therefore **vix functions**, not primitives — where the
+alias is expressible as one:
+
+```
+fn refresh(origin) = observe(origin, refresh: true)
+```
+
+This is already the house pattern for the ergonomic layer (`n`, `toml_n`,
+`json_n`, `crate_archive` are vix wrappers in the corpus); `refresh` is the
+outlier that was promoted to a compiler intrinsic instead of written as an
+ordinary vix function. Retiring it means the single `observe` binding exposes
+its mode as a real argument, `refresh` becomes a vix function over it (registered
+in `crate::stdlib`), and the `refresh` intrinsic is deleted. A vix function so
+bound is effectful exactly when its body invokes an effectful primitive; effect
+tracking flows through the call as for any wrapper.
+
+**Constraint — generic aliases cannot be vix functions until monomorphization
+lands.** `json_decode` / `toml_decode` (and the `try_*` forms) are *generic*:
+`decode<T>` needs its target type at the call site (`compiler.rs`,
+`lower_decode`/`lower_try_decode`). A vix wrapper
+`fn json_decode<T>(text) = decode<T>(text, format: Json)` would be a generic
+function. vix has generic *types* and generic type *application*, but a generic
+*function* is checked and then rejected at lowering — instantiating one raises
+`GenericLoweringUnsupported` "until monomorphization lands"
+(`tests/checker-corpus/reject/generic-lowering-unsupported.vix`). So the "alias
+is a vix function" rule holds today only for **non-generic** aliases (`refresh`).
+The decode aliases remain compiler intrinsics until monomorphization lands, at
+which point they become vix functions like any other and the intrinsics retire.
+
+### Placement
+
+A binding declares where its name lives:
+
+- **prelude** — injected into every module's scope, callable with no `use`
+  (today's `fetch`, `observe`). This is the prelude layer the binder currently
+  defers (see the `binder` module docs, which name `fetch` as the example).
+- **namespaced** — reached through a `::`-path or `use module::name`, e.g.
+  `some::ns::cool_function`.
+
+Placement is a binder concern: the binder consults the binding set when
+resolving unqualified prelude names and qualified paths, in place of leaving
+them in its `unresolved` bucket. The compiler's `lower_value` consults the same
+set in place of the hardcoded `effect_intrinsic` / `decode_format` string
+matches, emitting `Op::InvokePrimitive` with a request built from the binding's
+request shape. Because each primitive binding is one name with a data-described
+request, an arbitrary registered primitive compiles without compiler-side
+construction — closing the second and third gaps above.
+
+### Status
+
+The model exists as representable types (`vix::binding`): `Placement`
+(`Prelude` | `Module`), `Binding`, `BindingTarget` (`Primitive` | `VixFunction`),
+and `BindingRegistry`, with `builtin_bindings()` encoding the intended
+projection of the built-ins. It is **not yet wired**: the binder still defers
+prelude names and `lower_value` still dispatches intrinsics by hardcoded
+strings. Routing binder resolution and `lower_value` through a `BindingRegistry`
+— and moving `refresh`/`json_decode`/`toml_decode` into vix source over
+mode-taking primitive bindings — is the remaining work. Until then this layer
+must not be presented as the live binding path.
+
 ## Existing implementations
 
 The production examples are:

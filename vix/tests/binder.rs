@@ -84,10 +84,16 @@ fn lua_sketch_binds() {
         .expect("Cc imported");
     assert!(!b.references(cc_import).is_empty());
 
-    // Unresolved is a VALUE list, not an error list: primitives awaiting a prelude,
-    // constructor-like patterns, and the unimported Flag type.
+    // Unresolved is a VALUE list, not an error list: the `extract` primitive
+    // still awaiting a prelude binding, constructor-like patterns, and the
+    // unimported Flag type. `fetch` now resolves through the prelude binding
+    // registry (`vix::binding`), so it is NOT here.
     let unresolved: Vec<&str> = b.unresolved().iter().map(|s| s.value.as_str()).collect();
-    for expected in ["fetch", "extract", "Linux", "Macos", "Flag"] {
+    assert!(
+        !unresolved.contains(&"fetch"),
+        "fetch resolves through the prelude registry, got {unresolved:?}"
+    );
+    for expected in ["extract", "Linux", "Macos", "Flag"] {
         assert!(
             unresolved.contains(&expected),
             "expected `{expected}` in unresolved, got {unresolved:?}"

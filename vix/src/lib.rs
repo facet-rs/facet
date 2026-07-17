@@ -20,6 +20,7 @@ pub mod ast {
 }
 
 pub mod binder;
+pub mod binding;
 pub mod budget;
 pub mod compiler;
 pub(crate) mod data;
@@ -40,6 +41,7 @@ pub mod reloc_selection;
 pub mod rpc_process;
 pub mod runtime;
 pub mod schema;
+pub mod stdlib;
 pub mod surface;
 pub mod value;
 pub mod vir;
