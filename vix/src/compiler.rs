@@ -3523,7 +3523,7 @@ fn lower_value_expected(
         ast::Expr::Call(call) if effect_intrinsic(&call.callee.value) => {
             lower_effect_intrinsic(nodes, bindings, context, call)
         }
-        ast::Expr::Call(call) => lower_call(nodes, bindings, context, call),
+        ast::Expr::Call(call) => lower_call(nodes, bindings, context, call, expected),
         ast::Expr::WhereCall(call) => lower_where_call(nodes, bindings, context, call),
         ast::Expr::Command(command) => lower_command(nodes, bindings, context, command),
         ast::Expr::Exec(exec) => lower_exec(nodes, bindings, context, exec),
@@ -8893,6 +8893,7 @@ fn lower_call(
     bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
     call: &ast::Call,
+    expected: Option<&Type>,
 ) -> Result<LoweredValue, Diagnostics> {
     if let Some(callee) = bindings.get(&call.callee.value) {
         return lower_value_call(nodes, bindings, context, call, callee.clone());
@@ -8901,16 +8902,17 @@ fn lower_call(
         return lower_direct_call(nodes, bindings, context, call, signature);
     }
     if context.generics.contains_key(&call.callee.value) {
-        return lower_generic_call(nodes, bindings, context, call);
+        return lower_generic_call(nodes, bindings, context, call, expected);
     }
     Err(unknown_name(call.callee.span, &call.callee.value))
 }
 
 /// Lower a call to a generic function by monomorphizing it for the concrete
-/// type arguments, inferred from the positional argument types. Type arguments
-/// are never written explicitly — the surface rejects turbofish generic calls
-/// (`id<Int>(1)`) at parse — so inference is the only instantiation path. Each
-/// distinct type-argument set lowers one body.
+/// type arguments, inferred from the positional argument types and — for a
+/// parameter that appears only in the return type — the call's expected type.
+/// Type arguments are never written explicitly (the surface rejects turbofish
+/// generic calls `id<Int>(1)` at parse), so inference is the only instantiation
+/// path. Each distinct type-argument set lowers one body.
 ///
 /// r[impl lang.types.generic-function-monomorphized]
 fn lower_generic_call(
@@ -8918,6 +8920,7 @@ fn lower_generic_call(
     bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
     call: &ast::Call,
+    expected: Option<&Type>,
 ) -> Result<LoweredValue, Diagnostics> {
     let template = *context
         .generics
@@ -8955,6 +8958,22 @@ fn lower_generic_call(
         infer_type_argument(
             &parameter.ty,
             &value.ty,
+            &parameter_names,
+            &mut inferred,
+            call.callee.span,
+        )?;
+    }
+
+    // Return-position inference: a type parameter that appears only in the
+    // return type (`fn json_decode<T>(s: String) -> T`) is invisible to the
+    // argument-driven loop above. When the call site supplies an expected type,
+    // unify the declared return type against it to recover such parameters. A
+    // parameter fixed by both an argument and the return must agree —
+    // `infer_type_argument` rejects a conflict.
+    if let (Some(expected), Some(return_type)) = (expected, template.return_type.as_ref()) {
+        infer_type_argument(
+            return_type,
+            expected,
             &parameter_names,
             &mut inferred,
             call.callee.span,
