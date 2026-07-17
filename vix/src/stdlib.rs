@@ -21,10 +21,14 @@
 //! functions registered here today are the ones that compile against the
 //! current surface.
 //!
-//! Status: the mechanism is flag-gated ([`CompilerConfig::stdlib`], default
-//! off). Turning it on for every compilation perturbs function ids and the
-//! machine's module-set hash, so that flip belongs behind a full golden/ratchet
-//! re-vet and is not done here.
+//! Status: on by default ([`CompilerConfig::stdlib`]) — the retired decode and
+//! `refresh` intrinsics now live here as vix functions, so a compilation needs
+//! the prelude to resolve them. Turning it on perturbed function ids, exact
+//! module counts, and the constant-fold of literal decodes (a decode behind a
+//! wrapper parameter no longer folds); the ratchet goldens were re-vetted for
+//! that, with the decode-fold rungs `#[ignore]`d until pure vix functions
+//! constant-fold and folding is restored by default. Tests that assert on the
+//! bare user program disable the flag.
 //!
 //! [`CompilerConfig::stdlib`]: crate::compiler::CompilerConfig::stdlib
 
