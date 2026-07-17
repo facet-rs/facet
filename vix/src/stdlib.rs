@@ -33,11 +33,21 @@ use std::collections::BTreeSet;
 use crate::diagnostic::Diagnostics;
 use crate::surface::{SurfaceParser, ast};
 
-/// Registered prelude functions: pure vix source, one top-level `fn` each.
+/// Registered prelude items: pure vix source, one top-level item each (`fn`,
+/// `enum`, or `struct`). They travel the same front end as user code and are
+/// injected into every module (an unused item is demand-pruned, so it costs a
+/// module nothing it doesn't call).
 ///
-/// A deliberately tiny first registration (`is_blank`) exercises the loader end
-/// to end against the current surface. Add entries here to grow the prelude.
-const PRELUDE_FUNCTIONS: &[&str] = &["fn is_blank(text: String) -> Bool {\n    text == \"\"\n}\n"];
+/// `json_decode`/`toml_decode` are the retired decode intrinsics, now ordinary
+/// vix functions over the single `decode(document, Format)` binding: the format
+/// is a request field, and the target `T` is forwarded from the caller's
+/// expected type by return-position inference.
+const PRELUDE_FUNCTIONS: &[&str] = &[
+    "fn is_blank(text: String) -> Bool {\n    text == \"\"\n}\n",
+    "enum Format {\n    Json,\n    Toml,\n}\n",
+    "fn json_decode<T>(text: String) -> T {\n    decode(text, Format::Json)\n}\n",
+    "fn toml_decode<T>(text: String) -> T {\n    decode(text, Format::Toml)\n}\n",
+];
 
 fn item_name(item: &ast::Item) -> Option<&str> {
     match item {
@@ -85,13 +95,20 @@ mod tests {
         })
     }
 
+    fn without_stdlib() -> Compiler {
+        Compiler::with_config(CompilerConfig {
+            stdlib: false,
+            ..CompilerConfig::default()
+        })
+    }
+
     #[test]
     fn registered_prelude_fn_is_callable_like_user_code() {
         let program = "fn check(text: String) -> Bool {\n    is_blank(text)\n}\n";
 
         // Without the stdlib, `is_blank` is an unknown name…
         assert!(
-            Compiler::default().compile(program).is_err(),
+            without_stdlib().compile(program).is_err(),
             "is_blank is not available without the stdlib"
         );
         // …with it registered, the program compiles as if `is_blank` were

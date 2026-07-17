@@ -40,7 +40,7 @@ pub struct Compiler {
 /// shapes. The molten one-item-append fold is admitted under the as-if law; the
 /// forced-copy differential compiles the same source with the molten shape
 /// disabled so the two value sets can be proven identical.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CompilerConfig {
     /// When set, every `Array.fold` keeps the semantic copy path even where the
     /// strict one-item-append shape would otherwise be admitted molten.
@@ -50,11 +50,23 @@ pub struct CompilerConfig {
     /// as value inputs, so downstream demand keys are over `ValueId`s rather
     /// than recompute-and-compare results.
     pub force_scalar_call_boundaries: bool,
-    /// Merge the registered standard-library prelude functions (`crate::stdlib`)
-    /// into the compilation as ordinary top-level items. Off by default so
-    /// existing compilations — and the golden/ratchet module-set hashes — are
-    /// unperturbed; callers opt in.
+    /// Merge the registered standard-library prelude (`crate::stdlib`) into the
+    /// compilation as ordinary top-level items. On by default: the stdlib holds
+    /// the surface `json_decode`/`toml_decode` functions (the retired decode
+    /// intrinsics), so a compilation needs it to resolve them. Unused items are
+    /// demand-pruned, so this costs a module nothing it doesn't call. Off only
+    /// for tests that isolate the bare surface.
     pub stdlib: bool,
+}
+
+impl Default for CompilerConfig {
+    fn default() -> Self {
+        Self {
+            force_molten_copy: false,
+            force_scalar_call_boundaries: false,
+            stdlib: true,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -3520,9 +3532,6 @@ fn lower_value_expected(
         ast::Expr::Call(call) if call.callee.value == "decode" => {
             lower_decode_binding(nodes, bindings, context, call, expected)
         }
-        ast::Expr::Call(call) if decode_format(&call.callee.value).is_some() => {
-            lower_decode(nodes, bindings, context, call, expected)
-        }
         ast::Expr::Call(call) if effect_intrinsic(&call.callee.value) => {
             lower_effect_intrinsic(nodes, bindings, context, call)
         }
@@ -5228,14 +5237,6 @@ fn lower_some(
 /// primitive lands, this fold must become the constant-folded case *of* it, not
 /// a replacement — nonliteral sources are rejected at a named runtime seam
 /// ([`DiagnosticCode::RuntimeDecodeUnavailable`]) rather than host-evaluated.
-fn decode_format(name: &str) -> Option<DecodeFormat> {
-    match name {
-        "json_decode" => Some(DecodeFormat::Json),
-        "toml_decode" => Some(DecodeFormat::Toml),
-        _ => None,
-    }
-}
-
 /// The machine-plane primitive constructors of the tree/fetch band. Each
 /// lowers to an [`EffectKind::Effect`] node the partitioner hoists into its
 /// own effect island; nothing here is a Weavy-lowerable pure operation.
@@ -5627,32 +5628,6 @@ fn lower_try_decode(
             ))
         }
     }
-}
-
-fn lower_decode(
-    nodes: &mut Vec<Node>,
-    bindings: &BTreeMap<String, LoweredValue>,
-    context: &ModuleContext<'_>,
-    call: &ast::Call,
-    expected: Option<&Type>,
-) -> Result<LoweredValue, Diagnostics> {
-    let format = decode_format(&call.callee.value).expect("decode intrinsic name");
-    if call.named_args.is_some() {
-        return Err(Diagnostics::one(Diagnostic::unsupported(
-            call.span,
-            "named arguments on a decode call",
-        )));
-    }
-    check_arity(call, 1)?;
-    lower_decode_core(
-        nodes,
-        bindings,
-        context,
-        &call.args.args[0],
-        call.span,
-        format,
-        expected,
-    )
 }
 
 /// The single decode binding: `decode(document, Format::Json)`. The format is a
