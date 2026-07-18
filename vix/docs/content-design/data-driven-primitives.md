@@ -29,43 +29,92 @@ still gates *what earns a primitive* (it must cross an authority boundary). This
 note is about the *mechanism* once something has earned one: how that primitive
 projects onto the vix surface without bespoke compiler code.
 
-## What's wrong today: one primitive, three hand-synced spellings
+## What's wrong today: one primitive, *five* hand-synced spellings
 
-A single primitive like `fetch` is described in three places that must agree
-field-for-field, kept in lockstep by a human:
+A single primitive like `fetch` is described in five places that must agree
+field-for-field, kept in lockstep by a human. (The first three were the ones
+this doc originally listed; the last two were surfaced by investigating the
+step-1 PR — they are just as load-bearing.)
 
 1. **The Rust request struct** — `PinnedFetchRequest { pin: PinnedBlobRef }` in
    `runtime/fetch_primitive.rs`, `#[derive(facet::Facet)]`. This is what the
    runtime actually executes against.
 2. **A hand-written `Type` mirror** — `pinned_fetch_request_type()`,
-   `origin_hint_type()`, `pinned_blob_ref_type()`, `observe_request_type()`,
-   each a `Type::Record(...)` that re-spells struct #1 field-by-field. This is
-   what the compiler builds requests *of*, and what `PrimitiveDescriptor`'s
-   `schema_ref()` patterns point back into.
+   `origin_hint_type()`, `blob_id_type()`, `pinned_blob_ref_type()`,
+   `observe_request_type()`, each a `Type::Record(...)` that re-spells struct #1
+   field-by-field. This is what the compiler builds requests *of*, and what
+   `PrimitiveDescriptor`'s `schema_ref()` patterns point back into.
 3. **The projection onto the surface** — `binding::RequestShape` (per-argument
    `ArgRole`s → how surface arguments fold into #2's record) plus the central
    `request_shape(kind)` / `builtin_bindings()` tables in `binding.rs`.
+4. **The method-surface lowering** — `compiler.rs` (`PreludeMethod::RegistryUrl`
+   / `RegistryCoordinate`, the `.registry_url(name)` / `.registry_coordinate(name)`
+   methods) lowers to VIR ops typed with `pinned_blob_ref_type()` /
+   `origin_hint_type()` directly. This is in fact **the one vix-source-reachable
+   path that constructs these types today** — so the `observe_binding` comment
+   "no way to spell a valid origin in vix yet" is only true for record literals,
+   not for the method surface.
+5. **The wire-construction op** — `scheduler.rs` (`Op::RegistryUrl` /
+   `RegistryCoordinate` execution) hand-builds the raw `PrimitiveValue` product /
+   variant / sequence trees field-by-field, matching #2's records exactly,
+   including the hex-string `upstream` encoding. This is construction code, not a
+   type mirror, so it must track any field-order / shape / encoding change as
+   tightly as `parse_request` does on the read side.
 
 `RequestShape` already collapsed the *bespoke-compiler-arm* half of #3 into
 data — `fetch` and `observe` no longer have a hand-written arm in
 `lower_effect_intrinsic`. But #1 and #2 are still two spellings of the same
-shape, #2 has no vix-nameable surface, and #3's mapping table is a second place
-that names every primitive.
+shape, #2 has no vix-nameable surface, #3's mapping table is a second place that
+names every primitive, and #4/#5 must be reconciled by hand on every change.
 
 The duplication is not incidental: `facet::Facet` already gives full reflection
-over struct #1, so #2 is *derivable* and only exists because we hand-wrote it
-first.
+over struct #1, so #2 is *largely* derivable — see the next section for the small,
+honest set of leaf facts that are genuinely not inferable from the Rust type.
 
 ## End-state: one source per fact
 
 ### 1. The struct shape *is* the schema
 
 Derive `Type` / `schema_ref` from the `Facet` shape of the request struct and
-**delete** every hand-written `*_request_type()` / `*_hint_type()` /
-`*_ref_type()` constructor in `runtime/`. `RequestShape.request_ty` and
+**delete** the hand-written `*_request_type()` / `*_hint_type()` / `*_ref_type()`
+constructors in `runtime/`. `RequestShape.request_ty` and
 `PrimitiveDescriptor.request_schema` then read the *same* derived type — #1 and
 #2 become one. The struct is the single source; the schema is a projection of
 it, not a parallel artifact.
+
+**The mechanism, honestly.** A facet-shape → `SchemaRef` bridge already exists
+(`SchemaRef::for_facet`, via `facet`'s `taxon_bridge`) but is dead code, and it
+only yields the identity hash — the compiler needs the *structural* `vir::Type`
+(field names, record/option/array tree) to build requests, so a
+`Type::from_facet::<T>()` walker must be built. It maps the common cases
+generically (primitives, `struct → Record`, `enum → Enum`, `Vec → array`,
+`Option → option`), and consults a **tiny override table** (~4–6 entries) for the
+handful of leaf facts Rust's type system genuinely cannot carry:
+
+- a `[u8; 32]` digest is wire-encoded as a hex `String` (vix's `Type` has no
+  fixed-byte-array primitive) — `Digest` / `UpstreamDigest → Type::String`;
+- an opaque handle field is a `Type::Extern(kind)`, but the same Rust type
+  (`ValueId`) is reused for several `ExternKind`s and carries no marker for
+  *which*. The fix is to **reshape the structs** so each wire meaning gets its own
+  Rust newtype (e.g. a `RegistryHandle(ValueId)` distinct from `BlobId(ValueId)`),
+  and key the override on that type identity — distinct meanings, distinct types,
+  which is the "make invalid states unrepresentable" move anyway.
+
+This keeps the single-source promise while being honest that a few leaf facts
+need one line of override each — not a bespoke `Type::Record` per primitive.
+
+**Schema stability is the gate.** `PrimitiveDescriptor.request_schema =
+SchemaPattern::exact(&…type().schema_ref())` — dispatch matching and wire
+identity depend on the exact bytes. So the PR is fenced by a **snapshot test**:
+capture each of the five types' `.schema_ref()` before, assert byte-identical
+after. Watch the `required` flag: it is part of the schema hash, and adding a
+`#[facet(default)]` to any field would silently move the id past
+`SchemaPattern::exact` — worth an assertion or comment.
+
+Because this step also touches spellings #4 and #5 (the `compiler.rs` method
+surface and the `scheduler.rs` construction op), any change to a wire shape must
+move them in lockstep — the snapshot test catches drift, but those two sites need
+updating by hand if a leaf shape moves.
 
 ### 2. The primitive declares its own projection
 
@@ -281,9 +330,13 @@ target includes them; the order defers them behind their blockers.
 Tracks the workstreams in the arc; each is a clean PR against the fixed goal
 above.
 
-1. **Type-schema unification.** Derive `RequestShape.request_ty` and
-   `PrimitiveDescriptor` from one Facet-reflected schema; delete the paired
-   `*_type()` constructors. (Collapses #1 ↔ #2.)
+1. **Type-schema unification.** Build a `Type::from_facet::<T>()` walker (+ tiny
+   leaf-override table + per-`ExternKind` newtypes); derive `RequestShape.request_ty`
+   and `PrimitiveDescriptor` from it; author the missing `ObserveRequest` struct;
+   delete the five `*_type()` constructors. Fence with a `.schema_ref()` snapshot
+   test (byte-identical before/after) and reconcile spellings #4 (`compiler.rs`
+   method surface) and #5 (`scheduler.rs` construction op). Riskiest sub-decision:
+   how `BlobId`/`ValueId` decompose. (Collapses #1 ↔ #2, #4, #5.)
 2. **Nameable surface types.** Make `OriginHint` / `PinnedBlobRef` spellable in
    vix, so observe/fetch run from vix source, not just Rust. (Highest value.)
 3. **Projection moves onto the primitive; registry is harvested.** Kill the
@@ -303,7 +356,8 @@ above.
 Independent of 1–6 (orthogonal axis, can land any time):
 
 7. **Generic runtime context.** Make the runtime generic over an embedder
-   context `Ctx`; give `Primitive` a `type Deps: FromRef<Ctx>` projected into
-   `begin`; retire the hardcoded `PrimitiveServices` struct into ordinary `Ctx`
-   members. Enforce the invariant that `Ctx` is ambient authority only — nothing
+   context `Ctx` (`Runtime<S, Ctx = ()>`, `dyn Primitive<Ctx>` object-safe);
+   thread `&Ctx` into `begin`, each impl projecting its slice via `FromRef`;
+   retire the hardcoded `PrimitiveServices` struct into ordinary `Ctx` members.
+   Enforce the invariant that `Ctx` is ambient authority only — nothing
    in it feeds identity/memo/receipts.
