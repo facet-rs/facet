@@ -21,10 +21,14 @@
 //! functions registered here today are the ones that compile against the
 //! current surface.
 //!
-//! Status: the mechanism is flag-gated ([`CompilerConfig::stdlib`], default
-//! off). Turning it on for every compilation perturbs function ids and the
-//! machine's module-set hash, so that flip belongs behind a full golden/ratchet
-//! re-vet and is not done here.
+//! Status: on by default ([`CompilerConfig::stdlib`]) — the retired decode and
+//! `refresh` intrinsics now live here as vix functions, so a compilation needs
+//! the prelude to resolve them. Turning it on perturbed function ids, exact
+//! module counts, and the constant-fold of literal decodes (a decode behind a
+//! wrapper parameter no longer folds); the ratchet goldens were re-vetted for
+//! that, with the decode-fold rungs `#[ignore]`d until pure vix functions
+//! constant-fold and folding is restored by default. Tests that assert on the
+//! bare user program disable the flag.
 //!
 //! [`CompilerConfig::stdlib`]: crate::compiler::CompilerConfig::stdlib
 
@@ -33,11 +37,37 @@ use std::collections::BTreeSet;
 use crate::diagnostic::Diagnostics;
 use crate::surface::{SurfaceParser, ast};
 
-/// Registered prelude functions: pure vix source, one top-level `fn` each.
+/// Registered prelude items: pure vix source, one top-level item each (`fn`,
+/// `enum`, or `struct`). They travel the same front end as user code and are
+/// injected into every module. An uninstantiated *generic* fn costs nothing (it
+/// lowers only per call), but a non-generic fn (`is_blank`) and the enums
+/// (`Format`, `Mode`) are always emitted into the module — there is no
+/// reachability pruning — so they perturb module counts even when unused.
 ///
-/// A deliberately tiny first registration (`is_blank`) exercises the loader end
-/// to end against the current surface. Add entries here to grow the prelude.
-const PRELUDE_FUNCTIONS: &[&str] = &["fn is_blank(text: String) -> Bool {\n    text == \"\"\n}\n"];
+/// `json_decode`/`toml_decode` are the retired decode intrinsics, now ordinary
+/// vix functions over the single `decode(document, Format)` binding: the format
+/// is a request field, and the target `T` is forwarded from the caller's
+/// expected type by return-position inference. `try_json_decode`/`try_toml_decode`
+/// are the fallible twins over `try_decode(document, Format)`, returning
+/// `Result<T, DecodeError>`; `T` is recovered from the expected `Result` — no
+/// call-site turbofish, matching the language's inference-only instantiation.
+///
+/// `refresh` is the retired observe *mode* intrinsic, now an ordinary vix
+/// function over the single `observe(origin, Mode)` binding — `refresh` is
+/// `observe` with `Mode::Refresh`, exactly as `refresh` and `observe` already
+/// share one primitive (`observe_primitive_id`). The origin type (`OriginHint`)
+/// is not surface-nameable, so — like `json_decode`'s `T` — the parameter is
+/// generic and the `observe` binding enforces the real origin type at the call.
+const PRELUDE_FUNCTIONS: &[&str] = &[
+    "fn is_blank(text: String) -> Bool {\n    text == \"\"\n}\n",
+    "enum Format {\n    Json,\n    Toml,\n}\n",
+    "fn json_decode<T>(text: String) -> T {\n    decode(text, Format::Json)\n}\n",
+    "fn toml_decode<T>(text: String) -> T {\n    decode(text, Format::Toml)\n}\n",
+    "fn try_json_decode<T>(text: String) -> Result<T, DecodeError> {\n    try_decode(text, Format::Json)\n}\n",
+    "fn try_toml_decode<T>(text: String) -> Result<T, DecodeError> {\n    try_decode(text, Format::Toml)\n}\n",
+    "enum Mode {\n    Observe,\n    Refresh,\n}\n",
+    "fn refresh<Origin>(origin: Origin) -> Blob {\n    observe(origin, Mode::Refresh)\n}\n",
+];
 
 fn item_name(item: &ast::Item) -> Option<&str> {
     match item {
@@ -85,13 +115,20 @@ mod tests {
         })
     }
 
+    fn without_stdlib() -> Compiler {
+        Compiler::with_config(CompilerConfig {
+            stdlib: false,
+            ..CompilerConfig::default()
+        })
+    }
+
     #[test]
     fn registered_prelude_fn_is_callable_like_user_code() {
         let program = "fn check(text: String) -> Bool {\n    is_blank(text)\n}\n";
 
         // Without the stdlib, `is_blank` is an unknown name…
         assert!(
-            Compiler::default().compile(program).is_err(),
+            without_stdlib().compile(program).is_err(),
             "is_blank is not available without the stdlib"
         );
         // …with it registered, the program compiles as if `is_blank` were

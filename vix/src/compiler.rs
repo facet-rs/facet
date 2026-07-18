@@ -40,7 +40,7 @@ pub struct Compiler {
 /// shapes. The molten one-item-append fold is admitted under the as-if law; the
 /// forced-copy differential compiles the same source with the molten shape
 /// disabled so the two value sets can be proven identical.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CompilerConfig {
     /// When set, every `Array.fold` keeps the semantic copy path even where the
     /// strict one-item-append shape would otherwise be admitted molten.
@@ -50,11 +50,26 @@ pub struct CompilerConfig {
     /// as value inputs, so downstream demand keys are over `ValueId`s rather
     /// than recompute-and-compare results.
     pub force_scalar_call_boundaries: bool,
-    /// Merge the registered standard-library prelude functions (`crate::stdlib`)
-    /// into the compilation as ordinary top-level items. Off by default so
-    /// existing compilations — and the golden/ratchet module-set hashes — are
-    /// unperturbed; callers opt in.
+    /// Merge the registered standard-library prelude (`crate::stdlib`) into the
+    /// compilation as ordinary top-level items. On by default: the stdlib holds
+    /// the surface `json_decode`/`toml_decode`/`refresh` functions (the retired
+    /// intrinsics), so a compilation needs it to resolve them. An uninstantiated
+    /// *generic* prelude fn costs nothing (it only lowers per call), but a
+    /// non-generic fn (`is_blank`) and the prelude enums (`Format`, `Mode`) are
+    /// always emitted into the module — there is no reachability pruning — so
+    /// turning this on perturbs module counts and the module-set hash. Off only
+    /// for tests that isolate the bare surface.
     pub stdlib: bool,
+}
+
+impl Default for CompilerConfig {
+    fn default() -> Self {
+        Self {
+            force_molten_copy: false,
+            force_scalar_call_boundaries: false,
+            stdlib: true,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -3514,16 +3529,14 @@ fn lower_value_expected(
         ast::Expr::Call(call) if call.callee.value == "Some" => {
             lower_some(nodes, bindings, context, call, expected)
         }
-        ast::Expr::Call(call) if try_decode_format(&call.callee.value).is_some() => {
-            lower_try_decode(nodes, bindings, context, call)
+        ast::Expr::Call(call)
+            if crate::binding::prelude_primitive(&call.callee.value).is_some() =>
+        {
+            let kind = crate::binding::prelude_primitive(&call.callee.value)
+                .expect("guard confirmed the callee is a built-in primitive");
+            lower_primitive(nodes, bindings, context, call, kind, expected)
         }
-        ast::Expr::Call(call) if decode_format(&call.callee.value).is_some() => {
-            lower_decode(nodes, bindings, context, call, expected)
-        }
-        ast::Expr::Call(call) if effect_intrinsic(&call.callee.value) => {
-            lower_effect_intrinsic(nodes, bindings, context, call)
-        }
-        ast::Expr::Call(call) => lower_call(nodes, bindings, context, call),
+        ast::Expr::Call(call) => lower_call(nodes, bindings, context, call, expected),
         ast::Expr::WhereCall(call) => lower_where_call(nodes, bindings, context, call),
         ast::Expr::Command(command) => lower_command(nodes, bindings, context, command),
         ast::Expr::Exec(exec) => lower_exec(nodes, bindings, context, exec),
@@ -5225,37 +5238,51 @@ fn lower_some(
 /// primitive lands, this fold must become the constant-folded case *of* it, not
 /// a replacement — nonliteral sources are rejected at a named runtime seam
 /// ([`DiagnosticCode::RuntimeDecodeUnavailable`]) rather than host-evaluated.
-fn decode_format(name: &str) -> Option<DecodeFormat> {
-    match name {
-        "json_decode" => Some(DecodeFormat::Json),
-        "toml_decode" => Some(DecodeFormat::Toml),
-        _ => None,
+/// Lower a call to a built-in primitive, dispatched on the [`PrimitiveKind`] the
+/// binding registry (`crate::binding`) resolved the callee name to — no callee
+/// string matching here. The request construction is genuinely per-primitive
+/// (selector reads, expected-type targets, folding), so the registry owns the
+/// *name → primitive* map while each builder owns its request shape.
+fn lower_primitive(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    call: &ast::Call,
+    kind: crate::binding::PrimitiveKind,
+    expected: Option<&Type>,
+) -> Result<LoweredValue, Diagnostics> {
+    use crate::binding::PrimitiveKind;
+    match kind {
+        PrimitiveKind::Decode => lower_decode_binding(nodes, bindings, context, call, expected),
+        PrimitiveKind::TryDecode => {
+            lower_try_decode_binding(nodes, bindings, context, call, expected)
+        }
+        PrimitiveKind::Fetch
+        | PrimitiveKind::Observe
+        | PrimitiveKind::FixtureTree
+        | PrimitiveKind::FixtureRegistry
+        | PrimitiveKind::Untar => lower_effect_intrinsic(nodes, bindings, context, call, kind),
     }
 }
 
 /// The machine-plane primitive constructors of the tree/fetch band. Each
 /// lowers to an [`EffectKind::Effect`] node the partitioner hoists into its
 /// own effect island; nothing here is a Weavy-lowerable pure operation.
-fn effect_intrinsic(name: &str) -> bool {
-    matches!(
-        name,
-        "fixture_tree" | "fixture_registry" | "fetch" | "observe" | "refresh" | "untar"
-    )
-}
-
 fn lower_effect_intrinsic(
     nodes: &mut Vec<Node>,
     bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
     call: &ast::Call,
+    kind: crate::binding::PrimitiveKind,
 ) -> Result<LoweredValue, Diagnostics> {
+    use crate::binding::PrimitiveKind;
     if call.named_args.is_some() {
         return Err(Diagnostics::one(Diagnostic::unsupported(
             call.span,
             "named arguments on a primitive constructor",
         )));
     }
-    if call.callee.value == "fetch" {
+    if kind == PrimitiveKind::Fetch {
         check_arity(call, 1)?;
         let pin = lower_value(nodes, bindings, context, &call.args.args[0])?;
         require_type(&pin, &pinned_blob_ref_type(), expr_span(&call.args.args[0]))?;
@@ -5283,9 +5310,9 @@ fn lower_effect_intrinsic(
             ty,
         });
     }
-    if call.callee.value == "observe" || call.callee.value == "refresh" {
-        check_arity(call, 1)?;
-        let refresh = call.callee.value == "refresh";
+    if kind == PrimitiveKind::Observe {
+        check_arity(call, 2)?;
+        let refresh = observe_mode_arg(&call.args.args[1])?;
         let origin = lower_value(nodes, bindings, context, &call.args.args[0])?;
         require_type(&origin, &origin_hint_type(), expr_span(&call.args.args[0]))?;
         let flag = push_node(
@@ -5320,8 +5347,8 @@ fn lower_effect_intrinsic(
             ty,
         });
     }
-    let (ty, op, inputs) = match call.callee.value.as_str() {
-        "fixture_tree" => {
+    let (ty, op, inputs) = match kind {
+        PrimitiveKind::FixtureTree => {
             check_arity(call, 1)?;
             let ast::Expr::Str(name) = &call.args.args[0] else {
                 return Err(Diagnostics::one(Diagnostic::unsupported(
@@ -5335,7 +5362,7 @@ fn lower_effect_intrinsic(
                 Vec::new(),
             )
         }
-        "fixture_registry" => {
+        PrimitiveKind::FixtureRegistry => {
             check_arity(call, 0)?;
             (
                 Type::Extern(ExternKind::Registry),
@@ -5343,9 +5370,7 @@ fn lower_effect_intrinsic(
                 Vec::new(),
             )
         }
-        "fetch" => unreachable!("registered fetch returned above"),
-        "observe" | "refresh" => unreachable!("registered observe returned above"),
-        "untar" => {
+        PrimitiveKind::Untar => {
             check_arity(call, 1)?;
             let blob = lower_value(nodes, bindings, context, &call.args.args[0])?;
             require_type(
@@ -5355,7 +5380,12 @@ fn lower_effect_intrinsic(
             )?;
             (Type::Extern(ExternKind::Tree), Op::Untar, vec![blob.node])
         }
-        other => unreachable!("effect intrinsic dispatch matched `{other}`"),
+        PrimitiveKind::Fetch | PrimitiveKind::Observe => {
+            unreachable!("fetch/observe returned above")
+        }
+        PrimitiveKind::Decode | PrimitiveKind::TryDecode => {
+            unreachable!("decode/try_decode do not route through lower_effect_intrinsic")
+        }
     };
     Ok(LoweredValue {
         node: push_node(
@@ -5393,19 +5423,6 @@ fn runtime_decode_unavailable(
             target: target.map(Type::name),
         },
     })
-}
-
-/// The fallible decode surface: `try_json_decode<T>(doc)`. Unlike the infallible
-/// [`decode_format`] fold (062–065), this returns a first-class
-/// `Result<T, DecodeError>` — a decode that fails is a *value*, not a compile
-/// error (`r[lang.failure.typed]`). The target schema is named by the call-site
-/// turbofish, not inferred from a `let` annotation.
-fn try_decode_format(name: &str) -> Option<DecodeFormat> {
-    match name {
-        "try_json_decode" => Some(DecodeFormat::Json),
-        "try_toml_decode" => Some(DecodeFormat::Toml),
-        _ => None,
-    }
 }
 
 /// The `DecodeError` value surfaced as the `Err` payload of a decode `Result`.
@@ -5547,52 +5564,73 @@ fn lower_decode_error_message(
     }
 }
 
-/// Lower `try_json_decode<T>(doc)` to a `Result<T, DecodeError>`. On a
-/// compile-time-constant document this is the **constant fold** of the runtime
-/// doc-parse primitive: the decode is run once at compile time and its success
-/// or typed-failure value is emitted as ordinary typed construction, provably
-/// the same value the runtime primitive produces for that document.
-fn lower_try_decode(
+/// The single fallible decode binding: `try_decode(document, Format::Json)`,
+/// returning a first-class `Result<T, DecodeError>` — a decode that fails is a
+/// *value*, not a compile error (`r[lang.failure.typed]`). Like the infallible
+/// `decode` binding the format is a `Format` selector read at lower time; the
+/// target `T` comes from the expected type — here the `Ok` arm of the expected
+/// `Result<T, DecodeError>`, forwarded from a `try_json_decode`/`try_toml_decode`
+/// stdlib wrapper by return-position inference. No call-site turbofish: the
+/// target flows in from the binding it lands on, like every other generic.
+fn lower_try_decode_binding(
     nodes: &mut Vec<Node>,
     bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
     call: &ast::Call,
+    expected: Option<&Type>,
 ) -> Result<LoweredValue, Diagnostics> {
-    let format = try_decode_format(&call.callee.value).expect("try-decode intrinsic name");
     if call.named_args.is_some() {
         return Err(Diagnostics::one(Diagnostic::unsupported(
             call.span,
             "named arguments on a decode call",
         )));
     }
-    check_arity(call, 1)?;
-    let Some(type_args) = &call.type_args else {
+    check_arity(call, 2)?;
+    let format = decode_format_arg(&call.args.args[1])?;
+    let Some((target, _)) = expected.and_then(Type::result_inner) else {
         return Err(Diagnostics::one(Diagnostic::unsupported(
             call.span,
-            "try_json_decode without a target type application",
+            "try_decode without an expected `Result<T, DecodeError>` target type",
         )));
     };
-    if type_args.args.len() != 1 {
-        return Err(invalid_arity(type_args.span, 1, type_args.args.len()));
-    }
-    let target = lower_declared_type(&type_args.args[0], context.types())?;
+    let target = target.clone();
+    lower_try_decode_core(
+        nodes,
+        bindings,
+        context,
+        &call.args.args[0],
+        call.span,
+        format,
+        &target,
+    )
+}
+
+/// The fallible decode fold/seam behind the `try_decode` binding. A constant
+/// document literal *at this call site* folds to an `Ok`/`Err` value at compile
+/// time; anything else — including a document that arrives through a
+/// `try_json_decode`/`try_toml_decode` wrapper parameter — lowers to the
+/// registered decode primitive as a `Result<T, DecodeError>` value.
+fn lower_try_decode_core(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    document_expr: &ast::Expr,
+    span: Span,
+    format: DecodeFormat,
+    target: &Type,
+) -> Result<LoweredValue, Diagnostics> {
     let result_ty = Type::result(target.clone(), decode_error_type());
 
-    let ast::Expr::Str(document) = &call.args.args[0] else {
-        let document = lower_value_expected(
-            nodes,
-            bindings,
-            context,
-            &call.args.args[0],
-            Some(&Type::String),
-        )?;
-        require_type(&document, &Type::String, expr_span(&call.args.args[0]))?;
+    let ast::Expr::Str(document) = document_expr else {
+        let document =
+            lower_value_expected(nodes, bindings, context, document_expr, Some(&Type::String))?;
+        require_type(&document, &Type::String, expr_span(document_expr))?;
         return Ok(LoweredValue {
             node: lower_registered_decode_request(
                 nodes,
-                call.span,
+                span,
                 format,
-                &target,
+                target,
                 true,
                 document.node,
                 result_ty.clone(),
@@ -5602,64 +5640,147 @@ fn lower_try_decode(
     };
 
     // Constant fold: decode the literal once and emit the resulting Result value.
-    match decode::decode(format, &document.value, &target) {
+    match decode::decode(format, &document.value, target) {
         Ok(decoded) => {
-            let value = lower_decoded_value(nodes, &decoded, &target, call.span)?;
+            let value = lower_decoded_value(nodes, &decoded, target, span)?;
             Ok(lower_result_variant(
                 nodes,
                 value,
                 RESULT_OK_VARIANT,
                 &result_ty,
-                call.span,
+                span,
             ))
         }
         Err(error) => {
-            let value = lower_decode_error_value(nodes, &error, call.span);
+            let value = lower_decode_error_value(nodes, &error, span);
             Ok(lower_result_variant(
                 nodes,
                 value,
                 RESULT_ERR_VARIANT,
                 &result_ty,
-                call.span,
+                span,
             ))
         }
     }
 }
 
-fn lower_decode(
+/// The single decode binding: `decode(document, Format::Json)`. The format is a
+/// `Format` enum value read at lower time (like a fixture name — the selector
+/// never lowers to a runtime value); the target type comes from the expected
+/// type, so `fn json_decode<T>(s: String) -> T { decode(s, Format::Json) }`
+/// forwards `T` here via return-position inference. This is the primitive
+/// binding the json_decode/toml_decode vix functions wrap: json vs toml is a
+/// request field the DecodePrimitive reads, not a distinct compiler intrinsic.
+fn lower_decode_binding(
     nodes: &mut Vec<Node>,
     bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
     call: &ast::Call,
     expected: Option<&Type>,
 ) -> Result<LoweredValue, Diagnostics> {
-    let format = decode_format(&call.callee.value).expect("decode intrinsic name");
     if call.named_args.is_some() {
         return Err(Diagnostics::one(Diagnostic::unsupported(
             call.span,
             "named arguments on a decode call",
         )));
     }
-    check_arity(call, 1)?;
-    // The fold's precondition: a known target type and a constant document
-    // literal. Either missing names the runtime doc-parse seam — never a
-    // host-evaluation of a dynamic string.
-    let Some(target) = expected else {
-        return Err(runtime_decode_unavailable(call.span, format, None));
+    check_arity(call, 2)?;
+    let format = decode_format_arg(&call.args.args[1])?;
+    lower_decode_core(
+        nodes,
+        bindings,
+        context,
+        &call.args.args[0],
+        call.span,
+        format,
+        expected,
+    )
+}
+
+/// Read the `Format::Json` / `Format::Toml` selector of a decode binding. The
+/// argument is a `Format` variant whose name selects the decoder. It is read
+/// here at lower time and never lowered as a value, so an unknown or non-decode
+/// variant is rejected only here — not by the checker (which never sees it in a
+/// value position).
+fn decode_format_arg(arg: &ast::Expr) -> Result<DecodeFormat, Diagnostics> {
+    let ast::Expr::Variant(variant) = arg else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            expr_span(arg),
+            "a decode format `Format::Json` or `Format::Toml`",
+        )));
     };
-    let ast::Expr::Str(document) = &call.args.args[0] else {
-        let document = lower_value_expected(
-            nodes,
-            bindings,
-            context,
-            &call.args.args[0],
-            Some(&Type::String),
-        )?;
-        require_type(&document, &Type::String, expr_span(&call.args.args[0]))?;
+    if variant.path.type_name.value != "Format" {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            variant.path.span,
+            "a decode format `Format::Json` or `Format::Toml`",
+        )));
+    }
+    match variant.path.variant.value.as_str() {
+        "Json" => Ok(DecodeFormat::Json),
+        "Toml" => Ok(DecodeFormat::Toml),
+        other => Err(Diagnostics::one(Diagnostic::unsupported(
+            variant.path.variant.span,
+            format!("an unknown decode format `Format::{other}`"),
+        ))),
+    }
+}
+
+/// Read the `Mode::Observe` / `Mode::Refresh` selector of an `observe` call,
+/// returning the refresh flag the primitive folds into its request record. The
+/// twin of `decode_format_arg`: the observe mode is a surface argument, not a
+/// second primitive and not a `refresh` compiler intrinsic. Like the format
+/// selector it is read at lower time and never lowered as a value, so an unknown
+/// mode is rejected only here, not by the checker.
+fn observe_mode_arg(arg: &ast::Expr) -> Result<bool, Diagnostics> {
+    let ast::Expr::Variant(variant) = arg else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            expr_span(arg),
+            "an observe mode `Mode::Observe` or `Mode::Refresh`",
+        )));
+    };
+    if variant.path.type_name.value != "Mode" {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            variant.path.span,
+            "an observe mode `Mode::Observe` or `Mode::Refresh`",
+        )));
+    }
+    match variant.path.variant.value.as_str() {
+        "Observe" => Ok(false),
+        "Refresh" => Ok(true),
+        other => Err(Diagnostics::one(Diagnostic::unsupported(
+            variant.path.variant.span,
+            format!("an unknown observe mode `Mode::{other}`"),
+        ))),
+    }
+}
+
+/// The decode fold/seam behind the `decode` binding (`lower_decode_binding`
+/// splits off the `Format` selector and calls in here). A constant document
+/// literal *at this call site* folds at compile time; anything else — including
+/// a document that arrives through a `json_decode`/`toml_decode` wrapper
+/// parameter — lowers to the registered doc-parse primitive. Either way the
+/// target type is required: a missing one names the runtime seam rather than
+/// host-evaluating a dynamic string.
+fn lower_decode_core(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    document_expr: &ast::Expr,
+    span: Span,
+    format: DecodeFormat,
+    expected: Option<&Type>,
+) -> Result<LoweredValue, Diagnostics> {
+    let Some(target) = expected else {
+        return Err(runtime_decode_unavailable(span, format, None));
+    };
+    let ast::Expr::Str(document) = document_expr else {
+        let document =
+            lower_value_expected(nodes, bindings, context, document_expr, Some(&Type::String))?;
+        require_type(&document, &Type::String, expr_span(document_expr))?;
         return Ok(LoweredValue {
             node: lower_registered_decode_request(
                 nodes,
-                call.span,
+                span,
                 format,
                 target,
                 false,
@@ -5670,8 +5791,8 @@ fn lower_decode(
         });
     };
     let decoded = decode::decode(format, &document.value, target)
-        .map_err(|error| decode_failed_diagnostic(call.span, format, target, &error))?;
-    lower_decoded_value(nodes, &decoded, target, call.span)
+        .map_err(|error| decode_failed_diagnostic(span, format, target, &error))?;
+    lower_decoded_value(nodes, &decoded, target, span)
 }
 
 fn lower_registered_decode_request(
@@ -8893,6 +9014,7 @@ fn lower_call(
     bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
     call: &ast::Call,
+    expected: Option<&Type>,
 ) -> Result<LoweredValue, Diagnostics> {
     if let Some(callee) = bindings.get(&call.callee.value) {
         return lower_value_call(nodes, bindings, context, call, callee.clone());
@@ -8901,16 +9023,17 @@ fn lower_call(
         return lower_direct_call(nodes, bindings, context, call, signature);
     }
     if context.generics.contains_key(&call.callee.value) {
-        return lower_generic_call(nodes, bindings, context, call);
+        return lower_generic_call(nodes, bindings, context, call, expected);
     }
     Err(unknown_name(call.callee.span, &call.callee.value))
 }
 
 /// Lower a call to a generic function by monomorphizing it for the concrete
-/// type arguments, inferred from the positional argument types. Type arguments
-/// are never written explicitly — the surface rejects turbofish generic calls
-/// (`id<Int>(1)`) at parse — so inference is the only instantiation path. Each
-/// distinct type-argument set lowers one body.
+/// type arguments, inferred from the positional argument types and — for a
+/// parameter that appears only in the return type — the call's expected type.
+/// Type arguments are never written explicitly (the surface rejects turbofish
+/// generic calls `id<Int>(1)` at parse), so inference is the only instantiation
+/// path. Each distinct type-argument set lowers one body.
 ///
 /// r[impl lang.types.generic-function-monomorphized]
 fn lower_generic_call(
@@ -8918,6 +9041,7 @@ fn lower_generic_call(
     bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
     call: &ast::Call,
+    expected: Option<&Type>,
 ) -> Result<LoweredValue, Diagnostics> {
     let template = *context
         .generics
@@ -8955,6 +9079,22 @@ fn lower_generic_call(
         infer_type_argument(
             &parameter.ty,
             &value.ty,
+            &parameter_names,
+            &mut inferred,
+            call.callee.span,
+        )?;
+    }
+
+    // Return-position inference: a type parameter that appears only in the
+    // return type (`fn json_decode<T>(s: String) -> T`) is invisible to the
+    // argument-driven loop above. When the call site supplies an expected type,
+    // unify the declared return type against it to recover such parameters. A
+    // parameter fixed by both an argument and the return must agree —
+    // `infer_type_argument` rejects a conflict.
+    if let (Some(expected), Some(return_type)) = (expected, template.return_type.as_ref()) {
+        infer_type_argument(
+            return_type,
+            expected,
             &parameter_names,
             &mut inferred,
             call.callee.span,

@@ -668,7 +668,7 @@ impl ValuePersistence for RecordingCasPersistence {
 const OBSERVE_ONCE: &str = r#"
 #[test]
 fn observe_records_the_coordinate_claim() -> Stream<Check> {
-    let blob = observe(fixture_registry().coordinate("case.crate"));
+    let blob = observe(fixture_registry().coordinate("case.crate"), Mode::Observe);
     yield expect_eq(blob.len(), 4096);
     yield fetched(1);
 }
@@ -741,9 +741,9 @@ fn observed_alias(blob: Blob) -> String {
 
 #[test]
 fn refresh_forces_a_fresh_observation_past_the_memo() -> Stream<Check> {
-    let first = observe(fixture_registry().coordinate("case.crate"));
+    let first = observe(fixture_registry().coordinate("case.crate"), Mode::Observe);
     yield expect_eq(first.len(), 4096);
-    let second = observe(fixture_registry().coordinate("case.crate"));
+    let second = observe(fixture_registry().coordinate("case.crate"), Mode::Observe);
     yield expect_eq(second.len(), 4096);
     let refreshed = refresh(fixture_registry().coordinate(observed_alias(second)));
     yield expect_eq(refreshed.len(), 4096);
