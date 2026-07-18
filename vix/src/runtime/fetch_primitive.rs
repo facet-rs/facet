@@ -1,7 +1,7 @@
 use sha2::{Digest as _, Sha256};
 
 use crate::schema::{SchemaPattern, SchemaRef};
-use crate::vir::{ExternKind, RecordField, RecordType, Type};
+use crate::vir::{ExternKind, Type};
 
 use super::{
     Digest, EffectCtx, EffectTicket, Primitive, PrimitiveCompletion, PrimitiveDescriptor,
@@ -12,21 +12,46 @@ use super::{
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct UpstreamDigest(pub [u8; 32]);
 
+/// A registry capability handle. Wire-side this is `Type::Extern(Registry)`; it
+/// wraps a [`ValueId`] like [`BlobId`], but is a distinct newtype so the derived
+/// schema walker (`Type::from_facet`) can tell the two wire meanings apart —
+/// distinct meanings, distinct types.
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
-pub struct BlobId(pub ValueId);
+pub struct RegistryHandle(pub ValueId);
+
+/// A pinned Blob target identity. This is not a resident value but a *reference*
+/// to one, so it decomposes structurally into a `ValueId`'s `{schema, content}`:
+/// the schema is an `Extern(Schema)` store value and the content is the digest
+/// wire-encoded as a hex `String` (see [`Type::from_facet`]'s leaf overrides).
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct BlobId {
+    pub schema: SchemaRef,
+    pub content: Digest,
+}
 
 impl BlobId {
     pub fn new(value: ValueId) -> Result<Self, PrimitiveMachineError> {
         if value.schema != Type::Extern(ExternKind::Blob).schema_ref() {
             return Err(PrimitiveMachineError::InvalidRequest { request: value });
         }
-        Ok(Self(value))
+        Ok(Self {
+            schema: value.schema,
+            content: value.content,
+        })
+    }
+
+    #[must_use]
+    pub fn id(&self) -> ValueId {
+        ValueId {
+            schema: self.schema.clone(),
+            content: self.content,
+        }
     }
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct OriginHint {
-    pub capability: ValueId,
+    pub capability: RegistryHandle,
     pub coordinate: String,
 }
 
@@ -40,72 +65,6 @@ pub struct PinnedBlobRef {
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct PinnedFetchRequest {
     pub pin: PinnedBlobRef,
-}
-
-#[must_use]
-pub fn blob_id_type() -> Type {
-    Type::Record(RecordType::new(
-        "BlobId",
-        vec![
-            RecordField {
-                name: "schema".to_owned(),
-                ty: Type::Extern(ExternKind::Schema),
-            },
-            RecordField {
-                name: "content".to_owned(),
-                ty: Type::String,
-            },
-        ],
-    ))
-}
-
-#[must_use]
-pub fn origin_hint_type() -> Type {
-    Type::Record(RecordType::new(
-        "OriginHint",
-        vec![
-            RecordField {
-                name: "capability".to_owned(),
-                ty: Type::Extern(ExternKind::Registry),
-            },
-            RecordField {
-                name: "coordinate".to_owned(),
-                ty: Type::String,
-            },
-        ],
-    ))
-}
-
-#[must_use]
-pub fn pinned_blob_ref_type() -> Type {
-    Type::Record(RecordType::new(
-        "PinnedBlobRef",
-        vec![
-            RecordField {
-                name: "value".to_owned(),
-                ty: blob_id_type(),
-            },
-            RecordField {
-                name: "origins".to_owned(),
-                ty: Type::array(origin_hint_type()),
-            },
-            RecordField {
-                name: "upstream".to_owned(),
-                ty: Type::option(Type::String),
-            },
-        ],
-    ))
-}
-
-#[must_use]
-pub fn pinned_fetch_request_type() -> Type {
-    Type::Record(RecordType::new(
-        "PinnedFetchRequest",
-        vec![RecordField {
-            name: "pin".to_owned(),
-            ty: pinned_blob_ref_type(),
-        }],
-    ))
 }
 
 #[must_use]
@@ -126,7 +85,9 @@ impl Default for PinnedFetchPrimitive {
         Self {
             descriptor: PrimitiveDescriptor {
                 id: pinned_fetch_primitive_id(),
-                request_schema: SchemaPattern::exact(&pinned_fetch_request_type().schema_ref()),
+                request_schema: SchemaPattern::exact(
+                    &Type::from_facet::<PinnedFetchRequest>().schema_ref(),
+                ),
                 response_schema: SchemaPattern::exact(&Type::Extern(ExternKind::Blob).schema_ref()),
                 failure_schema: SchemaPattern::Var {
                     name: "PinnedFetchFailure".to_owned(),
@@ -172,34 +133,35 @@ impl<Ctx> Primitive<Ctx> for PinnedFetchPrimitive {
 fn execute(request: &ValueId, ctx: &EffectCtx) -> Result<ValueId, PrimitiveMachineError> {
     let request = ctx.read(request, ReadProjection::Whole)?;
     let pin = parse_request(request.value, request.identity)?;
+    let target = pin.value.id();
 
-    if let Ok(stored) = ctx.read(&pin.value.0, ReadProjection::Whole) {
+    if let Ok(stored) = ctx.read(&target, ReadProjection::Whole) {
         verify_upstream(&stored.bytes, pin.upstream.as_ref())?;
         return Ok(stored.identity);
     }
 
     let mut last_error = None;
-    if let Some(candidate) = ctx.persisted_candidate(&pin.value.0)? {
-        if candidate.claimed != pin.value.0 {
+    if let Some(candidate) = ctx.persisted_candidate(&target)? {
+        if candidate.claimed != target {
             last_error = Some(PrimitiveMachineError::CorruptCandidate {
                 source: candidate.claimed,
             });
         } else {
             let observed = blob_identity(&candidate.bytes);
-            if observed != pin.value.0 {
+            if observed != target {
                 last_error = Some(PrimitiveMachineError::CorruptCandidate { source: observed });
             } else {
                 verify_upstream(&candidate.bytes, pin.upstream.as_ref())?;
-                return admit(&candidate.bytes, &pin.value.0, ctx);
+                return admit(&candidate.bytes, &target, ctx);
             }
         }
     }
 
     for origin in &pin.origins {
-        match ctx.origin_candidate(&origin.capability, &origin.coordinate, &pin.value.0) {
+        match ctx.origin_candidate(&origin.capability.0, &origin.coordinate, &target) {
             Ok(bytes) => {
                 verify_upstream(&bytes, pin.upstream.as_ref())?;
-                let admitted = admit(&bytes, &pin.value.0, ctx)?;
+                let admitted = admit(&bytes, &target, ctx)?;
                 ctx.persist_value(&admitted, &bytes)?;
                 return Ok(admitted);
             }
@@ -325,7 +287,7 @@ fn parse_origins(value: &PrimitiveValue) -> Result<Vec<OriginHint>, PrimitiveMac
             let [capability, coordinate] = fields.as_slice() else {
                 return Err(invalid_value());
             };
-            let capability = child(capability)?.identity();
+            let capability = RegistryHandle(child(capability)?.identity());
             let coordinate = core::str::from_utf8(bytes(child(coordinate)?)?)
                 .map_err(|_| invalid_value())?
                 .to_owned();
@@ -372,5 +334,54 @@ fn bytes(value: &PrimitiveValue) -> Result<&[u8], PrimitiveMachineError> {
 fn invalid_value() -> PrimitiveMachineError {
     PrimitiveMachineError::AuthorityViolation {
         detail: "pinned fetch request disagrees with its declared schema".to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod schema_snapshot {
+    //! Wire-identity gate for the type-schema-unification PR.
+    //!
+    //! `PrimitiveDescriptor.request_schema = SchemaPattern::exact(&…type().schema_ref())`,
+    //! so dispatch matching and wire identity depend on the *exact* schema bytes
+    //! of each request/hint/ref type. These snapshots are the canonical
+    //! `SchemaRef::Display` (see `schema.rs`) of the five types captured against
+    //! the hand-written constructors; deriving them from the `Facet` shapes must
+    //! keep every one byte-identical.
+
+    use super::{BlobId, OriginHint, PinnedBlobRef, PinnedFetchRequest};
+    use crate::runtime::ObserveRequest;
+    use crate::vir::Type;
+
+    // Captured against the hand-written `*_type()` constructors before they were
+    // deleted; the derived `Type::from_facet` types must match byte-for-byte.
+    const BLOB_ID: &str = "e5904d597f3968d0";
+    const ORIGIN_HINT: &str = "ecd3ac5ba264e915";
+    const PINNED_BLOB_REF: &str = "a077429ce555df22";
+    const PINNED_FETCH_REQUEST: &str = "053ce66d21abed59";
+    const OBSERVE_REQUEST: &str = "d0e09706fdc08ace";
+
+    #[test]
+    fn request_schemas_are_byte_identical() {
+        assert_eq!(Type::from_facet::<BlobId>().schema_ref().to_string(), BLOB_ID);
+        assert_eq!(
+            Type::from_facet::<OriginHint>().schema_ref().to_string(),
+            ORIGIN_HINT
+        );
+        assert_eq!(
+            Type::from_facet::<PinnedBlobRef>().schema_ref().to_string(),
+            PINNED_BLOB_REF
+        );
+        assert_eq!(
+            Type::from_facet::<PinnedFetchRequest>()
+                .schema_ref()
+                .to_string(),
+            PINNED_FETCH_REQUEST
+        );
+        assert_eq!(
+            Type::from_facet::<ObserveRequest>()
+                .schema_ref()
+                .to_string(),
+            OBSERVE_REQUEST
+        );
     }
 }

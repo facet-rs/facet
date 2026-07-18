@@ -44,9 +44,9 @@ use super::{
     DecodePrimitive, EffectCtx, EffectTicket, ObservePrimitive, PinnedFetchPrimitive,
     PrimitiveCompletion, PrimitiveDispatcher, PrimitiveField, PrimitiveFieldValue,
     PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveRegistry, PrimitiveValue,
-    PrimitiveValueBody, StagedEffectAuthority, TicketSubscription, TreeReadPrimitive, blob_id_type,
-    origin_hint_type,
+    PrimitiveValueBody, StagedEffectAuthority, TicketSubscription, TreeReadPrimitive,
 };
+use super::{BlobId, OriginHint};
 use super::{MachineAttribution, MachineError, MachineOperation, RuntimeFault};
 
 #[derive(Clone, Debug)]
@@ -3118,7 +3118,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                     .ok_or_else(|| effect_machine_error("fixture registry artifact was absent"))?;
                 let blob_schema = Type::Extern(ExternKind::Blob).schema_ref();
                 let blob_id = PrimitiveValue {
-                    schema: blob_id_type().schema_ref(),
+                    schema: Type::from_facet::<BlobId>().schema_ref(),
                     body: PrimitiveValueBody::Product(vec![
                         primitive_child_field(PrimitiveValue::bytes(
                             Type::Extern(ExternKind::Schema).schema_ref(),
@@ -3133,7 +3133,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 let capability =
                     primitive_value_from_effect(&Type::Extern(ExternKind::Registry), &registry)?;
                 let origin = PrimitiveValue {
-                    schema: origin_hint_type().schema_ref(),
+                    schema: Type::from_facet::<OriginHint>().schema_ref(),
                     body: PrimitiveValueBody::Product(vec![
                         primitive_child_field(capability),
                         primitive_child_field(PrimitiveValue::bytes(
@@ -3149,9 +3149,10 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                         body: PrimitiveValueBody::Product(vec![
                             primitive_child_field(blob_id),
                             primitive_child_field(PrimitiveValue {
-                                schema: Type::array(origin_hint_type()).schema_ref(),
+                                schema: Type::array(Type::from_facet::<OriginHint>())
+                                    .schema_ref(),
                                 body: PrimitiveValueBody::Sequence {
-                                    element_schema: origin_hint_type().schema_ref(),
+                                    element_schema: Type::from_facet::<OriginHint>().schema_ref(),
                                     elements: vec![origin],
                                 },
                             }),

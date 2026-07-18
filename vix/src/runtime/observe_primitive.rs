@@ -1,31 +1,25 @@
 use crate::schema::SchemaPattern;
-use crate::vir::{ExternKind, RecordField, RecordType, Type};
+use crate::vir::{ExternKind, Type};
 
 use super::{
-    EffectCtx, EffectTicket, ObserveCoordinate, ObservedClaim, Primitive, PrimitiveCompletion,
-    PrimitiveDescriptor, PrimitiveField, PrimitiveFieldValue, PrimitiveMachineError,
-    PrimitiveMemoPolicy, PrimitiveValue, PrimitiveValueBody, ValueId, origin_hint_type,
+    EffectCtx, EffectTicket, ObserveCoordinate, ObservedClaim, OriginHint, Primitive,
+    PrimitiveCompletion, PrimitiveDescriptor, PrimitiveField, PrimitiveFieldValue,
+    PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveValue, PrimitiveValueBody, ValueId,
 };
 
-#[must_use]
-pub fn observe_request_type() -> Type {
-    Type::Record(RecordType::new(
-        "ObserveRequest",
-        vec![
-            RecordField {
-                name: "origin".to_owned(),
-                ty: origin_hint_type(),
-            },
-            // `false` = observe (memoized by demand like any effect result);
-            // `true` = refresh, a distinct demand that forces a fresh receipted
-            // observation past the within-run memo and appends a new head under
-            // optimistic concurrency.
-            RecordField {
-                name: "refresh".to_owned(),
-                ty: Type::Bool,
-            },
-        ],
-    ))
+/// The `observe` request shape. There is no other Rust spelling of this struct —
+/// it is authored here so the derived `Type::from_facet::<ObserveRequest>()` is
+/// the single source for both `RequestShape.request_ty` and the descriptor's
+/// `request_schema`.
+///
+/// `refresh == false` = observe (memoized by demand like any effect result);
+/// `refresh == true` = refresh, a distinct demand that forces a fresh receipted
+/// observation past the within-run memo and appends a new head under optimistic
+/// concurrency.
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct ObserveRequest {
+    pub origin: OriginHint,
+    pub refresh: bool,
 }
 
 #[must_use]
@@ -53,7 +47,9 @@ impl Default for ObservePrimitive {
         Self {
             descriptor: PrimitiveDescriptor {
                 id: observe_primitive_id(),
-                request_schema: SchemaPattern::exact(&observe_request_type().schema_ref()),
+                request_schema: SchemaPattern::exact(
+                    &Type::from_facet::<ObserveRequest>().schema_ref(),
+                ),
                 response_schema: SchemaPattern::exact(&Type::Extern(ExternKind::Blob).schema_ref()),
                 failure_schema: SchemaPattern::Var {
                     name: "ObserveFailure".to_owned(),
