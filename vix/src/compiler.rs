@@ -12,9 +12,7 @@ use taxon::{
 use crate::decode::{self, DecodeFormat, DecodedValue};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics, Label};
 use crate::runtime::{
-    observe_primitive_id, observe_request_type, origin_hint_type, pinned_blob_ref_type,
-    pinned_fetch_primitive_id, pinned_fetch_request_type, tree_read_primitive_id,
-    tree_read_request_type,
+    origin_hint_type, pinned_blob_ref_type, tree_read_primitive_id, tree_read_request_type,
 };
 use crate::schema::{SchemaBatch, SchemaRef, SchemaSet};
 use crate::support::{Span, Spanned};
@@ -5252,22 +5250,147 @@ fn lower_primitive(
     expected: Option<&Type>,
 ) -> Result<LoweredValue, Diagnostics> {
     use crate::binding::PrimitiveKind;
+    // Primitives whose request construction is fully data (`fetch`, `observe`)
+    // lower through their `RequestShape`; there is no per-primitive Rust arm.
+    if let Some(shape) = crate::binding::request_shape(kind) {
+        return lower_request_shape(nodes, bindings, context, call, &shape);
+    }
     match kind {
         PrimitiveKind::Decode => lower_decode_binding(nodes, bindings, context, call, expected),
         PrimitiveKind::TryDecode => {
             lower_try_decode_binding(nodes, bindings, context, call, expected)
         }
-        PrimitiveKind::Fetch
-        | PrimitiveKind::Observe
-        | PrimitiveKind::FixtureTree
-        | PrimitiveKind::FixtureRegistry
-        | PrimitiveKind::Untar => lower_effect_intrinsic(nodes, bindings, context, call, kind),
+        PrimitiveKind::FixtureTree | PrimitiveKind::FixtureRegistry | PrimitiveKind::Untar => {
+            lower_effect_intrinsic(nodes, bindings, context, call, kind)
+        }
+        PrimitiveKind::Fetch | PrimitiveKind::Observe => {
+            unreachable!("fetch/observe lower through their RequestShape")
+        }
     }
 }
 
-/// The machine-plane primitive constructors of the tree/fetch band. Each
-/// lowers to an [`EffectKind::Effect`] node the partitioner hoists into its
+/// Build a registered-primitive call from its [`RequestShape`]: check arity, read
+/// every [`Selector`](crate::binding::Selector) *before* enforcing any value-arg
+/// type (a bad mode must beat a wrong-typed origin — see `observe_binding`), then
+/// lower each argument in order into the request record and invoke the primitive.
+///
+/// This is the one generic replacement for the former per-primitive arms in
+/// `lower_effect_intrinsic`. The request record and the `InvokePrimitive` node are
+/// `PURE`: the effect-island the primitive runs in is keyed off the primitive
+/// itself, not these nodes' effect facts.
+fn lower_request_shape(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    call: &ast::Call,
+    shape: &crate::binding::RequestShape,
+) -> Result<LoweredValue, Diagnostics> {
+    use crate::binding::ArgRole;
+    if call.named_args.is_some() {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            call.span,
+            "named arguments on a primitive constructor",
+        )));
+    }
+    check_arity(call, shape.args.len())?;
+
+    // Read selectors first: a `Mode::Spin` must be rejected as an unknown mode
+    // before an origin of the wrong type is rejected as a type mismatch.
+    let mut flags: BTreeMap<usize, bool> = BTreeMap::new();
+    for (index, role) in shape.args.iter().enumerate() {
+        if let ArgRole::Selector(selector) = role {
+            flags.insert(index, read_selector(&call.args.args[index], selector)?);
+        }
+    }
+
+    let mut inputs = Vec::with_capacity(shape.args.len());
+    for (index, role) in shape.args.iter().enumerate() {
+        let arg = &call.args.args[index];
+        let node = match role {
+            ArgRole::Value { expected } => {
+                let value = lower_value(nodes, bindings, context, arg)?;
+                require_type(&value, expected, expr_span(arg))?;
+                value.node
+            }
+            ArgRole::Selector(_) => push_node(
+                nodes,
+                call.span,
+                Type::Bool,
+                EffectFacts::PURE,
+                Vec::new(),
+                Op::Bool(flags[&index]),
+            ),
+        };
+        inputs.push(node);
+    }
+
+    let request = push_node(
+        nodes,
+        call.span,
+        shape.request_ty.clone(),
+        EffectFacts::PURE,
+        inputs,
+        Op::Record,
+    );
+    let ty = shape.result.clone();
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            call.span,
+            ty.clone(),
+            EffectFacts::PURE,
+            vec![request],
+            Op::InvokePrimitive {
+                primitive: shape.primitive.clone(),
+            },
+        ),
+        ty,
+    })
+}
+
+/// Read a [`Selector`](crate::binding::Selector) argument: an enum variant named
+/// at lower time and folded to its request flag, never lowered as a value. The
+/// data form of the former `observe_mode_arg`/`decode_format_arg` readers — the
+/// accepted enum, its variants, and the diagnostic wording all come from the
+/// selector. An unknown or non-matching variant is rejected here, not by the
+/// checker (which never sees it in a value position).
+fn read_selector(
+    arg: &ast::Expr,
+    selector: &crate::binding::Selector,
+) -> Result<bool, Diagnostics> {
+    let ast::Expr::Variant(variant) = arg else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            expr_span(arg),
+            selector.expected(),
+        )));
+    };
+    if variant.path.type_name.value != selector.enum_name {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            variant.path.span,
+            selector.expected(),
+        )));
+    }
+    let chosen = variant.path.variant.value.as_str();
+    selector
+        .variants
+        .iter()
+        .find(|candidate| candidate.variant == chosen)
+        .map(|candidate| candidate.flag)
+        .ok_or_else(|| {
+            Diagnostics::one(Diagnostic::unsupported(
+                variant.path.variant.span,
+                selector.unknown(chosen),
+            ))
+        })
+}
+
+/// The dedicated-op tree primitives (`fixture_tree`, `fixture_registry`, `untar`).
+/// Each lowers to an [`EffectKind::Effect`] node the partitioner hoists into its
 /// own effect island; nothing here is a Weavy-lowerable pure operation.
+///
+/// Unlike `fetch`/`observe`, these are not `InvokePrimitive` requests — they are
+/// bespoke VIR ops, so they do not have a [`RequestShape`](crate::binding::RequestShape)
+/// yet and stay hand-lowered here.
 fn lower_effect_intrinsic(
     nodes: &mut Vec<Node>,
     bindings: &BTreeMap<String, LoweredValue>,
@@ -5281,71 +5404,6 @@ fn lower_effect_intrinsic(
             call.span,
             "named arguments on a primitive constructor",
         )));
-    }
-    if kind == PrimitiveKind::Fetch {
-        check_arity(call, 1)?;
-        let pin = lower_value(nodes, bindings, context, &call.args.args[0])?;
-        require_type(&pin, &pinned_blob_ref_type(), expr_span(&call.args.args[0]))?;
-        let request_ty = pinned_fetch_request_type();
-        let request = push_node(
-            nodes,
-            call.span,
-            request_ty,
-            EffectFacts::PURE,
-            vec![pin.node],
-            Op::Record,
-        );
-        let ty = Type::Extern(ExternKind::Blob);
-        return Ok(LoweredValue {
-            node: push_node(
-                nodes,
-                call.span,
-                ty.clone(),
-                EffectFacts::PURE,
-                vec![request],
-                Op::InvokePrimitive {
-                    primitive: pinned_fetch_primitive_id(),
-                },
-            ),
-            ty,
-        });
-    }
-    if kind == PrimitiveKind::Observe {
-        check_arity(call, 2)?;
-        let refresh = observe_mode_arg(&call.args.args[1])?;
-        let origin = lower_value(nodes, bindings, context, &call.args.args[0])?;
-        require_type(&origin, &origin_hint_type(), expr_span(&call.args.args[0]))?;
-        let flag = push_node(
-            nodes,
-            call.span,
-            Type::Bool,
-            EffectFacts::PURE,
-            Vec::new(),
-            Op::Bool(refresh),
-        );
-        let request_ty = observe_request_type();
-        let request = push_node(
-            nodes,
-            call.span,
-            request_ty,
-            EffectFacts::PURE,
-            vec![origin.node, flag],
-            Op::Record,
-        );
-        let ty = Type::Extern(ExternKind::Blob);
-        return Ok(LoweredValue {
-            node: push_node(
-                nodes,
-                call.span,
-                ty.clone(),
-                EffectFacts::PURE,
-                vec![request],
-                Op::InvokePrimitive {
-                    primitive: observe_primitive_id(),
-                },
-            ),
-            ty,
-        });
     }
     let (ty, op, inputs) = match kind {
         PrimitiveKind::FixtureTree => {
@@ -5381,7 +5439,7 @@ fn lower_effect_intrinsic(
             (Type::Extern(ExternKind::Tree), Op::Untar, vec![blob.node])
         }
         PrimitiveKind::Fetch | PrimitiveKind::Observe => {
-            unreachable!("fetch/observe returned above")
+            unreachable!("fetch/observe lower through their RequestShape")
         }
         PrimitiveKind::Decode | PrimitiveKind::TryDecode => {
             unreachable!("decode/try_decode do not route through lower_effect_intrinsic")
@@ -5721,35 +5779,6 @@ fn decode_format_arg(arg: &ast::Expr) -> Result<DecodeFormat, Diagnostics> {
         other => Err(Diagnostics::one(Diagnostic::unsupported(
             variant.path.variant.span,
             format!("an unknown decode format `Format::{other}`"),
-        ))),
-    }
-}
-
-/// Read the `Mode::Observe` / `Mode::Refresh` selector of an `observe` call,
-/// returning the refresh flag the primitive folds into its request record. The
-/// twin of `decode_format_arg`: the observe mode is a surface argument, not a
-/// second primitive and not a `refresh` compiler intrinsic. Like the format
-/// selector it is read at lower time and never lowered as a value, so an unknown
-/// mode is rejected only here, not by the checker.
-fn observe_mode_arg(arg: &ast::Expr) -> Result<bool, Diagnostics> {
-    let ast::Expr::Variant(variant) = arg else {
-        return Err(Diagnostics::one(Diagnostic::unsupported(
-            expr_span(arg),
-            "an observe mode `Mode::Observe` or `Mode::Refresh`",
-        )));
-    };
-    if variant.path.type_name.value != "Mode" {
-        return Err(Diagnostics::one(Diagnostic::unsupported(
-            variant.path.span,
-            "an observe mode `Mode::Observe` or `Mode::Refresh`",
-        )));
-    }
-    match variant.path.variant.value.as_str() {
-        "Observe" => Ok(false),
-        "Refresh" => Ok(true),
-        other => Err(Diagnostics::one(Diagnostic::unsupported(
-            variant.path.variant.span,
-            format!("an unknown observe mode `Mode::{other}`"),
         ))),
     }
 }
