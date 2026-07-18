@@ -553,7 +553,7 @@ pub enum GeneratorOutcome {
 /// r[impl machine.runtime.state-machines]
 /// r[impl machine.scheduler.passive-no-loop]
 /// r[impl machine.scheduler.no-shadow-scheduler]
-pub struct Runtime<S> {
+pub struct Runtime<S, Ctx = ()> {
     sink: S,
     sequence: u64,
     store: Store,
@@ -572,8 +572,12 @@ pub struct Runtime<S> {
     wire_demands: Vec<RealizedWireDemand>,
     performed_read_paths: BTreeSet<String>,
     fixture_store: FixtureStore,
-    primitive_dispatcher: PrimitiveDispatcher,
+    primitive_dispatcher: PrimitiveDispatcher<Ctx>,
     primitive_services: super::PrimitiveServices,
+    /// The embedder-installed shared runtime context — an ambient authority
+    /// (executor, pool, client) that primitives project a slice out of via
+    /// `FromRef`, never a semantic input to identity/memo/receipts.
+    ctx: Ctx,
     /// The scheduler-owned typed completion mailbox for registered primitives.
     completion_inbox: CompletionInbox,
     authoritative_rerun_audit: bool,
@@ -719,7 +723,7 @@ fn build_memo_suffix_index(
     index
 }
 
-fn default_primitive_dispatcher() -> PrimitiveDispatcher {
+fn default_primitive_dispatcher<Ctx>() -> PrimitiveDispatcher<Ctx> {
     let mut registry = PrimitiveRegistry::default();
     registry
         .register(Arc::new(DecodePrimitive::default()))
@@ -736,7 +740,7 @@ fn default_primitive_dispatcher() -> PrimitiveDispatcher {
     PrimitiveDispatcher::new(Arc::new(registry))
 }
 
-impl<S: EventSink> Runtime<S> {
+impl<S: EventSink> Runtime<S, ()> {
     #[must_use]
     pub fn new(sink: S) -> Self {
         Self {
@@ -754,6 +758,7 @@ impl<S: EventSink> Runtime<S> {
             fixture_store: FixtureStore::default(),
             primitive_dispatcher: default_primitive_dispatcher(),
             primitive_services: super::PrimitiveServices::default(),
+            ctx: (),
             completion_inbox: CompletionInbox::default(),
             authoritative_rerun_audit: false,
             runnable: Vec::new(),
@@ -793,6 +798,80 @@ impl<S: EventSink> Runtime<S> {
             fixture_store: FixtureStore::default(),
             primitive_dispatcher: default_primitive_dispatcher(),
             primitive_services: super::PrimitiveServices::default(),
+            ctx: (),
+            completion_inbox: CompletionInbox::default(),
+            authoritative_rerun_audit: false,
+            runnable: Vec::new(),
+            parked: BTreeMap::new(),
+            wire_waiters: BTreeMap::new(),
+            root_results: BTreeMap::new(),
+            primitive_pending: BTreeMap::new(),
+            exec_pending: BTreeMap::new(),
+            exec_projection_pending: BTreeMap::new(),
+            exec_progress_ready: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_persistent_journal_values(
+        sink: S,
+        journal: &PersistentRuntimeJournal,
+    ) -> Result<(Self, PersistentRuntimeJournalLoadReport), PersistentRuntimeJournalError> {
+        let (store, store_report) = Store::from_journal(journal.store.clone())?;
+        Ok((
+            Self {
+                sink,
+                sequence: 0,
+                store,
+                memo: BTreeMap::new(),
+                memo_suffix_index: BTreeMap::new(),
+                demands: BTreeMap::new(),
+                tasks: BTreeMap::new(),
+                counters: Counters::default(),
+                next_task: 0,
+                wire_demands: Vec::new(),
+                performed_read_paths: BTreeSet::new(),
+                fixture_store: FixtureStore::default(),
+                primitive_dispatcher: default_primitive_dispatcher(),
+                primitive_services: super::PrimitiveServices::default(),
+                ctx: (),
+                completion_inbox: CompletionInbox::default(),
+                authoritative_rerun_audit: false,
+                runnable: Vec::new(),
+                parked: BTreeMap::new(),
+                wire_waiters: BTreeMap::new(),
+                root_results: BTreeMap::new(),
+                primitive_pending: BTreeMap::new(),
+                exec_pending: BTreeMap::new(),
+                exec_projection_pending: BTreeMap::new(),
+                exec_progress_ready: BTreeMap::new(),
+            },
+            PersistentRuntimeJournalLoadReport {
+                store: store_report,
+                ..PersistentRuntimeJournalLoadReport::default()
+            },
+        ))
+    }
+}
+
+impl<S: EventSink, Ctx> Runtime<S, Ctx> {
+    #[must_use]
+    pub fn with_context(sink: S, ctx: Ctx) -> Self {
+        Self {
+            sink,
+            sequence: 0,
+            store: Store::default(),
+            memo: BTreeMap::new(),
+            memo_suffix_index: BTreeMap::new(),
+            demands: BTreeMap::new(),
+            tasks: BTreeMap::new(),
+            counters: Counters::default(),
+            next_task: 0,
+            wire_demands: Vec::new(),
+            performed_read_paths: BTreeSet::new(),
+            fixture_store: FixtureStore::default(),
+            primitive_dispatcher: default_primitive_dispatcher(),
+            primitive_services: super::PrimitiveServices::default(),
+            ctx,
             completion_inbox: CompletionInbox::default(),
             authoritative_rerun_audit: false,
             runnable: Vec::new(),
@@ -819,45 +898,6 @@ impl<S: EventSink> Runtime<S> {
 
     pub fn set_authoritative_rerun_audit(&mut self, enabled: bool) {
         self.authoritative_rerun_audit = enabled;
-    }
-
-    pub fn with_persistent_journal_values(
-        sink: S,
-        journal: &PersistentRuntimeJournal,
-    ) -> Result<(Self, PersistentRuntimeJournalLoadReport), PersistentRuntimeJournalError> {
-        let (store, store_report) = Store::from_journal(journal.store.clone())?;
-        Ok((
-            Self {
-                sink,
-                sequence: 0,
-                store,
-                memo: BTreeMap::new(),
-                memo_suffix_index: BTreeMap::new(),
-                demands: BTreeMap::new(),
-                tasks: BTreeMap::new(),
-                counters: Counters::default(),
-                next_task: 0,
-                wire_demands: Vec::new(),
-                performed_read_paths: BTreeSet::new(),
-                fixture_store: FixtureStore::default(),
-                primitive_dispatcher: default_primitive_dispatcher(),
-                primitive_services: super::PrimitiveServices::default(),
-                completion_inbox: CompletionInbox::default(),
-                authoritative_rerun_audit: false,
-                runnable: Vec::new(),
-                parked: BTreeMap::new(),
-                wire_waiters: BTreeMap::new(),
-                root_results: BTreeMap::new(),
-                primitive_pending: BTreeMap::new(),
-                exec_pending: BTreeMap::new(),
-                exec_projection_pending: BTreeMap::new(),
-                exec_progress_ready: BTreeMap::new(),
-            },
-            PersistentRuntimeJournalLoadReport {
-                store: store_report,
-                ..PersistentRuntimeJournalLoadReport::default()
-            },
-        ))
     }
 
     pub fn load_persistent_journal_claims(
@@ -3595,6 +3635,7 @@ impl<S: EventSink> Runtime<S> {
                 &plan.primitive,
                 request_id.clone(),
                 EffectCtx::new(primitive_demand, authority.clone()),
+                &self.ctx,
             ) {
                 Ok(ticket) => ticket,
                 Err(error) => {
@@ -8392,14 +8433,14 @@ fn scheduler_decode() -> Stream<Check> {
         begins: Arc<AtomicUsize>,
     }
 
-    impl Primitive for CountingDecode {
+    impl Primitive<()> for CountingDecode {
         fn descriptor(&self) -> &PrimitiveDescriptor {
             &self.descriptor
         }
 
-        fn begin(&self, request: ValueId, ctx: EffectCtx) -> EffectTicket {
+        fn begin(&self, request: ValueId, ctx: EffectCtx, app: &()) -> EffectTicket {
             self.begins.fetch_add(1, Ordering::AcqRel);
-            DecodePrimitive::default().begin(request, ctx)
+            DecodePrimitive::default().begin(request, ctx, app)
         }
     }
 
@@ -8414,12 +8455,12 @@ fn scheduler_decode() -> Stream<Check> {
         )>,
     }
 
-    impl Primitive for DelayedDecode {
+    impl Primitive<()> for DelayedDecode {
         fn descriptor(&self) -> &PrimitiveDescriptor {
             &self.descriptor
         }
 
-        fn begin(&self, request: ValueId, ctx: EffectCtx) -> EffectTicket {
+        fn begin(&self, request: ValueId, ctx: EffectCtx, _app: &()) -> EffectTicket {
             self.begins.fetch_add(1, Ordering::AcqRel);
             let gate = self.gate.clone();
             let cancel_gate = self.gate.clone();
@@ -8438,7 +8479,7 @@ fn scheduler_decode() -> Stream<Check> {
                     released = wake.wait(released).expect("decode gate mutex poisoned");
                 }
                 drop(released);
-                let inner = DecodePrimitive::default().begin(request, ctx);
+                let inner = DecodePrimitive::default().begin(request, ctx, &());
                 let _subscription = inner.join(move |publication| {
                     let result = completer.complete(publication.clone());
                     completed
@@ -8450,7 +8491,7 @@ fn scheduler_decode() -> Stream<Check> {
         }
     }
 
-    fn decode_registry(primitive: Arc<dyn Primitive>) -> PrimitiveDispatcher {
+    fn decode_registry(primitive: Arc<dyn Primitive<()>>) -> PrimitiveDispatcher<()> {
         let mut registry = PrimitiveRegistry::default();
         registry
             .register(primitive)
@@ -8537,7 +8578,7 @@ fn scheduler_decode() -> Stream<Check> {
         let primitive = DecodePrimitive::default();
         let mut runtime = Runtime::new(EventLog::default());
         runtime.primitive_dispatcher = decode_registry(Arc::new(CountingDecode {
-            descriptor: primitive.descriptor().clone(),
+            descriptor: <DecodePrimitive as Primitive<()>>::descriptor(&primitive).clone(),
             begins: begins.clone(),
         }));
 
@@ -8572,7 +8613,7 @@ fn scheduler_decode() -> Stream<Check> {
         let primitive = DecodePrimitive::default();
         let mut runtime = Runtime::new(EventLog::default());
         runtime.primitive_dispatcher = decode_registry(Arc::new(DelayedDecode {
-            descriptor: primitive.descriptor().clone(),
+            descriptor: <DecodePrimitive as Primitive<()>>::descriptor(&primitive).clone(),
             begins: begins.clone(),
             cancellations: cancellations.clone(),
             gate,

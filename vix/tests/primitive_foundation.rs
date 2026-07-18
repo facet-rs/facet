@@ -73,12 +73,12 @@ struct EchoPrimitive {
     begins: AtomicUsize,
 }
 
-impl Primitive for EchoPrimitive {
+impl<Ctx> Primitive<Ctx> for EchoPrimitive {
     fn descriptor(&self) -> &PrimitiveDescriptor {
         &self.descriptor
     }
 
-    fn begin(&self, request: ValueId, ctx: EffectCtx) -> EffectTicket {
+    fn begin(&self, request: ValueId, ctx: EffectCtx, _app: &Ctx) -> EffectTicket {
         self.begins.fetch_add(1, Ordering::Relaxed);
         let (ticket, completer) = ctx.ticket(|| {});
         let publication = ctx
@@ -134,7 +134,7 @@ fn registered_dispatch_records_reads_without_an_opt_in_receipt_call() {
         .register(primitive.clone())
         .expect("primitive registers once");
     let ticket = registry
-        .begin(&primitive.descriptor.id, request.clone(), ctx)
+        .begin(&primitive.descriptor.id, request.clone(), ctx, &())
         .expect("generic descriptor lookup dispatches");
     let publication = ticket.outcome().expect("immediate primitive completed");
 
@@ -171,6 +171,7 @@ fn request_schema_is_checked_before_primitive_code_runs() {
             &primitive.descriptor.id,
             wrong,
             EffectCtx::new(demand, authority),
+            &(),
         ),
         Err(error) if matches!(*error, PrimitiveDispatchError::RequestSchema { .. })
     ));
@@ -199,6 +200,7 @@ fn duplicate_running_demand_joins_one_registered_primitive_ticket() {
             &primitive.descriptor.id,
             request.clone(),
             EffectCtx::new(demand, authority.clone()),
+            &(),
         )
         .expect("first demand begins");
     let second = dispatcher
@@ -206,6 +208,7 @@ fn duplicate_running_demand_joins_one_registered_primitive_ticket() {
             &primitive.descriptor.id,
             request,
             EffectCtx::new(demand, authority),
+            &(),
         )
         .expect("duplicate demand joins");
 

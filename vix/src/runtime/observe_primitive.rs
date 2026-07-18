@@ -68,12 +68,12 @@ impl Default for ObservePrimitive {
     }
 }
 
-impl Primitive for ObservePrimitive {
+impl<Ctx> Primitive<Ctx> for ObservePrimitive {
     fn descriptor(&self) -> &PrimitiveDescriptor {
         &self.descriptor
     }
 
-    fn begin(&self, request: ValueId, ctx: EffectCtx) -> EffectTicket {
+    fn begin(&self, request: ValueId, ctx: EffectCtx, _app: &Ctx) -> EffectTicket {
         let (ticket, completer) = ctx.ticket(|| {});
         std::thread::spawn(move || {
             let completion = execute(&request, &ctx)
