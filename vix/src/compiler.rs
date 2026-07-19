@@ -5255,7 +5255,7 @@ fn lower_some(
 /// ([`DiagnosticCode::RuntimeDecodeUnavailable`]) rather than host-evaluated.
 /// Lower a call to a uniform registered primitive (`fetch`, `observe`)
 /// through the [`RequestShape`](crate::binding::RequestShape) it declares on
-/// itself (`Primitive::request_shape`, harvested by `crate::binding`) — there
+/// itself (`RawPrimitive::request_shape`, harvested by `crate::binding`) — there
 /// is no per-primitive Rust arm here. `decode`/`try_decode` and the
 /// `fixture_*`/`untar` intrinsics are matched by callee name earlier and never
 /// reach this function; see `lower_value_expected`'s `ast::Expr::Call` arms.

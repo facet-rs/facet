@@ -401,10 +401,6 @@ mod tests {
         }
     }
 
-    fn string_value(s: &str) -> PrimitiveValue {
-        PrimitiveValue::bytes(Type::String.schema_ref(), s.as_bytes().to_vec())
-    }
-
     fn int_value(n: i64) -> PrimitiveValue {
         PrimitiveValue::bytes(Type::Int.schema_ref(), n.to_le_bytes().to_vec())
     }

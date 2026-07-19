@@ -6,7 +6,7 @@ use crate::vir::{
 };
 
 use super::{
-    EffectCtx, EffectTicket, Primitive, PrimitiveCompletion, PrimitiveDescriptor, PrimitiveField,
+    EffectCtx, EffectTicket, RawPrimitive, PrimitiveCompletion, PrimitiveDescriptor, PrimitiveField,
     PrimitiveFieldValue, PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveValue,
     PrimitiveValueBody, ReadProjection, ValueId,
 };
@@ -35,7 +35,7 @@ impl Default for DecodePrimitive {
     }
 }
 
-impl<Ctx> Primitive<Ctx> for DecodePrimitive {
+impl<Ctx> RawPrimitive<Ctx> for DecodePrimitive {
     fn descriptor(&self) -> &PrimitiveDescriptor {
         &self.descriptor
     }

@@ -41,10 +41,10 @@ use super::store::{
     StoreJournalLoadReport,
 };
 use super::{
-    DecodePrimitive, EffectCtx, EffectTicket, ObservePrimitive, PinnedFetchPrimitive, Primitive,
+    DecodePrimitive, EffectCtx, EffectTicket, ObservePrimitive, PinnedFetchPrimitive, RawPrimitive,
     PrimitiveCompletion, PrimitiveDispatcher, PrimitiveField, PrimitiveFieldValue,
     PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveRegistry, PrimitiveValue,
-    PrimitiveValueBody, StagedEffectAuthority, TicketSubscription, TreeReadPrimitive,
+    PrimitiveValueBody, StagedEffectAuthority, TicketSubscription, TreeReadPrimitive, TypedAdapter,
 };
 use super::{BlobId, OriginHint};
 use super::{MachineAttribution, MachineError, MachineOperation, RuntimeFault};
@@ -139,7 +139,7 @@ fn primitive_runtime_fault(failure: PrimitiveHostFailure) -> RuntimeFault {
 /// (`machine.scheduler.block-on-event`, `machine.scheduler.no-shadow-scheduler`).
 enum DeliveredCompletion {
     /// A registered-primitive ticket completed (decode/fetch/observe/...).
-    Primitive {
+    RawPrimitive {
         demand: DemandKey,
         publication: super::PrimitivePublication,
     },
@@ -195,7 +195,7 @@ impl CompletionInbox {
     ) -> impl FnOnce(super::PrimitivePublication) + Send + 'static {
         let sender = self.sender.clone();
         move |publication| {
-            let _ = sender.send(DeliveredCompletion::Primitive {
+            let _ = sender.send(DeliveredCompletion::RawPrimitive {
                 demand,
                 publication,
             });
@@ -728,11 +728,11 @@ fn build_memo_suffix_index(
 /// `binding::builtin_bindings`) to harvest their surface projections. Adding a
 /// primitive is one entry here, not a second hand-registration.
 #[must_use]
-pub fn builtin_primitives<Ctx>() -> Vec<Arc<dyn Primitive<Ctx>>> {
+pub fn builtin_primitives<Ctx>() -> Vec<Arc<dyn RawPrimitive<Ctx>>> {
     vec![
         Arc::new(DecodePrimitive::default()),
-        Arc::new(PinnedFetchPrimitive::default()),
-        Arc::new(ObservePrimitive::default()),
+        Arc::new(TypedAdapter::new::<Ctx>(PinnedFetchPrimitive)),
+        Arc::new(TypedAdapter::new::<Ctx>(ObservePrimitive)),
         Arc::new(TreeReadPrimitive::default()),
     ]
 }
@@ -3717,7 +3717,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
         completion: DeliveredCompletion,
     ) -> Result<(), Box<MachineError>> {
         match completion {
-            DeliveredCompletion::Primitive {
+            DeliveredCompletion::RawPrimitive {
                 demand,
                 publication,
             } => self.apply_primitive_completion(demand, publication),
@@ -8376,7 +8376,7 @@ mod tests {
     use crate::compiler::Compiler;
     use crate::lowering::{LoweringCache, attribution_for};
     use crate::runtime::{
-        DecodePrimitive, EventLog, FramedNode, MachineCause, Primitive, PrimitiveDescriptor,
+        DecodePrimitive, EventLog, FramedNode, MachineCause, RawPrimitive, PrimitiveDescriptor,
         PrimitiveRegistry, TicketCompletionError,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -8441,7 +8441,7 @@ fn scheduler_decode() -> Stream<Check> {
         begins: Arc<AtomicUsize>,
     }
 
-    impl Primitive<()> for CountingDecode {
+    impl RawPrimitive<()> for CountingDecode {
         fn descriptor(&self) -> &PrimitiveDescriptor {
             &self.descriptor
         }
@@ -8463,7 +8463,7 @@ fn scheduler_decode() -> Stream<Check> {
         )>,
     }
 
-    impl Primitive<()> for DelayedDecode {
+    impl RawPrimitive<()> for DelayedDecode {
         fn descriptor(&self) -> &PrimitiveDescriptor {
             &self.descriptor
         }
@@ -8499,7 +8499,7 @@ fn scheduler_decode() -> Stream<Check> {
         }
     }
 
-    fn decode_registry(primitive: Arc<dyn Primitive<()>>) -> PrimitiveDispatcher<()> {
+    fn decode_registry(primitive: Arc<dyn RawPrimitive<()>>) -> PrimitiveDispatcher<()> {
         let mut registry = PrimitiveRegistry::default();
         registry
             .register(primitive)
@@ -8586,7 +8586,7 @@ fn scheduler_decode() -> Stream<Check> {
         let primitive = DecodePrimitive::default();
         let mut runtime = Runtime::new(EventLog::default());
         runtime.primitive_dispatcher = decode_registry(Arc::new(CountingDecode {
-            descriptor: <DecodePrimitive as Primitive<()>>::descriptor(&primitive).clone(),
+            descriptor: <DecodePrimitive as RawPrimitive<()>>::descriptor(&primitive).clone(),
             begins: begins.clone(),
         }));
 
@@ -8621,7 +8621,7 @@ fn scheduler_decode() -> Stream<Check> {
         let primitive = DecodePrimitive::default();
         let mut runtime = Runtime::new(EventLog::default());
         runtime.primitive_dispatcher = decode_registry(Arc::new(DelayedDecode {
-            descriptor: <DecodePrimitive as Primitive<()>>::descriptor(&primitive).clone(),
+            descriptor: <DecodePrimitive as RawPrimitive<()>>::descriptor(&primitive).clone(),
             begins: begins.clone(),
             cancellations: cancellations.clone(),
             gate,
@@ -8666,7 +8666,7 @@ fn scheduler_decode() -> Stream<Check> {
         assert!(runtime.memo.is_empty(), "cancellation never memoizes");
 
         runtime
-            .apply_completion(DeliveredCompletion::Primitive {
+            .apply_completion(DeliveredCompletion::RawPrimitive {
                 demand: primitive_demand,
                 publication,
             })

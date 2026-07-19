@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use vix::runtime::{
-    EffectAuthority, EffectCtx, EffectTicket, FramedNode, JournalObservation, Primitive,
+    EffectAuthority, EffectCtx, EffectTicket, FramedNode, JournalObservation, RawPrimitive,
     PrimitiveCompletion, PrimitiveDescriptor, PrimitiveDispatchError, PrimitiveDispatcher,
     PrimitiveEvent, PrimitiveId, PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveRegistry,
     ReadObservation, ReadProjection, TicketCompletionError, ValueId, WitnessedValue,
@@ -73,7 +73,7 @@ struct EchoPrimitive {
     begins: AtomicUsize,
 }
 
-impl<Ctx> Primitive<Ctx> for EchoPrimitive {
+impl<Ctx> RawPrimitive<Ctx> for EchoPrimitive {
     fn descriptor(&self) -> &PrimitiveDescriptor {
         &self.descriptor
     }
