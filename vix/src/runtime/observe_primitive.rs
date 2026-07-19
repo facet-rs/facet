@@ -2,9 +2,10 @@ use crate::schema::SchemaPattern;
 use crate::vir::{ExternKind, Type};
 
 use super::{
-    EffectCtx, EffectTicket, ObserveCoordinate, ObservedClaim, OriginHint, Primitive,
+    ArgRole, EffectCtx, EffectTicket, ObserveCoordinate, ObservedClaim, OriginHint, Primitive,
     PrimitiveCompletion, PrimitiveDescriptor, PrimitiveField, PrimitiveFieldValue,
-    PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveValue, PrimitiveValueBody, ValueId,
+    PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveValue, PrimitiveValueBody, RequestShape,
+    Selector, SelectorVariant, ValueId,
 };
 
 /// The `observe` request shape. There is no other Rust spelling of this struct —
@@ -89,6 +90,37 @@ impl<Ctx> Primitive<Ctx> for ObservePrimitive {
             let _ = completer.complete(publication);
         });
         ticket
+    }
+
+    fn surface_name(&self) -> Option<&'static str> {
+        Some("observe")
+    }
+
+    fn request_shape(&self) -> Option<RequestShape> {
+        Some(RequestShape {
+            args: vec![
+                ArgRole::Value {
+                    expected: Type::from_facet::<OriginHint>(),
+                },
+                ArgRole::Selector(Selector {
+                    enum_name: "Mode".to_owned(),
+                    noun: "observe mode".to_owned(),
+                    variants: vec![
+                        SelectorVariant {
+                            variant: "Observe".to_owned(),
+                            flag: false,
+                        },
+                        SelectorVariant {
+                            variant: "Refresh".to_owned(),
+                            flag: true,
+                        },
+                    ],
+                }),
+            ],
+            request_ty: Type::from_facet::<ObserveRequest>(),
+            result: Type::Extern(ExternKind::Blob),
+            primitive: observe_primitive_id(),
+        })
     }
 }
 

@@ -862,11 +862,104 @@ impl<T: Clone> FromRef<T> for T {
     }
 }
 
+/// One accepted variant of a [`Selector`] argument and the boolean flag it folds
+/// into the request record. (`Mode::Observe` → `false`, `Mode::Refresh` → `true`.)
+///
+/// Selectors fold to a boolean today because the only one — observe's `Mode` — is
+/// binary. Decode's `Format` is an integer tag; when it migrates onto a shape this
+/// widens to a general constant. Until then, "selector" means "enum → flag".
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SelectorVariant {
+    pub variant: String,
+    pub flag: bool,
+}
+
+/// A selector argument: an enum-variant read at *lower time* into a constant and
+/// folded into the request record, never lowered as a runtime value. The
+/// accepted `enum_name`, its variants, and the diagnostic wording all live here
+/// rather than as a bespoke Rust reader per primitive.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Selector {
+    /// The enum the variant must name (`Mode`).
+    pub enum_name: String,
+    /// How the selector reads in diagnostics (`observe mode`) — the noun the
+    /// "expected …" and "unknown …" messages are built from.
+    pub noun: String,
+    pub variants: Vec<SelectorVariant>,
+}
+
+impl Selector {
+    /// What a non-variant or wrong-enum argument should say it expected, e.g.
+    /// `an observe mode `Mode::Observe` or `Mode::Refresh``.
+    #[must_use]
+    pub fn expected(&self) -> String {
+        let choices: Vec<String> = self
+            .variants
+            .iter()
+            .map(|candidate| format!("`{}::{}`", self.enum_name, candidate.variant))
+            .collect();
+        format!("an {} {}", self.noun, choices.join(" or "))
+    }
+
+    /// The message for a known enum but unrecognized variant, e.g.
+    /// `an unknown observe mode `Mode::Spin``.
+    #[must_use]
+    pub fn unknown(&self, variant: &str) -> String {
+        format!("an unknown {} `{}::{variant}`", self.noun, self.enum_name)
+    }
+}
+
+/// The structural role a surface argument plays in a primitive's request record.
+/// The request record has one field per argument, in this order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ArgRole {
+    /// Lowered as an ordinary value and required to have the given type
+    /// (`fetch`'s `PinnedBlobRef`, `observe`'s `OriginHint`).
+    Value { expected: Type },
+    /// An enum-variant selector folded to a constant request field.
+    Selector(Selector),
+}
+
+/// How a registered primitive builds its request from its surface arguments — the
+/// data a single generic lowering step consumes in place of a bespoke Rust arm per
+/// primitive. Arity is `args.len()`; the compiler builds a `request_ty` record with
+/// one field per argument (in order), invokes `primitive`, and yields `result`.
+///
+/// Only the primitives whose construction is *fully uniform* declare one
+/// ([`Primitive::request_shape`]) today (`fetch`, `observe`). `decode`/
+/// `try_decode` (compile-time constant folding, expected-type-derived targets)
+/// are not yet expressible here and stay on the `None` default.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RequestShape {
+    pub args: Vec<ArgRole>,
+    pub request_ty: Type,
+    pub result: Type,
+    pub primitive: PrimitiveId,
+}
+
 pub trait Primitive<Ctx>: Send + Sync {
     fn descriptor(&self) -> &PrimitiveDescriptor;
     /// `app` is the whole shared embedder context; the impl projects the
     /// slice it needs out of it via [`FromRef`].
     fn begin(&self, request: ValueId, ctx: EffectCtx, app: &Ctx) -> EffectTicket;
+
+    /// The primitive's surface name in the vix prelude, or `None` if it
+    /// projects no surface binding at all (e.g. `TreeReadPrimitive`, reached
+    /// only through the `.text()` method surface, never by a free-function
+    /// call). A primitive with `Some` name here is exactly the primitives
+    /// `binding::builtin_bindings` harvests one prelude binding from.
+    fn surface_name(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// The [`RequestShape`] this primitive's surface call lowers through, or
+    /// `None` when request construction is not yet fully data (selector reads
+    /// and expected-type-derived targets that don't reduce to a plain record
+    /// shape). Returning `Some` is the contract that the compiler can build
+    /// this primitive's request generically, with no bespoke Rust arm.
+    fn request_shape(&self) -> Option<RequestShape> {
+        None
+    }
 }
 
 type TicketWaiter = Box<dyn FnOnce(PrimitivePublication) + Send + 'static>;
