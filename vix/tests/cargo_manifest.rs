@@ -588,8 +588,16 @@ fn real_workspace_metadata_baseline_is_counted() -> Result<(), String> {
     // workspace-allowlist entry, so each conversion removes one, taking the
     // legacy baseline from 780 to 777. It leaves the oracle dependency total
     // unchanged.
-    assert_eq!(total_oracle_deps, 1151);
-    assert_eq!(before_workspace_allowlist_failures, 777);
+    //
+    // The data-driven-primitives decoder (`decode_primitive_value`) adds a
+    // workspace-inherited `facet-reflect` normal dependency to `vix`, used to
+    // drive a `facet_reflect::Partial` when decoding a wire `PrimitiveValue`
+    // into a typed request. It contributes one direct workspace-member
+    // dependency edge, taking the oracle total from 1151 to 1152; being
+    // workspace-inherited it also adds one to the legacy workspace-allowlist
+    // baseline, taking it from 777 to 778.
+    assert_eq!(total_oracle_deps, 1152);
+    assert_eq!(before_workspace_allowlist_failures, 778);
     assert_eq!(target_cfg_represented, 55);
 
     Ok(())

@@ -23,6 +23,7 @@ facet = { path = "../facet" }
 facet-format = { path = "../facet-format" }
 facet-json = { path = "../facet-json" }
 facet-toml = { path = "../facet-toml" }
+facet-reflect = { workspace = true }
 facet-value = { path = "../facet-value", default-features = false, features = ["alloc"] }
 exec-protocol = { path = "../exec-protocol", optional = true }
 hex.workspace = true

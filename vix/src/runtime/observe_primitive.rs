@@ -165,7 +165,10 @@ fn execute(request: &ValueId, ctx: &EffectCtx) -> Result<ValueId, PrimitiveMachi
     Ok(admitted)
 }
 
-fn parse_request(
+// `pub(crate)`: exercised directly by `primitive_value_decode`'s tests, which
+// assert `decode_primitive_value` agrees with this hand parser on the same
+// wire `PrimitiveValue` for the real `ObserveRequest` it exists to decode.
+pub(crate) fn parse_request(
     request: PrimitiveValue,
     request_id: ValueId,
 ) -> Result<(ObserveCoordinate, bool), PrimitiveMachineError> {

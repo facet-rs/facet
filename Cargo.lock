@@ -9642,6 +9642,7 @@ dependencies = [
  "facet",
  "facet-format",
  "facet-json",
+ "facet-reflect",
  "facet-toml",
  "facet-value",
  "hex",
