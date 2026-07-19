@@ -852,9 +852,21 @@ impl EffectCtx {
     }
 }
 
-pub trait Primitive: Send + Sync {
+pub trait FromRef<Ctx> {
+    fn from_ref(ctx: &Ctx) -> Self;
+}
+
+impl<T: Clone> FromRef<T> for T {
+    fn from_ref(ctx: &T) -> T {
+        ctx.clone()
+    }
+}
+
+pub trait Primitive<Ctx>: Send + Sync {
     fn descriptor(&self) -> &PrimitiveDescriptor;
-    fn begin(&self, request: ValueId, ctx: EffectCtx) -> EffectTicket;
+    /// `app` is the whole shared embedder context; the impl projects the
+    /// slice it needs out of it via [`FromRef`].
+    fn begin(&self, request: ValueId, ctx: EffectCtx, app: &Ctx) -> EffectTicket;
 }
 
 type TicketWaiter = Box<dyn FnOnce(PrimitivePublication) + Send + 'static>;
@@ -1016,19 +1028,26 @@ impl Drop for TicketSubscription {
     }
 }
 
-#[derive(Default)]
-pub struct PrimitiveRegistry {
-    primitives: BTreeMap<PrimitiveId, Arc<dyn Primitive>>,
+pub struct PrimitiveRegistry<Ctx> {
+    primitives: BTreeMap<PrimitiveId, Arc<dyn Primitive<Ctx>>>,
 }
 
-pub struct PrimitiveDispatcher {
-    registry: Arc<PrimitiveRegistry>,
+impl<Ctx> Default for PrimitiveRegistry<Ctx> {
+    fn default() -> Self {
+        Self {
+            primitives: BTreeMap::new(),
+        }
+    }
+}
+
+pub struct PrimitiveDispatcher<Ctx> {
+    registry: Arc<PrimitiveRegistry<Ctx>>,
     in_flight: Mutex<BTreeMap<DemandKey, EffectTicket>>,
 }
 
-impl PrimitiveDispatcher {
+impl<Ctx> PrimitiveDispatcher<Ctx> {
     #[must_use]
-    pub fn new(registry: Arc<PrimitiveRegistry>) -> Self {
+    pub fn new(registry: Arc<PrimitiveRegistry<Ctx>>) -> Self {
         Self {
             registry,
             in_flight: Mutex::new(BTreeMap::new()),
@@ -1040,13 +1059,14 @@ impl PrimitiveDispatcher {
         id: &PrimitiveId,
         request: ValueId,
         ctx: EffectCtx,
+        app: &Ctx,
     ) -> Result<EffectTicket, Box<PrimitiveDispatchError>> {
         let demand = ctx.demand();
         let mut in_flight = self.in_flight.lock().expect("dispatcher mutex poisoned");
         if let Some(ticket) = in_flight.get(&demand) {
             return Ok(ticket.clone());
         }
-        let ticket = self.registry.begin(id, request, ctx)?;
+        let ticket = self.registry.begin(id, request, ctx, app)?;
         in_flight.insert(demand, ticket.clone());
         Ok(ticket)
     }
@@ -1077,10 +1097,10 @@ pub enum PrimitiveRegistrationError {
     Duplicate(PrimitiveId),
 }
 
-impl PrimitiveRegistry {
+impl<Ctx> PrimitiveRegistry<Ctx> {
     pub fn register(
         &mut self,
-        primitive: Arc<dyn Primitive>,
+        primitive: Arc<dyn Primitive<Ctx>>,
     ) -> Result<(), PrimitiveRegistrationError> {
         let id = primitive.descriptor().id.clone();
         if self.primitives.insert(id.clone(), primitive).is_some() {
@@ -1101,6 +1121,7 @@ impl PrimitiveRegistry {
         id: &PrimitiveId,
         request: ValueId,
         ctx: EffectCtx,
+        app: &Ctx,
     ) -> Result<EffectTicket, Box<PrimitiveDispatchError>> {
         let primitive = self
             .primitives
@@ -1117,7 +1138,7 @@ impl PrimitiveRegistry {
                 found: request.schema,
             }));
         }
-        Ok(primitive.begin(request, ctx))
+        Ok(primitive.begin(request, ctx, app))
     }
 }
 
@@ -1129,4 +1150,110 @@ pub enum PrimitiveDispatchError {
         expected: SchemaPattern,
         found: SchemaRef,
     },
+}
+
+#[cfg(test)]
+mod from_ref_tests {
+    use super::*;
+    use crate::runtime::{DemandPreimage, RecipeId};
+
+    /// A stand-in for a shared authority an embedder installs once — a DB
+    /// pool, say — and reuses across every primitive invocation.
+    #[derive(Clone)]
+    struct FakePool {
+        label: &'static str,
+    }
+
+    /// The embedder's application context: an ordinary struct assembling
+    /// whatever shared authorities it wants primitives to reach.
+    #[derive(Clone)]
+    struct AppCtx {
+        pool: FakePool,
+    }
+
+    impl FromRef<AppCtx> for FakePool {
+        fn from_ref(ctx: &AppCtx) -> FakePool {
+            ctx.pool.clone()
+        }
+    }
+
+    /// A primitive that names exactly the slice it needs; a missing `FakePool`
+    /// on `Ctx` would be a compile error here, not a runtime downcast.
+    struct PoolLabelPrimitive {
+        descriptor: PrimitiveDescriptor,
+        seen: Arc<Mutex<Option<&'static str>>>,
+    }
+
+    impl<Ctx> Primitive<Ctx> for PoolLabelPrimitive
+    where
+        FakePool: FromRef<Ctx>,
+    {
+        fn descriptor(&self) -> &PrimitiveDescriptor {
+            &self.descriptor
+        }
+
+        fn begin(&self, request: ValueId, ctx: EffectCtx, app: &Ctx) -> EffectTicket {
+            let pool = FakePool::from_ref(app);
+            *self.seen.lock().expect("seen mutex poisoned") = Some(pool.label);
+            let (ticket, completer) = ctx.ticket(|| {});
+            let publication = ctx
+                .finish(PrimitiveCompletion::Ok(request))
+                .expect("single completion transaction");
+            completer
+                .complete(publication)
+                .expect("fresh ticket accepts one completion");
+            ticket
+        }
+    }
+
+    fn descriptor() -> PrimitiveDescriptor {
+        PrimitiveDescriptor {
+            id: PrimitiveId {
+                namespace: "vix.test".to_owned(),
+                name: "pool-label".to_owned(),
+                version: 1,
+            },
+            request_schema: SchemaPattern::exact(&Type::String.schema_ref()),
+            response_schema: SchemaPattern::exact(&Type::String.schema_ref()),
+            failure_schema: SchemaPattern::exact(&Type::String.schema_ref()),
+            memo_policy: PrimitiveMemoPolicy::Hermetic,
+            protocol_version: 1,
+            capability_schemas: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn primitive_projects_its_dependency_out_of_the_shared_context_via_from_ref() {
+        let request =
+            FramedNode::leaf(Type::String.schema_ref(), b"ignored".to_vec()).identity();
+        let demand = DemandKey::from_preimage(&DemandPreimage {
+            closure: RecipeId::from_canonical_vir(b"from-ref-test"),
+            arguments: vec![request.clone()],
+        });
+        let authority = Arc::new(StagedEffectAuthority::new(std::iter::empty()));
+        let ctx = EffectCtx::new(demand, authority);
+
+        let primitive = Arc::new(PoolLabelPrimitive {
+            descriptor: descriptor(),
+            seen: Arc::new(Mutex::new(None)),
+        });
+        let mut registry = PrimitiveRegistry::default();
+        registry
+            .register(primitive.clone())
+            .expect("primitive registers once");
+        let dispatcher = PrimitiveDispatcher::new(Arc::new(registry));
+
+        let app = AppCtx {
+            pool: FakePool { label: "prod-pool" },
+        };
+        let ticket = dispatcher
+            .begin_or_join(&primitive.descriptor.id, request, ctx, &app)
+            .expect("registered primitive dispatches");
+        ticket.outcome().expect("immediate primitive completed");
+
+        assert_eq!(
+            *primitive.seen.lock().expect("seen mutex poisoned"),
+            Some("prod-pool")
+        );
+    }
 }

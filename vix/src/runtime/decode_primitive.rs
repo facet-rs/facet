@@ -35,12 +35,12 @@ impl Default for DecodePrimitive {
     }
 }
 
-impl Primitive for DecodePrimitive {
+impl<Ctx> Primitive<Ctx> for DecodePrimitive {
     fn descriptor(&self) -> &PrimitiveDescriptor {
         &self.descriptor
     }
 
-    fn begin(&self, request: ValueId, ctx: EffectCtx) -> EffectTicket {
+    fn begin(&self, request: ValueId, ctx: EffectCtx, _app: &Ctx) -> EffectTicket {
         let (ticket, completer) = ctx.ticket(|| {});
         let completion = decode_request(&request, &ctx)
             .and_then(|value| ctx.intern_value(value))
