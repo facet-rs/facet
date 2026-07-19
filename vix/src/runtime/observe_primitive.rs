@@ -1,31 +1,29 @@
-use crate::schema::SchemaPattern;
-use crate::vir::{ExternKind, RecordField, RecordType, Type};
+use crate::vir::{ExternKind, Type};
 
 use super::{
-    EffectCtx, EffectTicket, ObserveCoordinate, ObservedClaim, Primitive, PrimitiveCompletion,
-    PrimitiveDescriptor, PrimitiveField, PrimitiveFieldValue, PrimitiveMachineError,
-    PrimitiveMemoPolicy, PrimitiveValue, PrimitiveValueBody, ValueId, origin_hint_type,
+    ArgRoleDecl, EffectCtx, EffectTicket, ObserveCoordinate, ObservedClaim, OriginHint,
+    PrimitiveCompletion, PrimitiveDecl, PrimitiveMachineError, PrimitiveMemoPolicy,
+    PrimitivePublication, Receipt, ResponseDecl, SelectorDecl, SelectorVariantDecl, Primitive,
+    ValueId,
 };
+// Only the test-only hand parser (the `decode_primitive_value` oracle) walks the
+// wire `PrimitiveValue` structurally now; production `begin` decodes instead.
+#[cfg(test)]
+use super::{PrimitiveField, PrimitiveFieldValue, PrimitiveValue, PrimitiveValueBody};
 
-#[must_use]
-pub fn observe_request_type() -> Type {
-    Type::Record(RecordType::new(
-        "ObserveRequest",
-        vec![
-            RecordField {
-                name: "origin".to_owned(),
-                ty: origin_hint_type(),
-            },
-            // `false` = observe (memoized by demand like any effect result);
-            // `true` = refresh, a distinct demand that forces a fresh receipted
-            // observation past the within-run memo and appends a new head under
-            // optimistic concurrency.
-            RecordField {
-                name: "refresh".to_owned(),
-                ty: Type::Bool,
-            },
-        ],
-    ))
+/// The `observe` request shape. There is no other Rust spelling of this struct —
+/// it is authored here so the derived `Type::from_facet::<ObserveRequest>()` is
+/// the single source for both `RequestShape.request_ty` and the descriptor's
+/// `request_schema`.
+///
+/// `refresh == false` = observe (memoized by demand like any effect result);
+/// `refresh == true` = refresh, a distinct demand that forces a fresh receipted
+/// observation past the within-run memo and appends a new head under optimistic
+/// concurrency.
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct ObserveRequest {
+    pub origin: OriginHint,
+    pub refresh: bool,
 }
 
 #[must_use]
@@ -44,61 +42,69 @@ pub fn observe_primitive_id() -> super::PrimitiveId {
 /// append-only claim history (`machine.primitive.fetch-is-pinned`,
 /// `machine.persistence.four-lifetimes`). Its memo policy is therefore
 /// `Observed`: the identity becomes known through a receipted observation.
-pub struct ObservePrimitive {
-    descriptor: PrimitiveDescriptor,
-}
+pub struct ObservePrimitive;
 
-impl Default for ObservePrimitive {
-    fn default() -> Self {
-        Self {
-            descriptor: PrimitiveDescriptor {
-                id: observe_primitive_id(),
-                request_schema: SchemaPattern::exact(&observe_request_type().schema_ref()),
-                response_schema: SchemaPattern::exact(&Type::Extern(ExternKind::Blob).schema_ref()),
-                failure_schema: SchemaPattern::Var {
-                    name: "ObserveFailure".to_owned(),
-                },
-                memo_policy: PrimitiveMemoPolicy::Observed,
-                protocol_version: 1,
-                capability_schemas: vec![SchemaPattern::exact(
-                    &Type::Extern(ExternKind::Registry).schema_ref(),
-                )],
-            },
-        }
-    }
-}
+/// The `Mode` selector `observe`'s second argument folds to its `refresh` flag:
+/// `Mode::Observe` → `false`, `Mode::Refresh` → `true`.
+const MODE_SELECTOR: SelectorDecl = SelectorDecl {
+    enum_name: "Mode",
+    noun: "observe mode",
+    variants: &[
+        SelectorVariantDecl {
+            variant: "Observe",
+            flag: false,
+        },
+        SelectorVariantDecl {
+            variant: "Refresh",
+            flag: true,
+        },
+    ],
+};
 
-impl Primitive for ObservePrimitive {
-    fn descriptor(&self) -> &PrimitiveDescriptor {
-        &self.descriptor
-    }
+impl<Ctx> Primitive<Ctx> for ObservePrimitive {
+    type Request = ObserveRequest;
+    type Deps = ();
 
-    fn begin(&self, request: ValueId, ctx: EffectCtx) -> EffectTicket {
+    const DECL: PrimitiveDecl = PrimitiveDecl {
+        namespace: "vix.machine",
+        name: "observe",
+        id_name: "observe",
+        version: 1,
+        memo_policy: PrimitiveMemoPolicy::Observed,
+        protocol_version: 1,
+        response: ResponseDecl::Extern(ExternKind::Blob),
+        failure_schema_name: "ObserveFailure",
+        capabilities: &[ExternKind::Registry],
+        args: &[ArgRoleDecl::Value, ArgRoleDecl::Selector(MODE_SELECTOR)],
+    };
+
+    fn begin(&self, req: ObserveRequest, ctx: EffectCtx, _deps: ()) -> EffectTicket {
         let (ticket, completer) = ctx.ticket(|| {});
         std::thread::spawn(move || {
-            let completion = execute(&request, &ctx)
+            let completion = serve(req, &ctx)
                 .map(PrimitiveCompletion::Ok)
                 .unwrap_or_else(PrimitiveCompletion::MachineError);
-            let publication =
-                ctx.finish(completion)
-                    .unwrap_or_else(|error| super::PrimitivePublication {
-                        completion: PrimitiveCompletion::MachineError(error),
-                        receipt: super::Receipt {
-                            demand: ctx.demand(),
-                            reads: Vec::new(),
-                        },
-                        journal: Vec::new(),
-                        progressive: Vec::new(),
-                    });
+            let publication = ctx.finish(completion).unwrap_or_else(|error| PrimitivePublication {
+                completion: PrimitiveCompletion::MachineError(error),
+                receipt: Receipt {
+                    demand: ctx.demand(),
+                    reads: Vec::new(),
+                },
+                journal: Vec::new(),
+                progressive: Vec::new(),
+            });
             let _ = completer.complete(publication);
         });
         ticket
     }
 }
 
-fn execute(request: &ValueId, ctx: &EffectCtx) -> Result<ValueId, PrimitiveMachineError> {
-    let request = ctx.read(request, super::ReadProjection::Whole)?;
-    let (coordinate, refresh) = parse_request(request.value, request.identity)?;
+fn serve(request: ObserveRequest, ctx: &EffectCtx) -> Result<ValueId, PrimitiveMachineError> {
+    let coordinate = ObserveCoordinate {
+        capability: request.origin.capability.0,
+        coordinate: request.origin.coordinate,
+    };
+    let refresh = request.refresh;
 
     // Optimistic concurrency for refresh: sample the head before reading the
     // origin, and reject the append if a concurrent observer advanced the head
@@ -137,7 +143,12 @@ fn execute(request: &ValueId, ctx: &EffectCtx) -> Result<ValueId, PrimitiveMachi
     Ok(admitted)
 }
 
-fn parse_request(
+// `#[cfg(test)]`: since `begin` decodes via `decode_primitive_value`, this hand
+// parser survives only as the oracle for `primitive_value_decode`'s tests, which
+// assert that decoder agrees with it on the same wire `PrimitiveValue` for the
+// real `ObserveRequest`. Test-only, so it doesn't dead-code-warn in a normal build.
+#[cfg(test)]
+pub(crate) fn parse_request(
     request: PrimitiveValue,
     request_id: ValueId,
 ) -> Result<(ObserveCoordinate, bool), PrimitiveMachineError> {
@@ -176,6 +187,7 @@ fn parse_request(
     ))
 }
 
+#[cfg(test)]
 fn inline_i64(field: &PrimitiveField) -> Result<i64, PrimitiveMachineError> {
     let PrimitiveFieldValue::Inline(bytes) = &field.value else {
         return Err(invalid_value());
@@ -185,6 +197,7 @@ fn inline_i64(field: &PrimitiveField) -> Result<i64, PrimitiveMachineError> {
     ))
 }
 
+#[cfg(test)]
 fn child(field: &PrimitiveField) -> Result<&PrimitiveValue, PrimitiveMachineError> {
     let PrimitiveFieldValue::Child(value) = &field.value else {
         return Err(invalid_value());
@@ -192,6 +205,7 @@ fn child(field: &PrimitiveField) -> Result<&PrimitiveValue, PrimitiveMachineErro
     Ok(value)
 }
 
+#[cfg(test)]
 fn bytes(value: &PrimitiveValue) -> Result<&[u8], PrimitiveMachineError> {
     let PrimitiveValueBody::Bytes(bytes) = &value.body else {
         return Err(invalid_value());
@@ -199,6 +213,7 @@ fn bytes(value: &PrimitiveValue) -> Result<&[u8], PrimitiveMachineError> {
     Ok(bytes)
 }
 
+#[cfg(test)]
 fn invalid_value() -> PrimitiveMachineError {
     PrimitiveMachineError::AuthorityViolation {
         detail: "observe request disagrees with its declared schema".to_owned(),

@@ -852,9 +852,121 @@ impl EffectCtx {
     }
 }
 
-pub trait Primitive: Send + Sync {
+pub trait FromRef<Ctx> {
+    fn from_ref(ctx: &Ctx) -> Self;
+}
+
+/// A primitive that needs nothing from the embedder declares `type Deps = ()`
+/// and stays agnostic over `Ctx`: the empty slice is projectable out of *any*
+/// context, so a bare `Runtime<S, ()>` and a richly-provisioned one both admit
+/// `fetch`/`observe`. This is deliberately a generic `impl … for ()` rather than
+/// the reflexive `impl<T: Clone> FromRef<T> for T` (whole-context-as-its-own-dep):
+/// the two overlap at `Ctx = ()`, and it is `()`-deps agnosticism the built-in
+/// primitives actually rely on. Concrete slices (`PgPool`, a fixture store, …)
+/// name their own `impl FromRef<Ctx>` per embedder context, the way the
+/// `from_ref_tests` `FakePool` does.
+impl<Ctx> FromRef<Ctx> for () {
+    fn from_ref(_ctx: &Ctx) {}
+}
+
+/// One accepted variant of a [`Selector`] argument and the boolean flag it folds
+/// into the request record. (`Mode::Observe` → `false`, `Mode::Refresh` → `true`.)
+///
+/// Selectors fold to a boolean today because the only one — observe's `Mode` — is
+/// binary. Decode's `Format` is an integer tag; when it migrates onto a shape this
+/// widens to a general constant. Until then, "selector" means "enum → flag".
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SelectorVariant {
+    pub variant: String,
+    pub flag: bool,
+}
+
+/// A selector argument: an enum-variant read at *lower time* into a constant and
+/// folded into the request record, never lowered as a runtime value. The
+/// accepted `enum_name`, its variants, and the diagnostic wording all live here
+/// rather than as a bespoke Rust reader per primitive.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Selector {
+    /// The enum the variant must name (`Mode`).
+    pub enum_name: String,
+    /// How the selector reads in diagnostics (`observe mode`) — the noun the
+    /// "expected …" and "unknown …" messages are built from.
+    pub noun: String,
+    pub variants: Vec<SelectorVariant>,
+}
+
+impl Selector {
+    /// What a non-variant or wrong-enum argument should say it expected, e.g.
+    /// `an observe mode `Mode::Observe` or `Mode::Refresh``.
+    #[must_use]
+    pub fn expected(&self) -> String {
+        let choices: Vec<String> = self
+            .variants
+            .iter()
+            .map(|candidate| format!("`{}::{}`", self.enum_name, candidate.variant))
+            .collect();
+        format!("an {} {}", self.noun, choices.join(" or "))
+    }
+
+    /// The message for a known enum but unrecognized variant, e.g.
+    /// `an unknown observe mode `Mode::Spin``.
+    #[must_use]
+    pub fn unknown(&self, variant: &str) -> String {
+        format!("an unknown {} `{}::{variant}`", self.noun, self.enum_name)
+    }
+}
+
+/// The structural role a surface argument plays in a primitive's request record.
+/// The request record has one field per argument, in this order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ArgRole {
+    /// Lowered as an ordinary value and required to have the given type
+    /// (`fetch`'s `PinnedBlobRef`, `observe`'s `OriginHint`).
+    Value { expected: Type },
+    /// An enum-variant selector folded to a constant request field.
+    Selector(Selector),
+}
+
+/// How a registered primitive builds its request from its surface arguments — the
+/// data a single generic lowering step consumes in place of a bespoke Rust arm per
+/// primitive. Arity is `args.len()`; the compiler builds a `request_ty` record with
+/// one field per argument (in order), invokes `primitive`, and yields `result`.
+///
+/// Only the primitives whose construction is *fully uniform* declare one
+/// ([`RawPrimitive::request_shape`]) today (`fetch`, `observe`). `decode`/
+/// `try_decode` (compile-time constant folding, expected-type-derived targets)
+/// are not yet expressible here and stay on the `None` default.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RequestShape {
+    pub args: Vec<ArgRole>,
+    pub request_ty: Type,
+    pub result: Type,
+    pub primitive: PrimitiveId,
+}
+
+pub trait RawPrimitive<Ctx>: Send + Sync {
     fn descriptor(&self) -> &PrimitiveDescriptor;
-    fn begin(&self, request: ValueId, ctx: EffectCtx) -> EffectTicket;
+    /// `app` is the whole shared embedder context; the impl projects the
+    /// slice it needs out of it via [`FromRef`].
+    fn begin(&self, request: ValueId, ctx: EffectCtx, app: &Ctx) -> EffectTicket;
+
+    /// The primitive's surface name in the vix prelude, or `None` if it
+    /// projects no surface binding at all (e.g. `TreeReadPrimitive`, reached
+    /// only through the `.text()` method surface, never by a free-function
+    /// call). A primitive with `Some` name here is exactly the primitives
+    /// `binding::builtin_bindings` harvests one prelude binding from.
+    fn surface_name(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// The [`RequestShape`] this primitive's surface call lowers through, or
+    /// `None` when request construction is not yet fully data (selector reads
+    /// and expected-type-derived targets that don't reduce to a plain record
+    /// shape). Returning `Some` is the contract that the compiler can build
+    /// this primitive's request generically, with no bespoke Rust arm.
+    fn request_shape(&self) -> Option<RequestShape> {
+        None
+    }
 }
 
 type TicketWaiter = Box<dyn FnOnce(PrimitivePublication) + Send + 'static>;
@@ -1016,19 +1128,26 @@ impl Drop for TicketSubscription {
     }
 }
 
-#[derive(Default)]
-pub struct PrimitiveRegistry {
-    primitives: BTreeMap<PrimitiveId, Arc<dyn Primitive>>,
+pub struct PrimitiveRegistry<Ctx> {
+    primitives: BTreeMap<PrimitiveId, Arc<dyn RawPrimitive<Ctx>>>,
 }
 
-pub struct PrimitiveDispatcher {
-    registry: Arc<PrimitiveRegistry>,
+impl<Ctx> Default for PrimitiveRegistry<Ctx> {
+    fn default() -> Self {
+        Self {
+            primitives: BTreeMap::new(),
+        }
+    }
+}
+
+pub struct PrimitiveDispatcher<Ctx> {
+    registry: Arc<PrimitiveRegistry<Ctx>>,
     in_flight: Mutex<BTreeMap<DemandKey, EffectTicket>>,
 }
 
-impl PrimitiveDispatcher {
+impl<Ctx> PrimitiveDispatcher<Ctx> {
     #[must_use]
-    pub fn new(registry: Arc<PrimitiveRegistry>) -> Self {
+    pub fn new(registry: Arc<PrimitiveRegistry<Ctx>>) -> Self {
         Self {
             registry,
             in_flight: Mutex::new(BTreeMap::new()),
@@ -1040,13 +1159,14 @@ impl PrimitiveDispatcher {
         id: &PrimitiveId,
         request: ValueId,
         ctx: EffectCtx,
+        app: &Ctx,
     ) -> Result<EffectTicket, Box<PrimitiveDispatchError>> {
         let demand = ctx.demand();
         let mut in_flight = self.in_flight.lock().expect("dispatcher mutex poisoned");
         if let Some(ticket) = in_flight.get(&demand) {
             return Ok(ticket.clone());
         }
-        let ticket = self.registry.begin(id, request, ctx)?;
+        let ticket = self.registry.begin(id, request, ctx, app)?;
         in_flight.insert(demand, ticket.clone());
         Ok(ticket)
     }
@@ -1077,10 +1197,10 @@ pub enum PrimitiveRegistrationError {
     Duplicate(PrimitiveId),
 }
 
-impl PrimitiveRegistry {
+impl<Ctx> PrimitiveRegistry<Ctx> {
     pub fn register(
         &mut self,
-        primitive: Arc<dyn Primitive>,
+        primitive: Arc<dyn RawPrimitive<Ctx>>,
     ) -> Result<(), PrimitiveRegistrationError> {
         let id = primitive.descriptor().id.clone();
         if self.primitives.insert(id.clone(), primitive).is_some() {
@@ -1101,6 +1221,7 @@ impl PrimitiveRegistry {
         id: &PrimitiveId,
         request: ValueId,
         ctx: EffectCtx,
+        app: &Ctx,
     ) -> Result<EffectTicket, Box<PrimitiveDispatchError>> {
         let primitive = self
             .primitives
@@ -1117,7 +1238,7 @@ impl PrimitiveRegistry {
                 found: request.schema,
             }));
         }
-        Ok(primitive.begin(request, ctx))
+        Ok(primitive.begin(request, ctx, app))
     }
 }
 
@@ -1129,4 +1250,110 @@ pub enum PrimitiveDispatchError {
         expected: SchemaPattern,
         found: SchemaRef,
     },
+}
+
+#[cfg(test)]
+mod from_ref_tests {
+    use super::*;
+    use crate::runtime::{DemandPreimage, RecipeId};
+
+    /// A stand-in for a shared authority an embedder installs once — a DB
+    /// pool, say — and reuses across every primitive invocation.
+    #[derive(Clone)]
+    struct FakePool {
+        label: &'static str,
+    }
+
+    /// The embedder's application context: an ordinary struct assembling
+    /// whatever shared authorities it wants primitives to reach.
+    #[derive(Clone)]
+    struct AppCtx {
+        pool: FakePool,
+    }
+
+    impl FromRef<AppCtx> for FakePool {
+        fn from_ref(ctx: &AppCtx) -> FakePool {
+            ctx.pool.clone()
+        }
+    }
+
+    /// A primitive that names exactly the slice it needs; a missing `FakePool`
+    /// on `Ctx` would be a compile error here, not a runtime downcast.
+    struct PoolLabelPrimitive {
+        descriptor: PrimitiveDescriptor,
+        seen: Arc<Mutex<Option<&'static str>>>,
+    }
+
+    impl<Ctx> RawPrimitive<Ctx> for PoolLabelPrimitive
+    where
+        FakePool: FromRef<Ctx>,
+    {
+        fn descriptor(&self) -> &PrimitiveDescriptor {
+            &self.descriptor
+        }
+
+        fn begin(&self, request: ValueId, ctx: EffectCtx, app: &Ctx) -> EffectTicket {
+            let pool = FakePool::from_ref(app);
+            *self.seen.lock().expect("seen mutex poisoned") = Some(pool.label);
+            let (ticket, completer) = ctx.ticket(|| {});
+            let publication = ctx
+                .finish(PrimitiveCompletion::Ok(request))
+                .expect("single completion transaction");
+            completer
+                .complete(publication)
+                .expect("fresh ticket accepts one completion");
+            ticket
+        }
+    }
+
+    fn descriptor() -> PrimitiveDescriptor {
+        PrimitiveDescriptor {
+            id: PrimitiveId {
+                namespace: "vix.test".to_owned(),
+                name: "pool-label".to_owned(),
+                version: 1,
+            },
+            request_schema: SchemaPattern::exact(&Type::String.schema_ref()),
+            response_schema: SchemaPattern::exact(&Type::String.schema_ref()),
+            failure_schema: SchemaPattern::exact(&Type::String.schema_ref()),
+            memo_policy: PrimitiveMemoPolicy::Hermetic,
+            protocol_version: 1,
+            capability_schemas: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn primitive_projects_its_dependency_out_of_the_shared_context_via_from_ref() {
+        let request =
+            FramedNode::leaf(Type::String.schema_ref(), b"ignored".to_vec()).identity();
+        let demand = DemandKey::from_preimage(&DemandPreimage {
+            closure: RecipeId::from_canonical_vir(b"from-ref-test"),
+            arguments: vec![request.clone()],
+        });
+        let authority = Arc::new(StagedEffectAuthority::new(std::iter::empty()));
+        let ctx = EffectCtx::new(demand, authority);
+
+        let primitive = Arc::new(PoolLabelPrimitive {
+            descriptor: descriptor(),
+            seen: Arc::new(Mutex::new(None)),
+        });
+        let mut registry = PrimitiveRegistry::default();
+        registry
+            .register(primitive.clone())
+            .expect("primitive registers once");
+        let dispatcher = PrimitiveDispatcher::new(Arc::new(registry));
+
+        let app = AppCtx {
+            pool: FakePool { label: "prod-pool" },
+        };
+        let ticket = dispatcher
+            .begin_or_join(&primitive.descriptor.id, request, ctx, &app)
+            .expect("registered primitive dispatches");
+        ticket.outcome().expect("immediate primitive completed");
+
+        assert_eq!(
+            *primitive.seen.lock().expect("seen mutex poisoned"),
+            Some("prod-pool")
+        );
+    }
 }

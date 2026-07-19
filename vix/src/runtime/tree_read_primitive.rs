@@ -2,7 +2,7 @@ use crate::schema::SchemaPattern;
 use crate::vir::{ExternKind, RecordField, RecordType, Type};
 
 use super::{
-    EffectCtx, EffectTicket, Primitive, PrimitiveCompletion, PrimitiveDescriptor, PrimitiveField,
+    EffectCtx, EffectTicket, RawPrimitive, PrimitiveCompletion, PrimitiveDescriptor, PrimitiveField,
     PrimitiveFieldValue, PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveValue,
     PrimitiveValueBody, ReadProjection, ValueId, fixture_tree_name,
 };
@@ -57,12 +57,12 @@ impl Default for TreeReadPrimitive {
     }
 }
 
-impl Primitive for TreeReadPrimitive {
+impl<Ctx> RawPrimitive<Ctx> for TreeReadPrimitive {
     fn descriptor(&self) -> &PrimitiveDescriptor {
         &self.descriptor
     }
 
-    fn begin(&self, request: ValueId, ctx: EffectCtx) -> EffectTicket {
+    fn begin(&self, request: ValueId, ctx: EffectCtx, _app: &Ctx) -> EffectTicket {
         let (ticket, completer) = ctx.ticket(|| {});
         std::thread::spawn(move || {
             let completion = execute(&request, &ctx)

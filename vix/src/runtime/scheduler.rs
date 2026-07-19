@@ -41,12 +41,12 @@ use super::store::{
     StoreJournalLoadReport,
 };
 use super::{
-    DecodePrimitive, EffectCtx, EffectTicket, ObservePrimitive, PinnedFetchPrimitive,
+    DecodePrimitive, EffectCtx, EffectTicket, ObservePrimitive, PinnedFetchPrimitive, RawPrimitive,
     PrimitiveCompletion, PrimitiveDispatcher, PrimitiveField, PrimitiveFieldValue,
     PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveRegistry, PrimitiveValue,
-    PrimitiveValueBody, StagedEffectAuthority, TicketSubscription, TreeReadPrimitive, blob_id_type,
-    origin_hint_type,
+    PrimitiveValueBody, StagedEffectAuthority, TicketSubscription, TreeReadPrimitive, TypedAdapter,
 };
+use super::{BlobId, OriginHint};
 use super::{MachineAttribution, MachineError, MachineOperation, RuntimeFault};
 
 #[derive(Clone, Debug)]
@@ -139,7 +139,7 @@ fn primitive_runtime_fault(failure: PrimitiveHostFailure) -> RuntimeFault {
 /// (`machine.scheduler.block-on-event`, `machine.scheduler.no-shadow-scheduler`).
 enum DeliveredCompletion {
     /// A registered-primitive ticket completed (decode/fetch/observe/...).
-    Primitive {
+    RawPrimitive {
         demand: DemandKey,
         publication: super::PrimitivePublication,
     },
@@ -195,7 +195,7 @@ impl CompletionInbox {
     ) -> impl FnOnce(super::PrimitivePublication) + Send + 'static {
         let sender = self.sender.clone();
         move |publication| {
-            let _ = sender.send(DeliveredCompletion::Primitive {
+            let _ = sender.send(DeliveredCompletion::RawPrimitive {
                 demand,
                 publication,
             });
@@ -553,7 +553,7 @@ pub enum GeneratorOutcome {
 /// r[impl machine.runtime.state-machines]
 /// r[impl machine.scheduler.passive-no-loop]
 /// r[impl machine.scheduler.no-shadow-scheduler]
-pub struct Runtime<S> {
+pub struct Runtime<S, Ctx = ()> {
     sink: S,
     sequence: u64,
     store: Store,
@@ -572,8 +572,12 @@ pub struct Runtime<S> {
     wire_demands: Vec<RealizedWireDemand>,
     performed_read_paths: BTreeSet<String>,
     fixture_store: FixtureStore,
-    primitive_dispatcher: PrimitiveDispatcher,
+    primitive_dispatcher: PrimitiveDispatcher<Ctx>,
     primitive_services: super::PrimitiveServices,
+    /// The embedder-installed shared runtime context — an ambient authority
+    /// (executor, pool, client) that primitives project a slice out of via
+    /// `FromRef`, never a semantic input to identity/memo/receipts.
+    ctx: Ctx,
     /// The scheduler-owned typed completion mailbox for registered primitives.
     completion_inbox: CompletionInbox,
     authoritative_rerun_audit: bool,
@@ -719,24 +723,31 @@ fn build_memo_suffix_index(
     index
 }
 
-fn default_primitive_dispatcher() -> PrimitiveDispatcher {
+/// The built-in registered primitives, as data: this is the *one* place that
+/// lists them, consumed both to build the default dispatcher and (by
+/// `binding::builtin_bindings`) to harvest their surface projections. Adding a
+/// primitive is one entry here, not a second hand-registration.
+#[must_use]
+pub fn builtin_primitives<Ctx>() -> Vec<Arc<dyn RawPrimitive<Ctx>>> {
+    vec![
+        Arc::new(DecodePrimitive::default()),
+        Arc::new(TypedAdapter::new::<Ctx>(PinnedFetchPrimitive)),
+        Arc::new(TypedAdapter::new::<Ctx>(ObservePrimitive)),
+        Arc::new(TreeReadPrimitive::default()),
+    ]
+}
+
+fn default_primitive_dispatcher<Ctx>() -> PrimitiveDispatcher<Ctx> {
     let mut registry = PrimitiveRegistry::default();
-    registry
-        .register(Arc::new(DecodePrimitive::default()))
-        .expect("the built-in decode primitive is registered once");
-    registry
-        .register(Arc::new(PinnedFetchPrimitive::default()))
-        .expect("the built-in pinned fetch primitive is registered once");
-    registry
-        .register(Arc::new(ObservePrimitive::default()))
-        .expect("the built-in observe primitive is registered once");
-    registry
-        .register(Arc::new(TreeReadPrimitive::default()))
-        .expect("the built-in tree-read primitive is registered once");
+    for primitive in builtin_primitives::<Ctx>() {
+        registry
+            .register(primitive)
+            .expect("built-in primitives register once, each under a distinct id");
+    }
     PrimitiveDispatcher::new(Arc::new(registry))
 }
 
-impl<S: EventSink> Runtime<S> {
+impl<S: EventSink> Runtime<S, ()> {
     #[must_use]
     pub fn new(sink: S) -> Self {
         Self {
@@ -754,6 +765,7 @@ impl<S: EventSink> Runtime<S> {
             fixture_store: FixtureStore::default(),
             primitive_dispatcher: default_primitive_dispatcher(),
             primitive_services: super::PrimitiveServices::default(),
+            ctx: (),
             completion_inbox: CompletionInbox::default(),
             authoritative_rerun_audit: false,
             runnable: Vec::new(),
@@ -793,6 +805,80 @@ impl<S: EventSink> Runtime<S> {
             fixture_store: FixtureStore::default(),
             primitive_dispatcher: default_primitive_dispatcher(),
             primitive_services: super::PrimitiveServices::default(),
+            ctx: (),
+            completion_inbox: CompletionInbox::default(),
+            authoritative_rerun_audit: false,
+            runnable: Vec::new(),
+            parked: BTreeMap::new(),
+            wire_waiters: BTreeMap::new(),
+            root_results: BTreeMap::new(),
+            primitive_pending: BTreeMap::new(),
+            exec_pending: BTreeMap::new(),
+            exec_projection_pending: BTreeMap::new(),
+            exec_progress_ready: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_persistent_journal_values(
+        sink: S,
+        journal: &PersistentRuntimeJournal,
+    ) -> Result<(Self, PersistentRuntimeJournalLoadReport), PersistentRuntimeJournalError> {
+        let (store, store_report) = Store::from_journal(journal.store.clone())?;
+        Ok((
+            Self {
+                sink,
+                sequence: 0,
+                store,
+                memo: BTreeMap::new(),
+                memo_suffix_index: BTreeMap::new(),
+                demands: BTreeMap::new(),
+                tasks: BTreeMap::new(),
+                counters: Counters::default(),
+                next_task: 0,
+                wire_demands: Vec::new(),
+                performed_read_paths: BTreeSet::new(),
+                fixture_store: FixtureStore::default(),
+                primitive_dispatcher: default_primitive_dispatcher(),
+                primitive_services: super::PrimitiveServices::default(),
+                ctx: (),
+                completion_inbox: CompletionInbox::default(),
+                authoritative_rerun_audit: false,
+                runnable: Vec::new(),
+                parked: BTreeMap::new(),
+                wire_waiters: BTreeMap::new(),
+                root_results: BTreeMap::new(),
+                primitive_pending: BTreeMap::new(),
+                exec_pending: BTreeMap::new(),
+                exec_projection_pending: BTreeMap::new(),
+                exec_progress_ready: BTreeMap::new(),
+            },
+            PersistentRuntimeJournalLoadReport {
+                store: store_report,
+                ..PersistentRuntimeJournalLoadReport::default()
+            },
+        ))
+    }
+}
+
+impl<S: EventSink, Ctx> Runtime<S, Ctx> {
+    #[must_use]
+    pub fn with_context(sink: S, ctx: Ctx) -> Self {
+        Self {
+            sink,
+            sequence: 0,
+            store: Store::default(),
+            memo: BTreeMap::new(),
+            memo_suffix_index: BTreeMap::new(),
+            demands: BTreeMap::new(),
+            tasks: BTreeMap::new(),
+            counters: Counters::default(),
+            next_task: 0,
+            wire_demands: Vec::new(),
+            performed_read_paths: BTreeSet::new(),
+            fixture_store: FixtureStore::default(),
+            primitive_dispatcher: default_primitive_dispatcher(),
+            primitive_services: super::PrimitiveServices::default(),
+            ctx,
             completion_inbox: CompletionInbox::default(),
             authoritative_rerun_audit: false,
             runnable: Vec::new(),
@@ -819,45 +905,6 @@ impl<S: EventSink> Runtime<S> {
 
     pub fn set_authoritative_rerun_audit(&mut self, enabled: bool) {
         self.authoritative_rerun_audit = enabled;
-    }
-
-    pub fn with_persistent_journal_values(
-        sink: S,
-        journal: &PersistentRuntimeJournal,
-    ) -> Result<(Self, PersistentRuntimeJournalLoadReport), PersistentRuntimeJournalError> {
-        let (store, store_report) = Store::from_journal(journal.store.clone())?;
-        Ok((
-            Self {
-                sink,
-                sequence: 0,
-                store,
-                memo: BTreeMap::new(),
-                memo_suffix_index: BTreeMap::new(),
-                demands: BTreeMap::new(),
-                tasks: BTreeMap::new(),
-                counters: Counters::default(),
-                next_task: 0,
-                wire_demands: Vec::new(),
-                performed_read_paths: BTreeSet::new(),
-                fixture_store: FixtureStore::default(),
-                primitive_dispatcher: default_primitive_dispatcher(),
-                primitive_services: super::PrimitiveServices::default(),
-                completion_inbox: CompletionInbox::default(),
-                authoritative_rerun_audit: false,
-                runnable: Vec::new(),
-                parked: BTreeMap::new(),
-                wire_waiters: BTreeMap::new(),
-                root_results: BTreeMap::new(),
-                primitive_pending: BTreeMap::new(),
-                exec_pending: BTreeMap::new(),
-                exec_projection_pending: BTreeMap::new(),
-                exec_progress_ready: BTreeMap::new(),
-            },
-            PersistentRuntimeJournalLoadReport {
-                store: store_report,
-                ..PersistentRuntimeJournalLoadReport::default()
-            },
-        ))
     }
 
     pub fn load_persistent_journal_claims(
@@ -3078,7 +3125,7 @@ impl<S: EventSink> Runtime<S> {
                     .ok_or_else(|| effect_machine_error("fixture registry artifact was absent"))?;
                 let blob_schema = Type::Extern(ExternKind::Blob).schema_ref();
                 let blob_id = PrimitiveValue {
-                    schema: blob_id_type().schema_ref(),
+                    schema: Type::from_facet::<BlobId>().schema_ref(),
                     body: PrimitiveValueBody::Product(vec![
                         primitive_child_field(PrimitiveValue::bytes(
                             Type::Extern(ExternKind::Schema).schema_ref(),
@@ -3093,7 +3140,7 @@ impl<S: EventSink> Runtime<S> {
                 let capability =
                     primitive_value_from_effect(&Type::Extern(ExternKind::Registry), &registry)?;
                 let origin = PrimitiveValue {
-                    schema: origin_hint_type().schema_ref(),
+                    schema: Type::from_facet::<OriginHint>().schema_ref(),
                     body: PrimitiveValueBody::Product(vec![
                         primitive_child_field(capability),
                         primitive_child_field(PrimitiveValue::bytes(
@@ -3109,9 +3156,10 @@ impl<S: EventSink> Runtime<S> {
                         body: PrimitiveValueBody::Product(vec![
                             primitive_child_field(blob_id),
                             primitive_child_field(PrimitiveValue {
-                                schema: Type::array(origin_hint_type()).schema_ref(),
+                                schema: Type::array(Type::from_facet::<OriginHint>())
+                                    .schema_ref(),
                                 body: PrimitiveValueBody::Sequence {
-                                    element_schema: origin_hint_type().schema_ref(),
+                                    element_schema: Type::from_facet::<OriginHint>().schema_ref(),
                                     elements: vec![origin],
                                 },
                             }),
@@ -3595,6 +3643,7 @@ impl<S: EventSink> Runtime<S> {
                 &plan.primitive,
                 request_id.clone(),
                 EffectCtx::new(primitive_demand, authority.clone()),
+                &self.ctx,
             ) {
                 Ok(ticket) => ticket,
                 Err(error) => {
@@ -3668,7 +3717,7 @@ impl<S: EventSink> Runtime<S> {
         completion: DeliveredCompletion,
     ) -> Result<(), Box<MachineError>> {
         match completion {
-            DeliveredCompletion::Primitive {
+            DeliveredCompletion::RawPrimitive {
                 demand,
                 publication,
             } => self.apply_primitive_completion(demand, publication),
@@ -8327,7 +8376,7 @@ mod tests {
     use crate::compiler::Compiler;
     use crate::lowering::{LoweringCache, attribution_for};
     use crate::runtime::{
-        DecodePrimitive, EventLog, FramedNode, MachineCause, Primitive, PrimitiveDescriptor,
+        DecodePrimitive, EventLog, FramedNode, MachineCause, RawPrimitive, PrimitiveDescriptor,
         PrimitiveRegistry, TicketCompletionError,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -8392,14 +8441,14 @@ fn scheduler_decode() -> Stream<Check> {
         begins: Arc<AtomicUsize>,
     }
 
-    impl Primitive for CountingDecode {
+    impl RawPrimitive<()> for CountingDecode {
         fn descriptor(&self) -> &PrimitiveDescriptor {
             &self.descriptor
         }
 
-        fn begin(&self, request: ValueId, ctx: EffectCtx) -> EffectTicket {
+        fn begin(&self, request: ValueId, ctx: EffectCtx, app: &()) -> EffectTicket {
             self.begins.fetch_add(1, Ordering::AcqRel);
-            DecodePrimitive::default().begin(request, ctx)
+            DecodePrimitive::default().begin(request, ctx, app)
         }
     }
 
@@ -8414,12 +8463,12 @@ fn scheduler_decode() -> Stream<Check> {
         )>,
     }
 
-    impl Primitive for DelayedDecode {
+    impl RawPrimitive<()> for DelayedDecode {
         fn descriptor(&self) -> &PrimitiveDescriptor {
             &self.descriptor
         }
 
-        fn begin(&self, request: ValueId, ctx: EffectCtx) -> EffectTicket {
+        fn begin(&self, request: ValueId, ctx: EffectCtx, _app: &()) -> EffectTicket {
             self.begins.fetch_add(1, Ordering::AcqRel);
             let gate = self.gate.clone();
             let cancel_gate = self.gate.clone();
@@ -8438,7 +8487,7 @@ fn scheduler_decode() -> Stream<Check> {
                     released = wake.wait(released).expect("decode gate mutex poisoned");
                 }
                 drop(released);
-                let inner = DecodePrimitive::default().begin(request, ctx);
+                let inner = DecodePrimitive::default().begin(request, ctx, &());
                 let _subscription = inner.join(move |publication| {
                     let result = completer.complete(publication.clone());
                     completed
@@ -8450,7 +8499,7 @@ fn scheduler_decode() -> Stream<Check> {
         }
     }
 
-    fn decode_registry(primitive: Arc<dyn Primitive>) -> PrimitiveDispatcher {
+    fn decode_registry(primitive: Arc<dyn RawPrimitive<()>>) -> PrimitiveDispatcher<()> {
         let mut registry = PrimitiveRegistry::default();
         registry
             .register(primitive)
@@ -8537,7 +8586,7 @@ fn scheduler_decode() -> Stream<Check> {
         let primitive = DecodePrimitive::default();
         let mut runtime = Runtime::new(EventLog::default());
         runtime.primitive_dispatcher = decode_registry(Arc::new(CountingDecode {
-            descriptor: primitive.descriptor().clone(),
+            descriptor: <DecodePrimitive as RawPrimitive<()>>::descriptor(&primitive).clone(),
             begins: begins.clone(),
         }));
 
@@ -8572,7 +8621,7 @@ fn scheduler_decode() -> Stream<Check> {
         let primitive = DecodePrimitive::default();
         let mut runtime = Runtime::new(EventLog::default());
         runtime.primitive_dispatcher = decode_registry(Arc::new(DelayedDecode {
-            descriptor: primitive.descriptor().clone(),
+            descriptor: <DecodePrimitive as RawPrimitive<()>>::descriptor(&primitive).clone(),
             begins: begins.clone(),
             cancellations: cancellations.clone(),
             gate,
@@ -8617,7 +8666,7 @@ fn scheduler_decode() -> Stream<Check> {
         assert!(runtime.memo.is_empty(), "cancellation never memoizes");
 
         runtime
-            .apply_completion(DeliveredCompletion::Primitive {
+            .apply_completion(DeliveredCompletion::RawPrimitive {
                 demand: primitive_demand,
                 publication,
             })
