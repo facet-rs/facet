@@ -339,6 +339,13 @@ fn decode_user(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::fetch_primitive::{
+        parse_blob_id, parse_origins, parse_request as fetch_parse_request, parse_upstream,
+    };
+    use crate::runtime::observe_primitive::parse_request as observe_parse_request;
+    use crate::runtime::{
+        BlobId, ObserveCoordinate, ObserveRequest, OriginHint, PinnedBlobRef, PinnedFetchRequest,
+    };
     use crate::vir::{ExternKind, Type};
 
     #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -670,5 +677,513 @@ mod tests {
             },
         };
         assert!(decode_primitive_value::<Option<String>>(&wire).is_err());
+    }
+
+    // -- agreement with the real request types and their hand-written parsers --
+    //
+    // Every generic test above only ever drives synthetic shapes (`Pair`,
+    // `Nested`, `Choice`). None of it exercises the leaf-override paths
+    // (`Digest`/`UpstreamDigest`/`SchemaRef`/`RegistryHandle`) or validates
+    // this decoder against the actual request types it exists to decode. The
+    // wire values below are built field-by-field to exactly match what
+    // `fetch_primitive::parse_request`/`parse_blob_id`/`parse_origins`/
+    // `parse_upstream` and `observe_primitive::parse_request` already read, so
+    // a disagreement here is a real decoder bug, not a test artifact.
+
+    fn product(schema: SchemaRef, fields: Vec<PrimitiveField>) -> PrimitiveValue {
+        PrimitiveValue {
+            schema,
+            body: PrimitiveValueBody::Product(fields),
+        }
+    }
+
+    fn sequence(
+        schema: SchemaRef,
+        element_schema: SchemaRef,
+        elements: Vec<PrimitiveValue>,
+    ) -> PrimitiveValue {
+        PrimitiveValue {
+            schema,
+            body: PrimitiveValueBody::Sequence {
+                element_schema,
+                elements,
+            },
+        }
+    }
+
+    fn variant(schema: SchemaRef, tag: u32, fields: Vec<PrimitiveField>) -> PrimitiveValue {
+        PrimitiveValue {
+            schema,
+            body: PrimitiveValueBody::Variant { tag, fields },
+        }
+    }
+
+    fn hex_digest_wire(digest: [u8; 32]) -> PrimitiveValue {
+        PrimitiveValue::bytes(
+            Type::from_facet::<Digest>().schema_ref(),
+            hex::encode(digest).into_bytes(),
+        )
+    }
+
+    fn hex_upstream_digest_wire(digest: [u8; 32]) -> PrimitiveValue {
+        PrimitiveValue::bytes(
+            Type::from_facet::<UpstreamDigest>().schema_ref(),
+            hex::encode(digest).into_bytes(),
+        )
+    }
+
+    fn schema_ref_wire(schema: &SchemaRef) -> PrimitiveValue {
+        PrimitiveValue::bytes(
+            Type::from_facet::<SchemaRef>().schema_ref(),
+            schema.canonical_bytes(),
+        )
+    }
+
+    /// A capability's wire form: a `Bytes` leaf tagged `Extern(Registry)`. Its
+    /// wire *identity* — never its bytes — is what a `RegistryHandle` decodes
+    /// to (`machine.identity.handle-by-referent`), matching
+    /// `fetch_primitive::parse_origins`: `RegistryHandle(child(capability)?.identity())`.
+    fn registry_capability_wire(label: &str) -> PrimitiveValue {
+        PrimitiveValue::bytes(
+            Type::from_facet::<RegistryHandle>().schema_ref(),
+            label.as_bytes().to_vec(),
+        )
+    }
+
+    fn blob_id_wire(blob_id: &BlobId) -> PrimitiveValue {
+        product(
+            Type::from_facet::<BlobId>().schema_ref(),
+            vec![
+                child(schema_ref_wire(&blob_id.schema)),
+                child(hex_digest_wire(blob_id.content.0)),
+            ],
+        )
+    }
+
+    fn origin_hint_wire(origin: &OriginHint, capability_wire: PrimitiveValue) -> PrimitiveValue {
+        product(
+            Type::from_facet::<OriginHint>().schema_ref(),
+            vec![
+                child(capability_wire),
+                child_string(&origin.coordinate),
+            ],
+        )
+    }
+
+    fn origins_wire(origins: &[(OriginHint, PrimitiveValue)]) -> PrimitiveValue {
+        sequence(
+            Type::from_facet::<Vec<OriginHint>>().schema_ref(),
+            Type::from_facet::<OriginHint>().schema_ref(),
+            origins
+                .iter()
+                .map(|(origin, capability_wire)| origin_hint_wire(origin, capability_wire.clone()))
+                .collect(),
+        )
+    }
+
+    fn upstream_wire(upstream: Option<[u8; 32]>) -> PrimitiveValue {
+        match upstream {
+            Some(digest) => variant(
+                Type::from_facet::<Option<UpstreamDigest>>().schema_ref(),
+                crate::vir::OPTION_SOME_VARIANT,
+                vec![child(hex_upstream_digest_wire(digest))],
+            ),
+            None => variant(
+                Type::from_facet::<Option<UpstreamDigest>>().schema_ref(),
+                crate::vir::OPTION_NONE_VARIANT,
+                vec![],
+            ),
+        }
+    }
+
+    fn pinned_blob_ref_wire(
+        blob_wire: PrimitiveValue,
+        origins_wire: PrimitiveValue,
+        upstream_wire: PrimitiveValue,
+    ) -> PrimitiveValue {
+        product(
+            Type::from_facet::<PinnedBlobRef>().schema_ref(),
+            vec![child(blob_wire), child(origins_wire), child(upstream_wire)],
+        )
+    }
+
+    fn pinned_fetch_request_wire(pin_wire: PrimitiveValue) -> PrimitiveValue {
+        product(
+            Type::from_facet::<PinnedFetchRequest>().schema_ref(),
+            vec![child(pin_wire)],
+        )
+    }
+
+    /// One capability, one origin, an upstream digest present: exercises every
+    /// leaf override plus `Vec`/`Option`/nested records at once.
+    #[test]
+    fn round_trips_pinned_fetch_request_against_hand_parsers() {
+        let blob_id = BlobId {
+            schema: Type::Extern(ExternKind::Blob).schema_ref(),
+            content: Digest([0xAB; 32]),
+        };
+        let blob_wire = blob_id_wire(&blob_id);
+
+        let capability_a = registry_capability_wire("registry:primary");
+        let origin_a = OriginHint {
+            capability: RegistryHandle(capability_a.identity()),
+            coordinate: "artifacts/a.bin".to_owned(),
+        };
+        let capability_b = registry_capability_wire("registry:mirror");
+        let origin_b = OriginHint {
+            capability: RegistryHandle(capability_b.identity()),
+            coordinate: "artifacts/b.bin".to_owned(),
+        };
+        let origins = vec![(origin_a.clone(), capability_a), (origin_b.clone(), capability_b)];
+        let origins_wire_value = origins_wire(&origins);
+
+        let upstream_bytes = [0xCD; 32];
+        let upstream_wire_value = upstream_wire(Some(upstream_bytes));
+
+        let pin_wire = pinned_blob_ref_wire(
+            blob_wire.clone(),
+            origins_wire_value.clone(),
+            upstream_wire_value.clone(),
+        );
+        let wire = pinned_fetch_request_wire(pin_wire.clone());
+
+        let expected = PinnedBlobRef {
+            value: blob_id.clone(),
+            origins: vec![origin_a.clone(), origin_b.clone()],
+            upstream: Some(UpstreamDigest(upstream_bytes)),
+        };
+
+        // (1) `decode_primitive_value` reconstructs the exact typed value.
+        let decoded: PinnedFetchRequest =
+            decode_primitive_value(&wire).expect("well-formed pinned-fetch wire value");
+        assert_eq!(decoded.pin, expected);
+
+        // (2) It agrees with the hand-written parser on the SAME wire value —
+        // top-level `parse_request` and every sub-parser it delegates to.
+        let hand_parsed = fetch_parse_request(wire.clone(), wire.identity())
+            .expect("hand parser accepts the same wire value");
+        assert_eq!(
+            decoded.pin, hand_parsed,
+            "decode_primitive_value disagrees with fetch_primitive::parse_request"
+        );
+
+        let hand_blob_id = parse_blob_id(&pin_wire_field(&pin_wire, 0), &wire.identity())
+            .expect("parse_blob_id accepts the same wire value");
+        assert_eq!(
+            decoded.pin.value, hand_blob_id,
+            "decode_primitive_value disagrees with fetch_primitive::parse_blob_id"
+        );
+
+        let hand_origins = parse_origins(&pin_wire_field(&pin_wire, 1))
+            .expect("parse_origins accepts the same wire value");
+        assert_eq!(
+            decoded.pin.origins, hand_origins,
+            "decode_primitive_value disagrees with fetch_primitive::parse_origins"
+        );
+
+        let hand_upstream = parse_upstream(&pin_wire_field(&pin_wire, 2))
+            .expect("parse_upstream accepts the same wire value");
+        assert_eq!(
+            decoded.pin.upstream, hand_upstream,
+            "decode_primitive_value disagrees with fetch_primitive::parse_upstream"
+        );
+    }
+
+    /// The empty/absent edge: no origins, no upstream digest — exercises the
+    /// `None` variant and a zero-length `Sequence` against the same parsers.
+    #[test]
+    fn round_trips_pinned_fetch_request_with_no_origins_and_no_upstream() {
+        let blob_id = BlobId {
+            schema: Type::Extern(ExternKind::Blob).schema_ref(),
+            content: Digest([0x11; 32]),
+        };
+        let blob_wire = blob_id_wire(&blob_id);
+        let origins_wire_value = origins_wire(&[]);
+        let upstream_wire_value = upstream_wire(None);
+
+        let pin_wire = pinned_blob_ref_wire(blob_wire, origins_wire_value, upstream_wire_value);
+        let wire = pinned_fetch_request_wire(pin_wire);
+
+        let expected = PinnedBlobRef {
+            value: blob_id,
+            origins: vec![],
+            upstream: None,
+        };
+
+        let decoded: PinnedFetchRequest =
+            decode_primitive_value(&wire).expect("well-formed pinned-fetch wire value");
+        assert_eq!(decoded.pin, expected);
+
+        let hand_parsed = fetch_parse_request(wire.clone(), wire.identity())
+            .expect("hand parser accepts the same wire value");
+        assert_eq!(
+            decoded.pin, hand_parsed,
+            "decode_primitive_value disagrees with fetch_primitive::parse_request"
+        );
+    }
+
+    /// Pull the nth `Child` field back out of a `Product` wire value — used to
+    /// hand the sub-parsers (`parse_blob_id`/`parse_origins`/`parse_upstream`)
+    /// exactly the same nested wire value `decode_primitive_value` walked.
+    fn pin_wire_field(pin_wire: &PrimitiveValue, index: usize) -> PrimitiveValue {
+        let PrimitiveValueBody::Product(fields) = &pin_wire.body else {
+            panic!("pin_wire is always a Product in these tests");
+        };
+        let PrimitiveFieldValue::Child(child) = &fields[index].value else {
+            panic!("pin_wire fields are always Child in these tests");
+        };
+        (**child).clone()
+    }
+
+    #[test]
+    fn round_trips_observe_request_against_hand_parser() {
+        let capability = registry_capability_wire("registry:primary");
+        let origin = OriginHint {
+            capability: RegistryHandle(capability.identity()),
+            coordinate: "coordinate/path".to_owned(),
+        };
+        let origin_wire_value = origin_hint_wire(&origin, capability);
+
+        let wire = product(
+            Type::from_facet::<ObserveRequest>().schema_ref(),
+            vec![child(origin_wire_value), inline_bool(true)],
+        );
+
+        let expected = ObserveRequest {
+            origin: origin.clone(),
+            refresh: true,
+        };
+
+        let decoded: ObserveRequest =
+            decode_primitive_value(&wire).expect("well-formed observe wire value");
+        assert_eq!(decoded, expected);
+
+        let (hand_coordinate, hand_refresh) = observe_parse_request(wire.clone(), wire.identity())
+            .expect("hand parser accepts the same wire value");
+        assert_eq!(hand_refresh, expected.refresh);
+        assert_eq!(
+            hand_coordinate,
+            ObserveCoordinate {
+                capability: origin.capability.0,
+                coordinate: origin.coordinate,
+            },
+            "decode_primitive_value disagrees with observe_primitive::parse_request"
+        );
+    }
+
+    #[test]
+    fn round_trips_observe_request_refresh_false() {
+        let capability = registry_capability_wire("registry:mirror");
+        let origin = OriginHint {
+            capability: RegistryHandle(capability.identity()),
+            coordinate: "coordinate/other".to_owned(),
+        };
+        let origin_wire_value = origin_hint_wire(&origin, capability);
+
+        let wire = product(
+            Type::from_facet::<ObserveRequest>().schema_ref(),
+            vec![child(origin_wire_value), inline_bool(false)],
+        );
+
+        let expected = ObserveRequest {
+            origin: origin.clone(),
+            refresh: false,
+        };
+
+        let decoded: ObserveRequest =
+            decode_primitive_value(&wire).expect("well-formed observe wire value");
+        assert_eq!(decoded, expected);
+
+        let (_, hand_refresh) = observe_parse_request(wire.clone(), wire.identity())
+            .expect("hand parser accepts the same wire value");
+        assert_eq!(hand_refresh, expected.refresh);
+    }
+
+    // -- adversarial: leaf-override paths, never panic, always Err -----------
+
+    #[test]
+    fn rejects_digest_with_non_hex_bytes() {
+        let wire = blob_id_wire(&BlobId {
+            schema: Type::Extern(ExternKind::Blob).schema_ref(),
+            content: Digest([0; 32]),
+        });
+        let PrimitiveValueBody::Product(mut fields) = wire.body else {
+            unreachable!("blob_id_wire is always Product");
+        };
+        fields[1] = child(PrimitiveValue::bytes(
+            Type::from_facet::<Digest>().schema_ref(),
+            b"not-hex-at-all-zz".to_vec(),
+        ));
+        let wire = product(wire.schema, fields);
+        assert!(decode_primitive_value::<BlobId>(&wire).is_err());
+    }
+
+    #[test]
+    fn rejects_upstream_digest_with_non_hex_bytes() {
+        let wire = variant(
+            Type::from_facet::<Option<UpstreamDigest>>().schema_ref(),
+            crate::vir::OPTION_SOME_VARIANT,
+            vec![child(PrimitiveValue::bytes(
+                Type::from_facet::<UpstreamDigest>().schema_ref(),
+                b"zz-not-hex".to_vec(),
+            ))],
+        );
+        assert!(decode_primitive_value::<Option<UpstreamDigest>>(&wire).is_err());
+    }
+
+    #[test]
+    fn rejects_hex_digest_that_decodes_to_wrong_length() {
+        // Valid hex, but only 16 bytes once decoded — not the required 32.
+        let short_hex = hex::encode([0xAA; 16]);
+        let wire = blob_id_wire(&BlobId {
+            schema: Type::Extern(ExternKind::Blob).schema_ref(),
+            content: Digest([0; 32]),
+        });
+        let PrimitiveValueBody::Product(mut fields) = wire.body else {
+            unreachable!("blob_id_wire is always Product");
+        };
+        fields[1] = child(PrimitiveValue::bytes(
+            Type::from_facet::<Digest>().schema_ref(),
+            short_hex.into_bytes(),
+        ));
+        let wire = product(wire.schema, fields);
+        assert!(decode_primitive_value::<BlobId>(&wire).is_err());
+    }
+
+    #[test]
+    fn rejects_hex_digest_that_decodes_to_too_many_bytes() {
+        let long_hex = hex::encode([0xAA; 33]);
+        let wire = blob_id_wire(&BlobId {
+            schema: Type::Extern(ExternKind::Blob).schema_ref(),
+            content: Digest([0; 32]),
+        });
+        let PrimitiveValueBody::Product(mut fields) = wire.body else {
+            unreachable!("blob_id_wire is always Product");
+        };
+        fields[1] = child(PrimitiveValue::bytes(
+            Type::from_facet::<Digest>().schema_ref(),
+            long_hex.into_bytes(),
+        ));
+        let wire = product(wire.schema, fields);
+        assert!(decode_primitive_value::<BlobId>(&wire).is_err());
+    }
+
+    #[test]
+    fn rejects_schema_ref_with_bytes_that_are_not_valid_canonical_schema_bytes() {
+        // Too short to even carry a `SchemaId` + arg count (needs >= 16 bytes).
+        let wire = blob_id_wire(&BlobId {
+            schema: Type::Extern(ExternKind::Blob).schema_ref(),
+            content: Digest([0; 32]),
+        });
+        let PrimitiveValueBody::Product(mut fields) = wire.body else {
+            unreachable!("blob_id_wire is always Product");
+        };
+        fields[0] = child(PrimitiveValue::bytes(
+            Type::from_facet::<SchemaRef>().schema_ref(),
+            vec![1, 2, 3],
+        ));
+        let wire = product(wire.schema, fields);
+        assert!(decode_primitive_value::<BlobId>(&wire).is_err());
+    }
+
+    #[test]
+    fn rejects_schema_ref_with_trailing_garbage_bytes() {
+        let mut bytes = Type::Extern(ExternKind::Blob).schema_ref().canonical_bytes();
+        bytes.push(0xFF);
+        let wire = blob_id_wire(&BlobId {
+            schema: Type::Extern(ExternKind::Blob).schema_ref(),
+            content: Digest([0; 32]),
+        });
+        let PrimitiveValueBody::Product(mut fields) = wire.body else {
+            unreachable!("blob_id_wire is always Product");
+        };
+        fields[0] = child(PrimitiveValue::bytes(
+            Type::from_facet::<SchemaRef>().schema_ref(),
+            bytes,
+        ));
+        let wire = product(wire.schema, fields);
+        assert!(decode_primitive_value::<BlobId>(&wire).is_err());
+    }
+
+    #[test]
+    fn rejects_schema_ref_child_with_product_body_instead_of_bytes() {
+        let wire = blob_id_wire(&BlobId {
+            schema: Type::Extern(ExternKind::Blob).schema_ref(),
+            content: Digest([0; 32]),
+        });
+        let PrimitiveValueBody::Product(mut fields) = wire.body else {
+            unreachable!("blob_id_wire is always Product");
+        };
+        fields[0] = child(PrimitiveValue {
+            schema: Type::from_facet::<SchemaRef>().schema_ref(),
+            body: PrimitiveValueBody::Product(vec![]),
+        });
+        let wire = product(wire.schema, fields);
+        assert!(decode_primitive_value::<BlobId>(&wire).is_err());
+    }
+
+    #[test]
+    fn rejects_registry_handle_field_given_inline_instead_of_child() {
+        // `RegistryHandle` (like every leaf override) is never `Inline` on the
+        // wire — only `Int`/`Bool` scalars are.
+        let wire = PrimitiveValue {
+            schema: Type::from_facet::<OriginHint>().schema_ref(),
+            body: PrimitiveValueBody::Product(vec![inline_i64(0), child_string("coordinate")]),
+        };
+        assert!(decode_primitive_value::<OriginHint>(&wire).is_err());
+    }
+
+    #[test]
+    fn rejects_origin_hint_with_too_few_fields() {
+        let capability = registry_capability_wire("registry:primary");
+        let wire = PrimitiveValue {
+            schema: Type::from_facet::<OriginHint>().schema_ref(),
+            body: PrimitiveValueBody::Product(vec![child(capability)]),
+        };
+        assert!(decode_primitive_value::<OriginHint>(&wire).is_err());
+    }
+
+    #[test]
+    fn rejects_origin_hint_with_too_many_fields() {
+        let capability = registry_capability_wire("registry:primary");
+        let wire = PrimitiveValue {
+            schema: Type::from_facet::<OriginHint>().schema_ref(),
+            body: PrimitiveValueBody::Product(vec![
+                child(capability),
+                child_string("coordinate"),
+                child_string("unexpected"),
+            ]),
+        };
+        assert!(decode_primitive_value::<OriginHint>(&wire).is_err());
+    }
+
+    #[test]
+    fn rejects_bytes_leaf_where_a_real_request_expects_a_child_product() {
+        // `PinnedBlobRef.value: BlobId` is a struct; give it `Bytes` instead of
+        // `Product`.
+        let wire = pinned_blob_ref_wire(
+            PrimitiveValue::bytes(Type::from_facet::<BlobId>().schema_ref(), vec![1, 2, 3]),
+            origins_wire(&[]),
+            upstream_wire(None),
+        );
+        assert!(decode_primitive_value::<PinnedBlobRef>(&wire).is_err());
+    }
+
+    #[test]
+    fn rejects_product_where_a_real_request_expects_a_bytes_leaf() {
+        // `OriginHint.coordinate: String` is a scalar; give it a `Product`
+        // instead of `Bytes`.
+        let capability = registry_capability_wire("registry:primary");
+        let wire = PrimitiveValue {
+            schema: Type::from_facet::<OriginHint>().schema_ref(),
+            body: PrimitiveValueBody::Product(vec![
+                child(capability),
+                child(PrimitiveValue {
+                    schema: Type::String.schema_ref(),
+                    body: PrimitiveValueBody::Product(vec![]),
+                }),
+            ]),
+        };
+        assert!(decode_primitive_value::<OriginHint>(&wire).is_err());
     }
 }

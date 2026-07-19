@@ -222,7 +222,10 @@ fn verify_upstream(
     Ok(())
 }
 
-fn parse_request(
+// `pub(crate)`: exercised directly by `primitive_value_decode`'s tests, which
+// assert `decode_primitive_value` agrees with these hand parsers on the same
+// wire `PrimitiveValue` for the real request types they exist to decode.
+pub(crate) fn parse_request(
     request: PrimitiveValue,
     request_id: ValueId,
 ) -> Result<PinnedBlobRef, PrimitiveMachineError> {
@@ -257,7 +260,7 @@ fn parse_request(
     })
 }
 
-fn parse_blob_id(
+pub(crate) fn parse_blob_id(
     value: &PrimitiveValue,
     request: &ValueId,
 ) -> Result<BlobId, PrimitiveMachineError> {
@@ -289,7 +292,7 @@ fn parse_blob_id(
     })
 }
 
-fn parse_origins(value: &PrimitiveValue) -> Result<Vec<OriginHint>, PrimitiveMachineError> {
+pub(crate) fn parse_origins(value: &PrimitiveValue) -> Result<Vec<OriginHint>, PrimitiveMachineError> {
     let PrimitiveValueBody::Sequence { elements, .. } = &value.body else {
         return Err(invalid_value());
     };
@@ -314,7 +317,9 @@ fn parse_origins(value: &PrimitiveValue) -> Result<Vec<OriginHint>, PrimitiveMac
         .collect()
 }
 
-fn parse_upstream(value: &PrimitiveValue) -> Result<Option<UpstreamDigest>, PrimitiveMachineError> {
+pub(crate) fn parse_upstream(
+    value: &PrimitiveValue,
+) -> Result<Option<UpstreamDigest>, PrimitiveMachineError> {
     let PrimitiveValueBody::Variant { tag, fields } = &value.body else {
         return Err(invalid_value());
     };
