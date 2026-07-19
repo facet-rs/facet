@@ -1,13 +1,17 @@
 use sha2::{Digest as _, Sha256};
 
-use crate::schema::{SchemaPattern, SchemaRef};
+use crate::schema::SchemaRef;
 use crate::vir::{ExternKind, Type};
 
 use super::{
-    ArgRole, Digest, EffectCtx, EffectTicket, Primitive, PrimitiveCompletion, PrimitiveDescriptor,
-    PrimitiveField, PrimitiveFieldValue, PrimitiveMachineError, PrimitiveMemoPolicy,
-    PrimitiveValue, PrimitiveValueBody, ReadProjection, RequestShape, ValueId,
+    ArgRoleDecl, Digest, EffectCtx, EffectTicket, PrimitiveCompletion, PrimitiveDecl,
+    PrimitiveMachineError, PrimitiveMemoPolicy, PrimitivePublication, ReadProjection, Receipt,
+    ResponseDecl, Primitive, ValueId,
 };
+// Only the test-only hand parsers (the `decode_primitive_value` oracle) walk the
+// wire `PrimitiveValue` structurally now; production `begin` decodes instead.
+#[cfg(test)]
+use super::{PrimitiveField, PrimitiveFieldValue, PrimitiveValue, PrimitiveValueBody};
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct UpstreamDigest(pub [u8; 32]);
@@ -76,78 +80,47 @@ pub fn pinned_fetch_primitive_id() -> super::PrimitiveId {
     }
 }
 
-pub struct PinnedFetchPrimitive {
-    descriptor: PrimitiveDescriptor,
-}
-
-impl Default for PinnedFetchPrimitive {
-    fn default() -> Self {
-        Self {
-            descriptor: PrimitiveDescriptor {
-                id: pinned_fetch_primitive_id(),
-                request_schema: SchemaPattern::exact(
-                    &Type::from_facet::<PinnedFetchRequest>().schema_ref(),
-                ),
-                response_schema: SchemaPattern::exact(&Type::Extern(ExternKind::Blob).schema_ref()),
-                failure_schema: SchemaPattern::Var {
-                    name: "PinnedFetchFailure".to_owned(),
-                },
-                memo_policy: PrimitiveMemoPolicy::Pinned,
-                protocol_version: 1,
-                capability_schemas: vec![SchemaPattern::exact(
-                    &Type::Extern(ExternKind::Registry).schema_ref(),
-                )],
-            },
-        }
-    }
-}
+pub struct PinnedFetchPrimitive;
 
 impl<Ctx> Primitive<Ctx> for PinnedFetchPrimitive {
-    fn descriptor(&self) -> &PrimitiveDescriptor {
-        &self.descriptor
-    }
+    type Request = PinnedFetchRequest;
+    type Deps = ();
 
-    fn begin(&self, request: ValueId, ctx: EffectCtx, _app: &Ctx) -> EffectTicket {
+    const DECL: PrimitiveDecl = PrimitiveDecl {
+        namespace: "vix.machine",
+        name: "fetch",
+        id_name: "pinned-fetch",
+        version: 1,
+        memo_policy: PrimitiveMemoPolicy::Pinned,
+        protocol_version: 1,
+        response: ResponseDecl::Extern(ExternKind::Blob),
+        failure_schema_name: "PinnedFetchFailure",
+        capabilities: &[ExternKind::Registry],
+        args: &[ArgRoleDecl::Value],
+    };
+
+    fn begin(&self, req: PinnedFetchRequest, ctx: EffectCtx, _deps: ()) -> EffectTicket {
         let (ticket, completer) = ctx.ticket(|| {});
         std::thread::spawn(move || {
-            let completion = execute(&request, &ctx)
+            let completion = serve(req.pin, &ctx)
                 .map(PrimitiveCompletion::Ok)
                 .unwrap_or_else(PrimitiveCompletion::MachineError);
-            let publication =
-                ctx.finish(completion)
-                    .unwrap_or_else(|error| super::PrimitivePublication {
-                        completion: PrimitiveCompletion::MachineError(error),
-                        receipt: super::Receipt {
-                            demand: ctx.demand(),
-                            reads: Vec::new(),
-                        },
-                        journal: Vec::new(),
-                        progressive: Vec::new(),
-                    });
+            let publication = ctx.finish(completion).unwrap_or_else(|error| PrimitivePublication {
+                completion: PrimitiveCompletion::MachineError(error),
+                receipt: Receipt {
+                    demand: ctx.demand(),
+                    reads: Vec::new(),
+                },
+                journal: Vec::new(),
+                progressive: Vec::new(),
+            });
             let _ = completer.complete(publication);
         });
         ticket
     }
-
-    fn surface_name(&self) -> Option<&'static str> {
-        Some("fetch")
-    }
-
-    fn request_shape(&self) -> Option<RequestShape> {
-        Some(RequestShape {
-            args: vec![ArgRole::Value {
-                expected: Type::from_facet::<PinnedBlobRef>(),
-            }],
-            request_ty: Type::from_facet::<PinnedFetchRequest>(),
-            result: Type::Extern(ExternKind::Blob),
-            primitive: pinned_fetch_primitive_id(),
-        })
-    }
 }
 
-fn execute(request: &ValueId, ctx: &EffectCtx) -> Result<ValueId, PrimitiveMachineError> {
-    let request = ctx.read(request, ReadProjection::Whole)?;
-    let pin = parse_request(request.value, request.identity)?;
+fn serve(pin: PinnedBlobRef, ctx: &EffectCtx) -> Result<ValueId, PrimitiveMachineError> {
     let target = pin.value.id();
 
     if let Ok(stored) = ctx.read(&target, ReadProjection::Whole) {
@@ -222,9 +195,11 @@ fn verify_upstream(
     Ok(())
 }
 
-// `pub(crate)`: exercised directly by `primitive_value_decode`'s tests, which
-// assert `decode_primitive_value` agrees with these hand parsers on the same
-// wire `PrimitiveValue` for the real request types they exist to decode.
+// `#[cfg(test)]`: since `begin` decodes via `decode_primitive_value`, these hand
+// parsers survive only as the oracle for `primitive_value_decode`'s tests, which
+// assert that decoder agrees with them on the same wire `PrimitiveValue` for the
+// real request types. Test-only, so they don't dead-code-warn in a normal build.
+#[cfg(test)]
 pub(crate) fn parse_request(
     request: PrimitiveValue,
     request_id: ValueId,
@@ -260,6 +235,7 @@ pub(crate) fn parse_request(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn parse_blob_id(
     value: &PrimitiveValue,
     request: &ValueId,
@@ -292,6 +268,7 @@ pub(crate) fn parse_blob_id(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn parse_origins(value: &PrimitiveValue) -> Result<Vec<OriginHint>, PrimitiveMachineError> {
     let PrimitiveValueBody::Sequence { elements, .. } = &value.body else {
         return Err(invalid_value());
@@ -317,6 +294,7 @@ pub(crate) fn parse_origins(value: &PrimitiveValue) -> Result<Vec<OriginHint>, P
         .collect()
 }
 
+#[cfg(test)]
 pub(crate) fn parse_upstream(
     value: &PrimitiveValue,
 ) -> Result<Option<UpstreamDigest>, PrimitiveMachineError> {
@@ -337,6 +315,7 @@ pub(crate) fn parse_upstream(
     }
 }
 
+#[cfg(test)]
 fn child(field: &PrimitiveField) -> Result<&PrimitiveValue, PrimitiveMachineError> {
     let PrimitiveFieldValue::Child(value) = &field.value else {
         return Err(invalid_value());
@@ -344,6 +323,7 @@ fn child(field: &PrimitiveField) -> Result<&PrimitiveValue, PrimitiveMachineErro
     Ok(value)
 }
 
+#[cfg(test)]
 fn bytes(value: &PrimitiveValue) -> Result<&[u8], PrimitiveMachineError> {
     let PrimitiveValueBody::Bytes(bytes) = &value.body else {
         return Err(invalid_value());
@@ -351,6 +331,7 @@ fn bytes(value: &PrimitiveValue) -> Result<&[u8], PrimitiveMachineError> {
     Ok(bytes)
 }
 
+#[cfg(test)]
 fn invalid_value() -> PrimitiveMachineError {
     PrimitiveMachineError::AuthorityViolation {
         detail: "pinned fetch request disagrees with its declared schema".to_owned(),

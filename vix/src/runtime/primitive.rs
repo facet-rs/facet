@@ -856,10 +856,17 @@ pub trait FromRef<Ctx> {
     fn from_ref(ctx: &Ctx) -> Self;
 }
 
-impl<T: Clone> FromRef<T> for T {
-    fn from_ref(ctx: &T) -> T {
-        ctx.clone()
-    }
+/// A primitive that needs nothing from the embedder declares `type Deps = ()`
+/// and stays agnostic over `Ctx`: the empty slice is projectable out of *any*
+/// context, so a bare `Runtime<S, ()>` and a richly-provisioned one both admit
+/// `fetch`/`observe`. This is deliberately a generic `impl … for ()` rather than
+/// the reflexive `impl<T: Clone> FromRef<T> for T` (whole-context-as-its-own-dep):
+/// the two overlap at `Ctx = ()`, and it is `()`-deps agnosticism the built-in
+/// primitives actually rely on. Concrete slices (`PgPool`, a fixture store, …)
+/// name their own `impl FromRef<Ctx>` per embedder context, the way the
+/// `from_ref_tests` `FakePool` does.
+impl<Ctx> FromRef<Ctx> for () {
+    fn from_ref(_ctx: &Ctx) {}
 }
 
 /// One accepted variant of a [`Selector`] argument and the boolean flag it folds
@@ -926,7 +933,7 @@ pub enum ArgRole {
 /// one field per argument (in order), invokes `primitive`, and yields `result`.
 ///
 /// Only the primitives whose construction is *fully uniform* declare one
-/// ([`Primitive::request_shape`]) today (`fetch`, `observe`). `decode`/
+/// ([`RawPrimitive::request_shape`]) today (`fetch`, `observe`). `decode`/
 /// `try_decode` (compile-time constant folding, expected-type-derived targets)
 /// are not yet expressible here and stay on the `None` default.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -937,7 +944,7 @@ pub struct RequestShape {
     pub primitive: PrimitiveId,
 }
 
-pub trait Primitive<Ctx>: Send + Sync {
+pub trait RawPrimitive<Ctx>: Send + Sync {
     fn descriptor(&self) -> &PrimitiveDescriptor;
     /// `app` is the whole shared embedder context; the impl projects the
     /// slice it needs out of it via [`FromRef`].
@@ -1122,7 +1129,7 @@ impl Drop for TicketSubscription {
 }
 
 pub struct PrimitiveRegistry<Ctx> {
-    primitives: BTreeMap<PrimitiveId, Arc<dyn Primitive<Ctx>>>,
+    primitives: BTreeMap<PrimitiveId, Arc<dyn RawPrimitive<Ctx>>>,
 }
 
 impl<Ctx> Default for PrimitiveRegistry<Ctx> {
@@ -1193,7 +1200,7 @@ pub enum PrimitiveRegistrationError {
 impl<Ctx> PrimitiveRegistry<Ctx> {
     pub fn register(
         &mut self,
-        primitive: Arc<dyn Primitive<Ctx>>,
+        primitive: Arc<dyn RawPrimitive<Ctx>>,
     ) -> Result<(), PrimitiveRegistrationError> {
         let id = primitive.descriptor().id.clone();
         if self.primitives.insert(id.clone(), primitive).is_some() {
@@ -1277,7 +1284,7 @@ mod from_ref_tests {
         seen: Arc<Mutex<Option<&'static str>>>,
     }
 
-    impl<Ctx> Primitive<Ctx> for PoolLabelPrimitive
+    impl<Ctx> RawPrimitive<Ctx> for PoolLabelPrimitive
     where
         FakePool: FromRef<Ctx>,
     {

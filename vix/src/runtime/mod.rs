@@ -15,6 +15,7 @@ mod primitive_value_decode;
 mod scheduler;
 mod store;
 mod tree_read_primitive;
+mod typed_primitive;
 
 pub use abi::*;
 pub use blob_persistence::*;
@@ -31,3 +32,4 @@ pub use primitive_value_decode::*;
 pub use scheduler::*;
 pub use store::*;
 pub use tree_read_primitive::*;
+pub use typed_primitive::*;

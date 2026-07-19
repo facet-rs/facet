@@ -21,8 +21,8 @@
 //! # Status
 //!
 //! **The projection lives on the primitive.** Each registered primitive
-//! declares its own [`Primitive::surface_name`](crate::runtime::Primitive) and
-//! [`Primitive::request_shape`](crate::runtime::Primitive); [`builtin_bindings`]
+//! declares its own [`RawPrimitive::surface_name`](crate::runtime::RawPrimitive) and
+//! [`RawPrimitive::request_shape`](crate::runtime::RawPrimitive); [`builtin_bindings`]
 //! *harvests* the [`BindingRegistry`] from [`runtime::builtin_primitives`]
 //! rather than maintaining a second table that names every primitive by hand.
 //! `compiler::lower_value` recognizes built-in primitives through
@@ -62,7 +62,7 @@ use crate::vir::decode_primitive_id;
 
 // Re-exported so existing call sites (`compiler.rs`) can keep spelling these
 // `crate::binding::RequestShape` etc. — the types now live next to
-// `Primitive` in `runtime`, since it is the primitive that declares them.
+// `RawPrimitive` in `runtime`, since it is the primitive that declares them.
 pub use crate::runtime::{ArgRole, RequestShape, Selector, SelectorVariant};
 
 /// A non-empty `::`-separated module path (`caps`, `some::ns::inner`).
@@ -228,7 +228,7 @@ impl BindingRegistry {
 
 /// The built-in prelude bindings, encoded as data.
 ///
-/// Every registered primitive that projects a surface name (`Primitive::
+/// Every registered primitive that projects a surface name (`RawPrimitive::
 /// surface_name` returns `Some`) is harvested straight from
 /// [`runtime::builtin_primitives`] — `fetch` and `observe` today. `decode`/
 /// `try_decode` share one primitive under two names and are not yet uniform
@@ -345,7 +345,7 @@ pub fn prelude_intrinsic(name: &str) -> Option<Intrinsic> {
 /// Returning `Some` is the contract that a primitive is fully described by
 /// data: the compiler builds its request generically from the shape. Built by
 /// asking every [`runtime::builtin_primitives`] entry for its own
-/// [`Primitive::request_shape`](crate::runtime::Primitive) — never a `match`
+/// [`RawPrimitive::request_shape`](crate::runtime::RawPrimitive) — never a `match`
 /// over a closed enum.
 #[must_use]
 pub fn request_shape(id: &PrimitiveId) -> Option<RequestShape> {
