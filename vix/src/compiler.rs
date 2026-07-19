@@ -12,7 +12,7 @@ use taxon::{
 use crate::decode::{self, DecodeFormat, DecodedValue};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics, Label};
 use crate::runtime::{
-    origin_hint_type, pinned_blob_ref_type, tree_read_primitive_id, tree_read_request_type,
+    OriginHint, PinnedBlobRef, tree_read_primitive_id, tree_read_request_type,
 };
 use crate::schema::{SchemaBatch, SchemaRef, SchemaSet};
 use crate::support::{Span, Spanned};
@@ -4971,7 +4971,7 @@ fn lower_method_call(
         PreludeMethod::RegistryUrl => {
             let name = lower_value(nodes, bindings, context, &positional[0])?;
             require_type(&name, &Type::String, expr_span(&positional[0]))?;
-            let ty = pinned_blob_ref_type();
+            let ty = Type::from_facet::<PinnedBlobRef>();
             Ok(LoweredValue {
                 node: push_node(
                     nodes,
@@ -4987,7 +4987,7 @@ fn lower_method_call(
         PreludeMethod::RegistryCoordinate => {
             let name = lower_value(nodes, bindings, context, &positional[0])?;
             require_type(&name, &Type::String, expr_span(&positional[0]))?;
-            let ty = origin_hint_type();
+            let ty = Type::from_facet::<OriginHint>();
             Ok(LoweredValue {
                 node: push_node(
                     nodes,

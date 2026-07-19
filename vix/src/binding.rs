@@ -51,8 +51,8 @@ use std::collections::BTreeSet;
 use std::sync::LazyLock;
 
 use crate::runtime::{
-    PrimitiveId, observe_primitive_id, observe_request_type, origin_hint_type, pinned_blob_ref_type,
-    pinned_fetch_primitive_id, pinned_fetch_request_type,
+    ObserveRequest, OriginHint, PinnedBlobRef, PinnedFetchRequest, PrimitiveId, observe_primitive_id,
+    pinned_fetch_primitive_id,
 };
 use crate::vir::{ExternKind, Type};
 
@@ -225,16 +225,16 @@ pub fn request_shape(kind: PrimitiveKind) -> Option<RequestShape> {
     match kind {
         PrimitiveKind::Fetch => Some(RequestShape {
             args: vec![ArgRole::Value {
-                expected: pinned_blob_ref_type(),
+                expected: Type::from_facet::<PinnedBlobRef>(),
             }],
-            request_ty: pinned_fetch_request_type(),
+            request_ty: Type::from_facet::<PinnedFetchRequest>(),
             result: blob,
             primitive: pinned_fetch_primitive_id(),
         }),
         PrimitiveKind::Observe => Some(RequestShape {
             args: vec![
                 ArgRole::Value {
-                    expected: origin_hint_type(),
+                    expected: Type::from_facet::<OriginHint>(),
                 },
                 ArgRole::Selector(Selector {
                     enum_name: "Mode".to_owned(),
@@ -251,7 +251,7 @@ pub fn request_shape(kind: PrimitiveKind) -> Option<RequestShape> {
                     ],
                 }),
             ],
-            request_ty: observe_request_type(),
+            request_ty: Type::from_facet::<ObserveRequest>(),
             result: blob,
             primitive: observe_primitive_id(),
         }),

@@ -774,6 +774,86 @@ impl ExternKind {
     }
 }
 
+/// The leaf-override table for [`Type::from_facet`]: the handful of Rust types
+/// whose wire `Type` cannot be read off their `Facet` shape. Keyed by nominal
+/// type identity ([`facet::ConstTypeId`]), so distinct wire meanings are distinct
+/// Rust newtypes rather than one reused type with a hidden discriminator.
+fn facet_leaf_override(shape: &'static facet::Shape) -> Option<Type> {
+    use crate::runtime::{Digest, RegistryHandle, UpstreamDigest};
+
+    // Fixed 32-byte digests have no vix `Type` primitive; they wire-encode as a
+    // hex `String` (see `fetch_primitive` parse/verify: `hex::encode`/`decode`).
+    if shape.id == <Digest as facet::Facet>::SHAPE.id
+        || shape.id == <UpstreamDigest as facet::Facet>::SHAPE.id
+    {
+        return Some(Type::String);
+    }
+    // A published schema reference is an opaque `Extern(Schema)` store value whose
+    // resident bytes are its canonical encoding, not the walked `{id, args}`.
+    if shape.id == <SchemaRef as facet::Facet>::SHAPE.id {
+        return Some(Type::Extern(ExternKind::Schema));
+    }
+    // A registry capability handle: a `ValueId` reused for several extern kinds,
+    // distinguished by its newtype so the wire meaning is unambiguous.
+    if shape.id == <RegistryHandle as facet::Facet>::SHAPE.id {
+        return Some(Type::Extern(ExternKind::Registry));
+    }
+    None
+}
+
+fn facet_transparent_pointee(shape: &'static facet::Shape) -> Option<&'static facet::Shape> {
+    match shape.def {
+        facet::Def::Pointer(pointer) => pointer.pointee(),
+        _ => match shape.ty {
+            facet::Type::Pointer(
+                facet::PointerType::Reference(reference) | facet::PointerType::Raw(reference),
+            ) => Some(reference.target()),
+            _ => None,
+        },
+    }
+}
+
+fn facet_scalar(scalar: facet::ScalarType, shape: &'static facet::Shape) -> Type {
+    match scalar {
+        facet::ScalarType::Bool => Type::Bool,
+        facet::ScalarType::Str | facet::ScalarType::String | facet::ScalarType::CowStr => {
+            Type::String
+        }
+        facet::ScalarType::I64 | facet::ScalarType::ISize => Type::Int,
+        other => panic!(
+            "Type::from_facet: unsupported scalar `{other:?}` for `{}`",
+            shape.type_identifier
+        ),
+    }
+}
+
+fn facet_fields(fields: &'static [facet::Field]) -> Vec<RecordField> {
+    fields
+        .iter()
+        .map(|field| RecordField {
+            name: field.effective_name().to_owned(),
+            ty: Type::from_facet_shape(field.shape()),
+        })
+        .collect()
+}
+
+fn facet_variant_payload(variant: &'static facet::Variant) -> VariantPayload {
+    let fields = variant.data.fields;
+    if fields.is_empty() {
+        return VariantPayload::Unit;
+    }
+    match variant.data.kind {
+        facet::StructKind::Struct => VariantPayload::Record(facet_fields(fields)),
+        facet::StructKind::Tuple | facet::StructKind::TupleStruct => VariantPayload::Tuple(
+            fields
+                .iter()
+                .map(|field| Type::from_facet_shape(field.shape()))
+                .collect(),
+        ),
+        facet::StructKind::Unit => VariantPayload::Unit,
+    }
+}
+
 impl Type {
     /// The Taxon-derived semantic schema carried by value identity. Weavy's
     /// numeric `SchemaRef` remains a separate program-local ABI index.
@@ -808,6 +888,78 @@ impl Type {
             }
             Self::Order(subject) => generic_builtin_schema("Order", vec![subject.schema_ref()]),
             Self::Extern(kind) => builtin_schema(kind.name()),
+        }
+    }
+
+    /// Derive the structural `Type` from a `#[derive(facet::Facet)]` type, so a
+    /// Rust request struct is the single source of truth for both the runtime
+    /// shape and its wire schema. The walk mirrors `facet::taxon_bridge`'s `Kind`
+    /// cases but targets `vir::Type`, so records/enums/options/arrays route
+    /// through the vix builtin schema wiring and the derived `schema_ref` is
+    /// byte-identical to the equivalent hand-written `Type`.
+    ///
+    /// A tiny override table (see [`facet_leaf_override`]) carries the handful of
+    /// leaf facts Rust's type system cannot express: fixed-byte digests
+    /// wire-encode as a hex `String`, and opaque store handles are `Extern`
+    /// values keyed by their distinct newtype identity.
+    #[must_use]
+    pub fn from_facet<T: facet::Facet<'static>>() -> Self {
+        Self::from_facet_shape(T::SHAPE)
+    }
+
+    fn from_facet_shape(shape: &'static facet::Shape) -> Self {
+        if let Some(ty) = facet_leaf_override(shape) {
+            return ty;
+        }
+        if let Some(pointee) = facet_transparent_pointee(shape) {
+            return Self::from_facet_shape(pointee);
+        }
+        if let Some(scalar) = shape.scalar_type() {
+            return facet_scalar(scalar, shape);
+        }
+        match shape.def {
+            facet::Def::List(list) => Self::array(Self::from_facet_shape(list.t())),
+            facet::Def::Slice(slice) => Self::array(Self::from_facet_shape(slice.t())),
+            facet::Def::Option(option) => Self::option(Self::from_facet_shape(option.t())),
+            facet::Def::Scalar | facet::Def::Undefined => Self::from_facet_user(shape),
+            _ => panic!(
+                "Type::from_facet: unsupported def for `{}`",
+                shape.type_identifier
+            ),
+        }
+    }
+
+    fn from_facet_user(shape: &'static facet::Shape) -> Self {
+        match shape.ty {
+            facet::Type::User(facet::UserType::Struct(struct_type)) => {
+                match struct_type.kind {
+                    facet::StructKind::Unit | facet::StructKind::Struct => Self::Record(
+                        RecordType::new(shape.type_identifier, facet_fields(struct_type.fields)),
+                    ),
+                    facet::StructKind::Tuple | facet::StructKind::TupleStruct => Self::Tuple(
+                        struct_type
+                            .fields
+                            .iter()
+                            .map(|field| Self::from_facet_shape(field.shape()))
+                            .collect(),
+                    ),
+                }
+            }
+            facet::Type::User(facet::UserType::Enum(enum_type)) => Self::Enum(EnumType::new(
+                shape.type_identifier,
+                enum_type
+                    .variants
+                    .iter()
+                    .map(|variant| EnumVariant {
+                        name: variant.effective_name().to_owned(),
+                        payload: facet_variant_payload(variant),
+                    })
+                    .collect(),
+            )),
+            _ => panic!(
+                "Type::from_facet: unsupported shape `{}`",
+                shape.type_identifier
+            ),
         }
     }
 
