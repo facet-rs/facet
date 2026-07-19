@@ -3527,12 +3527,29 @@ fn lower_value_expected(
         ast::Expr::Call(call) if call.callee.value == "Some" => {
             lower_some(nodes, bindings, context, call, expected)
         }
+        // `decode`/`try_decode` share one registered primitive under two
+        // surface names (`decode_primitive_id`), so they can't
+        // be told apart by `PrimitiveId` the way `fetch`/`observe` can — matched
+        // directly by callee name into their existing typed builders.
+        ast::Expr::Call(call) if call.callee.value == "decode" => {
+            lower_decode_binding(nodes, bindings, context, call, expected)
+        }
+        ast::Expr::Call(call) if call.callee.value == "try_decode" => {
+            lower_try_decode_binding(nodes, bindings, context, call, expected)
+        }
+        ast::Expr::Call(call)
+            if crate::binding::prelude_intrinsic(&call.callee.value).is_some() =>
+        {
+            let intrinsic = crate::binding::prelude_intrinsic(&call.callee.value)
+                .expect("guard confirmed the callee is a built-in intrinsic");
+            lower_effect_intrinsic(nodes, bindings, context, call, intrinsic)
+        }
         ast::Expr::Call(call)
             if crate::binding::prelude_primitive(&call.callee.value).is_some() =>
         {
-            let kind = crate::binding::prelude_primitive(&call.callee.value)
+            let primitive = crate::binding::prelude_primitive(&call.callee.value)
                 .expect("guard confirmed the callee is a built-in primitive");
-            lower_primitive(nodes, bindings, context, call, kind, expected)
+            lower_primitive(nodes, bindings, context, call, &primitive)
         }
         ast::Expr::Call(call) => lower_call(nodes, bindings, context, call, expected),
         ast::Expr::WhereCall(call) => lower_where_call(nodes, bindings, context, call),
@@ -5236,37 +5253,23 @@ fn lower_some(
 /// primitive lands, this fold must become the constant-folded case *of* it, not
 /// a replacement — nonliteral sources are rejected at a named runtime seam
 /// ([`DiagnosticCode::RuntimeDecodeUnavailable`]) rather than host-evaluated.
-/// Lower a call to a built-in primitive, dispatched on the [`PrimitiveKind`] the
-/// binding registry (`crate::binding`) resolved the callee name to — no callee
-/// string matching here. The request construction is genuinely per-primitive
-/// (selector reads, expected-type targets, folding), so the registry owns the
-/// *name → primitive* map while each builder owns its request shape.
+/// Lower a call to a uniform registered primitive (`fetch`, `observe`)
+/// through the [`RequestShape`](crate::binding::RequestShape) it declares on
+/// itself (`Primitive::request_shape`, harvested by `crate::binding`) — there
+/// is no per-primitive Rust arm here. `decode`/`try_decode` and the
+/// `fixture_*`/`untar` intrinsics are matched by callee name earlier and never
+/// reach this function; see `lower_value_expected`'s `ast::Expr::Call` arms.
 fn lower_primitive(
     nodes: &mut Vec<Node>,
     bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
     call: &ast::Call,
-    kind: crate::binding::PrimitiveKind,
-    expected: Option<&Type>,
+    primitive: &crate::runtime::PrimitiveId,
 ) -> Result<LoweredValue, Diagnostics> {
-    use crate::binding::PrimitiveKind;
-    // Primitives whose request construction is fully data (`fetch`, `observe`)
-    // lower through their `RequestShape`; there is no per-primitive Rust arm.
-    if let Some(shape) = crate::binding::request_shape(kind) {
-        return lower_request_shape(nodes, bindings, context, call, &shape);
-    }
-    match kind {
-        PrimitiveKind::Decode => lower_decode_binding(nodes, bindings, context, call, expected),
-        PrimitiveKind::TryDecode => {
-            lower_try_decode_binding(nodes, bindings, context, call, expected)
-        }
-        PrimitiveKind::FixtureTree | PrimitiveKind::FixtureRegistry | PrimitiveKind::Untar => {
-            lower_effect_intrinsic(nodes, bindings, context, call, kind)
-        }
-        PrimitiveKind::Fetch | PrimitiveKind::Observe => {
-            unreachable!("fetch/observe lower through their RequestShape")
-        }
-    }
+    let shape = crate::binding::request_shape(primitive).expect(
+        "prelude_primitive only resolves names with a harvested RequestShape (fetch/observe)",
+    );
+    lower_request_shape(nodes, bindings, context, call, &shape)
 }
 
 /// Build a registered-primitive call from its [`RequestShape`]: check arity, read
@@ -5396,9 +5399,9 @@ fn lower_effect_intrinsic(
     bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
     call: &ast::Call,
-    kind: crate::binding::PrimitiveKind,
+    kind: crate::binding::Intrinsic,
 ) -> Result<LoweredValue, Diagnostics> {
-    use crate::binding::PrimitiveKind;
+    use crate::binding::Intrinsic;
     if call.named_args.is_some() {
         return Err(Diagnostics::one(Diagnostic::unsupported(
             call.span,
@@ -5406,7 +5409,7 @@ fn lower_effect_intrinsic(
         )));
     }
     let (ty, op, inputs) = match kind {
-        PrimitiveKind::FixtureTree => {
+        Intrinsic::FixtureTree => {
             check_arity(call, 1)?;
             let ast::Expr::Str(name) = &call.args.args[0] else {
                 return Err(Diagnostics::one(Diagnostic::unsupported(
@@ -5420,7 +5423,7 @@ fn lower_effect_intrinsic(
                 Vec::new(),
             )
         }
-        PrimitiveKind::FixtureRegistry => {
+        Intrinsic::FixtureRegistry => {
             check_arity(call, 0)?;
             (
                 Type::Extern(ExternKind::Registry),
@@ -5428,7 +5431,7 @@ fn lower_effect_intrinsic(
                 Vec::new(),
             )
         }
-        PrimitiveKind::Untar => {
+        Intrinsic::Untar => {
             check_arity(call, 1)?;
             let blob = lower_value(nodes, bindings, context, &call.args.args[0])?;
             require_type(
@@ -5437,12 +5440,6 @@ fn lower_effect_intrinsic(
                 expr_span(&call.args.args[0]),
             )?;
             (Type::Extern(ExternKind::Tree), Op::Untar, vec![blob.node])
-        }
-        PrimitiveKind::Fetch | PrimitiveKind::Observe => {
-            unreachable!("fetch/observe lower through their RequestShape")
-        }
-        PrimitiveKind::Decode | PrimitiveKind::TryDecode => {
-            unreachable!("decode/try_decode do not route through lower_effect_intrinsic")
         }
     };
     Ok(LoweredValue {

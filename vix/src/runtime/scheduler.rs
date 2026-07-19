@@ -41,7 +41,7 @@ use super::store::{
     StoreJournalLoadReport,
 };
 use super::{
-    DecodePrimitive, EffectCtx, EffectTicket, ObservePrimitive, PinnedFetchPrimitive,
+    DecodePrimitive, EffectCtx, EffectTicket, ObservePrimitive, PinnedFetchPrimitive, Primitive,
     PrimitiveCompletion, PrimitiveDispatcher, PrimitiveField, PrimitiveFieldValue,
     PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveRegistry, PrimitiveValue,
     PrimitiveValueBody, StagedEffectAuthority, TicketSubscription, TreeReadPrimitive,
@@ -723,20 +723,27 @@ fn build_memo_suffix_index(
     index
 }
 
+/// The built-in registered primitives, as data: this is the *one* place that
+/// lists them, consumed both to build the default dispatcher and (by
+/// `binding::builtin_bindings`) to harvest their surface projections. Adding a
+/// primitive is one entry here, not a second hand-registration.
+#[must_use]
+pub fn builtin_primitives<Ctx>() -> Vec<Arc<dyn Primitive<Ctx>>> {
+    vec![
+        Arc::new(DecodePrimitive::default()),
+        Arc::new(PinnedFetchPrimitive::default()),
+        Arc::new(ObservePrimitive::default()),
+        Arc::new(TreeReadPrimitive::default()),
+    ]
+}
+
 fn default_primitive_dispatcher<Ctx>() -> PrimitiveDispatcher<Ctx> {
     let mut registry = PrimitiveRegistry::default();
-    registry
-        .register(Arc::new(DecodePrimitive::default()))
-        .expect("the built-in decode primitive is registered once");
-    registry
-        .register(Arc::new(PinnedFetchPrimitive::default()))
-        .expect("the built-in pinned fetch primitive is registered once");
-    registry
-        .register(Arc::new(ObservePrimitive::default()))
-        .expect("the built-in observe primitive is registered once");
-    registry
-        .register(Arc::new(TreeReadPrimitive::default()))
-        .expect("the built-in tree-read primitive is registered once");
+    for primitive in builtin_primitives::<Ctx>() {
+        registry
+            .register(primitive)
+            .expect("built-in primitives register once, each under a distinct id");
+    }
     PrimitiveDispatcher::new(Arc::new(registry))
 }
 

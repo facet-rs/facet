@@ -4,9 +4,9 @@ use crate::schema::{SchemaPattern, SchemaRef};
 use crate::vir::{ExternKind, Type};
 
 use super::{
-    Digest, EffectCtx, EffectTicket, Primitive, PrimitiveCompletion, PrimitiveDescriptor,
+    ArgRole, Digest, EffectCtx, EffectTicket, Primitive, PrimitiveCompletion, PrimitiveDescriptor,
     PrimitiveField, PrimitiveFieldValue, PrimitiveMachineError, PrimitiveMemoPolicy,
-    PrimitiveValue, PrimitiveValueBody, ReadProjection, ValueId,
+    PrimitiveValue, PrimitiveValueBody, ReadProjection, RequestShape, ValueId,
 };
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -127,6 +127,21 @@ impl<Ctx> Primitive<Ctx> for PinnedFetchPrimitive {
             let _ = completer.complete(publication);
         });
         ticket
+    }
+
+    fn surface_name(&self) -> Option<&'static str> {
+        Some("fetch")
+    }
+
+    fn request_shape(&self) -> Option<RequestShape> {
+        Some(RequestShape {
+            args: vec![ArgRole::Value {
+                expected: Type::from_facet::<PinnedBlobRef>(),
+            }],
+            request_ty: Type::from_facet::<PinnedFetchRequest>(),
+            result: Type::Extern(ExternKind::Blob),
+            primitive: pinned_fetch_primitive_id(),
+        })
     }
 }
 
