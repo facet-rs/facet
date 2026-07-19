@@ -188,6 +188,7 @@ fn item_summary(item: &Item) -> Value {
         Item::Fn(item) => fn_summary(item),
         Item::Struct(item) => node_summary("struct", Some(&item.name.value), item.span),
         Item::Enum(item) => node_summary("enum", Some(&item.name.value), item.span),
+        Item::Command(item) => node_summary("command", Some(&item.name.value), item.span),
     }
 }
 

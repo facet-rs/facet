@@ -16,12 +16,18 @@ ast({
   _type: { enum: "Type" },
   _pattern: { enum: "Pattern" },
   _arg: { enum: "Arg" },
+  _command_atom: { enum: "CommandAtom" },
 
   // items
   use_item: { as: "Use" },
   fn_item: { as: "Fn" },
   struct_item: { as: "Struct" },
   enum_item: { as: "Enum" },
+  command_item: { as: "Command" },
+  command_alternatives: { struct: "CommandPattern" },
+  command_slot: { as: "Slot" },
+  command_optional: { as: "Optional" },
+  command_group: { as: "Group" },
 
   // statements
   let_statement: { as: "Let", struct: "LetStmt" },
@@ -73,4 +79,6 @@ ast({
   boolean: { as: "Bool", decode: "bool" },
   flag: { as: "Flag", decode: "text" },
   command_token: { as: "Token", decode: "text" },
+  command_literal: { as: "Literal", decode: "text" },
+  command_quantifier: { as: "Quantifier", decode: "text" },
 });

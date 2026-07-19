@@ -24,8 +24,9 @@
 use std::collections::BTreeMap;
 
 use crate::ast::{
-    Arg, ArrayElem, Block, CommandPart, EnumItem, Expr, FieldList, GenericParams, Item, PathRef,
-    Pattern, SourceFile, Span, Spanned, Stmt, StructItem, TupleFields, Type,
+    Arg, ArrayElem, Block, CommandAtom, CommandPart, CommandPattern, EnumItem, Expr, FieldList,
+    GenericParams, Item, PathRef, Pattern, SourceFile, Span, Spanned, Stmt, StructItem,
+    TupleFields, Type,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -207,6 +208,9 @@ pub fn bind(file: &SourceFile) -> Bindings {
             Item::Enum(e) => {
                 b.define(SymbolKind::Type, &e.name);
             }
+            Item::Command(c) => {
+                b.define(SymbolKind::Type, &c.name);
+            }
         }
     }
 
@@ -229,6 +233,12 @@ pub fn bind(file: &SourceFile) -> Bindings {
             }
             Item::Struct(s) => b.struct_item(s),
             Item::Enum(e) => b.enum_item(e),
+            Item::Command(c) => {
+                if let Some(return_type) = &c.return_type {
+                    b.ty(return_type);
+                }
+                b.command_pattern(&c.grammar.pattern);
+            }
         }
     }
 
@@ -453,6 +463,21 @@ impl Binder {
     fn tuple_fields(&mut self, tuple: &TupleFields) {
         for t in &tuple.types {
             self.ty(t);
+        }
+    }
+
+    fn command_pattern(&mut self, pattern: &CommandPattern) {
+        for alternative in &pattern.alternatives {
+            for term in &alternative.terms {
+                match &term.atom {
+                    CommandAtom::Literal(_) => {}
+                    CommandAtom::Slot(slot) => self.ty(&slot.ty),
+                    CommandAtom::Optional(optional) => {
+                        self.command_pattern(&optional.pattern);
+                    }
+                    CommandAtom::Group(group) => self.command_pattern(&group.pattern),
+                }
+            }
         }
     }
 

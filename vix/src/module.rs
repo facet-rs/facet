@@ -698,7 +698,7 @@ pub(crate) fn load_module_tables_from_modules(
                         },
                     )?;
                 }
-                Item::Use(_) => {}
+                Item::Use(_) | Item::Command(_) => {}
             }
         }
         fn_spans_by_module.insert(module.clone(), fn_spans);
@@ -760,7 +760,7 @@ fn schema_tables(files: &BTreeMap<String, SourceFile>) -> Result<SchemaTables, S
                 Item::Enum(e) => {
                     builder.reserve_named(&e.name.value);
                 }
-                Item::Fn(_) | Item::Use(_) => {}
+                Item::Fn(_) | Item::Use(_) | Item::Command(_) => {}
             }
         }
     }
@@ -771,7 +771,7 @@ fn schema_tables(files: &BTreeMap<String, SourceFile>) -> Result<SchemaTables, S
             match item {
                 Item::Struct(s) => add_struct_schema(&mut builder, s)?,
                 Item::Enum(e) => add_enum_schema(&mut builder, e)?,
-                Item::Fn(_) | Item::Use(_) => {}
+                Item::Fn(_) | Item::Use(_) | Item::Command(_) => {}
             }
         }
     }
@@ -1243,7 +1243,7 @@ fn declared_descriptors(
                         declared_mem::declared_enum(schemas.legacy_ref(&e.name.value), variants),
                     );
                 }
-                Item::Fn(_) | Item::Use(_) => {}
+                Item::Fn(_) | Item::Use(_) | Item::Command(_) => {}
             }
         }
     }

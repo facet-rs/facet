@@ -49,7 +49,8 @@ module.exports = grammar({
     source_file: ($) => repeat(field("item", $._item)),
 
     // ---- items ----------------------------------------------------------
-    _item: ($) => choice($.use_item, $.fn_item, $.struct_item, $.enum_item),
+    _item: ($) =>
+      choice($.use_item, $.fn_item, $.struct_item, $.enum_item, $.command_item),
 
     use_item: ($) => seq("use", field("tree", $.use_tree), ";"),
     use_tree: ($) =>
@@ -92,6 +93,53 @@ module.exports = grammar({
         sepBy(",", field("variant", $.variant)),
         "}",
       ),
+
+    // A command declaration is a hoisted, typed description of an argv
+    // language. It declares no executable authority: a value of the generated
+    // command type must still be supplied at an invocation site.
+    command_item: ($) =>
+      seq(
+        optional(field("vis", "pub")),
+        "command",
+        field("name", $.identifier),
+        optional(seq("->", field("return_type", $._type))),
+        "{",
+        "program",
+        field("program", $.string),
+        "grammar",
+        field("grammar", $.command_grammar),
+        "}",
+      ),
+
+    // Command patterns are regular, algebraic argv grammars. Alternatives and
+    // sequences are structural; postfix quantifiers apply to one atom. Slots
+    // splice back into Vix's ordinary type language.
+    command_grammar: ($) =>
+      seq("{", field("pattern", $.command_alternatives), "}"),
+    command_alternatives: ($) =>
+      seq(
+        field("alternative", $.command_sequence),
+        repeat(seq("|", field("alternative", $.command_sequence))),
+      ),
+    command_sequence: ($) => repeat1(field("term", $.command_term)),
+    command_term: ($) =>
+      seq(
+        field("atom", $._command_atom),
+        optional(field("quantifier", $.command_quantifier)),
+      ),
+    _command_atom: ($) =>
+      choice($.command_literal, $.command_slot, $.command_optional, $.command_group),
+    command_slot: ($) =>
+      seq("{", field("name", $.identifier), ":", field("type", $._type), "}"),
+    command_optional: ($) =>
+      seq("[", field("pattern", $.command_alternatives), "]"),
+    command_group: ($) =>
+      seq("(", field("pattern", $.command_alternatives), ")"),
+    command_quantifier: () => token.immediate(choice("*", "+")),
+    // `+`, `*`, and `?` occur inside real argv atoms (`c++`, globs, ffmpeg's
+    // optional stream selector). Quantifiers are only recognized immediately
+    // after a structural atom such as a slot or group.
+    command_literal: () => token(/[^{}\[\]()|\s]+/),
 
     // Unit `Phony`, tuple `Object(Path)`, record `Archive { name: String }`.
     // Declaration order IS the total order — reordering variants is semantic.
@@ -353,7 +401,9 @@ module.exports = grammar({
       ),
     splice: ($) => seq("{", field("expr", $._expr), "}"),
     // Anything that isn't whitespace or a brace: flags, subcommands, file names.
-    command_token: () => prec(-1, /[^{}\s]+/),
+    // Command tokens outrank `//` comments in this lexical mode: Bazel/Buck
+    // labels such as `//app:bin` are argv, not comments.
+    command_token: () => prec(2, /[^{}\s]+/),
 
     // ---- leaves ------------------------------------------------------------
     identifier: () => /[A-Za-z_][A-Za-z0-9_]*/,
@@ -399,7 +449,10 @@ module.exports = grammar({
     tuple_index: () => /[0-9]+/,
     boolean: () => choice("true", "false"),
 
-    line_comment: () => token(prec(1, seq("//", /[^\n]*/))),
+    // Keep comments below contextual command tokens so `//pkg:target` remains
+    // usable inside Bazel/Buck command blocks. Outside command mode this is
+    // still the only token spanning the full comment and therefore wins.
+    line_comment: () => token(prec(-2, seq("//", /[^\n]*/))),
     doc_comment: () => token(prec(2, seq("///", /[^\n]*/))),
   },
 });
