@@ -471,13 +471,46 @@ impl Binder {
             for term in &alternative.terms {
                 match &term.atom {
                     CommandAtom::Literal(_) => {}
-                    CommandAtom::Slot(slot) => self.ty(&slot.ty),
+                    CommandAtom::Slot(slot) => self.command_slot_ty(&slot.ty),
                     CommandAtom::Optional(optional) => {
                         self.command_pattern(&optional.pattern);
                     }
                     CommandAtom::Group(group) => self.command_pattern(&group.pattern),
                 }
             }
+        }
+    }
+
+    fn command_slot_ty(&mut self, ty: &Type) {
+        const ROLES: &[&str] = &[
+            "Executable",
+            "Input",
+            "InputFlag",
+            "Output",
+            "OutputFlag",
+            "OutputDir",
+            "Stdout",
+            "Env",
+            "SearchDir",
+            "SearchDirFlag",
+        ];
+        match ty {
+            Type::Generic(g)
+                if g.base
+                    .segments
+                    .last()
+                    .is_some_and(|name| ROLES.contains(&name.value.as_str())) =>
+            {
+                for arg in &g.args {
+                    self.ty(arg);
+                }
+            }
+            Type::Path(path)
+                if path
+                    .segments
+                    .last()
+                    .is_some_and(|name| ROLES.contains(&name.value.as_str())) => {}
+            _ => self.ty(ty),
         }
     }
 

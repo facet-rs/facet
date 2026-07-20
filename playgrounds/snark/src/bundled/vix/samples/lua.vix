@@ -3,6 +3,16 @@
 use vix::{Tree, Path, Target};
 use caps::{Cc, Ar};
 
+command cc -> Tree {
+    program "cc"
+    grammar { ((-I {search: SearchDir<Path>}) | (-o {output: Output<Path>}) | (-c {input: Input<Path>}) | {input: Input<Path>} | {flag: Flag})* }
+}
+
+command ar -> Tree {
+    program "ar"
+    grammar { rcs {output: Output<Path>} {inputs: Input<Path>}+ }
+}
+
 /// Lua's sources, pinned by content. `fetch` is pure: the checksum IS the identity;
 /// the URL is only a hint about where satisfying bytes may be found.
 fn sources() -> Tree {

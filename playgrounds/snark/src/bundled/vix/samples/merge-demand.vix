@@ -1,6 +1,8 @@
 use vix::{Tree, Path, Target};
 use caps::Cc;
 
+command cc -> Tree { program "cc" grammar { ((-o {output: Output<Path>}) | {flag: Flag})* } }
+
 fn object(cc: Cc, unit: Path) -> Tree {
     cc! { -o {unit.with_ext("o")} }
 }

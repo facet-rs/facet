@@ -45,7 +45,7 @@ use weavy::task::{FnId, HostFn, Program, Task, TaskStep, ValueMemories, ValueMem
 use crate::ast;
 use crate::fetch::{FetchBackend, NoFetchBackend};
 use crate::module::{DescriptorMap, SchemaTables, VixDescriptor};
-use crate::support::{PathMissing, assign_roles, subtree, tool_for, tree_text};
+use crate::support::{PathMissing, subtree, tool_for, tree_text};
 use crate::value::{Payload, Value};
 
 #[derive(Clone, Debug, PartialEq, Eq, Facet)]
@@ -535,8 +535,8 @@ struct ExecRequest {
 
 #[derive(Clone, Debug)]
 enum CommandRequestPart {
-    Token(i64),
-    Splice(i64),
+    Token(i64, crate::exec::Role),
+    Splice(i64, crate::exec::Role),
 }
 
 #[derive(Clone, Debug)]
@@ -3164,8 +3164,8 @@ impl Driver {
                             exec.fn_ref,
                             &exec.args,
                             req.parts.iter().filter_map(|part| match part {
-                                CommandRequestPart::Splice(word) => Some(*word),
-                                CommandRequestPart::Token(_) => None,
+                                CommandRequestPart::Splice(word, _) => Some(*word),
+                                CommandRequestPart::Token(_, _) => None,
                             }),
                             &mut exec.read_set,
                         );
@@ -4685,17 +4685,14 @@ impl Driver {
 
             let mut exec_host = |frame: &mut [u8]| {
                 let input_slot = read_frame_word(frame, primitive_region) as usize;
-                let command = match read_frame_word(frame, primitive_region + 8) {
-                    0 => "cc",
-                    1 => "ar",
-                    2 => "rustc",
-                    3 => "build_script",
-                    other => {
-                        *host_error.borrow_mut() = Some(format!("unknown command kind {other}"));
+                let command_handle = read_frame_word(frame, primitive_region + 8);
+                let command = match store_cell.borrow().string_value(command_handle, "String") {
+                    Ok(command) => command,
+                    Err(err) => {
+                        *host_error.borrow_mut() = Some(err);
                         return;
                     }
-                }
-                .to_string();
+                };
                 let capability = read_frame_word(frame, primitive_region + 16);
                 let part_count =
                     match usize::try_from(read_frame_word(frame, primitive_region + 24)) {
@@ -4714,11 +4711,18 @@ impl Driver {
                 };
                 let mut parts = Vec::with_capacity(part_count);
                 for index in 0..part_count {
-                    let at = primitive_region + 48 + index * 24;
+                    let at = primitive_region + 48 + index * 32;
                     let kind = read_frame_word(frame, at);
                     let word = read_frame_word(frame, at + 8);
+                    let role = match command_role_from_word(read_frame_word(frame, at + 24)) {
+                        Ok(role) => role,
+                        Err(err) => {
+                            *host_error.borrow_mut() = Some(err);
+                            return;
+                        }
+                    };
                     let part = match kind {
-                        0 => CommandRequestPart::Token(word),
+                        0 => CommandRequestPart::Token(word, role),
                         1 => {
                             let schema = match schema_name_for(
                                 read_frame_word(frame, at + 16),
@@ -4745,7 +4749,7 @@ impl Driver {
                                     return;
                                 }
                             };
-                            CommandRequestPart::Splice(word)
+                            CommandRequestPart::Splice(word, role)
                         }
                         other => {
                             *host_error.borrow_mut() =
@@ -7436,32 +7440,39 @@ impl Driver {
     }
 
     fn execute_request(&mut self, req: ExecRequest) -> Result<(usize, i64), String> {
+        let capability_schema = self
+            .store
+            .borrow()
+            .entry(req.capability)
+            .ok_or_else(|| format!("unknown capability handle {}", req.capability))?
+            .schema
+            .clone();
         let cap_key = self
             .store
             .borrow()
-            .string_value(req.capability, &cap_schema(&req.command))?;
-        let cap_hash = capability_hash(&req.command, &cap_key);
+            .string_value(req.capability, &capability_schema)?;
+        let cap_hash = capability_hash(&capability_schema, &cap_key);
         let mut argv = Vec::new();
         let mut mounts = Vec::new();
         for part in req.parts {
             match part {
-                CommandRequestPart::Token(handle) => {
+                CommandRequestPart::Token(handle, role) => {
                     let token = self.store.borrow().string_value(handle, "String")?;
-                    append_command_token(token, &mut argv)?;
+                    append_command_token(token, role, &mut argv)?;
                 }
-                CommandRequestPart::Splice(word) => {
-                    let prefer_tree_root = argv.last().is_some_and(|arg| {
+                CommandRequestPart::Splice(word, role) => {
+                    let prefer_tree_root = argv.last().is_some_and(|(arg, _)| {
                         arg.ends_with("dependency=")
                             || arg.ends_with("OUT_DIR=")
                             || arg.ends_with("CARGO_MANIFEST_DIR=")
                     });
                     let args =
                         self.splice_word_to_command_args(word, &mut mounts, prefer_tree_root)?;
-                    append_spliced_command_args(args, &mut argv)?;
+                    append_spliced_command_args(args, role, &mut argv)?;
                 }
             }
         }
-        let plan = assign_roles(&req.command, &argv)?;
+        let plan = crate::exec::ExecPlan { argv };
         let output = plan
             .argv
             .iter()
@@ -7484,7 +7495,7 @@ impl Driver {
             run_id,
             command_name: req.command.clone(),
             capability_key: cap_key,
-            argv: argv.clone(),
+            argv: plan.argv.iter().map(|(arg, _)| arg.clone()).collect(),
             describe: crate::exec::describe(&req.command, &plan),
             span: req.span,
             timestamp_us,
@@ -7722,7 +7733,17 @@ impl Driver {
                         let mut args = Vec::new();
                         for word in words {
                             let nested = self.splice_word_to_command_args(word, mounts, false)?;
-                            append_spliced_command_args(nested, &mut args)?;
+                            if args.last().is_some_and(|arg: &String| arg.ends_with('=')) {
+                                if nested.len() != 1 {
+                                    return Err(
+                                        "command affix splice must produce exactly one argument"
+                                            .into(),
+                                    );
+                                }
+                                args.last_mut().expect("checked").push_str(&nested[0]);
+                            } else {
+                                args.extend(nested);
+                            }
                         }
                         Ok(args)
                     }
@@ -12360,64 +12381,68 @@ fn target_hash(store: &RefCell<ValueStore>, handle: i64) -> Result<u64, String> 
     ))
 }
 
-fn cc_capability_hash(fingerprint: &str) -> u64 {
-    let value = Value::Struct {
-        name: "Cc".into(),
-        fields: vec![("fingerprint".into(), Value::Str(fingerprint.to_string()))],
-    };
-    value.canon_hash()
-}
-
-fn ar_capability_hash(fingerprint: &str) -> u64 {
-    let value = Value::Struct {
-        name: "Ar".into(),
-        fields: vec![("fingerprint".into(), Value::Str(fingerprint.to_string()))],
-    };
-    value.canon_hash()
-}
-
-fn cap_schema(command: &str) -> String {
-    match command {
-        "cc" => "Cc",
-        "ar" => "Ar",
-        "rustc" => "Rustc",
-        "build_script" => "String",
-        _ => "Cc",
-    }
-    .to_string()
-}
-
-fn append_command_token(token: String, argv: &mut Vec<String>) -> Result<(), String> {
+fn append_command_token(
+    token: String,
+    role: crate::exec::Role,
+    argv: &mut Vec<(String, crate::exec::Role)>,
+) -> Result<(), String> {
     if token.starts_with(',') {
         let previous = argv
             .last_mut()
             .ok_or_else(|| format!("command affix `{token}` has no previous argument"))?;
-        previous.push_str(&token);
+        previous.0.push_str(&token);
+        previous.1 = role;
         return Ok(());
     }
-    argv.push(token);
+    argv.push((token, role));
     Ok(())
 }
 
-fn append_spliced_command_args(args: Vec<String>, argv: &mut Vec<String>) -> Result<(), String> {
-    if argv.last().is_some_and(|arg| arg.ends_with('=')) {
+fn command_role_from_word(word: i64) -> Result<crate::exec::Role, String> {
+    use crate::exec::Role;
+    match word {
+        0 => Ok(Role::Executable),
+        1 => Ok(Role::Input),
+        2 => Ok(Role::InputFlag),
+        3 => Ok(Role::Output),
+        4 => Ok(Role::OutputFlag),
+        5 => Ok(Role::OutputDir),
+        6 => Ok(Role::Stdout),
+        7 => Ok(Role::Env),
+        8 => Ok(Role::SearchDir),
+        9 => Ok(Role::SearchDirFlag),
+        10 => Ok(Role::Flag),
+        other => Err(format!("unknown command role {other}")),
+    }
+}
+
+fn append_spliced_command_args(
+    args: Vec<String>,
+    role: crate::exec::Role,
+    argv: &mut Vec<(String, crate::exec::Role)>,
+) -> Result<(), String> {
+    if argv.last().is_some_and(|(arg, _)| arg.ends_with('=')) {
         if args.len() != 1 {
             return Err("command affix splice must produce exactly one argument".into());
         }
         let previous = argv.last_mut().expect("checked");
-        previous.push_str(&args[0]);
+        previous.0.push_str(&args[0]);
+        previous.1 = role;
         return Ok(());
     }
-    argv.extend(args);
+    argv.extend(args.into_iter().map(|arg| (arg, role)));
     Ok(())
 }
 
-fn capability_hash(command: &str, fingerprint: &str) -> u64 {
-    match command {
-        "cc" => cc_capability_hash(fingerprint),
-        "ar" => ar_capability_hash(fingerprint),
-        _ => hash_u64(fingerprint),
+fn capability_hash(schema: &str, fingerprint: &str) -> u64 {
+    if schema == "String" {
+        return hash_u64(fingerprint);
     }
+    Value::Struct {
+        name: schema.into(),
+        fields: vec![("fingerprint".into(), Value::Str(fingerprint.to_string()))],
+    }
+    .canon_hash()
 }
 
 fn pending_exec_identity_hash(
@@ -13668,8 +13693,8 @@ mod tests {
     fn exec_text_overlap_program() -> (Program, Vec<LoweredFn>) {
         const REGION: u32 = 128;
         let mut code = Vec::new();
-        push_exec_request_ops(&mut code, REGION, 0, 0, 8, 16);
-        push_exec_request_ops(&mut code, REGION, 1, 0, 8, 24);
+        push_exec_request_ops(&mut code, REGION, 0, 0, 48, 8, 16);
+        push_exec_request_ops(&mut code, REGION, 1, 0, 48, 8, 24);
         code.extend([
             Op::Await { dst: 48, input: 0 },
             Op::Await { dst: 56, input: 1 },
@@ -13707,7 +13732,7 @@ mod tests {
         let fns = vec![LoweredFn {
             hash: 0xE0EC,
             task_fn: FnId(0),
-            arg_offsets: vec![0, 8, 16, 24, 32, 40],
+            arg_offsets: vec![0, 8, 16, 24, 32, 40, 48],
             arg_schemas: vec![
                 "Cc".into(),
                 "String".into(),
@@ -13715,6 +13740,7 @@ mod tests {
                 "String".into(),
                 "Path".into(),
                 "Path".into(),
+                "String".into(),
             ],
             return_schema: "String".into(),
             semantic_comparators: Vec::new(),
@@ -13787,6 +13813,7 @@ mod tests {
         region: u32,
         input_slot: i64,
         capability_slot: u32,
+        program_slot: u32,
         dash_o_slot: u32,
         output_slot: u32,
     ) {
@@ -13795,9 +13822,9 @@ mod tests {
                 dst: region,
                 value: input_slot,
             },
-            Op::ConstI64 {
+            Op::CopyI64 {
                 dst: region + 8,
-                value: 0,
+                src: program_slot,
             },
             Op::CopyI64 {
                 dst: region + 16,
@@ -13829,15 +13856,23 @@ mod tests {
             },
             Op::ConstI64 {
                 dst: region + 72,
+                value: crate::exec::Role::Flag as i64,
+            },
+            Op::ConstI64 {
+                dst: region + 80,
                 value: 0,
             },
             Op::CopyI64 {
-                dst: region + 80,
+                dst: region + 88,
                 src: output_slot,
             },
             Op::ConstI64 {
-                dst: region + 88,
+                dst: region + 96,
                 value: 0,
+            },
+            Op::ConstI64 {
+                dst: region + 104,
+                value: crate::exec::Role::Output as i64,
             },
             Op::HostCall { host: EXEC_HOST },
         ]);
@@ -13901,6 +13936,7 @@ mod tests {
                 store.alloc_raw("String", b"b.o".to_vec(), &schemas).0,
                 store.alloc_raw("Path", b"a.o".to_vec(), &schemas).0,
                 store.alloc_raw("Path", b"b.o".to_vec(), &schemas).0,
+                store.alloc_raw("String", b"cc".to_vec(), &schemas).0,
             ]
         };
         driver.set_exec_backend(Some(Arc::new(LatencyExecBackend {

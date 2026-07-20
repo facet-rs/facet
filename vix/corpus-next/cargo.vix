@@ -1,4 +1,9 @@
 use vix::{Arg, Map, Path, Target, Tree, VersionSet};
+
+command build_script -> Tree {
+    program "build_script"
+    grammar { ((--executable {executable: Executable<Path>}) | (--stdout {stdout: Stdout<Path>}) | (--out-dir {output: OutputDir<Path>}) | (--env {prefix: Flag} {env: Env}) | (--env {env: Env}) | {flag: Flag})* }
+}
 use cargo_manifest::{
     SparseIndexRow,
     WorkspaceIndexState,

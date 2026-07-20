@@ -999,6 +999,12 @@ fn live_string_handles(driver: &Driver, tables: &ModuleTables) -> HashMap<String
 
 fn string_literals(tables: &ModuleTables) -> BTreeSet<String> {
     let mut strings = BTreeSet::new();
+    strings.extend(
+        tables
+            .commands
+            .values()
+            .map(|command| command.program.value.clone()),
+    );
     for item in tables.fns.values() {
         collect_block_strings(&item.body, &mut strings);
     }
@@ -7282,15 +7288,15 @@ impl<'a> FnLowerer<'a> {
     }
 
     fn command_block(&mut self, command: &ast::CommandBlock) -> Result<ValueSlot, String> {
-        if !matches!(
-            command.command.value.as_str(),
-            "cc" | "ar" | "rustc" | "build_script"
-        ) {
-            return Err(format!(
-                "command {} is outside the machine exec subset",
-                command.command.value
-            ));
-        }
+        let declaration = self
+            .tables
+            .resolve_command(self.current_module, &command.command.value)
+            .ok_or_else(|| {
+                format!(
+                    "no command grammar declared for `{}`",
+                    command.command.value
+                )
+            })?;
         let capability = self
             .resolve_binding(&command.command.value, None)
             .map_err(|_| format!("no capability `{}` in scope", command.command.value))?;
@@ -7317,6 +7323,26 @@ impl<'a> FnLowerer<'a> {
                 }
             }
         }
+        let shapes = parts
+            .iter()
+            .zip(&command.parts)
+            .map(|(lowered, source)| match (lowered, source) {
+                (LoweredCommandPart::Token(_), ast::CommandPart::Token(token)) => {
+                    CommandPartShape::Token(token.value.as_str())
+                }
+                (LoweredCommandPart::Splice(value), ast::CommandPart::Splice(_)) => {
+                    CommandPartShape::Splice(value.schema.as_str())
+                }
+                _ => unreachable!("lowered command part preserves source kind"),
+            })
+            .collect::<Vec<_>>();
+        let roles =
+            match_command_grammar(&declaration.grammar.pattern, &shapes).ok_or_else(|| {
+                format!(
+                    "{}! invocation does not match its declared command grammar",
+                    command.command.value
+                )
+            })?;
         let input_slot = self.next_input_slot;
         self.next_input_slot += 1;
         let region = self.primitive_region;
@@ -7326,7 +7352,16 @@ impl<'a> FnLowerer<'a> {
         });
         self.code.push(Op::ConstI64 {
             dst: region + 8,
-            value: command_kind(&command.command.value)?,
+            value: *self
+                .literal_handles
+                .strings
+                .get(&declaration.program.value)
+                .ok_or_else(|| {
+                    format!(
+                        "command program {:?} was not interned",
+                        declaration.program.value
+                    )
+                })?,
         });
         self.code.push(Op::CopyI64 {
             dst: region + 16,
@@ -7344,8 +7379,8 @@ impl<'a> FnLowerer<'a> {
             dst: region + 40,
             value: command.span.end.into(),
         });
-        for (index, part) in parts.iter().enumerate() {
-            let at = region + 48 + 24 * u32::try_from(index).expect("command part index");
+        for (index, (part, role)) in parts.iter().zip(roles).enumerate() {
+            let at = region + 48 + 32 * u32::try_from(index).expect("command part index");
             match part {
                 LoweredCommandPart::Token(handle) => {
                     self.code.push(Op::ConstI64 { dst: at, value: 0 });
@@ -7374,6 +7409,10 @@ impl<'a> FnLowerer<'a> {
                     });
                 }
             }
+            self.code.push(Op::ConstI64 {
+                dst: at + 24,
+                value: role as i64,
+            });
         }
         self.code.push(Op::HostCall { host: EXEC_HOST });
         let dst = self.alloc();
@@ -8450,15 +8489,187 @@ fn collect_filter_excluded_paths(
     }
 }
 
-fn command_kind(command: &str) -> Result<i64, String> {
-    match command {
-        "cc" => Ok(0),
-        "ar" => Ok(1),
-        "rustc" => Ok(2),
-        "build_script" => Ok(3),
-        other => Err(format!(
-            "command {other} is outside the machine exec subset"
-        )),
+#[derive(Clone, Copy)]
+enum CommandPartShape<'a> {
+    Token(&'a str),
+    Splice(&'a str),
+}
+
+fn match_command_grammar(
+    pattern: &ast::CommandPattern,
+    parts: &[CommandPartShape<'_>],
+) -> Option<Vec<crate::exec::Role>> {
+    command_pattern_states(pattern, parts, 0)
+        .into_iter()
+        .find_map(|(position, roles)| (position == parts.len()).then_some(roles))
+}
+
+fn command_pattern_states(
+    pattern: &ast::CommandPattern,
+    parts: &[CommandPartShape<'_>],
+    position: usize,
+) -> Vec<(usize, Vec<crate::exec::Role>)> {
+    dedup_command_states(
+        pattern
+            .alternatives
+            .iter()
+            .flat_map(|sequence| command_sequence_states(&sequence.terms, parts, position))
+            .collect(),
+    )
+}
+
+fn command_sequence_states(
+    terms: &[ast::CommandTerm],
+    parts: &[CommandPartShape<'_>],
+    position: usize,
+) -> Vec<(usize, Vec<crate::exec::Role>)> {
+    let Some((term, rest)) = terms.split_first() else {
+        return vec![(position, Vec::new())];
+    };
+    let mut prefixes = match term.quantifier.as_ref().map(|q| q.value.as_str()) {
+        None => command_atom_states(&term.atom, parts, position),
+        Some("*") => command_repetition_states(&term.atom, parts, position, false),
+        Some("+") => command_repetition_states(&term.atom, parts, position, true),
+        Some(other) => panic!("parser admitted unknown command quantifier {other}"),
+    };
+    let mut out = Vec::new();
+    for (next, prefix_roles) in prefixes.drain(..) {
+        for (end, mut suffix_roles) in command_sequence_states(rest, parts, next) {
+            let mut roles = prefix_roles.clone();
+            roles.append(&mut suffix_roles);
+            out.push((end, roles));
+        }
+    }
+    dedup_command_states(out)
+}
+
+fn command_repetition_states(
+    atom: &ast::CommandAtom,
+    parts: &[CommandPartShape<'_>],
+    position: usize,
+    require_one: bool,
+) -> Vec<(usize, Vec<crate::exec::Role>)> {
+    let mut out = if require_one {
+        Vec::new()
+    } else {
+        vec![(position, Vec::new())]
+    };
+    let mut frontier = vec![(position, Vec::new())];
+    for _ in 0..=parts.len() {
+        let mut next_frontier = Vec::new();
+        for (at, prefix) in frontier {
+            for (next, atom_roles) in command_atom_states(atom, parts, at) {
+                if next == at {
+                    continue;
+                }
+                let mut roles = prefix.clone();
+                roles.extend(atom_roles);
+                out.push((next, roles.clone()));
+                next_frontier.push((next, roles));
+            }
+        }
+        if next_frontier.is_empty() {
+            break;
+        }
+        frontier = dedup_command_states(next_frontier);
+    }
+    dedup_command_states(out)
+}
+
+fn dedup_command_states(
+    states: Vec<(usize, Vec<crate::exec::Role>)>,
+) -> Vec<(usize, Vec<crate::exec::Role>)> {
+    let mut seen = BTreeSet::new();
+    states
+        .into_iter()
+        .filter(|(position, _)| seen.insert(*position))
+        .collect()
+}
+
+fn command_atom_states(
+    atom: &ast::CommandAtom,
+    parts: &[CommandPartShape<'_>],
+    position: usize,
+) -> Vec<(usize, Vec<crate::exec::Role>)> {
+    use crate::exec::Role;
+    match atom {
+        ast::CommandAtom::Literal(literal) => match parts.get(position) {
+            Some(CommandPartShape::Token(token)) if *token == literal.value => {
+                vec![(position + 1, vec![Role::Flag])]
+            }
+            _ => Vec::new(),
+        },
+        ast::CommandAtom::Slot(slot) => {
+            let Some(part) = parts.get(position) else {
+                return Vec::new();
+            };
+            let role = command_slot_role(&slot.ty);
+            command_slot_accepts(&slot.ty, *part)
+                .then_some((position + 1, vec![role]))
+                .into_iter()
+                .collect()
+        }
+        ast::CommandAtom::Optional(optional) => {
+            let mut states = vec![(position, Vec::new())];
+            states.extend(command_pattern_states(&optional.pattern, parts, position));
+            states
+        }
+        ast::CommandAtom::Group(group) => command_pattern_states(&group.pattern, parts, position),
+    }
+}
+
+fn command_slot_role(ty: &ast::Type) -> crate::exec::Role {
+    use crate::exec::Role;
+    let name = match ty {
+        ast::Type::Generic(generic) => generic.base.segments.last().map(|s| s.value.as_str()),
+        ast::Type::Path(path) => path.segments.last().map(|s| s.value.as_str()),
+        ast::Type::Array(array) => return command_slot_role(&array.elem),
+        ast::Type::Fn(_) | ast::Type::Tuple(_) => None,
+    };
+    match name {
+        Some("Executable") => Role::Executable,
+        Some("Input") => Role::Input,
+        Some("InputFlag") => Role::InputFlag,
+        Some("Output") => Role::Output,
+        Some("OutputFlag") => Role::OutputFlag,
+        Some("OutputDir") => Role::OutputDir,
+        Some("Stdout") => Role::Stdout,
+        Some("Env") => Role::Env,
+        Some("SearchDir") => Role::SearchDir,
+        Some("SearchDirFlag") => Role::SearchDirFlag,
+        _ => Role::Flag,
+    }
+}
+
+fn command_slot_accepts(ty: &ast::Type, part: CommandPartShape<'_>) -> bool {
+    match part {
+        CommandPartShape::Token(token) => {
+            command_slot_role(ty) == crate::exec::Role::Flag || !token.starts_with('-')
+        }
+        CommandPartShape::Splice(actual) => match ty {
+            ast::Type::Array(array) => command_slot_accepts(&array.elem, part),
+            ast::Type::Generic(generic) => generic
+                .args
+                .first()
+                .is_none_or(|inner| command_slot_accepts(inner, part)),
+            ast::Type::Path(path) => path.segments.last().is_some_and(|expected| {
+                matches!(
+                    expected.value.as_str(),
+                    "Executable"
+                        | "Input"
+                        | "InputFlag"
+                        | "Output"
+                        | "OutputFlag"
+                        | "OutputDir"
+                        | "Stdout"
+                        | "Env"
+                        | "SearchDir"
+                        | "SearchDirFlag"
+                ) || actual.contains(&expected.value)
+                    || (expected.value == "Path" && actual == "Tree")
+            }),
+            ast::Type::Fn(_) | ast::Type::Tuple(_) => false,
+        },
     }
 }
 
@@ -8665,7 +8876,7 @@ fn max_command_part_words(block: &ast::Block) -> usize {
                 }
             }
             ast::Expr::Command(command) => {
-                *max = (*max).max(6 + command.parts.len() * 3);
+                *max = (*max).max(6 + command.parts.len() * 4);
                 for part in &command.parts {
                     if let ast::CommandPart::Splice(splice) = part {
                         in_expr(&splice.expr, max);
@@ -10114,6 +10325,7 @@ pub fn main(input: Tree) -> Tree {
         let src = r#"
 use vix::Target;
 use caps::Cc;
+command cc -> Tree { program "cc" grammar { ((-o {output: Output<Path>}) | {flag: Flag})* } }
 
 pub fn main(target: Target) -> Tree {
     let cc = Cc::acquire(target);
@@ -10142,10 +10354,110 @@ pub fn main(target: Target) -> Tree {
     }
 
     #[test]
+    fn declared_command_name_is_not_a_builtin_parser_or_runtime_name() {
+        let src = r#"
+use vix::Target;
+use caps::Cc;
+
+command compile_object -> Tree {
+    program "cc"
+    grammar { -o {output: Output<Path>} }
+}
+
+pub fn main(target: Target) -> Tree {
+    let compile_object = Cc::acquire(target);
+    compile_object! { -o {p"custom.o"} }
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let target = machine.linux_target_handle();
+            let output = machine.demand_i64("main", vec![target]).unwrap();
+            assert!(
+                machine
+                    .tree_entries(output)
+                    .unwrap()
+                    .contains_key("custom.o")
+            );
+        }
+    }
+
+    #[test]
+    fn command_invocation_requires_a_local_hoisted_declaration() {
+        let src = r#"
+use vix::Target;
+use caps::Cc;
+
+pub fn main(target: Target) -> Tree {
+    let mystery = Cc::acquire(target);
+    mystery! { -o {p"mystery.o"} }
+}
+"#;
+        let err = match Machine::load(src) {
+            Ok(_) => panic!("undeclared command must fail during lowering"),
+            Err(err) => err,
+        };
+        assert!(
+            err.contains("no command grammar declared for `mystery`"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn command_invocation_is_validated_before_execution() {
+        let src = r#"
+use vix::Target;
+use caps::Cc;
+
+command compile_object -> Tree {
+    program "cc"
+    grammar { -c {input: Input<Path>} -o {output: Output<Path>} }
+}
+
+pub fn main(target: Target) -> Tree {
+    let compile_object = Cc::acquire(target);
+    compile_object! { -o {p"missing-input.o"} }
+}
+"#;
+        let err = match Machine::load(src) {
+            Ok(_) => panic!("invalid argv must fail during lowering"),
+            Err(err) => err,
+        };
+        assert!(
+            err.contains("does not match its declared command grammar"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn command_grammar_changes_invalidate_functions_in_the_declaring_module() {
+        let source = |role: &str| {
+            format!(
+                r#"
+use vix::Target;
+use caps::Cc;
+command compile_object -> Tree {{ program "cc" grammar {{ -o {{output: {role}<Path>}} }} }}
+pub fn main(target: Target) -> Tree {{
+    let compile_object = Cc::acquire(target);
+    compile_object! {{ -o {{p"artifact.o"}} }}
+}}
+"#
+            )
+        };
+        let first = source("Output");
+        let mut machine = Machine::load(&first).unwrap();
+        let before = machine.fn_hash("main").unwrap();
+        let second = source("OutputFlag");
+        machine.reload(&second).unwrap();
+        assert_ne!(before, machine.fn_hash("main").unwrap());
+    }
+
+    #[test]
     fn pending_tree_missing_path_errors_after_one_run() {
         let src = r#"
 use vix::Target;
 use caps::Cc;
+command cc -> Tree { program "cc" grammar { ((-o {output: Output<Path>}) | {flag: Flag})* } }
 
 pub fn main(target: Target) -> Tree {
     let cc = Cc::acquire(target);
@@ -10176,6 +10488,7 @@ pub fn main(target: Target) -> Tree {
         let src = r#"
 use vix::Target;
 use caps::Cc;
+command cc -> Tree { program "cc" grammar { ((-c {input: Input<Path>}) | (-o {output: Output<Path>}) | {flag: Flag})* } }
 
 pub fn bad(target: Target) -> Tree {
     let cc = Cc::acquire(target);
@@ -10208,6 +10521,7 @@ pub fn bad(target: Target) -> Tree {
         let src = r#"
 use vix::Target;
 use caps::Cc;
+command cc -> Tree { program "cc" grammar { ((-o {output: Output<Path>}) | {flag: Flag})* } }
 
 pub fn main(target: Target) -> Int {
     let cc = Cc::acquire(target);
@@ -10927,6 +11241,7 @@ pub fn answer() -> Int {
         let src = r#"
 use vix::{Tree, Path, Target};
 use caps::Cc;
+command cc -> Tree { program "cc" grammar { ((-I {search: SearchDir<Path>}) | (-c {input: Input<Path>}) | (-o {output: Output<Path>}) | {flag: Flag})* } }
 
 fn get_cc(target: Target) -> Cc {
     Cc::acquire(target)
@@ -11014,6 +11329,7 @@ fn object(cc: Cc, src: Tree, unit: Path) -> Tree {
         let src = r#"
 use vix::{Tree, Path, Target};
 use caps::Cc;
+command cc -> Tree { program "cc" grammar { ((-I {search: SearchDir<Path>}) | (-c {input: Input<Path>}) | (-o {output: Output<Path>}) | {flag: Flag})* } }
 
 fn get_cc(target: Target) -> Cc {
     Cc::acquire(target)
@@ -12926,6 +13242,7 @@ pub fn lazy(n: Int) -> Map<String, Float> {
         let src = r#"
 use vix::{Tree, Path, Target};
 use caps::Cc;
+command cc -> Tree { program "cc" grammar { ((-o {output: Output<Path>}) | {flag: Flag})* } }
 
 fn object(cc: Cc, unit: Path) -> Tree {
     cc! { -o {unit.with_ext("o")} }

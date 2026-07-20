@@ -47,16 +47,22 @@ fn lua_sketch_binds() {
     // `cc` in `fn lua`: let def + two `object(cc, …)` refs + the `cc!` command
     // invocation in the tail — command names ARE value references.
     let cc_at = word_offsets(&src, "cc");
-    // 0: doc comment mention (not code). fn object: param def + cc! command (1..3).
-    // fn lua: let def + 2 `object(cc, …)` refs + cc! tail (3..7).
-    assert_eq!(cc_at.len(), 7);
-    assert_eq!(b.symbol_at(cc_at[0]), None, "comment text binds nothing");
-    let object_cc = b.symbol_at(cc_at[1]).expect("object's cc param");
+    // 0: command declaration; 1: program string; 2: comment. Function-local
+    // value references start at 3.
+    assert_eq!(cc_at.len(), 9);
+    assert_eq!(
+        b.symbol(b.symbol_at(cc_at[0]).expect("command declaration binds"))
+            .kind,
+        SymbolKind::Type
+    );
+    assert_eq!(b.symbol_at(cc_at[1]), None, "program string binds nothing");
+    assert_eq!(b.symbol_at(cc_at[2]), None, "comment text binds nothing");
+    let object_cc = b.symbol_at(cc_at[3]).expect("object's cc param");
     assert_eq!(b.symbol(object_cc).kind, SymbolKind::Param);
-    assert_eq!(starts(&b.occurrences(object_cc)), cc_at[1..3]);
-    let lua_cc = b.symbol_at(cc_at[3]).expect("lua's cc let");
+    assert_eq!(starts(&b.occurrences(object_cc)), cc_at[3..5]);
+    let lua_cc = b.symbol_at(cc_at[5]).expect("lua's cc let");
     assert_eq!(b.symbol(lua_cc).kind, SymbolKind::Let);
-    assert_eq!(starts(&b.occurrences(lua_cc)), cc_at[3..]);
+    assert_eq!(starts(&b.occurrences(lua_cc)), cc_at[5..]);
 
     // The two closures bind separate `u`s: filter's has 3 refs, map's has 1.
     let u_at = word_offsets(&src, "u");

@@ -105,12 +105,17 @@ pub(crate) struct ModuleTables {
     pub(crate) fn_hashes: HashMap<String, u64>,
     pub(crate) enums: HashMap<String, EnumInfo>,
     pub(crate) structs: HashMap<String, StructInfo>,
+    pub(crate) commands: HashMap<String, ast::CommandItem>,
     pub(crate) descriptors: DescriptorMap,
     pub(crate) schemas: SchemaTables,
     modules: BTreeMap<String, ModuleInfo>,
 }
 
 impl ModuleTables {
+    pub(crate) fn resolve_command(&self, module: &str, name: &str) -> Option<&ast::CommandItem> {
+        self.commands.get(&format!("{module}::{name}"))
+    }
+
     pub(crate) fn has_schema(&self, name: &str) -> bool {
         let Some(SchemaRef::Concrete { id, .. }) = self.schemas.ref_for_name(name) else {
             return false;
@@ -615,6 +620,7 @@ pub(crate) fn load_module_tables_from_modules(
     let mut bare_fn_hashes = BTreeMap::new();
     let mut enums = HashMap::new();
     let mut structs = HashMap::new();
+    let mut commands = HashMap::new();
     let mut type_hashes = BTreeMap::new();
     let mut fn_spans_by_module = BTreeMap::new();
     let mut type_spans_by_module = BTreeMap::new();
@@ -633,13 +639,34 @@ pub(crate) fn load_module_tables_from_modules(
         .collect();
 
     for (module, file) in &files {
+        let mut command_hashes = file
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Command(command) => {
+                    Some((command.name.value.as_str(), canon_command_hash(command)))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        command_hashes.sort_by_key(|(name, _)| *name);
+        let command_hash = hash_list(
+            "vix-module-commands",
+            &command_hashes
+                .into_iter()
+                .map(|(_, hash)| hash)
+                .collect::<Vec<_>>(),
+        );
         let mut fn_spans = BTreeMap::new();
         let mut type_spans = BTreeMap::new();
         for item in &file.items {
             match item {
                 Item::Fn(f) => {
                     let canonical = canonical_fn_name(root, module, &f.name.value);
-                    bare_fn_hashes.insert(canonical.clone(), canon_fn_hash(f));
+                    bare_fn_hashes.insert(
+                        canonical.clone(),
+                        hash_list("vix-fn-with-commands", &[canon_fn_hash(f), command_hash]),
+                    );
                     fn_spans.insert(canonical.clone(), f.span);
                     module_infos
                         .get_mut(module)
@@ -698,7 +725,13 @@ pub(crate) fn load_module_tables_from_modules(
                         },
                     )?;
                 }
-                Item::Use(_) | Item::Command(_) => {}
+                Item::Command(command) => {
+                    commands.insert(
+                        format!("{module}::{}", command.name.value),
+                        (**command).clone(),
+                    );
+                }
+                Item::Use(_) => {}
             }
         }
         fn_spans_by_module.insert(module.clone(), fn_spans);
@@ -743,6 +776,7 @@ pub(crate) fn load_module_tables_from_modules(
         fn_hashes,
         enums,
         structs,
+        commands,
         descriptors,
         schemas,
         modules: module_infos,
@@ -1575,6 +1609,13 @@ fn canon_fn_hash(item: &ast::FnItem) -> u64 {
     canonical.strip_spans();
     let bytes = phon::api::encode(&canonical).expect("AST serializes");
     hash_bytes_u64(b"vix-fn", &bytes)
+}
+
+fn canon_command_hash(item: &ast::CommandItem) -> u64 {
+    let mut canonical = item.clone();
+    canonical.strip_spans();
+    let bytes = phon::api::encode(&canonical).expect("AST serializes");
+    hash_bytes_u64(b"vix-command", &bytes)
 }
 
 fn canon_enum_hash(item: &EnumItem) -> u64 {

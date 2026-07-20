@@ -5,6 +5,16 @@ const SOURCE: &str = r#"
 use vix::{Arg, Target, Tree};
 use caps::Rustc;
 
+command rustc -> Tree {
+    program "rustc"
+    grammar { ((--emit=metadata= {output: OutputFlag<Path>}) | (--emit=link= {output: OutputFlag<Path>}) | (-o {output: Output<Path>}) | (-L {prefix: Flag} {search: SearchDirFlag}) | (--extern {prefix: Flag} {input: InputFlag}) | (--env {env: Env}) | (--stdout {stdout: Stdout}) | {arg: Arg} | {input: Input<Path>} | {value: String} | {flag: Flag})* }
+}
+
+command build_script -> Tree {
+    program "build_script"
+    grammar { ((--executable {executable: Executable<Path>}) | (--stdout {stdout: Stdout<Path>}) | (--out-dir {output: OutputDir<Path>}) | (--env {prefix: Flag} {env: Env}) | (--env {env: Env}) | {flag: Flag})* }
+}
+
 fn rustc_for(target: Target) -> Rustc {
     Rustc::acquire(target)
 }

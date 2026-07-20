@@ -17,6 +17,11 @@ const SOURCE: &str = r#"
 use vix::{Tree, Path, Target};
 use caps::Cc;
 
+command cc -> Tree {
+    program "cc"
+    grammar { ((-I {search: SearchDir<Path>}) | (-o {output: Output<Path>}) | (-c {input: Input<Path>}) | {input: Input<Path>} | {flag: Flag})* }
+}
+
 fn get_cc(target: Target) -> Cc {
     Cc::acquire(target)
 }
@@ -36,6 +41,11 @@ pub fn object_kind(cc: Cc, src: Tree, unit: Path) -> String {
 
 const BUILD_SCRIPT_SOURCE: &str = r#"
 use vix::Tree;
+
+command build_script -> Tree {
+    program "build_script"
+    grammar { ((--executable {executable: Executable<Path>}) | (--stdout {stdout: Stdout<Path>}) | (--out-dir {output: OutputDir<Path>}) | (--env {prefix: Flag} {env: Env}) | (--env {env: Env}) | {flag: Flag})* }
+}
 
 pub fn undeclared_cc(script: Tree) -> String {
     let build_script = "build-script-runner";

@@ -17,8 +17,8 @@ fn lua_sketch_lowers_to_typed_ast() {
     let source = lua_source();
     let file = parser.parse(&source).expect("lua.vix parses");
 
-    // use vix::{Tree, Path, Target}; use caps::{Cc, Ar}; fn sources; fn object; pub fn lua
-    assert_eq!(file.items.len(), 5);
+    // Two imports, locally declared cc/ar grammars, then the three functions.
+    assert_eq!(file.items.len(), 7);
     let Item::Use(use_vix) = &file.items[0] else {
         panic!("item 0 is `use vix::…`");
     };
