@@ -1,9 +1,8 @@
 //! vix — the demand-driven build language.
 //!
 //! The authoritative compiler path starts at [`surface`], lowers through [`vir`]
-//! and [`lowering`], and runs through [`runtime`]. The crate-root parser and
-//! [`machine`] module remain during migration for existing consumers; the ratchet
-//! does not enter them. Both syntax trees are generated from Snark grammars.
+//! and [`lowering`], and runs through [`runtime`]. Both syntax trees are
+//! generated from Snark grammars.
 
 use snark::{
     grammar::RawGrammarJson,
@@ -23,22 +22,15 @@ pub mod binder;
 pub mod binding;
 pub mod budget;
 pub mod compiler;
-pub(crate) mod data;
 pub mod decode;
 pub mod diagnostic;
 pub mod exec;
 pub mod fetch;
 pub mod ide;
 pub mod lowering;
-pub mod machine;
-pub(crate) mod module;
 pub mod modules;
 pub mod ratchet;
-#[cfg(all(feature = "real-process", not(target_arch = "wasm32")))]
-pub mod real_process;
 pub mod reloc_selection;
-#[cfg(all(feature = "runner-rpc", not(target_arch = "wasm32")))]
-pub mod rpc_process;
 pub mod runtime;
 pub mod schema;
 pub mod stdlib;
@@ -235,8 +227,6 @@ impl Default for VixParser {
 
 /// Runtime support for the generated lowering.
 pub mod support {
-    use std::collections::BTreeMap;
-
     use snark::parser::ResolvedCstNode;
 
     /// Half-open byte range into the source, carried by every AST node.
@@ -405,133 +395,7 @@ pub mod support {
         }
     }
 
-    pub(crate) fn subtree(
-        tree: &crate::exec::Tree,
-        path: &str,
-    ) -> Result<crate::exec::Tree, String> {
-        if let Some(contents) = tree.entries.get(path) {
-            let base = path.rsplit_once('/').map(|(_, b)| b).unwrap_or(path);
-            return Ok(crate::exec::Tree::of(&[(base, contents.as_str())]));
-        }
-        if let Some(contents) = tree.blobs.get(path) {
-            let base = path.rsplit_once('/').map(|(_, b)| b).unwrap_or(path);
-            return Ok(crate::exec::Tree::of_blobs(&[(base, contents.as_slice())]));
-        }
-        let prefix = format!("{path}/");
-        let entries: BTreeMap<String, String> = tree
-            .entries
-            .iter()
-            .filter_map(|(k, v)| k.strip_prefix(&prefix).map(|r| (r.to_string(), v.clone())))
-            .collect();
-        let blobs: BTreeMap<String, Vec<u8>> = tree
-            .blobs
-            .iter()
-            .filter_map(|(k, v)| k.strip_prefix(&prefix).map(|r| (r.to_string(), v.clone())))
-            .collect();
-        if entries.is_empty() && blobs.is_empty() {
-            return Err(format!("no `{path}` in tree"));
-        }
-        Ok(crate::exec::Tree { entries, blobs })
-    }
 
-    pub(crate) fn tree_text(tree: &crate::exec::Tree, path: &str) -> Result<String, String> {
-        if let Some(contents) = tree.entries.get(path) {
-            return Ok(contents.clone());
-        }
-        if let Some(contents) = tree.blobs.get(path) {
-            return String::from_utf8(contents.clone()).map_err(|err| err.to_string());
-        }
-        let prefix = format!("{path}/");
-        if tree
-            .entries
-            .keys()
-            .chain(tree.blobs.keys())
-            .any(|key| key.starts_with(&prefix))
-        {
-            return Err(format!("path `{path}` is a directory, not a file"));
-        }
-        Err(format!("no `{path}` in tree"))
-    }
 
-    pub(crate) fn assign_roles(
-        command: &str,
-        argv: &[String],
-    ) -> Result<crate::exec::ExecPlan, String> {
-        use crate::exec::Role;
-        let mut out = Vec::new();
-        match command {
-            "cc" => {
-                let mut prev: Option<&str> = None;
-                for arg in argv {
-                    let role = match prev {
-                        Some("-o") => Role::Output,
-                        Some("-I") => Role::SearchDir,
-                        _ if arg.starts_with("/m/") => Role::Input,
-                        _ => Role::Flag,
-                    };
-                    out.push((arg.clone(), role));
-                    prev = Some(arg.as_str());
-                }
-            }
-            "ar" => {
-                for arg in argv {
-                    let role = if arg.starts_with("/m/") {
-                        crate::exec::Role::Input
-                    } else if arg == "rcs" {
-                        Role::Flag
-                    } else {
-                        Role::Output
-                    };
-                    out.push((arg.clone(), role));
-                }
-            }
-            "rustc" => {
-                let mut prev: Option<&str> = None;
-                for arg in argv {
-                    let role = match prev {
-                        Some("-o") => Role::Output,
-                        Some("-L") if arg.contains("/m/") => Role::SearchDirFlag,
-                        Some("-L") => Role::Flag,
-                        Some("--extern") if arg.contains("/m/") => Role::InputFlag,
-                        Some("--extern") => Role::Flag,
-                        Some("--env") => Role::Env,
-                        Some("--stdout") => Role::Stdout,
-                        _ if arg.starts_with("/m/") => Role::Input,
-                        _ if arg.starts_with("--emit=") && arg.contains('=') => Role::OutputFlag,
-                        _ if arg.starts_with("-L") && arg.contains("/m/") => Role::SearchDirFlag,
-                        _ if arg.starts_with("--extern") && arg.contains("/m/") => Role::InputFlag,
-                        _ => Role::Flag,
-                    };
-                    out.push((arg.clone(), role));
-                    prev = Some(arg.as_str());
-                }
-            }
-            "build_script" => {
-                let mut prev: Option<&str> = None;
-                for arg in argv {
-                    let role = match prev {
-                        Some("--executable") => Role::Executable,
-                        Some("--stdout") => Role::Stdout,
-                        Some("--out-dir") => Role::OutputDir,
-                        Some("--env") => Role::Env,
-                        _ => Role::Flag,
-                    };
-                    out.push((arg.clone(), role));
-                    prev = Some(arg.as_str());
-                }
-            }
-            other => return Err(format!("no command grammar for `{other}`")),
-        }
-        Ok(crate::exec::ExecPlan { argv: out })
-    }
 
-    pub(crate) fn tool_for(command: &str) -> Result<&'static dyn crate::exec::Tool, String> {
-        match command {
-            "cc" => Ok(&crate::exec::FakeCc),
-            "ar" => Ok(&crate::exec::FakeAr),
-            "rustc" => Ok(&crate::exec::FakeRustc),
-            "build_script" => Ok(&crate::exec::FakeBuildScript),
-            other => Err(format!("no tool for `{other}`")),
-        }
-    }
 }

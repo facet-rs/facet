@@ -16,12 +16,11 @@ Written 2026-07-07 by Fable after ~16 gated folds; every rule below was earned t
 3. **Fmt-noise discipline.** Wandering `cargo fmt` collateral is common. Use `git show -w` to
    suppress whitespace and reveal real semantic changes. A 163-line driver.rs diff can be 100%
    reflow — or hide one real hunk. `-w` tells you which.
-4. **Tripwire rule (load-bearing).** Any diff touching `vix/tests/demand_driven.rs`, molten/reuse
+4. **Tripwire rule (load-bearing).** Any diff touching molten/reuse
    machinery, weavy task execution, or lowering semantics gets its hunks READ before folding.
    The demand-driven invariant cannot be retrofitted; the tripwires are its only guard.
 5. **Tests — `cargo nextest run`, NEVER `cargo test`.** Scope by surface:
-   - vix touched: `-p vix`; add `--features real-process` when exec/rodin/build paths changed
-     (that suite shells real rustc/cargo — it must run).
+   - vix touched: `-p vix`.
    - weavy touched: `-p weavy --all-features` (jit is feature-gated; without it half the tests
      don't exist).
    - facet-core touched: also `cargo build -p facet-core --no-default-features` (no_std must

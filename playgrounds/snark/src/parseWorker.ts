@@ -2,7 +2,7 @@
 // heavy grammar (e.g. gingembre) takes seconds and is synchronous; doing it on the main
 // thread freezes the whole UI, which is brutal on mobile. The worker holds the prepared
 // session so the main thread only ever posts a message and renders the result.
-import init, { SnarkPlaygroundSession, runVixMachine, vixBindings } from "@bearcove/snark-wasm";
+import init, { SnarkPlaygroundSession, vixBindings } from "@bearcove/snark-wasm";
 
 export type ParseWorkerRequest = {
   id: number;
@@ -36,7 +36,7 @@ function post(response: ParseWorkerResponse) {
 }
 
 self.onmessage = async (event: MessageEvent<ParseWorkerRequest>) => {
-  const { id, key, files, input, runCorpus, edit, useReparse, vixIde, vixMachineFn } = event.data;
+  const { id, key, files, input, runCorpus, edit, useReparse, vixIde } = event.data;
   try {
     const initStart = performance.now();
     await ready;
@@ -76,36 +76,12 @@ self.onmessage = async (event: MessageEvent<ParseWorkerRequest>) => {
     // vix IDE bindings ride the same round trip: parse+bind with vix's own embedded
     // grammar (lazy table build inside wasm, once per worker lifetime).
     const vix = vixIde ? vixBindings(input) : null;
-    let vixMachine: string | null = null;
-    if (vixMachineFn) {
-      try {
-        vixMachine = runVixMachine(input, vixMachineFn);
-      } catch (error) {
-        vixMachine = JSON.stringify({
-          ok: false,
-          error: errorMessage(error),
-          source_kind: machineSourceKind(input),
-          fn_name: vixMachineFn,
-          result: null,
-          cold_trace: [],
-          warm_trace: [],
-          fn_hashes: [],
-          run_hashes: [],
-        });
-      }
-    }
+    // The legacy vix machine engine was removed from snark-wasm; the panel
+    // reports null until the demo is rebuilt on the authoritative runtime.
+    const vixMachine: string | null = null;
     post({ id, ok: true, response, prepared: true, vix, vixMachine });
   } catch (error) {
     post({ id, ok: false, error: errorMessage(error) });
   }
 };
 
-function machineSourceKind(input: string): string {
-  if (input.includes("left.c") && input.includes("subtree_chain")) {
-    return "merge-demand";
-  }
-  if (input.includes("pub fn demo() -> Float")) {
-    return "eval";
-  }
-  return "vix";
-}

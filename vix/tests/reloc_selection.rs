@@ -1,4 +1,4 @@
-#![cfg(all(target_os = "macos", feature = "real-process"))]
+#![cfg(target_os = "macos")]
 
 use std::collections::BTreeMap;
 use std::fs;

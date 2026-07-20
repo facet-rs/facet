@@ -7912,8 +7912,6 @@ dependencies = [
 name = "snark-wasm"
 version = "0.0.1"
 dependencies = [
- "facet",
- "facet-json",
  "snark-playground",
  "vix",
  "wasm-bindgen",
@@ -9638,7 +9636,6 @@ name = "vix"
 version = "0.0.0"
 dependencies = [
  "blake3",
- "exec-protocol",
  "facet",
  "facet-format",
  "facet-json",
@@ -9647,7 +9644,6 @@ dependencies = [
  "facet-value",
  "hex",
  "libc",
- "miniz_oxide",
  "object 0.39.1",
  "phon",
  "rustc-demangle",
@@ -9656,26 +9652,9 @@ dependencies = [
  "snark",
  "snark-dsl",
  "taxon",
- "tempfile",
  "tokio",
  "tracing",
- "vox",
  "weavy",
-]
-
-[[package]]
-name = "vix-daemon"
-version = "0.0.0"
-dependencies = [
- "eyre",
- "facet",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "vix",
- "vox",
- "vox-codegen",
- "vox-schema",
 ]
 
 [[package]]
@@ -9701,20 +9680,6 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "vix",
-]
-
-[[package]]
-name = "vix-wire"
-version = "0.0.0"
-dependencies = [
- "blake3",
- "eyre",
- "facet",
- "phon",
- "tokio",
- "vix",
- "vox",
- "vox-schema",
 ]
 
 [[package]]

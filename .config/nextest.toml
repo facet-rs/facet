@@ -142,28 +142,8 @@ slow-timeout = { period = "3s", terminate-after = 2 }
 filter = 'test(declared_value_checker_reports_required_errors) | test(declared_type_checker_rejects_duplicate_and_unknown_names)'
 slow-timeout = { period = "120s", terminate-after = 5 }
 
-# The real-workspace dependency-probe shards exercise the production manifest
-# walk against a large workspace. They are bounded but several shards exceed the
-# default 180s cap on local macOS runs.
-[[profile.default.overrides]]
-filter = 'package(vix) & binary(cargo_manifest) & test(real_workspace_dependency_probe_shard_)'
-slow-timeout = { period = "300s", terminate-after = 2 }
-
 [[profile.default.overrides]]
 filter = 'package(vix) & binary(reloc_selection)'
-threads-required = "num-cpus"
-
-# This acceptance test deliberately holds one executor action open while a
-# dependent action completes through a partial output. Running it alongside a
-# saturated workspace can starve its websocket/fake-tool tasks long enough to
-# trip the semantic timeout, so give the probe exclusive ownership of the
-# nextest runner without changing the timeout it is asserting.
-[[profile.default.overrides]]
-filter = 'package(vix-wire) & test(=language_level_pipelining_b_finishes_while_a_still_runs)'
-threads-required = "num-cpus"
-
-[[profile.default.overrides]]
-filter = 'package(vix) & test(=cargo_toml_projection_runs_on_the_machine)'
 threads-required = "num-cpus"
 
 # This certificate measures the source-declared execution wall/RSS budget after
