@@ -1,0 +1,53 @@
+// cjson.vix — build DaveGamble/cJSON for any target the fleet can serve.
+//
+// The same shape as lua.vix, one project smaller: glob the C units, compile
+// each to an object, archive them into a static library, then link the test
+// driver against that library.
+
+use vix::{Tree, Path, Target};
+use caps::{Cc, Ar};
+
+/// cJSON's sources, pinned by content. `fetch` is pure: the checksum IS the
+/// identity; the URL is only a hint about where satisfying bytes may be found.
+///
+/// The pin below is the hash of the harness's fixture archive bytes (the test
+/// serves a pre-extracted tree by URL). The real upstream tarball hashes to
+/// 3aa806844a03442c00769b83e99970be70fbef03735ff898f4811dd03b9f5ee5 — swap it in
+/// when a real fetch backend is wired.
+fn sources() -> Tree {
+    let tar = fetch(
+        url: "https://github.com/DaveGamble/cJSON/archive/refs/tags/v1.7.18.tar.gz",
+        sha256: "c81fc2067fd81ccf23e724e72f5962174d056a01b61acbb66e343c18d882df1e",
+    );
+    extract(tar) / p"cJSON-1.7.18"
+}
+
+/// One translation unit -> one object file, wherever `cc` lives. `-I {src}`
+/// mounts the whole tree so `#include "cJSON.h"` resolves; `{src / unit}` cuts
+/// the single unit out of it.
+fn object(cc: Cc, src: Tree, unit: Path) -> Tree {
+    cc! {
+        -O2 -Wall
+        -I {src}
+        -c {src / unit}
+        -o {unit.with_ext("o")}
+    }
+}
+
+/// The cJSON test driver, linked against the archived library, one target at a
+/// time.
+pub fn cjson(target: Target) -> Tree {
+    let cc = Cc::acquire(target);
+    let ar = Ar::acquire(target);
+    let src = sources();
+
+    // Library units only — the test driver is linked separately as `main`.
+    let units = src.glob("*.c").filter(|u| u != p"test.c");
+
+    let objs: Tree = units.map(|u| object(cc, src, u)).collect();
+
+    // The TREE splices (anchoring mount); bare relative paths would dangle.
+    let lib  = ar! { rcs libcjson.a {objs} };
+    let main = object(cc, src, p"test.c");
+    cc! { -o cjson_test {main / p"test.o"} {lib / p"libcjson.a"} -lm }
+}
