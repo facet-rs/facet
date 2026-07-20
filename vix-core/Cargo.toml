@@ -31,9 +31,7 @@ facet-reflect = { workspace = true }
 facet-value = { path = "../facet-value", default-features = false, features = ["alloc"] }
 hex.workspace = true
 blake3.workspace = true
-# Cross-process resident-set observation for the outer budget runner. Only the
-# unix RSS readers use it, behind typed cfg boundaries.
-libc.workspace = true
+# reloc_selection.rs walks Mach-O relocations with `object`.
 object.workspace = true
 phon = { path = "../phon/rust/phon" }
 rustc-demangle = "0.1.26"
@@ -47,16 +45,6 @@ weavy = { path = "../weavy" }
 
 [build-dependencies]
 snark-dsl = { path = "../snark-dsl", features = ["typed-ast"] }
-
-# Cross-process resident-set observation for the outer budget runner on Windows.
-# The working-set reader (GetProcessMemoryInfo) is confined behind a typed cfg
-# boundary in src/budget.rs, mirroring the unix /proc and libproc readers.
-[target.'cfg(windows)'.dependencies]
-windows-sys = { workspace = true, features = [
-  "Win32_Foundation",
-  "Win32_System_Threading",
-  "Win32_System_ProcessStatus",
-] }
 
 # The graph demand engine's driver uses only core::future (vix stays
 # wasm-clean); tokio is DEV-only, an executor + timers for the demand tests.

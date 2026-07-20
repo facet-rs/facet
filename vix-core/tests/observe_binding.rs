@@ -14,12 +14,18 @@
 
 use vix::compiler::{Compiler, CompilerConfig};
 
+// The stdlib prelude is supplied by the vixen runtime (`vix-core` alone ships
+// none), so `refresh` — a stdlib vix wrapper — resolves only with it installed.
+// `PRELUDE_SOURCES` is `&[&str]` data, so naming it across the dev-dependency is
+// free of any crate-copy identity hazard.
 fn error(src: &str) -> String {
+    let compiler = Compiler::with_config(CompilerConfig {
+        prelude: vixen_primitives::stdlib::PRELUDE_SOURCES,
+        ..CompilerConfig::default()
+    });
     format!(
         "{:?}",
-        Compiler::default()
-            .compile(src)
-            .expect_err("expected a compile error")
+        compiler.compile(src).expect_err("expected a compile error")
     )
 }
 

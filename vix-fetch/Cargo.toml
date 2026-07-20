@@ -18,3 +18,6 @@ ureq = "3.3"
 
 [dev-dependencies]
 tempfile.workspace = true
+# The fetch/observe integration test drives programs through the ratchet harness,
+# which lives in the vixen runtime (it installs the builtin primitives).
+vixen-runtime = { path = "../vixen-runtime" }

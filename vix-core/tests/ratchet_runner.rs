@@ -1,5 +1,4 @@
 use std::collections::BTreeSet;
-use std::path::Path;
 
 use vix::compiler::{Compiler, CompilerConfig};
 use vix::diagnostic::{DiagnosticCode, DiagnosticPayload, DiagnosticSeverity};
@@ -32,6 +31,17 @@ use weavy::{LaneRequest, PayloadKind, RegionShape, ValueShapeKind, WordKind};
 fn user_program_compiler() -> Compiler {
     Compiler::with_config(CompilerConfig {
         prelude: &[],
+        ..CompilerConfig::default()
+    })
+}
+
+/// A compiler carrying the vixen stdlib prelude, for tests whose fixture calls a
+/// stdlib wrapper (`json_decode`/`toml_decode`/`try_*_decode`). `vix-core` ships
+/// no prelude; `PRELUDE_SOURCES` is `&[&str]` data, so naming it across the
+/// dev-dependency is free of the crate-copy identity hazard.
+fn decode_compiler() -> Compiler {
+    Compiler::with_config(CompilerConfig {
+        prelude: vixen_primitives::stdlib::PRELUDE_SOURCES,
         ..CompilerConfig::default()
     })
 }
@@ -5977,7 +5987,7 @@ fn t() -> Stream<Check> {
     yield expect_eq(row.name, \"x\");
 }
 ";
-    let compilation = Compiler::new()
+    let compilation = decode_compiler()
         .compile(SOURCE)
         .expect("a nonliteral decode document lowers to the runtime seam");
     // The decode seam now lives inside the monomorphized `json_decode` wrapper
@@ -6054,7 +6064,7 @@ fn t() -> Stream<Check> {
 ";
 
     for (source, expected_documents) in [(JSON_OK, 1u64), (JSON_ERR, 1), (TOML_OK, 1)] {
-        let module = Compiler::new()
+        let module = decode_compiler()
             .compile(source)
             .expect("dynamic decode compiles");
         assert_eq!(
@@ -6278,7 +6288,7 @@ fn t() -> Stream<Check> {
 }
 ";
     let lower = |source: &str| {
-        let module = Compiler::new().compile(source).expect("compiles");
+        let module = decode_compiler().compile(source).expect("compiles");
         let partitioned = module.partition_test(&module.tests[0]);
         partitioned.islands[0].canonical_recipe_bytes()
     };

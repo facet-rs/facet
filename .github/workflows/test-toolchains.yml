@@ -96,20 +96,22 @@ jobs:
         env:
           PROPTEST_CASES: 0
           WEAVY_JIT: "0"
-        run: cargo nextest list -p vix -E 'binary(ratchet_runner) | binary(cross_lane_differential)'
+        run: cargo nextest list -p vix-core -E 'binary(ratchet_runner) | binary(cross_lane_differential)'
       - name: Run the interpreter corpus except the budget probe
         env:
           PROPTEST_CASES: 0
           WEAVY_JIT: "0"
         run: >-
-          cargo nextest run -p vix --no-fail-fast
-          -E '(binary(ratchet_runner) | binary(cross_lane_differential)) & not test(=rung_050_deep_tail_recursion_runs_under_its_declared_budget)'
+          cargo nextest run -p vix-core --no-fail-fast
+          -E 'binary(ratchet_runner) | binary(cross_lane_differential)'
       - name: Run the execution-budget probe in isolation
         env:
           PROPTEST_CASES: 0
           WEAVY_JIT: "0"
+        # The budget probe spawns the vix-budget-child bin, which lives in
+        # vixen-runtime (the runnable system) alongside the ratchet/budget harness.
         run: >-
-          cargo nextest run -p vix --no-fail-fast
+          cargo nextest run -p vixen-runtime --no-fail-fast
           -E 'test(=rung_050_deep_tail_recursion_runs_under_its_declared_budget)'
 
   coverage:

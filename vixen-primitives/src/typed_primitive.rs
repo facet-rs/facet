@@ -229,9 +229,8 @@ mod milestone {
     use super::*;
     use crate::{ObservePrimitive, PinnedFetchPrimitive};
     use crate::rt::{
-        ArgRole, ObserveRequest, OriginHint, PinnedBlobRef, PinnedFetchRequest, PrimitiveId,
-        PrimitiveMemoPolicy, Selector, SelectorVariant, observe_primitive_id,
-        pinned_fetch_primitive_id,
+        ArgRole, ObserveRequest, OriginHint, PinnedBlobRef, PinnedFetchRequest, PrimitiveMemoPolicy,
+        Selector, SelectorVariant, observe_primitive_id, pinned_fetch_primitive_id,
     };
     use vix::schema::SchemaPattern;
     use vix::vir::ExternKind;

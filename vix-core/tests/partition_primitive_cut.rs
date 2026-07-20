@@ -13,10 +13,20 @@
 //! the helper publication must lower, suspend on its primitive, resume, and
 //! publish through its checked result ABI.
 
-use vix::compiler::Compiler;
+use vix::compiler::{Compiler, CompilerConfig};
 use vix::lowering::{LoweringCache, attribution_for};
 use vix::runtime::{ChaosPolicy, EventLog, IslandInputs, Location, Runtime};
 use vix::vir::{IslandPurpose, Op, PartitionedTest};
+
+/// A compiler carrying the vixen stdlib prelude — these fixtures call the
+/// `json_decode`/`try_json_decode` stdlib wrappers. `vix-core` ships no prelude;
+/// `PRELUDE_SOURCES` is `&[&str]` data, safe to name across the dev-dependency.
+fn decode_compiler() -> Compiler {
+    Compiler::with_config(CompilerConfig {
+        prelude: vixen_primitives::stdlib::PRELUDE_SOURCES,
+        ..CompilerConfig::default()
+    })
+}
 
 /// Every effect island in the partition that carries an `InvokePrimitive` in its
 /// root nodes or its callee closure — a violation of the primitive-authority
@@ -59,7 +69,7 @@ fn primitives_inside_effect_islands(partitioned: &PartitionedTest) -> Vec<String
 }
 
 fn partition(src: &str) -> PartitionedTest {
-    let module = Compiler::new().compile(src).expect("source compiles");
+    let module = decode_compiler().compile(src).expect("source compiles");
     let test = module.tests.first().expect("source declares one #[test]");
     module.partition_test(test)
 }
@@ -157,7 +167,7 @@ fn early_cutoff() -> Stream<Check> {
 
 #[test]
 fn primitive_helper_result_remains_a_publication_boundary() {
-    let module = Compiler::new()
+    let module = decode_compiler()
         .compile(EARLY_CUTOFF_SHAPE)
         .expect("source compiles");
     let test = module.tests.first().expect("source declares one #[test]");
@@ -187,6 +197,9 @@ fn primitive_helper_result_remains_a_publication_boundary() {
         .expect("the primitive-bearing helper lowers");
     let attribution = attribution_for(&helper.island);
     let mut runtime = Runtime::new(EventLog::default());
+    // vix-core builds runtimes with an empty dispatcher; install the vixen
+    // builtins so the helper's decode primitive dispatches.
+    vixen_runtime::install_builtins(&mut runtime);
     let result = runtime.evaluate(
         helper.island.id,
         &Location::for_test_value("primitive-helper", "result"),

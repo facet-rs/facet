@@ -9614,7 +9614,6 @@ dependencies = [
  "facet-toml",
  "facet-value",
  "hex",
- "libc",
  "object 0.39.1",
  "phon",
  "rustc-demangle",
@@ -9629,7 +9628,6 @@ dependencies = [
  "vixen-primitives",
  "vixen-runtime",
  "weavy",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -9641,6 +9639,7 @@ dependencies = [
  "tempfile",
  "ureq",
  "vix-core",
+ "vixen-runtime",
 ]
 
 [[package]]
