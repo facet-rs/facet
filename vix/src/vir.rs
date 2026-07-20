@@ -779,7 +779,7 @@ impl ExternKind {
 /// type identity ([`facet::ConstTypeId`]), so distinct wire meanings are distinct
 /// Rust newtypes rather than one reused type with a hidden discriminator.
 fn facet_leaf_override(shape: &'static facet::Shape) -> Option<Type> {
-    use crate::runtime::{Digest, RegistryHandle, UpstreamDigest};
+    use crate::runtime::{BlobHandle, Digest, RegistryHandle, UpstreamDigest};
 
     // Fixed 32-byte digests have no vix `Type` primitive; they wire-encode as a
     // hex `String` (see `fetch_primitive` parse/verify: `hex::encode`/`decode`).
@@ -797,6 +797,12 @@ fn facet_leaf_override(shape: &'static facet::Shape) -> Option<Type> {
     // distinguished by its newtype so the wire meaning is unambiguous.
     if shape.id == <RegistryHandle as facet::Facet>::SHAPE.id {
         return Some(Type::Extern(ExternKind::Registry));
+    }
+    // A served Blob handle is already an interned `Extern(Blob)` store value; its
+    // typed response `Type` must be bit-for-bit `Extern(Blob)` so the synthesized
+    // `response_schema` stays byte-identical to the hand-written one.
+    if shape.id == <BlobHandle as facet::Facet>::SHAPE.id {
+        return Some(Type::Extern(ExternKind::Blob));
     }
     None
 }
