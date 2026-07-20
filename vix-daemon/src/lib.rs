@@ -541,7 +541,10 @@ fn function_spans(source: &str) -> Result<BTreeMap<String, Span>, String> {
             vix::ast::Item::Fn(function) => {
                 Some((function.name.value.clone(), function.span.into()))
             }
-            vix::ast::Item::Enum(_) | vix::ast::Item::Struct(_) | vix::ast::Item::Use(_) => None,
+            vix::ast::Item::Enum(_)
+            | vix::ast::Item::Struct(_)
+            | vix::ast::Item::Command(_)
+            | vix::ast::Item::Use(_) => None,
         })
         .collect())
 }
