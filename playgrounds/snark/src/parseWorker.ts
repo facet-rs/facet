@@ -2,7 +2,7 @@
 // heavy grammar (e.g. gingembre) takes seconds and is synchronous; doing it on the main
 // thread freezes the whole UI, which is brutal on mobile. The worker holds the prepared
 // session so the main thread only ever posts a message and renders the result.
-import init, { SnarkPlaygroundSession, vixBindings } from "@bearcove/snark-wasm";
+import init, { SnarkPlaygroundSession } from "@bearcove/snark-wasm";
 
 export type ParseWorkerRequest = {
   id: number;
@@ -13,14 +13,12 @@ export type ParseWorkerRequest = {
   runCorpus: boolean;
   edit: unknown | null;
   useReparse: boolean;
-  /** Also compute vix IDE bindings (symbols/refs/unresolved) for this input. */
-  vixIde?: boolean;
   /** Also run the vix machine on this input and public function. */
   vixMachineFn?: string | null;
 };
 
 export type ParseWorkerResponse =
-  | { id: number; ok: true; response: string; prepared: boolean; vix: string | null; vixMachine: string | null }
+  | { id: number; ok: true; response: string; prepared: boolean; vixMachine: string | null }
   | { id: number; ok: false; error: string };
 
 const ready = init();
@@ -36,7 +34,7 @@ function post(response: ParseWorkerResponse) {
 }
 
 self.onmessage = async (event: MessageEvent<ParseWorkerRequest>) => {
-  const { id, key, files, input, runCorpus, edit, useReparse, vixIde } = event.data;
+  const { id, key, files, input, runCorpus, edit, useReparse } = event.data;
   try {
     const initStart = performance.now();
     await ready;
@@ -73,15 +71,11 @@ self.onmessage = async (event: MessageEvent<ParseWorkerRequest>) => {
       edit: useReparse ? edit : null,
     });
     const response = useReparse ? session.reparse(request) : session.parse(request);
-    // vix IDE bindings ride the same round trip: parse+bind with vix's own embedded
-    // grammar (lazy table build inside wasm, once per worker lifetime).
-    const vix = vixIde ? vixBindings(input) : null;
     // The legacy vix machine engine was removed from snark-wasm; the panel
     // reports null until the demo is rebuilt on the authoritative runtime.
     const vixMachine: string | null = null;
-    post({ id, ok: true, response, prepared: true, vix, vixMachine });
+    post({ id, ok: true, response, prepared: true, vixMachine });
   } catch (error) {
     post({ id, ok: false, error: errorMessage(error) });
   }
 };
-

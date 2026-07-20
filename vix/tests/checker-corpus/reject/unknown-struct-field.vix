@@ -1,7 +1,0 @@
-struct Config {
-    name: String,
-}
-
-fn main() -> Config {
-    Config { missing: "a" }
-}

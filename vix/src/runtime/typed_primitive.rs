@@ -21,10 +21,10 @@ use crate::schema::SchemaPattern;
 use crate::vir::{ExternKind, RecordField, Type};
 
 use super::{
-    decode_primitive_value, ArgRole, EffectCtx, FromRef, RawEffectCompleter, RawEffectTicket,
-    RawPrimitive, PrimitiveCompletion, PrimitiveDescriptor, PrimitiveId, PrimitiveMachineError,
-    PrimitiveMemoPolicy, PrimitivePublication, ReadProjection, Receipt, RequestShape, Selector,
-    SelectorVariant, TicketCompletionError, ValueId,
+    ArgRole, EffectCtx, FromRef, PrimitiveCompletion, PrimitiveDescriptor, PrimitiveId,
+    PrimitiveMachineError, PrimitiveMemoPolicy, PrimitivePublication, RawEffectCompleter,
+    RawEffectTicket, RawPrimitive, ReadProjection, Receipt, RequestShape, Selector,
+    SelectorVariant, TicketCompletionError, ValueId, decode_primitive_value,
 };
 
 /// One accepted variant of a selector argument and the boolean flag it folds
@@ -101,8 +101,12 @@ pub trait Primitive<Ctx>: Send + Sync {
     /// Serve an already-decoded request with the projected dependency slice.
     /// The wire read + decode happened in [`TypedAdapter`]; a decode failure
     /// never reaches here (it is completed synchronously by the adapter).
-    fn begin(&self, req: Self::Request, ctx: EffectCtx, deps: Self::Deps)
-        -> EffectTicket<Self::Response>;
+    fn begin(
+        &self,
+        req: Self::Request,
+        ctx: EffectCtx,
+        deps: Self::Deps,
+    ) -> EffectTicket<Self::Response>;
 }
 
 /// A typed view over an erased [`RawEffectTicket`]: the handle a typed
@@ -162,8 +166,7 @@ pub trait ResponseValue {
 impl<T: ResponseValue> EffectCompleter<T> {
     /// Complete the demand with a successful typed response.
     pub fn complete_ok(self, ctx: &EffectCtx, resp: T) -> Result<(), TicketCompletionError> {
-        let publication =
-            publication_or_fallback(ctx, PrimitiveCompletion::Ok(resp.into_value()));
+        let publication = publication_or_fallback(ctx, PrimitiveCompletion::Ok(resp.into_value()));
         self.inner.complete(publication)
     }
 }
@@ -345,14 +348,16 @@ mod milestone {
 
     use super::*;
     use crate::runtime::{
-        observe_primitive_id, pinned_fetch_primitive_id, ObservePrimitive, ObserveRequest,
-        OriginHint, PinnedBlobRef, PinnedFetchPrimitive, PinnedFetchRequest,
+        ObservePrimitive, ObserveRequest, OriginHint, PinnedBlobRef, PinnedFetchPrimitive,
+        PinnedFetchRequest, observe_primitive_id, pinned_fetch_primitive_id,
     };
 
     fn old_fetch_descriptor() -> PrimitiveDescriptor {
         PrimitiveDescriptor {
             id: pinned_fetch_primitive_id(),
-            request_schema: SchemaPattern::exact(&Type::from_facet::<PinnedFetchRequest>().schema_ref()),
+            request_schema: SchemaPattern::exact(
+                &Type::from_facet::<PinnedFetchRequest>().schema_ref(),
+            ),
             response_schema: SchemaPattern::exact(&Type::Extern(ExternKind::Blob).schema_ref()),
             failure_schema: SchemaPattern::Var {
                 name: "PinnedFetchFailure".to_owned(),
@@ -379,7 +384,9 @@ mod milestone {
     fn old_observe_descriptor() -> PrimitiveDescriptor {
         PrimitiveDescriptor {
             id: observe_primitive_id(),
-            request_schema: SchemaPattern::exact(&Type::from_facet::<ObserveRequest>().schema_ref()),
+            request_schema: SchemaPattern::exact(
+                &Type::from_facet::<ObserveRequest>().schema_ref(),
+            ),
             response_schema: SchemaPattern::exact(&Type::Extern(ExternKind::Blob).schema_ref()),
             failure_schema: SchemaPattern::Var {
                 name: "ObserveFailure".to_owned(),
@@ -422,7 +429,10 @@ mod milestone {
     #[test]
     fn fetch_adapter_is_byte_identical_to_the_hand_written_primitive() {
         let adapter = TypedAdapter::new::<()>(PinnedFetchPrimitive);
-        assert_eq!(*RawPrimitive::<()>::descriptor(&adapter), old_fetch_descriptor());
+        assert_eq!(
+            *RawPrimitive::<()>::descriptor(&adapter),
+            old_fetch_descriptor()
+        );
         assert_eq!(
             RawPrimitive::<()>::request_shape(&adapter),
             Some(old_fetch_shape())

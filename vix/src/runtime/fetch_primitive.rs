@@ -4,8 +4,8 @@ use crate::schema::SchemaRef;
 use crate::vir::{ExternKind, Type};
 
 use super::{
-    ArgRoleDecl, Digest, EffectCtx, EffectTicket, Primitive, PrimitiveDecl,
-    PrimitiveMachineError, PrimitiveMemoPolicy, ReadProjection, ResponseValue, ValueId,
+    ArgRoleDecl, Digest, EffectCtx, EffectTicket, Primitive, PrimitiveDecl, PrimitiveMachineError,
+    PrimitiveMemoPolicy, ReadProjection, ResponseValue, ValueId,
 };
 // Only the test-only hand parsers (the `decode_primitive_value` oracle) walk the
 // wire `PrimitiveValue` structurally now; production `begin` decodes instead.
@@ -110,7 +110,12 @@ impl<Ctx> Primitive<Ctx> for PinnedFetchPrimitive {
         args: &[ArgRoleDecl::Value],
     };
 
-    fn begin(&self, req: PinnedFetchRequest, ctx: EffectCtx, _deps: ()) -> EffectTicket<BlobHandle> {
+    fn begin(
+        &self,
+        req: PinnedFetchRequest,
+        ctx: EffectCtx,
+        _deps: (),
+    ) -> EffectTicket<BlobHandle> {
         let (ticket, completer) = EffectTicket::<BlobHandle>::pair(&ctx, || {});
         std::thread::spawn(move || {
             let _ = match serve(req.pin, &ctx) {
@@ -271,7 +276,9 @@ pub(crate) fn parse_blob_id(
 }
 
 #[cfg(test)]
-pub(crate) fn parse_origins(value: &PrimitiveValue) -> Result<Vec<OriginHint>, PrimitiveMachineError> {
+pub(crate) fn parse_origins(
+    value: &PrimitiveValue,
+) -> Result<Vec<OriginHint>, PrimitiveMachineError> {
     let PrimitiveValueBody::Sequence { elements, .. } = &value.body else {
         return Err(invalid_value());
     };
@@ -365,7 +372,10 @@ mod schema_snapshot {
 
     #[test]
     fn request_schemas_are_byte_identical() {
-        assert_eq!(Type::from_facet::<BlobId>().schema_ref().to_string(), BLOB_ID);
+        assert_eq!(
+            Type::from_facet::<BlobId>().schema_ref().to_string(),
+            BLOB_ID
+        );
         assert_eq!(
             Type::from_facet::<OriginHint>().schema_ref().to_string(),
             ORIGIN_HINT

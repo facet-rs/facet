@@ -1,6 +1,6 @@
 # crate.vix v2 port gaps
 
-Source: `playgrounds/snark/src/bundled/vix/samples/crate.vix`
+Historical source: deleted legacy `playgrounds/snark/src/bundled/vix/samples/crate.vix`
 Port: `vix/corpus-next/crate.vix`
 
 These are design artifacts against `vix/corpus-next/SURFACE.md`; they are not
@@ -158,5 +158,4 @@ the payload is all you supply. `m.get(k).unwrap()` as an error-raise — which t
 file, `cargo_manifest.vix` and `index.vix` each invented independently, in three
 different disguises — is now a thing you should never write. Queue item C3 is closed.
 See `/vix/errors`.
-
 

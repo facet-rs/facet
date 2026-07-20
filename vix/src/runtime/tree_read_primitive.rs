@@ -2,9 +2,9 @@ use crate::schema::SchemaPattern;
 use crate::vir::{ExternKind, RecordField, RecordType, Type};
 
 use super::{
-    EffectCtx, RawEffectTicket, RawPrimitive, PrimitiveCompletion, PrimitiveDescriptor, PrimitiveField,
-    PrimitiveFieldValue, PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveValue,
-    PrimitiveValueBody, ReadProjection, ValueId, fixture_tree_name,
+    EffectCtx, PrimitiveCompletion, PrimitiveDescriptor, PrimitiveField, PrimitiveFieldValue,
+    PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveValue, PrimitiveValueBody,
+    RawEffectTicket, RawPrimitive, ReadProjection, ValueId, fixture_tree_name,
 };
 
 #[must_use]

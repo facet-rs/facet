@@ -1,6 +1,0 @@
-fn main(x: Int) -> Int {
-    match x {
-        _ => 1,
-        2 => 2,
-    }
-}

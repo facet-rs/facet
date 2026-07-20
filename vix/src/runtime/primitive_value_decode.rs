@@ -481,7 +481,10 @@ mod tests {
             decoded,
             Nested {
                 name: "hi".to_owned(),
-                pair: Pair { left: 0, right: false },
+                pair: Pair {
+                    left: 0,
+                    right: false
+                },
                 items: vec![],
                 note: None,
             }
@@ -759,10 +762,7 @@ mod tests {
     fn origin_hint_wire(origin: &OriginHint, capability_wire: PrimitiveValue) -> PrimitiveValue {
         product(
             Type::from_facet::<OriginHint>().schema_ref(),
-            vec![
-                child(capability_wire),
-                child_string(&origin.coordinate),
-            ],
+            vec![child(capability_wire), child_string(&origin.coordinate)],
         )
     }
 
@@ -830,7 +830,10 @@ mod tests {
             capability: RegistryHandle(capability_b.identity()),
             coordinate: "artifacts/b.bin".to_owned(),
         };
-        let origins = vec![(origin_a.clone(), capability_a), (origin_b.clone(), capability_b)];
+        let origins = vec![
+            (origin_a.clone(), capability_a),
+            (origin_b.clone(), capability_b),
+        ];
         let origins_wire_value = origins_wire(&origins);
 
         let upstream_bytes = [0xCD; 32];
@@ -1084,7 +1087,9 @@ mod tests {
 
     #[test]
     fn rejects_schema_ref_with_trailing_garbage_bytes() {
-        let mut bytes = Type::Extern(ExternKind::Blob).schema_ref().canonical_bytes();
+        let mut bytes = Type::Extern(ExternKind::Blob)
+            .schema_ref()
+            .canonical_bytes();
         bytes.push(0xFF);
         let wire = blob_id_wire(&BlobId {
             schema: Type::Extern(ExternKind::Blob).schema_ref(),

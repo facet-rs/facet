@@ -11,9 +11,7 @@ use taxon::{
 
 use crate::decode::{self, DecodeFormat, DecodedValue};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics, Label};
-use crate::runtime::{
-    OriginHint, PinnedBlobRef, tree_read_primitive_id, tree_read_request_type,
-};
+use crate::runtime::{OriginHint, PinnedBlobRef, tree_read_primitive_id, tree_read_request_type};
 use crate::schema::{SchemaBatch, SchemaRef, SchemaSet};
 use crate::support::{Span, Spanned};
 use crate::surface::{SurfaceParser, ast};
@@ -462,7 +460,7 @@ fn semantic_schema_set(source: &ast::SourceFile) -> Result<SchemaSet, Diagnostic
         let (name, span) = match item {
             ast::Item::Struct(record) => (&record.name.value, record.name.span),
             ast::Item::Enum(enumeration) => (&enumeration.name.value, enumeration.name.span),
-            ast::Item::Fn(_) | ast::Item::Import(_) => continue,
+            ast::Item::Fn(_) | ast::Item::Import(_) | ast::Item::Command(_) => continue,
         };
         if batch.named_ref(name).is_some() || declarations.insert(name.clone(), span).is_some() {
             return Err(Diagnostics::one(Diagnostic {
@@ -569,7 +567,7 @@ fn semantic_schema_set(source: &ast::SourceFile) -> Result<SchemaSet, Diagnostic
                     },
                 );
             }
-            ast::Item::Fn(_) | ast::Item::Import(_) => {}
+            ast::Item::Fn(_) | ast::Item::Import(_) | ast::Item::Command(_) => {}
         }
     }
     Ok(batch.finish())
@@ -656,7 +654,7 @@ impl<'a> TypeResolver<'a> {
                 ),
                 // Imports are consumed by the module front before lowering;
                 // a stray one contributes no type declaration.
-                ast::Item::Fn(_) | ast::Item::Import(_) => continue,
+                ast::Item::Fn(_) | ast::Item::Import(_) | ast::Item::Command(_) => continue,
             };
             if name == "Ordering" {
                 return Err(Diagnostics::one(Diagnostic {
@@ -1310,7 +1308,7 @@ fn lower_module(source: &ast::SourceFile, config: CompilerConfig) -> Result<Modu
         .filter_map(|item| match item {
             ast::Item::Struct(record) => Some(record.name.value.as_str()),
             ast::Item::Enum(enumeration) => Some(enumeration.name.value.as_str()),
-            ast::Item::Fn(_) | ast::Item::Import(_) => None,
+            ast::Item::Fn(_) | ast::Item::Import(_) | ast::Item::Command(_) => None,
         })
         .collect::<BTreeSet<_>>();
     let mut signatures = BTreeMap::new();
@@ -1377,7 +1375,10 @@ fn lower_module(source: &ast::SourceFile, config: CompilerConfig) -> Result<Modu
                     Some(Type::Record(record)) => Some(record.clone()),
                     _ => None,
                 },
-                ast::Item::Enum(_) | ast::Item::Fn(_) | ast::Item::Import(_) => None,
+                ast::Item::Enum(_)
+                | ast::Item::Fn(_)
+                | ast::Item::Import(_)
+                | ast::Item::Command(_) => None,
             })
             .collect(),
         enums: resolved_enum_declarations(source, &types),

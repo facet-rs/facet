@@ -1006,7 +1006,10 @@ pub enum TicketCompletionError {
 }
 
 impl RawEffectTicket {
-    fn pair(demand: DemandKey, cancel: impl FnOnce() + Send + 'static) -> (Self, RawEffectCompleter) {
+    fn pair(
+        demand: DemandKey,
+        cancel: impl FnOnce() + Send + 'static,
+    ) -> (Self, RawEffectCompleter) {
         let shared = Arc::new(TicketShared {
             demand,
             state: Mutex::new(TicketState {
@@ -1324,8 +1327,7 @@ mod from_ref_tests {
 
     #[test]
     fn primitive_projects_its_dependency_out_of_the_shared_context_via_from_ref() {
-        let request =
-            FramedNode::leaf(Type::String.schema_ref(), b"ignored".to_vec()).identity();
+        let request = FramedNode::leaf(Type::String.schema_ref(), b"ignored".to_vec()).identity();
         let demand = DemandKey::from_preimage(&DemandPreimage {
             closure: RecipeId::from_canonical_vir(b"from-ref-test"),
             arguments: vec![request.clone()],

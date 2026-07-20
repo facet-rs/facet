@@ -5739,14 +5739,6 @@ mod tests {
                     Some(0)
                 ),
                 (
-                    "vix",
-                    "samples/ast-query.vix",
-                    true,
-                    Some("vix"),
-                    Some(0),
-                    Some(0)
-                ),
-                (
                     "yuri",
                     "samples/example.yuri",
                     true,

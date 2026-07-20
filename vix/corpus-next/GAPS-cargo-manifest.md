@@ -1,6 +1,7 @@
 # GAPS: cargo_manifest.vix
 
-Source: `playgrounds/snark/src/bundled/vix/samples/cargo_manifest.vix`
+Historical source: deleted legacy
+`playgrounds/snark/src/bundled/vix/samples/cargo_manifest.vix`
 Port: `vix/corpus-next/cargo_manifest.vix`
 Surface: v2, from `vix/corpus-next/SURFACE.md`, `vix/docs/content-design/maps-all-the-way-down.md`, and `vix/docs/content-design/spec-changelog.md` rounds 7-9 plus addenda.
 

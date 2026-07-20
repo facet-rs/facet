@@ -937,20 +937,18 @@ impl Type {
 
     fn from_facet_user(shape: &'static facet::Shape) -> Self {
         match shape.ty {
-            facet::Type::User(facet::UserType::Struct(struct_type)) => {
-                match struct_type.kind {
-                    facet::StructKind::Unit | facet::StructKind::Struct => Self::Record(
-                        RecordType::new(shape.type_identifier, facet_fields(struct_type.fields)),
-                    ),
-                    facet::StructKind::Tuple | facet::StructKind::TupleStruct => Self::Tuple(
-                        struct_type
-                            .fields
-                            .iter()
-                            .map(|field| Self::from_facet_shape(field.shape()))
-                            .collect(),
-                    ),
-                }
-            }
+            facet::Type::User(facet::UserType::Struct(struct_type)) => match struct_type.kind {
+                facet::StructKind::Unit | facet::StructKind::Struct => Self::Record(
+                    RecordType::new(shape.type_identifier, facet_fields(struct_type.fields)),
+                ),
+                facet::StructKind::Tuple | facet::StructKind::TupleStruct => Self::Tuple(
+                    struct_type
+                        .fields
+                        .iter()
+                        .map(|field| Self::from_facet_shape(field.shape()))
+                        .collect(),
+                ),
+            },
             facet::Type::User(facet::UserType::Enum(enum_type)) => Self::Enum(EnumType::new(
                 shape.type_identifier,
                 enum_type

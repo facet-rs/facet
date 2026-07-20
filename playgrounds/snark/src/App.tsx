@@ -1,7 +1,7 @@
 import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { runParse } from "./parseClient";
 import { runBenchmark, BenchBody, benchMeta, type BenchReport } from "./benchmark";
-import { SourceEditor, type EditorJump, type IdeInfo, type IdeState, type SourceEdit } from "./editor";
+import { SourceEditor, type EditorJump, type SourceEdit } from "./editor";
 import { captureClass } from "./highlight";
 import { defaultVendoredRootId, vendoredFiles } from "./bundled";
 import {
@@ -284,8 +284,6 @@ type PlaygroundResponse = {
   highlight_tests: HighlightTestOutput[];
   tests: TestSummary;
   timings: Timings;
-  /** vix IDE bindings (attached client-side from the worker's vix lane). */
-  vix_ide?: IdeState;
   /** vix machine run (attached client-side from the worker's vix lane). */
   vix_machine?: VixMachineRun | null;
 };
@@ -394,7 +392,7 @@ const defaultFiles: BundleFile[] = vendoredFiles;
 // One frame (~60fps). Leading-edge throttle interval for live re-parsing.
 const PARSE_THROTTLE_MS = 16;
 
-// Hash routes: `#/vix` selects a grammar root, `#/vix/samples/lua.vix` a sample too.
+// Hash routes select a grammar root and, optionally, one of its samples.
 // Kept in sync both ways (replaceState on UI changes; hashchange applies inbound edits).
 function parseHashRoute(): { root: string; sample: string } | null {
   const raw = window.location.hash.replace(/^#\/?/, "");
@@ -420,12 +418,6 @@ const routedSample = initialRouteValid
   : undefined;
 const defaultSample =
   routedSample ??
-  sourceExamplesForGrammarRootId(defaultFiles, defaultGrammarRoot).find(
-    (file) => defaultGrammarRoot === "vix" && file.path === "samples/lua.vix",
-  ) ??
-  sourceExamplesForGrammarRootId(defaultFiles, defaultGrammarRoot).find(
-    (file) => defaultGrammarRoot === "vix" && file.path === "samples/merge-demand.vix",
-  ) ??
   preferredSampleForGrammarRootId(defaultFiles, defaultGrammarRoot);
 
 type PendingSourceEdit = {
@@ -755,7 +747,7 @@ export function App() {
         baselineInputRef.current === pendingEdit.oldInput &&
         pendingEdit.oldInput !== input;
 
-      let result: { response: string; prepared: boolean; vix: string | null; vixMachine: string | null };
+      let result: { response: string; prepared: boolean; vixMachine: string | null };
       try {
         result = await runParse({
           key,
@@ -764,7 +756,6 @@ export function App() {
           runCorpus: runBundledTests,
           edit: useReparse ? pendingEdit.edit : null,
           useReparse,
-          vixIde: activeGrammarRootId === "vix",
           vixMachineFn: activeGrammarRootId === "vix" ? activeMachineFn : null,
         });
       } catch (error) {
@@ -776,8 +767,6 @@ export function App() {
 
       preparedKeyRef.current = result.prepared ? key : null;
       const parsed = JSON.parse(result.response) as PlaygroundResponse;
-      // IDE bindings only make sense against the exact input they were computed for.
-      parsed.vix_ide = result.vix ? { ide: JSON.parse(result.vix) as IdeInfo, input } : null;
       parsed.vix_machine = result.vixMachine ? (JSON.parse(result.vixMachine) as VixMachineRun) : null;
       if (runBundledTests) {
         bundledTestSnapshotRef.current = {
@@ -961,7 +950,6 @@ export function App() {
             input={input}
             captures={editorCaptures}
             diagnostic={editorDiagnostic}
-            ide={result?.vix_ide ?? null}
             jump={editorJump}
             onCursorByte={(byte) => {
               setSourceCursorByte(byte);

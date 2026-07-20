@@ -1,3 +1,0 @@
-fn main(x: Missing) -> Int {
-    1
-}

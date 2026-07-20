@@ -1,11 +1,9 @@
 [workspace]
 members = [
-  "arborium-vix",
   "gingembre-snark-spike",
   "snark-ts-diff",
   "vix",
   "facet-lsp",
-  "vix-lsp",
   "vix-fetch",
   "exec-protocol",
   # core

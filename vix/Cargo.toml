@@ -1,8 +1,6 @@
 # vix — the demand-driven language.
 #
-# build.rs currently generates two Snark front ends while existing consumers
-# migrate: the playground v0 grammar and the authoritative ratchet-facing grammar
-# in surface/grammar.js. Both ASTs and resolved-CST lowerings are generated; no
+# build.rs generates the authoritative surface grammar and typed AST. No
 # evaluator hand-writes a syntax tree.
 
 [package]
@@ -62,6 +60,7 @@ windows-sys = { workspace = true, features = [
 # normal deps and are nameable from integration tests, so no extra dev-dep is
 # needed for it.
 semver = "1.0.28"
+tempfile.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time"] }
 weavy = { path = "../weavy" }
 

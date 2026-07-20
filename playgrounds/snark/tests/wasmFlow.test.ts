@@ -1721,7 +1721,6 @@ test("runs every vendored grammar sample through generated grammar.json and Snar
       { id: "nginx", sample: "samples/basic.conf", ok: true, language: "nginx", errorCount: 0, missingCount: 0 },
       { id: "proto", sample: "samples/addressbook.proto", ok: true, language: "proto", errorCount: 0, missingCount: 0 },
       { id: "thrift", sample: "samples/tutorial.thrift", ok: true, language: "thrift", errorCount: 0, missingCount: 0 },
-      { id: "vix", sample: "samples/ast-query.vix", ok: true, language: "vix", errorCount: 0, missingCount: 0 },
       { id: "yuri", sample: "samples/example.yuri", ok: true, language: "yuri", errorCount: 0, missingCount: 0 },
     ],
   );

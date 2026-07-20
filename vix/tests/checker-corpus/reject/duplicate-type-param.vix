@@ -1,7 +1,0 @@
-struct Pair<A, A> {
-    first: A,
-}
-
-fn main() -> Int {
-    1
-}

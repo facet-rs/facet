@@ -1,8 +1,0 @@
-enum Mode {
-    Fast,
-    Fast,
-}
-
-fn main() -> Int {
-    1
-}

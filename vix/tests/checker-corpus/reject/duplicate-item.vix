@@ -1,7 +1,0 @@
-fn build() -> Int {
-    1
-}
-
-fn build() -> Int {
-    2
-}

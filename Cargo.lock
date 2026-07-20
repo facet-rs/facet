@@ -268,15 +268,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "arborium-vix"
-version = "0.1.0"
-dependencies = [
- "arborium-tree-sitter",
- "cc",
- "tree-sitter-language",
-]
-
-[[package]]
 name = "arborium-xml"
 version = "2.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7913,7 +7904,6 @@ name = "snark-wasm"
 version = "0.0.1"
 dependencies = [
  "snark-playground",
- "vix",
  "wasm-bindgen",
 ]
 
@@ -8401,12 +8391,6 @@ checksum = "c64fc7232dd8d2e4ac5ce4ef302b1d81e0b80d055b9d77c7c4f51f6aa4c867d6"
 dependencies = [
  "is_ci",
 ]
-
-[[package]]
-name = "symlink"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7973cce6668464ea31f176d85b13c7ab3bba2cb3b77a2ed26abd7801688010a"
 
 [[package]]
 name = "syn"
@@ -9234,19 +9218,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tracing-appender"
-version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "050686193eb999b4bb3bc2acfa891a13da00f79734704c4b8b4ef1a10b368a3c"
-dependencies = [
- "crossbeam-channel",
- "symlink",
- "thiserror 2.0.18",
- "time",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "tracing-attributes"
 version = "0.1.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9667,20 +9638,6 @@ dependencies = [
  "tar",
  "tempfile",
  "ureq",
- "vix",
-]
-
-[[package]]
-name = "vix-lsp"
-version = "0.0.0"
-dependencies = [
- "facet",
- "facet-json",
- "facet-lsp",
- "facet-testhelpers",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
  "vix",
 ]
 

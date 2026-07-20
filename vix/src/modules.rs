@@ -45,6 +45,7 @@ fn declared_items(file: &ast::SourceFile) -> BTreeMap<String, DeclaredItem> {
             ast::Item::Fn(function) => (&function.name.value, function.vis.is_some()),
             ast::Item::Struct(record) => (&record.name.value, record.vis.is_some()),
             ast::Item::Enum(enumeration) => (&enumeration.name.value, enumeration.vis.is_some()),
+            ast::Item::Command(command) => (&command.name.value, command.vis.is_some()),
             ast::Item::Import(_) => continue,
         };
         items.entry(name.clone()).or_insert(DeclaredItem { public });
@@ -151,6 +152,11 @@ fn resolve_imports(
                         enumeration.name.span,
                         &enumeration.name.value,
                     ));
+                }
+            }
+            ast::Item::Command(command) => {
+                if !bound.insert(command.name.value.clone()) {
+                    return Err(duplicate_name(command.name.span, &command.name.value));
                 }
             }
         }
@@ -314,6 +320,31 @@ impl Rewriter<'_> {
                                 self.ty(&mut field.ty)?;
                             }
                         }
+                    }
+                }
+            }
+            ast::Item::Command(command) => {
+                self.reference(&mut command.name);
+                if let Some(return_type) = &mut command.return_type {
+                    self.ty(return_type)?;
+                }
+                self.command_pattern(&mut command.grammar.pattern)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn command_pattern(&mut self, pattern: &mut ast::CommandPattern) -> Result<(), Diagnostics> {
+        for alternative in &mut pattern.alternatives {
+            for term in &mut alternative.terms {
+                match &mut term.atom {
+                    ast::CommandAtom::Literal(_) => {}
+                    ast::CommandAtom::Slot(slot) => self.ty(&mut slot.ty)?,
+                    ast::CommandAtom::Optional(optional) => {
+                        self.command_pattern(&mut optional.pattern)?;
+                    }
+                    ast::CommandAtom::Group(group) => {
+                        self.command_pattern(&mut group.pattern)?;
                     }
                 }
             }

@@ -1,9 +1,0 @@
-enum Artifact {
-    Archive { name: String },
-}
-
-fn main(a: Artifact) -> String {
-    match a {
-        Artifact::Archive { name, name } => name,
-    }
-}

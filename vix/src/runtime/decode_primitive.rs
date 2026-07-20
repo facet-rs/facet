@@ -6,9 +6,9 @@ use crate::vir::{
 };
 
 use super::{
-    EffectCtx, RawEffectTicket, RawPrimitive, PrimitiveCompletion, PrimitiveDescriptor, PrimitiveField,
-    PrimitiveFieldValue, PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveValue,
-    PrimitiveValueBody, ReadProjection, ValueId,
+    EffectCtx, PrimitiveCompletion, PrimitiveDescriptor, PrimitiveField, PrimitiveFieldValue,
+    PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveValue, PrimitiveValueBody,
+    RawEffectTicket, RawPrimitive, ReadProjection, ValueId,
 };
 
 pub struct DecodePrimitive {
