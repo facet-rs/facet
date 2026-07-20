@@ -8361,12 +8361,82 @@ fn task_fault_attribution(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compiler::Compiler;
+    use crate::compiler::{Compiler, CompilerConfig};
     use crate::lowering::{LoweringCache, attribution_for};
+
+    /// A compiler carrying the vixen stdlib prelude, for the decode-dispatch
+    /// tests whose fixture calls `json_decode`. `PRELUDE_SOURCES` is `&[&str]`
+    /// data, so naming it across the dev-dependency is free of the crate-copy
+    /// identity hazard that types (e.g. `RawPrimitive`) would hit.
+    fn decode_compiler() -> Compiler {
+        Compiler::with_config(CompilerConfig {
+            prelude: vixen_primitives::stdlib::PRELUDE_SOURCES,
+            ..CompilerConfig::default()
+        })
+    }
     use crate::runtime::{
-        DecodePrimitive, EventLog, FramedNode, MachineCause, PrimitiveDescriptor,
-        PrimitiveRegistry, RawPrimitive, TicketCompletionError,
+        EventLog, FramedNode, MachineCause, PrimitiveDescriptor, PrimitiveRegistry, RawPrimitive,
+        TicketCompletionError,
     };
+    use crate::schema::SchemaPattern;
+    use crate::vir::{decode_primitive_id, decode_request_type};
+
+    // The engine's own dispatch tests exercise it against a decode primitive.
+    // The concrete `LocalDecode` lives in vixen-primitives, but a
+    // dev-dependency on it would be a *second copy* of this very crate (the
+    // dev-dep cycle), whose `RawPrimitive` would not satisfy this crate's own
+    // trait. So we wrap the shared, in-crate decode logic (`decode_request`) in a
+    // local primitive — identical behaviour, one crate version.
+    struct LocalDecode {
+        descriptor: PrimitiveDescriptor,
+    }
+
+    impl Default for LocalDecode {
+        fn default() -> Self {
+            Self {
+                descriptor: PrimitiveDescriptor {
+                    id: decode_primitive_id(),
+                    request_schema: SchemaPattern::exact(&decode_request_type().schema_ref()),
+                    response_schema: SchemaPattern::Var {
+                        name: "Response".to_owned(),
+                    },
+                    failure_schema: SchemaPattern::Var {
+                        name: "Failure".to_owned(),
+                    },
+                    memo_policy: PrimitiveMemoPolicy::Hermetic,
+                    protocol_version: 1,
+                    capability_schemas: Vec::new(),
+                },
+            }
+        }
+    }
+
+    impl RawPrimitive<()> for LocalDecode {
+        fn descriptor(&self) -> &PrimitiveDescriptor {
+            &self.descriptor
+        }
+
+        fn begin(&self, request: ValueId, ctx: EffectCtx, _app: &()) -> RawEffectTicket {
+            let (ticket, completer) = ctx.ticket(|| {});
+            let completion = crate::runtime::decode_request(&request, &ctx)
+                .and_then(|value| ctx.intern_value(value))
+                .map(PrimitiveCompletion::Ok)
+                .unwrap_or_else(PrimitiveCompletion::MachineError);
+            let publication = ctx.finish(completion).unwrap_or_else(|error| {
+                crate::runtime::PrimitivePublication {
+                    completion: PrimitiveCompletion::MachineError(error),
+                    receipt: crate::runtime::Receipt {
+                        demand: ctx.demand(),
+                        reads: Vec::new(),
+                    },
+                    journal: Vec::new(),
+                    progressive: Vec::new(),
+                }
+            });
+            let _ = completer.complete(publication);
+            ticket
+        }
+    }
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::mpsc::{SyncSender, sync_channel};
     use std::sync::{Arc, Condvar, Mutex};
@@ -8436,7 +8506,7 @@ fn scheduler_decode() -> Stream<Check> {
 
         fn begin(&self, request: ValueId, ctx: EffectCtx, app: &()) -> RawEffectTicket {
             self.begins.fetch_add(1, Ordering::AcqRel);
-            DecodePrimitive::default().begin(request, ctx, app)
+            LocalDecode::default().begin(request, ctx, app)
         }
     }
 
@@ -8475,7 +8545,7 @@ fn scheduler_decode() -> Stream<Check> {
                     released = wake.wait(released).expect("decode gate mutex poisoned");
                 }
                 drop(released);
-                let inner = DecodePrimitive::default().begin(request, ctx, &());
+                let inner = LocalDecode::default().begin(request, ctx, &());
                 let _subscription = inner.join(move |publication| {
                     let result = completer.complete(publication.clone());
                     completed
@@ -8517,7 +8587,7 @@ fn scheduler_decode() -> Stream<Check> {
         runtime: &mut Runtime<EventLog>,
         chaos: ChaosPolicy,
     ) -> Result<Evaluation, Box<MachineError>> {
-        let module = Compiler::new()
+        let module = decode_compiler()
             .compile(SCHEDULER_DECODE_SOURCE)
             .expect("scheduler decode source compiles");
         let partitioned = module.partition_test(&module.tests[0]);
@@ -8543,7 +8613,7 @@ fn scheduler_decode() -> Stream<Check> {
     fn submit_scheduler_decode(
         runtime: &mut Runtime<EventLog>,
     ) -> Result<DemandKey, Box<MachineError>> {
-        let module = Compiler::new()
+        let module = decode_compiler()
             .compile(SCHEDULER_DECODE_SOURCE)
             .expect("scheduler decode source compiles");
         let partitioned = module.partition_test(&module.tests[0]);
@@ -8571,10 +8641,10 @@ fn scheduler_decode() -> Stream<Check> {
     #[test]
     fn kill_during_primitive_park_replays_and_joins_one_ticket() {
         let begins = Arc::new(AtomicUsize::new(0));
-        let primitive = DecodePrimitive::default();
+        let primitive = LocalDecode::default();
         let mut runtime = Runtime::new(EventLog::default());
         runtime.primitive_dispatcher = decode_registry(Arc::new(CountingDecode {
-            descriptor: <DecodePrimitive as RawPrimitive<()>>::descriptor(&primitive).clone(),
+            descriptor: <LocalDecode as RawPrimitive<()>>::descriptor(&primitive).clone(),
             begins: begins.clone(),
         }));
 
@@ -8606,10 +8676,10 @@ fn scheduler_decode() -> Stream<Check> {
         let cancellations = Arc::new(AtomicUsize::new(0));
         let gate = Arc::new((Mutex::new(false), Condvar::new()));
         let (completed_tx, completed_rx) = sync_channel(1);
-        let primitive = DecodePrimitive::default();
+        let primitive = LocalDecode::default();
         let mut runtime = Runtime::new(EventLog::default());
         runtime.primitive_dispatcher = decode_registry(Arc::new(DelayedDecode {
-            descriptor: <DecodePrimitive as RawPrimitive<()>>::descriptor(&primitive).clone(),
+            descriptor: <LocalDecode as RawPrimitive<()>>::descriptor(&primitive).clone(),
             begins: begins.clone(),
             cancellations: cancellations.clone(),
             gate,

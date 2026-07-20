@@ -1,7 +1,7 @@
 //! Checked-call ABI for an aggregate that contains an array. The result retains
 //! its structural value-shape when it crosses the hidden array outcome.
 
-use vix::ratchet::run_source;
+use vixen_runtime::ratchet::run_source;
 
 const SOURCE: &str = r#"
 struct Boxed { values: [Int] }

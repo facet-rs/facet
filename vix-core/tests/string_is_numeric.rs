@@ -5,7 +5,7 @@
 //! primitive the version substrate needs to classify SemVer prerelease
 //! identifiers as numeric or alphanumeric.
 
-use vix::ratchet::run_source;
+use vixen_runtime::ratchet::run_source;
 
 const SOURCE: &str = r#"
 #[test]

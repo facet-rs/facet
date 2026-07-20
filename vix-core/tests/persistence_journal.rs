@@ -1,4 +1,4 @@
-use vix::ratchet::{RunError, prepare_source};
+use vixen_runtime::ratchet::{RunError, prepare_source};
 use vix::runtime::{
     PersistentClaimRejectionReason, PersistentRuntimeJournalError, StoreJournalError,
 };

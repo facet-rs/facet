@@ -25,13 +25,13 @@
 
 use std::path::Path;
 
-use vix::budget::{BudgetOutcome, Workload, run_source_under_declared_budget, run_under_budget};
+use vixen_runtime::budget::{BudgetOutcome, Workload, run_source_under_declared_budget, run_under_budget};
 use vix::compiler::Compiler;
 use vix::diagnostic::DiagnosticCode;
-use vix::ratchet::run_source;
+use vixen_runtime::ratchet::run_source;
 use vix::vir::Budget;
 
-const RUNG_050: &str = include_str!("ratchet/050-deep-tail-recursion.vix");
+const RUNG_050: &str = include_str!("../../vix-core/tests/ratchet/050-deep-tail-recursion.vix");
 
 /// The compiled outer budget-enforcing child process.
 const CHILD_EXE: &str = env!("CARGO_BIN_EXE_vix-budget-child");
@@ -266,7 +266,7 @@ fn within() -> Stream<Check> {
         matches!(
             outcome,
             BudgetOutcome::Within {
-                report: vix::budget::ChildReport::RanSource { passed: true, .. }
+                report: vixen_runtime::budget::ChildReport::RanSource { passed: true, .. }
             }
         ),
         "the outcome is an in-budget successful source run: {outcome:?}",
@@ -417,7 +417,7 @@ fn tight_wall() -> Stream<Check> {
         matches!(
             outcome,
             BudgetOutcome::Within {
-                report: vix::budget::ChildReport::Completed
+                report: vixen_runtime::budget::ChildReport::Completed
             }
         ),
         "a slow-to-prepare, fast-to-execute workload completes within budget: {outcome:?}",
@@ -512,4 +512,21 @@ fn bare() -> Stream<Check> {
 }
 "#;
     assert_eq!(compile_error_code(SOURCE), DiagnosticCode::TypeMismatch);
+}
+
+/// The rung 050 deep-tail-recursion fixture runs to completion under its
+/// declared budget through the outer child path. (Extracted from the vix-core
+/// ratchet_runner suite because it spawns the vixen-runtime budget child bin.)
+#[test]
+fn rung_050_deep_tail_recursion_runs_under_its_declared_budget() {
+    let outcome = run_source_under_declared_budget(Path::new(CHILD_EXE), RUNG_050);
+    assert!(
+        matches!(
+            &outcome,
+            BudgetOutcome::Within {
+                report: vixen_runtime::budget::ChildReport::RanSource { passed: true, .. },
+            }
+        ),
+        "unexpected budget outcome: {outcome:?}"
+    );
 }

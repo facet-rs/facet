@@ -17,7 +17,7 @@
 
 use vix::compiler::{Compiler, CompilerConfig};
 use vix::lowering::LoweringCache;
-use vix::ratchet::{RunError, run_source, run_source_with_config};
+use vixen_runtime::ratchet::{RunError, run_source, run_source_with_config};
 use vix::runtime::EventKind;
 use vix::vir::Op as VirOp;
 use weavy::task::Op as WeavyOp;
@@ -343,7 +343,7 @@ fn duplicates() -> Stream<Check> {
     )
     .expect("forced-copy duplicates run");
     assert!(molten.passed() && copy.passed());
-    let ids = |report: &vix::ratchet::RatchetReport| -> Vec<_> {
+    let ids = |report: &vixen_runtime::ratchet::RatchetReport| -> Vec<_> {
         report
             .plain
             .checks
@@ -387,7 +387,7 @@ fn canonical_rung_051_publishes_the_million_element_value_once() {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn weavy_mark_count(report: &vix::ratchet::RatchetReport) -> usize {
+fn weavy_mark_count(report: &vixen_runtime::ratchet::RatchetReport) -> usize {
     report
         .plain
         .events

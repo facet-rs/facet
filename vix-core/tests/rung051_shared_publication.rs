@@ -9,7 +9,7 @@
 //! `ValueId`.
 
 use vix::compiler::{Compiler, CompilerConfig};
-use vix::ratchet::{run_source, run_source_with_config};
+use vixen_runtime::ratchet::{run_source, run_source_with_config};
 use vix::runtime::EventKind;
 use vix::vir::{Op as VirOp, PartitionedRecipe};
 

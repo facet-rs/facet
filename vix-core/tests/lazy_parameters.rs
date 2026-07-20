@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 
 use vix::compiler::Compiler;
 use vix::lowering::LoweringCache;
-use vix::ratchet::run_source;
+use vixen_runtime::ratchet::run_source;
 use vix::runtime::{EventKind, FailureValue};
 use weavy::task::Op as WeavyOp;
 

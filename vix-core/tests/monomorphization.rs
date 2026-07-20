@@ -9,7 +9,7 @@
 //! instantiation bound: a generic that recurses at an ever-growing type is
 //! rejected with a diagnostic rather than instantiated without limit.
 
-use vix::ratchet::{RunError, run_source};
+use vixen_runtime::ratchet::{RunError, run_source};
 
 fn passing(source: &str, checks: usize) {
     let report = run_source(source).expect("generic program compiles and runs in production");

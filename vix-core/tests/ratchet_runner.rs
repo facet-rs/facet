@@ -1,12 +1,11 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use vix::budget::{BudgetOutcome, ChildReport, run_source_under_declared_budget};
 use vix::compiler::{Compiler, CompilerConfig};
 use vix::diagnostic::{DiagnosticCode, DiagnosticPayload, DiagnosticSeverity};
 use vix::lowering::{LoweringCache, attribution_for, source_map_for};
 use vix::modules::ModuleSource;
-use vix::ratchet::{
+use vixen_runtime::ratchet::{
     RunError, SnapshotExpectations, run_source, run_source_innards, run_source_rerun_audit,
     run_source_rerun_audit_with_lane, run_source_revision_audit,
     run_source_revision_audit_with_lane, run_source_with_modules, run_source_with_snapshots,
@@ -4270,22 +4269,10 @@ fn rung_052_functions_are_first_class_arguments_and_results() {
     }
 }
 
-#[test]
-fn rung_050_deep_tail_recursion_runs_under_its_declared_budget() {
-    let outcome = run_source_under_declared_budget(
-        Path::new(env!("CARGO_BIN_EXE_vix-budget-child")),
-        RUNG_050,
-    );
-    assert!(
-        matches!(
-            &outcome,
-            BudgetOutcome::Within {
-                report: ChildReport::RanSource { passed: true, .. },
-            }
-        ),
-        "unexpected budget outcome: {outcome:?}"
-    );
-}
+// `rung_050_deep_tail_recursion_runs_under_its_declared_budget` moved to
+// vixen-runtime/tests/rung050_trace_budget.rs: it spawns the vixen-runtime
+// budget child bin (CARGO_BIN_EXE_vix-budget-child), which is only nameable from
+// that crate's tests.
 
 /// The ordinary ratchet path is production execution, not an innards
 /// diagnostic capture. The self-tail pollpoint remains in lowered code for
@@ -5948,7 +5935,7 @@ fn t() -> Stream<Check> {
 
     // 2. Production Store path: running both interns the same framed value
     //    identities and yields identical check identities.
-    let store_identities = |run: &vix::ratchet::SuiteRun| {
+    let store_identities = |run: &vixen_runtime::ratchet::SuiteRun| {
         run.events
             .iter()
             .filter_map(|event| match &event.kind {
@@ -6255,7 +6242,7 @@ fn t() -> Stream<Check> {
     // yield-site provenance — the decoded program binds its payload through a
     // match, so its yield sites are numbered differently, but the value each
     // check observes must be the same content-addressed value.
-    let check_value_ids = |run: &vix::ratchet::SuiteRun| {
+    let check_value_ids = |run: &vixen_runtime::ratchet::SuiteRun| {
         run.checks
             .iter()
             .map(|check| check.identity.clone())
@@ -6997,7 +6984,7 @@ const GREEK_LETTERS_GOLDEN: &str = "[\n    \"alpha\",\n    \"beta\",\n    \"gamm
 /// The one snapshot check in `report`, asserting lanes agree and it is the only
 /// check. Goldens are supplied to `run_source_with_snapshots`, so the verdict is
 /// the ratchet's own — not a post-hoc Rust `assert_eq!` over an always-pass run.
-fn sole_snapshot(report: &vix::ratchet::RatchetReport) -> SnapshotOutcome {
+fn sole_snapshot(report: &vixen_runtime::ratchet::RatchetReport) -> SnapshotOutcome {
     assert!(
         report.agrees(),
         "plain and chaos lanes agree on the snapshot"
@@ -7071,13 +7058,13 @@ fn rung_061_snapshots_sorted_stream_values_are_canonical() {
 
 /// Run inline snapshot source against an oracle and return the checks in site
 /// order (plain lane); asserts lanes agree so every assertion is lane-stable.
-fn snapshot_checks(source: &str, oracle: &SnapshotExpectations) -> Vec<vix::ratchet::CheckRun> {
+fn snapshot_checks(source: &str, oracle: &SnapshotExpectations) -> Vec<vixen_runtime::ratchet::CheckRun> {
     let report = run_source_with_snapshots(source, oracle).expect("snapshot source runs");
     assert!(report.agrees(), "plain and chaos lanes agree");
     report.plain.checks.clone()
 }
 
-fn snapshot_outcome(check: &vix::ratchet::CheckRun) -> SnapshotOutcome {
+fn snapshot_outcome(check: &vixen_runtime::ratchet::CheckRun) -> SnapshotOutcome {
     check
         .snapshot
         .as_ref()

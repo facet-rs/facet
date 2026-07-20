@@ -17,7 +17,7 @@
 use std::collections::BTreeMap;
 
 use vix::compiler::Compiler;
-use vix::ratchet::{RatchetReport, run_source};
+use vixen_runtime::ratchet::{RatchetReport, run_source};
 use vix::runtime::EventKind;
 
 const RUNG_052: &str = include_str!("ratchet/052-higher-order.vix");

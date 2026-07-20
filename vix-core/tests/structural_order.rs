@@ -7,7 +7,7 @@
 //! reuse the machine's structural comparison — no host comparator, no
 //! handle/hash order.
 
-use vix::ratchet::run_source;
+use vixen_runtime::ratchet::run_source;
 
 fn all_pass(source: &str, expected_checks: usize) {
     let report = run_source(source).expect("compiles and runs through the production path");

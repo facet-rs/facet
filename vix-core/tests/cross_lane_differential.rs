@@ -22,7 +22,7 @@
 //! * [`SuiteRun::check_family`] — the provenance-keyed completed check family,
 //!   which carries each check's evaluated value identity, ordinary demand
 //!   argument identities, pass/fail verdict, failure value, and failure-context
-//!   attribution (a full [`vix::ratchet::CheckRun`] compared by value, not a
+//!   attribution (a full [`vixen_runtime::ratchet::CheckRun`] compared by value, not a
 //!   boolean);
 //! * [`SuiteRun::value_family`] — the provenance-keyed published value identities
 //!   and their failure payloads;
@@ -49,7 +49,7 @@
 //! [`weavy::jit::task_lane::available`] capability rule the other in-tree
 //! cross-lane tests use (e.g. `tail_loop_interpreter_and_jit_agree`).
 
-use vix::ratchet::{
+use vixen_runtime::ratchet::{
     RatchetReport, RunError, SnapshotExpectations, SuiteRun, run_source_with_snapshots_and_lane,
 };
 use weavy::exec::LaneRequest;

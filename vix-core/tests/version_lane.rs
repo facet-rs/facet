@@ -28,7 +28,7 @@
 //!     (`parse_req`, `contains`/`intersect`/`is_empty`) with method dispatch.
 
 use vix::diagnostic::{DiagnosticCode, DiagnosticPayload};
-use vix::ratchet::{RunError, run_source};
+use vixen_runtime::ratchet::{RunError, run_source};
 
 /// The vix-native version substrate, authored in the production surface as
 /// records-at-offsets values over the checked string/array/comparison

@@ -6,7 +6,7 @@
 //! canonical source intentionally names a fixture provider.
 
 use vix::diagnostic::{DiagnosticCode, DiagnosticPayload};
-use vix::ratchet::{RunError, prepare_source, run_source};
+use vixen_runtime::ratchet::{RunError, prepare_source, run_source};
 use vix::runtime::{EventKind, MemoVerdict, PersistentClaimRejectionReason};
 
 const STD_VERSION: &str = include_str!("../std/version.vix");

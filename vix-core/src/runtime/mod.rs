@@ -8,6 +8,7 @@
 
 mod abi;
 mod blob_persistence;
+mod decode_value;
 mod error;
 mod fixture;
 mod identity;
@@ -20,6 +21,7 @@ mod store;
 
 pub use abi::*;
 pub use blob_persistence::*;
+pub use decode_value::*;
 pub use error::*;
 pub use fixture::*;
 pub use identity::*;

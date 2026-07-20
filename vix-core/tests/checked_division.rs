@@ -4,7 +4,7 @@
 //! never fails. Interpreter and native JIT share the semantics and the typed
 //! fault (this suite runs on both lanes via `WEAVY_JIT`).
 
-use vix::ratchet::run_source;
+use vixen_runtime::ratchet::run_source;
 use vix::runtime::FailureValue;
 
 /// A demanded `100 / 0` is a typed `DivisionByZero` failure carrying its source
