@@ -1433,7 +1433,7 @@ fn run_lane(
     ready_phase: ExecutionPhase,
     completed_phase: ExecutionPhase,
     expectations: &SnapshotExpectations,
-    observe: &mut impl FnMut(ExecutionPhase),
+    observe: &mut dyn FnMut(ExecutionPhase),
     evaluate_trace_checks: bool,
     use_rerun_overlays: bool,
     persistent_in: Option<PersistentRuntimeState>,

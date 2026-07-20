@@ -7,8 +7,6 @@ members = [
   "facet-lsp",
   "vix-lsp",
   "vix-fetch",
-  "vix-wire",
-  "vix-daemon",
   "exec-protocol",
   # core
   "facet-core",
