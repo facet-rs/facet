@@ -9652,9 +9652,11 @@ dependencies = [
  "snark",
  "snark-dsl",
  "taxon",
+ "tempfile",
  "tokio",
  "tracing",
  "weavy",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

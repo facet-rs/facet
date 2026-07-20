@@ -175,9 +175,9 @@ impl BudgetOutcome {
 /// Whether this platform can soundly observe a child process's resident-set
 /// size. Decided at compile time so an unsupported platform is a typed seam,
 /// never a transient runtime `None`.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 const RSS_ENFORCEABLE: bool = true;
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 const RSS_ENFORCEABLE: bool = false;
 
 /// Compile `source` in the parent and enforce the one test's declared budget.
@@ -376,10 +376,36 @@ fn saturating_nanos(duration: Duration) -> u64 {
     u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
 }
 
-/// The child entry point. It prepares a typed workload, publishes `Ready`, then
-/// waits for the parent's typed execution release. Runaway workloads never
-/// publish `Completed`; the parent watchdog terminates them. Never returns.
+/// The stack reserved for the child's protocol thread. Preparing a `RunSource`
+/// workload natively compiles it, and lowering recurses over the island graph
+/// deeply enough to overflow the platform default main-thread stack (1 MiB on
+/// Windows/MSVC). A stack overflow aborts the process without unwinding, so the
+/// child would die before publishing readiness and the parent would see only an
+/// opaque "child exited before child event". Give preparation a generous stack.
+const CHILD_STACK_BYTES: usize = 64 * 1024 * 1024;
+
+/// The child entry point. Runs the protocol on a large-stack worker thread (see
+/// [`CHILD_STACK_BYTES`]) so native compilation cannot silently overflow the
+/// default main-thread stack, then exits with the thread's success. Runaway
+/// workloads never publish `Completed`; the parent watchdog terminates them.
 pub fn run_child_from_stdio() -> ! {
+    let worker = std::thread::Builder::new()
+        .stack_size(CHILD_STACK_BYTES)
+        .spawn(run_child_protocol)
+        .expect("spawn budget-child protocol thread");
+    // A panic in the worker has already printed to the inherited stderr; a
+    // nonzero exit lets the parent observe the child as a failed run rather
+    // than a clean completion.
+    match worker.join() {
+        Ok(()) => std::process::exit(0),
+        Err(_) => std::process::exit(101),
+    }
+}
+
+/// The child protocol body: prepare a typed workload, publish `Ready`, wait for
+/// the parent's typed execution release, run it, and report. Runs on the
+/// large-stack worker thread spawned by [`run_child_from_stdio`].
+fn run_child_protocol() {
     let stdin = std::io::stdin();
     let mut input = BufReader::new(stdin.lock());
     let command = read_parent_command(&mut input).expect("decode workload preparation command");
@@ -397,7 +423,6 @@ pub fn run_child_from_stdio() -> ! {
     let report = execute_prepared(prepared);
     write_child_event(&mut output, &ChildEvent::Completed { report })
         .expect("write child completion event");
-    std::process::exit(0);
 }
 
 fn write_parent_command(writer: &mut ChildStdin, command: &ParentCommand) -> Result<(), String> {
@@ -567,7 +592,44 @@ fn resident_bytes(pid: u32) -> Option<u64> {
     resident_pages.checked_mul(page_size)
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+/// The resident-set size of `pid` in bytes from the process working set
+/// (`GetProcessMemoryInfo`'s `WorkingSetSize`), Windows's resident-memory
+/// measure. `None` on a transient race (the child just exited, so the handle
+/// can no longer be opened or queried); `try_wait` in the watchdog owns exit.
+#[cfg(windows)]
+fn resident_bytes(pid: u32) -> Option<u64> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::ProcessStatus::{
+        GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
+    };
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ,
+    };
+
+    // SAFETY: `OpenProcess` is a plain FFI call; it returns a null handle on
+    // failure (e.g. the child has exited), which we treat as an unobservable
+    // sample. The `0` is the `bInheritHandle` BOOL.
+    let handle = unsafe {
+        OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, 0, pid)
+    };
+    if handle.is_null() {
+        return None;
+    }
+
+    let mut counters = PROCESS_MEMORY_COUNTERS::default();
+    let size = u32::try_from(std::mem::size_of::<PROCESS_MEMORY_COUNTERS>()).ok()?;
+    // SAFETY: `handle` is a live process handle from `OpenProcess`; `counters`
+    // is a valid, correctly sized out-parameter for the working-set query.
+    let ok = unsafe { GetProcessMemoryInfo(handle, &raw mut counters, size) };
+    // SAFETY: `handle` came from `OpenProcess` and is not used after this close.
+    unsafe { CloseHandle(handle) };
+    if ok == 0 {
+        return None;
+    }
+    u64::try_from(counters.WorkingSetSize).ok()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 fn resident_bytes(_pid: u32) -> Option<u64> {
     None
 }
