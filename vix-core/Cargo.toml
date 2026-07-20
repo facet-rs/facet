@@ -4,11 +4,17 @@
 # evaluator hand-writes a syntax tree.
 
 [package]
-name = "vix"
+name = "vix-core"
 version = "0.0.0"
 edition = "2024"
 publish = false
-description = "The Vix demand-driven language and runtime."
+description = "The Vix demand-driven language: parse, compile, lower, and execute — with no primitives (the vixen runtime supplies those)."
+
+# The language crate is imported as `vix` (the raw language, à la V8); the
+# `vixen` runtime crates that embed it re-export this surface. Package name and
+# import name differ so dependents keep `use vix::…`.
+[lib]
+name = "vix"
 
 [package.metadata]
 

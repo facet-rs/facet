@@ -11,7 +11,7 @@ description = "Real fetch backend for vix archives."
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-vix = { path = "../vix" }
+vix = { path = "../vix-core", package = "vix-core" }
 flate2 = "1.1"
 tar = "0.4"
 ureq = "3.3"
