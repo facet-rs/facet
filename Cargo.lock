@@ -9623,6 +9623,7 @@ dependencies = [
  "snark",
  "snark-dsl",
  "taxon",
+ "tempfile",
  "tokio",
  "tracing",
  "weavy",

@@ -50,5 +50,6 @@ snark-dsl = { path = "../snark-dsl", features = ["typed-ast"] }
 # normal deps and are nameable from integration tests, so no extra dev-dep is
 # needed for it.
 semver = "1.0.28"
+tempfile.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time"] }
 weavy = { path = "../weavy" }
