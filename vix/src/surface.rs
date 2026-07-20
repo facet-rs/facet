@@ -1,8 +1,4 @@
-//! Ratchet-facing Vix parser.
-//!
-//! The legacy parser remains exported from the crate root while existing
-//! consumers migrate. New compiler work starts here and never enters the
-//! legacy machine.
+//! Authoritative Vix surface parser.
 
 use snark::{
     grammar::RawGrammarJson,

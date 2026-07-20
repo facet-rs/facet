@@ -28,7 +28,8 @@ module.exports = grammar({
   rules: {
     source_file: ($) => repeat(field("item", $._item)),
 
-    _item: ($) => choice($.import_item, $.enum_item, $.struct_item, $.fn_item),
+    _item: ($) =>
+      choice($.import_item, $.enum_item, $.struct_item, $.fn_item, $.command_item),
 
     // `import geometry::{Point, magnitude_sq};` / `import geometry::Point;`
     // (ratchet rungs 106–110). One module segment, then either a single item
@@ -84,6 +85,55 @@ module.exports = grammar({
         field("name", $.identifier),
         optional(field("generics", $.generic_params)),
         field("variants", $.enum_variant_list),
+      ),
+
+    // A hoisted description of an argv language. The declaration is schema,
+    // not executable authority: command construction still starts from a
+    // capability value at the invocation site.
+    command_item: ($) =>
+      seq(
+        repeat(field("attribute", $.attribute)),
+        optional(field("vis", "pub")),
+        "command",
+        field("name", $.identifier),
+        optional(seq("->", field("return_type", $._type))),
+        "{",
+        "program",
+        field("program", $.string),
+        "grammar",
+        field("grammar", $.command_grammar),
+        "}",
+      ),
+    command_grammar: ($) =>
+      seq("{", field("pattern", $.command_alternatives), "}"),
+    command_alternatives: ($) =>
+      seq(
+        field("alternative", $.command_sequence),
+        repeat(seq("|", field("alternative", $.command_sequence))),
+      ),
+    command_sequence: ($) => repeat1(field("term", $.command_term)),
+    command_term: ($) =>
+      seq(
+        field("atom", $._command_atom),
+        optional(field("quantifier", $.command_quantifier)),
+      ),
+    _command_atom: ($) =>
+      choice($.command_literal, $.command_slot, $.command_optional, $.command_group),
+    command_slot: ($) =>
+      seq("{", field("name", $.identifier), ":", field("type", $._type), "}"),
+    command_optional: ($) =>
+      seq("[", field("pattern", $.command_alternatives), "]"),
+    command_group: ($) =>
+      seq("(", field("pattern", $.command_alternatives), ")"),
+    command_quantifier: () => token.immediate(choice("*", "+")),
+    // Real argv uses punctuation as data (`c++`, ffmpeg's `0:a?`, MSVC
+    // `/OUT:`, response files, and Bazel/Buck `//target` labels). A `//` token
+    // with non-whitespace payload outranks line comments only in states where
+    // a command literal is legal.
+    command_literal: () =>
+      choice(
+        token(prec(2, /\/\/[^{}\[\]()|\s]+/)),
+        token(/[^{}\[\]()|\s]+/),
       ),
     enum_variant_list: ($) => seq("{", sepBy(",", field("variant", $.enum_variant)), "}"),
     enum_variant: ($) =>
@@ -426,6 +476,6 @@ module.exports = grammar({
     number: () => /[0-9]+/,
     tuple_index: () => /[0-9]+/,
     boolean: () => choice("true", "false"),
-    line_comment: () => token(seq("//", /[^\n]*/)),
+    line_comment: () => token(prec(1, seq("//", /[^\n]*/))),
   },
 });

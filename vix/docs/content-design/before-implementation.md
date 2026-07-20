@@ -7,9 +7,9 @@ the order it must become true. Grounded in what exists, not in what feels missin
 
 ## Gate 0 — nothing has ever parsed this language
 
-- `playgrounds/snark/src/bundled/vix/grammar.js` describes the **old** surface. It knows
-  nothing of juxtaposition, `where`-as-arguments, backtick commands, `struct { }`,
-  punning, suffix literals, or postfix `?`.
+- The since-deleted `playgrounds/snark/src/bundled/vix/grammar.js` described the **old**
+  surface. It knew nothing of juxtaposition, `where`-as-arguments, backtick commands,
+  `struct { }`, punning, suffix literals, or postfix `?`.
 - **Zero lines of code reference `vix/corpus-next/`.**
 - `vix/tests/ratchet/` is 144 `.vix` files and three `.md` files. There is **no runner**.
 

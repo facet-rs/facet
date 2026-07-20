@@ -25,11 +25,6 @@
 use vix::{Version, parse_version, version_lte, Ordering, VersionSet, Map, Tree, Target};
 use caps::Rustc;
 
-command rustc -> Tree {
-    program "rustc"
-    grammar { ((--stdout {stdout: Stdout<Path>}) | {value: String} | {flag: Flag})* }
-}
-
 // ---------------------------------------------------------------------------
 // Package identity  (rodin-facts/src/interner.rs: PkgId, CompatClass, SourceIx)
 //

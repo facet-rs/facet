@@ -1,8 +1,0 @@
-struct Config {
-    path: Path,
-    path: String,
-}
-
-fn main() -> Int {
-    1
-}

@@ -1,4 +1,4 @@
-//! Narrow LSP 3.17 type subset consumed by `vix-lsp`.
+//! Narrow LSP 3.17 type subset shared by language-server implementations.
 
 use std::collections::BTreeMap;
 

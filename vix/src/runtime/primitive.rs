@@ -847,8 +847,8 @@ impl EffectCtx {
     pub fn ticket(
         &self,
         cancel: impl FnOnce() + Send + 'static,
-    ) -> (EffectTicket, EffectCompleter) {
-        EffectTicket::pair(self.demand, cancel)
+    ) -> (RawEffectTicket, RawEffectCompleter) {
+        RawEffectTicket::pair(self.demand, cancel)
     }
 }
 
@@ -948,7 +948,7 @@ pub trait RawPrimitive<Ctx>: Send + Sync {
     fn descriptor(&self) -> &PrimitiveDescriptor;
     /// `app` is the whole shared embedder context; the impl projects the
     /// slice it needs out of it via [`FromRef`].
-    fn begin(&self, request: ValueId, ctx: EffectCtx, app: &Ctx) -> EffectTicket;
+    fn begin(&self, request: ValueId, ctx: EffectCtx, app: &Ctx) -> RawEffectTicket;
 
     /// The primitive's surface name in the vix prelude, or `None` if it
     /// projects no surface binding at all (e.g. `TreeReadPrimitive`, reached
@@ -986,11 +986,11 @@ struct TicketShared {
 }
 
 #[derive(Clone)]
-pub struct EffectTicket {
+pub struct RawEffectTicket {
     shared: Arc<TicketShared>,
 }
 
-pub struct EffectCompleter {
+pub struct RawEffectCompleter {
     shared: Arc<TicketShared>,
 }
 
@@ -1005,8 +1005,11 @@ pub enum TicketCompletionError {
     Cancelled,
 }
 
-impl EffectTicket {
-    fn pair(demand: DemandKey, cancel: impl FnOnce() + Send + 'static) -> (Self, EffectCompleter) {
+impl RawEffectTicket {
+    fn pair(
+        demand: DemandKey,
+        cancel: impl FnOnce() + Send + 'static,
+    ) -> (Self, RawEffectCompleter) {
         let shared = Arc::new(TicketShared {
             demand,
             state: Mutex::new(TicketState {
@@ -1022,7 +1025,7 @@ impl EffectTicket {
             Self {
                 shared: shared.clone(),
             },
-            EffectCompleter { shared },
+            RawEffectCompleter { shared },
         )
     }
 
@@ -1095,7 +1098,7 @@ impl EffectTicket {
     }
 }
 
-impl EffectCompleter {
+impl RawEffectCompleter {
     pub fn complete(self, outcome: PrimitivePublication) -> Result<(), TicketCompletionError> {
         let waiters = {
             let mut state = self.shared.state.lock().expect("ticket mutex poisoned");
@@ -1142,7 +1145,7 @@ impl<Ctx> Default for PrimitiveRegistry<Ctx> {
 
 pub struct PrimitiveDispatcher<Ctx> {
     registry: Arc<PrimitiveRegistry<Ctx>>,
-    in_flight: Mutex<BTreeMap<DemandKey, EffectTicket>>,
+    in_flight: Mutex<BTreeMap<DemandKey, RawEffectTicket>>,
 }
 
 impl<Ctx> PrimitiveDispatcher<Ctx> {
@@ -1160,7 +1163,7 @@ impl<Ctx> PrimitiveDispatcher<Ctx> {
         request: ValueId,
         ctx: EffectCtx,
         app: &Ctx,
-    ) -> Result<EffectTicket, Box<PrimitiveDispatchError>> {
+    ) -> Result<RawEffectTicket, Box<PrimitiveDispatchError>> {
         let demand = ctx.demand();
         let mut in_flight = self.in_flight.lock().expect("dispatcher mutex poisoned");
         if let Some(ticket) = in_flight.get(&demand) {
@@ -1176,7 +1179,7 @@ impl<Ctx> PrimitiveDispatcher<Ctx> {
         self.registry.descriptor(id)
     }
 
-    pub fn retire(&self, demand: DemandKey) -> Option<EffectTicket> {
+    pub fn retire(&self, demand: DemandKey) -> Option<RawEffectTicket> {
         self.in_flight
             .lock()
             .expect("dispatcher mutex poisoned")
@@ -1222,7 +1225,7 @@ impl<Ctx> PrimitiveRegistry<Ctx> {
         request: ValueId,
         ctx: EffectCtx,
         app: &Ctx,
-    ) -> Result<EffectTicket, Box<PrimitiveDispatchError>> {
+    ) -> Result<RawEffectTicket, Box<PrimitiveDispatchError>> {
         let primitive = self
             .primitives
             .get(id)
@@ -1292,7 +1295,7 @@ mod from_ref_tests {
             &self.descriptor
         }
 
-        fn begin(&self, request: ValueId, ctx: EffectCtx, app: &Ctx) -> EffectTicket {
+        fn begin(&self, request: ValueId, ctx: EffectCtx, app: &Ctx) -> RawEffectTicket {
             let pool = FakePool::from_ref(app);
             *self.seen.lock().expect("seen mutex poisoned") = Some(pool.label);
             let (ticket, completer) = ctx.ticket(|| {});
@@ -1324,8 +1327,7 @@ mod from_ref_tests {
 
     #[test]
     fn primitive_projects_its_dependency_out_of_the_shared_context_via_from_ref() {
-        let request =
-            FramedNode::leaf(Type::String.schema_ref(), b"ignored".to_vec()).identity();
+        let request = FramedNode::leaf(Type::String.schema_ref(), b"ignored".to_vec()).identity();
         let demand = DemandKey::from_preimage(&DemandPreimage {
             closure: RecipeId::from_canonical_vir(b"from-ref-test"),
             arguments: vec![request.clone()],

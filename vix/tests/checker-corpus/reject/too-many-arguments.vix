@@ -1,7 +1,0 @@
-fn id(x: Int) -> Int {
-    x
-}
-
-fn main() -> Int {
-    id(1, 2)
-}

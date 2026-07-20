@@ -4,9 +4,8 @@ use crate::schema::SchemaRef;
 use crate::vir::{ExternKind, Type};
 
 use super::{
-    ArgRoleDecl, Digest, EffectCtx, EffectTicket, PrimitiveCompletion, PrimitiveDecl,
-    PrimitiveMachineError, PrimitiveMemoPolicy, PrimitivePublication, ReadProjection, Receipt,
-    ResponseDecl, Primitive, ValueId,
+    ArgRoleDecl, Digest, EffectCtx, EffectTicket, Primitive, PrimitiveDecl, PrimitiveMachineError,
+    PrimitiveMemoPolicy, ReadProjection, ResponseValue, ValueId,
 };
 // Only the test-only hand parsers (the `decode_primitive_value` oracle) walk the
 // wire `PrimitiveValue` structurally now; production `begin` decodes instead.
@@ -22,6 +21,18 @@ pub struct UpstreamDigest(pub [u8; 32]);
 /// distinct meanings, distinct types.
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct RegistryHandle(pub ValueId);
+
+/// A served Blob handle: the typed response of `fetch`/`observe`. Wire-side this
+/// is `Type::Extern(Blob)` (see the `vir` leaf override), and it already *is* an
+/// interned [`ValueId`] — completing with it never re-encodes or re-interns.
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct BlobHandle(pub ValueId);
+
+impl ResponseValue for BlobHandle {
+    fn into_value(self) -> ValueId {
+        self.0
+    }
+}
 
 /// A pinned Blob target identity. This is not a resident value but a *reference*
 /// to one, so it decomposes structurally into a `ValueId`'s `{schema, content}`:
@@ -84,6 +95,7 @@ pub struct PinnedFetchPrimitive;
 
 impl<Ctx> Primitive<Ctx> for PinnedFetchPrimitive {
     type Request = PinnedFetchRequest;
+    type Response = BlobHandle;
     type Deps = ();
 
     const DECL: PrimitiveDecl = PrimitiveDecl {
@@ -93,28 +105,23 @@ impl<Ctx> Primitive<Ctx> for PinnedFetchPrimitive {
         version: 1,
         memo_policy: PrimitiveMemoPolicy::Pinned,
         protocol_version: 1,
-        response: ResponseDecl::Extern(ExternKind::Blob),
         failure_schema_name: "PinnedFetchFailure",
         capabilities: &[ExternKind::Registry],
         args: &[ArgRoleDecl::Value],
     };
 
-    fn begin(&self, req: PinnedFetchRequest, ctx: EffectCtx, _deps: ()) -> EffectTicket {
-        let (ticket, completer) = ctx.ticket(|| {});
+    fn begin(
+        &self,
+        req: PinnedFetchRequest,
+        ctx: EffectCtx,
+        _deps: (),
+    ) -> EffectTicket<BlobHandle> {
+        let (ticket, completer) = EffectTicket::<BlobHandle>::pair(&ctx, || {});
         std::thread::spawn(move || {
-            let completion = serve(req.pin, &ctx)
-                .map(PrimitiveCompletion::Ok)
-                .unwrap_or_else(PrimitiveCompletion::MachineError);
-            let publication = ctx.finish(completion).unwrap_or_else(|error| PrimitivePublication {
-                completion: PrimitiveCompletion::MachineError(error),
-                receipt: Receipt {
-                    demand: ctx.demand(),
-                    reads: Vec::new(),
-                },
-                journal: Vec::new(),
-                progressive: Vec::new(),
-            });
-            let _ = completer.complete(publication);
+            let _ = match serve(req.pin, &ctx) {
+                Ok(value) => completer.complete_ok(&ctx, BlobHandle(value)),
+                Err(error) => completer.complete_err(&ctx, error),
+            };
         });
         ticket
     }
@@ -269,7 +276,9 @@ pub(crate) fn parse_blob_id(
 }
 
 #[cfg(test)]
-pub(crate) fn parse_origins(value: &PrimitiveValue) -> Result<Vec<OriginHint>, PrimitiveMachineError> {
+pub(crate) fn parse_origins(
+    value: &PrimitiveValue,
+) -> Result<Vec<OriginHint>, PrimitiveMachineError> {
     let PrimitiveValueBody::Sequence { elements, .. } = &value.body else {
         return Err(invalid_value());
     };
@@ -363,7 +372,10 @@ mod schema_snapshot {
 
     #[test]
     fn request_schemas_are_byte_identical() {
-        assert_eq!(Type::from_facet::<BlobId>().schema_ref().to_string(), BLOB_ID);
+        assert_eq!(
+            Type::from_facet::<BlobId>().schema_ref().to_string(),
+            BLOB_ID
+        );
         assert_eq!(
             Type::from_facet::<OriginHint>().schema_ref().to_string(),
             ORIGIN_HINT

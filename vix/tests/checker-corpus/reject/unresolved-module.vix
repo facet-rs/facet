@@ -1,5 +1,0 @@
-use nope::Thing;
-
-fn main() -> Int {
-    1
-}

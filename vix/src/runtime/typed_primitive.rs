@@ -15,14 +15,16 @@
 //! the `milestone` tests below, which reconstruct the pre-migration values and
 //! assert equality.
 
+use std::marker::PhantomData;
+
 use crate::schema::SchemaPattern;
 use crate::vir::{ExternKind, RecordField, Type};
 
 use super::{
-    decode_primitive_value, ArgRole, EffectCtx, EffectTicket, FromRef, RawPrimitive,
-    PrimitiveCompletion, PrimitiveDescriptor, PrimitiveId, PrimitiveMachineError,
-    PrimitiveMemoPolicy, PrimitivePublication, ReadProjection, Receipt, RequestShape, Selector,
-    SelectorVariant, ValueId,
+    ArgRole, EffectCtx, FromRef, PrimitiveCompletion, PrimitiveDescriptor, PrimitiveId,
+    PrimitiveMachineError, PrimitiveMemoPolicy, PrimitivePublication, RawEffectCompleter,
+    RawEffectTicket, RawPrimitive, ReadProjection, Receipt, RequestShape, Selector,
+    SelectorVariant, TicketCompletionError, ValueId, decode_primitive_value,
 };
 
 /// One accepted variant of a selector argument and the boolean flag it folds
@@ -49,13 +51,6 @@ pub enum ArgRoleDecl {
     Selector(SelectorDecl),
 }
 
-/// How a primitive's response schema is declared: a concrete extern kind
-/// (`Extern(Blob)` for fetch/observe) or a schema variable (a generic result).
-pub enum ResponseDecl {
-    Extern(ExternKind),
-    Var(&'static str),
-}
-
 /// Everything a registered primitive *is*, as const data. Consumed once by
 /// [`TypedAdapter::new`] to synthesize the [`PrimitiveDescriptor`] and
 /// [`RequestShape`]; nothing here is heap-allocated and no [`Type`] is embedded
@@ -72,7 +67,6 @@ pub struct PrimitiveDecl {
     pub version: u32,
     pub memo_policy: PrimitiveMemoPolicy,
     pub protocol_version: u32,
-    pub response: ResponseDecl,
     pub failure_schema_name: &'static str,
     /// The primitive's *curated* capability extern kinds — declared here, never
     /// derived from the request tree.
@@ -97,13 +91,115 @@ impl PrimitiveDecl {
 /// `RawPrimitive::descriptor` returns `&PrimitiveDescriptor` and so needs an owner.
 pub trait Primitive<Ctx>: Send + Sync {
     type Request: facet::Facet<'static>;
+    /// The typed response value the primitive completes with. Its
+    /// `Type::from_facet` drives both the descriptor's `response_schema` and the
+    /// `RequestShape.result`, symmetric with how `Request` drives `request_schema`.
+    type Response: facet::Facet<'static>;
     type Deps: FromRef<Ctx>;
     const DECL: PrimitiveDecl;
 
     /// Serve an already-decoded request with the projected dependency slice.
     /// The wire read + decode happened in [`TypedAdapter`]; a decode failure
     /// never reaches here (it is completed synchronously by the adapter).
-    fn begin(&self, req: Self::Request, ctx: EffectCtx, deps: Self::Deps) -> EffectTicket;
+    fn begin(
+        &self,
+        req: Self::Request,
+        ctx: EffectCtx,
+        deps: Self::Deps,
+    ) -> EffectTicket<Self::Response>;
+}
+
+/// A typed view over an erased [`RawEffectTicket`]: the handle a typed
+/// [`Primitive::begin`] hands back. The runtime keeps the erased ticket in its
+/// heterogeneous in-flight map; `EffectTicket<T>` only records, in the type, the
+/// response the paired [`EffectCompleter`] will produce. `PhantomData<fn() -> T>`
+/// keeps the wrapper unconditionally `Send` (the real state lives in the already
+/// `Send` shared ticket), so it still moves into `std::thread::spawn`.
+pub struct EffectTicket<T> {
+    inner: RawEffectTicket,
+    _marker: PhantomData<fn() -> T>,
+}
+
+/// The typed completing half of an [`EffectTicket`]. Completing it goes through
+/// [`ResponseValue`], the seam that keeps generic-response encoding out of scope:
+/// every response today is a handle that already names an interned [`ValueId`].
+pub struct EffectCompleter<T> {
+    inner: RawEffectCompleter,
+    _marker: PhantomData<fn(T)>,
+}
+
+impl<T> EffectTicket<T> {
+    /// Mint a typed ticket/completer pair over a fresh erased ticket.
+    pub fn pair(
+        ctx: &EffectCtx,
+        cancel: impl FnOnce() + Send + 'static,
+    ) -> (Self, EffectCompleter<T>) {
+        let (raw, raw_c) = ctx.ticket(cancel);
+        (
+            Self {
+                inner: raw,
+                _marker: PhantomData,
+            },
+            EffectCompleter {
+                inner: raw_c,
+                _marker: PhantomData,
+            },
+        )
+    }
+
+    /// Erase back to the runtime's [`RawEffectTicket`] — what [`TypedAdapter`]
+    /// hands to the scheduler's heterogeneous in-flight map.
+    #[must_use]
+    pub fn into_raw(self) -> RawEffectTicket {
+        self.inner
+    }
+}
+
+/// The seam between a typed response and the erased [`ValueId`] the runtime
+/// completes with. Only handle-shaped responses — a newtype already wrapping an
+/// interned `ValueId` — are convertible today; a future record-shaped response
+/// would need a real `T: Facet -> PrimitiveValue` encoder, deliberately out of scope.
+pub trait ResponseValue {
+    fn into_value(self) -> ValueId;
+}
+
+impl<T: ResponseValue> EffectCompleter<T> {
+    /// Complete the demand with a successful typed response.
+    pub fn complete_ok(self, ctx: &EffectCtx, resp: T) -> Result<(), TicketCompletionError> {
+        let publication = publication_or_fallback(ctx, PrimitiveCompletion::Ok(resp.into_value()));
+        self.inner.complete(publication)
+    }
+}
+
+impl<T> EffectCompleter<T> {
+    /// Complete the demand with a machine error.
+    pub fn complete_err(
+        self,
+        ctx: &EffectCtx,
+        error: PrimitiveMachineError,
+    ) -> Result<(), TicketCompletionError> {
+        let publication = publication_or_fallback(ctx, PrimitiveCompletion::MachineError(error));
+        self.inner.complete(publication)
+    }
+}
+
+/// Build the [`PrimitivePublication`] from a completion, mirroring the
+/// `finish`-error fallback the fetch/observe `begin` bodies use when their own
+/// work fails: a failed `finish` still publishes a machine error, never panics.
+fn publication_or_fallback(
+    ctx: &EffectCtx,
+    completion: PrimitiveCompletion,
+) -> PrimitivePublication {
+    ctx.finish(completion)
+        .unwrap_or_else(|error| PrimitivePublication {
+            completion: PrimitiveCompletion::MachineError(error),
+            receipt: Receipt {
+                demand: ctx.demand(),
+                reads: Vec::new(),
+            },
+            journal: Vec::new(),
+            progressive: Vec::new(),
+        })
 }
 
 /// Bridges a [`Primitive`] onto the untyped [`RawPrimitive`] surface. Owns the
@@ -124,8 +220,9 @@ impl<P> TypedAdapter<P> {
     {
         let decl = <P as Primitive<Ctx>>::DECL;
         let request_ty = Type::from_facet::<P::Request>();
-        let descriptor = synth_descriptor(&decl, &request_ty);
-        let shape = synth_shape(&decl, request_ty);
+        let response_ty = Type::from_facet::<P::Response>();
+        let descriptor = synth_descriptor(&decl, &request_ty, &response_ty);
+        let shape = synth_shape(&decl, request_ty, response_ty);
         Self {
             inner,
             descriptor,
@@ -134,32 +231,15 @@ impl<P> TypedAdapter<P> {
     }
 }
 
-fn response_pattern(response: &ResponseDecl) -> SchemaPattern {
-    match response {
-        ResponseDecl::Extern(kind) => SchemaPattern::exact(&Type::Extern(*kind).schema_ref()),
-        ResponseDecl::Var(name) => SchemaPattern::Var {
-            name: (*name).to_owned(),
-        },
-    }
-}
-
-/// The concrete result [`Type`] a `RequestShape` carries. Only a concrete
-/// `Extern` response has one; a schema-variable response is generic and cannot
-/// yet be expressed as a shape (no migrated primitive uses one).
-fn response_result_ty(response: &ResponseDecl) -> Type {
-    match response {
-        ResponseDecl::Extern(kind) => Type::Extern(*kind),
-        ResponseDecl::Var(name) => {
-            panic!("a Var-response primitive (`{name}`) cannot express a RequestShape result type")
-        }
-    }
-}
-
-fn synth_descriptor(decl: &PrimitiveDecl, request_ty: &Type) -> PrimitiveDescriptor {
+fn synth_descriptor(
+    decl: &PrimitiveDecl,
+    request_ty: &Type,
+    response_ty: &Type,
+) -> PrimitiveDescriptor {
     PrimitiveDescriptor {
         id: decl.id(),
         request_schema: SchemaPattern::exact(&request_ty.schema_ref()),
-        response_schema: response_pattern(&decl.response),
+        response_schema: SchemaPattern::exact(&response_ty.schema_ref()),
         failure_schema: SchemaPattern::Var {
             name: decl.failure_schema_name.to_owned(),
         },
@@ -173,7 +253,7 @@ fn synth_descriptor(decl: &PrimitiveDecl, request_ty: &Type) -> PrimitiveDescrip
     }
 }
 
-fn synth_shape(decl: &PrimitiveDecl, request_ty: Type) -> RequestShape {
+fn synth_shape(decl: &PrimitiveDecl, request_ty: Type, response_ty: Type) -> RequestShape {
     let fields = record_fields(&request_ty);
     let args = decl
         .args
@@ -199,7 +279,7 @@ fn synth_shape(decl: &PrimitiveDecl, request_ty: Type) -> RequestShape {
         .collect();
     RequestShape {
         args,
-        result: response_result_ty(&decl.response),
+        result: response_ty,
         primitive: decl.id(),
         request_ty,
     }
@@ -231,7 +311,7 @@ where
         Some(self.shape.clone())
     }
 
-    fn begin(&self, request: ValueId, ctx: EffectCtx, app: &Ctx) -> EffectTicket {
+    fn begin(&self, request: ValueId, ctx: EffectCtx, app: &Ctx) -> RawEffectTicket {
         // Read the wire request the way the hand-parsers did — this records the
         // read witness/receipt into the shared transaction, which the typed
         // `begin` (and its worker thread) then extend.
@@ -244,26 +324,16 @@ where
             Err(error) => return complete_with_error(&ctx, error),
         };
         let deps = <P::Deps as FromRef<Ctx>>::from_ref(app);
-        self.inner.begin(req, ctx, deps)
+        self.inner.begin(req, ctx, deps).into_raw()
     }
 }
 
 /// Complete a demand synchronously with a machine error — the decode-failure
 /// path, mirroring the `unwrap_or_else`/`finish` error shape the fetch/observe
 /// `begin` bodies use when their own work fails.
-fn complete_with_error(ctx: &EffectCtx, error: PrimitiveMachineError) -> EffectTicket {
+fn complete_with_error(ctx: &EffectCtx, error: PrimitiveMachineError) -> RawEffectTicket {
     let (ticket, completer) = ctx.ticket(|| {});
-    let publication = ctx
-        .finish(PrimitiveCompletion::MachineError(error))
-        .unwrap_or_else(|error| PrimitivePublication {
-            completion: PrimitiveCompletion::MachineError(error),
-            receipt: Receipt {
-                demand: ctx.demand(),
-                reads: Vec::new(),
-            },
-            journal: Vec::new(),
-            progressive: Vec::new(),
-        });
+    let publication = publication_or_fallback(ctx, PrimitiveCompletion::MachineError(error));
     let _ = completer.complete(publication);
     ticket
 }
@@ -278,14 +348,16 @@ mod milestone {
 
     use super::*;
     use crate::runtime::{
-        observe_primitive_id, pinned_fetch_primitive_id, ObservePrimitive, ObserveRequest,
-        OriginHint, PinnedBlobRef, PinnedFetchPrimitive, PinnedFetchRequest,
+        ObservePrimitive, ObserveRequest, OriginHint, PinnedBlobRef, PinnedFetchPrimitive,
+        PinnedFetchRequest, observe_primitive_id, pinned_fetch_primitive_id,
     };
 
     fn old_fetch_descriptor() -> PrimitiveDescriptor {
         PrimitiveDescriptor {
             id: pinned_fetch_primitive_id(),
-            request_schema: SchemaPattern::exact(&Type::from_facet::<PinnedFetchRequest>().schema_ref()),
+            request_schema: SchemaPattern::exact(
+                &Type::from_facet::<PinnedFetchRequest>().schema_ref(),
+            ),
             response_schema: SchemaPattern::exact(&Type::Extern(ExternKind::Blob).schema_ref()),
             failure_schema: SchemaPattern::Var {
                 name: "PinnedFetchFailure".to_owned(),
@@ -312,7 +384,9 @@ mod milestone {
     fn old_observe_descriptor() -> PrimitiveDescriptor {
         PrimitiveDescriptor {
             id: observe_primitive_id(),
-            request_schema: SchemaPattern::exact(&Type::from_facet::<ObserveRequest>().schema_ref()),
+            request_schema: SchemaPattern::exact(
+                &Type::from_facet::<ObserveRequest>().schema_ref(),
+            ),
             response_schema: SchemaPattern::exact(&Type::Extern(ExternKind::Blob).schema_ref()),
             failure_schema: SchemaPattern::Var {
                 name: "ObserveFailure".to_owned(),
@@ -355,7 +429,10 @@ mod milestone {
     #[test]
     fn fetch_adapter_is_byte_identical_to_the_hand_written_primitive() {
         let adapter = TypedAdapter::new::<()>(PinnedFetchPrimitive);
-        assert_eq!(*RawPrimitive::<()>::descriptor(&adapter), old_fetch_descriptor());
+        assert_eq!(
+            *RawPrimitive::<()>::descriptor(&adapter),
+            old_fetch_descriptor()
+        );
         assert_eq!(
             RawPrimitive::<()>::request_shape(&adapter),
             Some(old_fetch_shape())

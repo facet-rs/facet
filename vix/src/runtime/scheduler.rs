@@ -40,13 +40,13 @@ use super::store::{
     FrozenValue, Handle, Interned, Store, StoreEntry, StoreJournal, StoreJournalError,
     StoreJournalLoadReport,
 };
-use super::{
-    DecodePrimitive, EffectCtx, EffectTicket, ObservePrimitive, PinnedFetchPrimitive, RawPrimitive,
-    PrimitiveCompletion, PrimitiveDispatcher, PrimitiveField, PrimitiveFieldValue,
-    PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveRegistry, PrimitiveValue,
-    PrimitiveValueBody, StagedEffectAuthority, TicketSubscription, TreeReadPrimitive, TypedAdapter,
-};
 use super::{BlobId, OriginHint};
+use super::{
+    DecodePrimitive, EffectCtx, ObservePrimitive, PinnedFetchPrimitive, PrimitiveCompletion,
+    PrimitiveDispatcher, PrimitiveField, PrimitiveFieldValue, PrimitiveMachineError,
+    PrimitiveMemoPolicy, PrimitiveRegistry, PrimitiveValue, PrimitiveValueBody, RawEffectTicket,
+    RawPrimitive, StagedEffectAuthority, TicketSubscription, TreeReadPrimitive, TypedAdapter,
+};
 use super::{MachineAttribution, MachineError, MachineOperation, RuntimeFault};
 
 #[derive(Clone, Debug)]
@@ -353,7 +353,7 @@ enum DriveOutcome {
 struct PrimitivePending {
     /// The demand-owned ticket remains live even if a waiting task is discarded;
     /// replay joins this same ticket instead of beginning a second effect.
-    ticket: EffectTicket,
+    ticket: RawEffectTicket,
     /// The first caller's staged authority; joiners never construct another.
     authority: Arc<StagedEffectAuthority>,
     /// The single ticket subscription that delivers this demand's completion
@@ -3156,8 +3156,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                         body: PrimitiveValueBody::Product(vec![
                             primitive_child_field(blob_id),
                             primitive_child_field(PrimitiveValue {
-                                schema: Type::array(Type::from_facet::<OriginHint>())
-                                    .schema_ref(),
+                                schema: Type::array(Type::from_facet::<OriginHint>()).schema_ref(),
                                 body: PrimitiveValueBody::Sequence {
                                     element_schema: Type::from_facet::<OriginHint>().schema_ref(),
                                     elements: vec![origin],
@@ -8376,8 +8375,8 @@ mod tests {
     use crate::compiler::Compiler;
     use crate::lowering::{LoweringCache, attribution_for};
     use crate::runtime::{
-        DecodePrimitive, EventLog, FramedNode, MachineCause, RawPrimitive, PrimitiveDescriptor,
-        PrimitiveRegistry, TicketCompletionError,
+        DecodePrimitive, EventLog, FramedNode, MachineCause, PrimitiveDescriptor,
+        PrimitiveRegistry, RawPrimitive, TicketCompletionError,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::mpsc::{SyncSender, sync_channel};
@@ -8446,7 +8445,7 @@ fn scheduler_decode() -> Stream<Check> {
             &self.descriptor
         }
 
-        fn begin(&self, request: ValueId, ctx: EffectCtx, app: &()) -> EffectTicket {
+        fn begin(&self, request: ValueId, ctx: EffectCtx, app: &()) -> RawEffectTicket {
             self.begins.fetch_add(1, Ordering::AcqRel);
             DecodePrimitive::default().begin(request, ctx, app)
         }
@@ -8468,7 +8467,7 @@ fn scheduler_decode() -> Stream<Check> {
             &self.descriptor
         }
 
-        fn begin(&self, request: ValueId, ctx: EffectCtx, _app: &()) -> EffectTicket {
+        fn begin(&self, request: ValueId, ctx: EffectCtx, _app: &()) -> RawEffectTicket {
             self.begins.fetch_add(1, Ordering::AcqRel);
             let gate = self.gate.clone();
             let cancel_gate = self.gate.clone();

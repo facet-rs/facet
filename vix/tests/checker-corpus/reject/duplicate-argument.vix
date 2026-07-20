@@ -1,7 +1,0 @@
-fn add(x: Int, y: Int) -> Int {
-    x + y
-}
-
-fn main() -> Int {
-    add(x: 1, x: 2)
-}

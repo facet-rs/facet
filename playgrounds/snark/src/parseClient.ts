@@ -6,7 +6,6 @@ export type RunParseInput = Omit<ParseWorkerRequest, "id">;
 export type RunParseResult = {
   response: string;
   prepared: boolean;
-  vix: string | null;
   vixMachine: string | null;
 };
 
@@ -30,7 +29,6 @@ function ensureWorker(): Worker {
       entry.resolve({
         response: data.response,
         prepared: data.prepared,
-        vix: data.vix,
         vixMachine: data.vixMachine,
       });
     } else {

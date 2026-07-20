@@ -74,6 +74,7 @@ fn item_name(item: &ast::Item) -> Option<&str> {
         ast::Item::Fn(function) => Some(function.name.value.as_str()),
         ast::Item::Struct(record) => Some(record.name.value.as_str()),
         ast::Item::Enum(enumeration) => Some(enumeration.name.value.as_str()),
+        ast::Item::Command(command) => Some(command.name.value.as_str()),
         ast::Item::Import(_) => None,
     }
 }

@@ -511,6 +511,9 @@ mod tests {
             selector.expected(),
             "an observe mode `Mode::Observe` or `Mode::Refresh`",
         );
-        assert_eq!(selector.unknown("Spin"), "an unknown observe mode `Mode::Spin`");
+        assert_eq!(
+            selector.unknown("Spin"),
+            "an unknown observe mode `Mode::Spin`"
+        );
     }
 }

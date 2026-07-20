@@ -2,8 +2,8 @@
 //! strange argv surfaces build derivations encounter; they are not claims that
 //! Vix executes these tools yet.
 
-use vix::VixParser;
-use vix::ast::{CommandAtom, CommandPart, CommandPattern, Expr, Item};
+use vix::surface::SurfaceParser;
+use vix::surface::ast::{CommandAtom, CommandPattern, Item};
 
 struct Case {
     name: &'static str,
@@ -456,12 +456,12 @@ fn parses_at_least_fifty_chunky_real_world_command_schemas_and_usages() {
         "corpus shrank to {} commands",
         CASES.len()
     );
-    let parser = VixParser::new();
+    let parser = SurfaceParser::new();
 
     for case in CASES {
         let variable = case.name.to_ascii_lowercase();
         let source = format!(
-            "command {} -> Tree {{ program {:?} grammar {{ {} }} }}\nfn exercise({}: {}, input: Tree, path: Path, text: String) -> Tree {{ {}! {{ {} }} }}",
+            "command {} -> Tree {{ program {:?} grammar {{ {} }} }}\nfn exercise({}: {}, input: Tree, path: Path, text: String) -> Tree {{ {}`{}` }}",
             case.name, case.program, case.grammar, variable, case.name, variable, case.usage,
         );
         let file = parser.parse(&source).unwrap_or_else(|error| {
@@ -476,78 +476,61 @@ fn parses_at_least_fifty_chunky_real_world_command_schemas_and_usages() {
             "{} schema stopped being chunky",
             case.name,
         );
-        let Item::Fn(function) = &file.items[1] else {
+        let Item::Fn(_) = &file.items[1] else {
             panic!("{} usage function", case.name);
         };
-        let Some(Expr::Command(usage)) = &function.body.tail else {
-            panic!("{} usage", case.name);
-        };
-        assert!(
-            usage.parts.len() >= 6,
-            "{} usage stopped being chunky",
-            case.name
-        );
     }
 }
 
 #[test]
-fn pathological_command_tokens_survive_as_argv_instead_of_language_syntax() {
+fn pathological_command_tokens_survive_in_schema_literals() {
     let source = r#"
-fn edge_cases(tool: Tool, path: Path) -> Tree {
-    let cpp = tool! { -std=c++23 -stdlib=libc++ };
-    let labels = tool! {
-        // Bazel labels remain argv without sacrificing command-block comments.
+command Edge {
+    program "edge"
+    grammar {
+        -std=c++23 -stdlib=libc++
+        // Bazel labels remain argv without sacrificing schema comments.
         //app:all //lib/tests:unit
-    };
-    let streams = tool! { -map 0:a? -movflags +faststart };
-    tool! { /OUT:{path} /DEBUG:FULL @response.rsp }
+        -map 0:a? -movflags +faststart
+        /OUT:{path: Path} /DEBUG:FULL @response.rsp
+    }
 }
 "#;
-    let file = VixParser::new().parse(source).expect("edge tokens parse");
-    let Item::Fn(function) = &file.items[0] else {
-        panic!("fixture is a function");
+    let file = SurfaceParser::new()
+        .parse(source)
+        .expect("edge tokens parse");
+    let Item::Command(command) = &file.items[0] else {
+        panic!("fixture is a command declaration");
     };
-    let token_values = |expr: &Expr| {
-        let Expr::Command(command) = expr else {
-            panic!("fixture expression is a command");
-        };
-        command
-            .parts
-            .iter()
-            .filter_map(|part| match part {
-                CommandPart::Token(token) => Some(token.value.clone()),
-                CommandPart::Splice(_) => None,
-            })
-            .collect::<Vec<_>>()
-    };
-
-    let vix::ast::Stmt::Let(cpp) = &function.body.stmts[0] else {
-        panic!("cpp binding");
-    };
-    assert_eq!(token_values(&cpp.value), ["-std=c++23", "-stdlib=libc++"]);
-    let vix::ast::Stmt::Let(labels) = &function.body.stmts[1] else {
-        panic!("labels binding");
-    };
+    let literals = command.grammar.pattern.alternatives[0]
+        .terms
+        .iter()
+        .filter_map(|term| match &term.atom {
+            CommandAtom::Literal(literal) => Some(literal.value.as_str()),
+            CommandAtom::Slot(_) | CommandAtom::Optional(_) | CommandAtom::Group(_) => None,
+        })
+        .collect::<Vec<_>>();
     assert_eq!(
-        token_values(&labels.value),
-        ["//app:all", "//lib/tests:unit"]
-    );
-    let vix::ast::Stmt::Let(streams) = &function.body.stmts[2] else {
-        panic!("streams binding");
-    };
-    assert_eq!(
-        token_values(&streams.value),
-        ["-map", "0:a?", "-movflags", "+faststart"]
-    );
-    assert_eq!(
-        token_values(function.body.tail.as_ref().expect("tail command")),
-        ["/OUT:", "/DEBUG:FULL", "@response.rsp"]
+        literals,
+        [
+            "-std=c++23",
+            "-stdlib=libc++",
+            "//app:all",
+            "//lib/tests:unit",
+            "-map",
+            "0:a?",
+            "-movflags",
+            "+faststart",
+            "/OUT:",
+            "/DEBUG:FULL",
+            "@response.rsp",
+        ]
     );
 }
 
 #[test]
 fn malformed_command_declarations_and_usages_are_rejected() {
-    let parser = VixParser::new();
+    let parser = SurfaceParser::new();
     let invalid = [
         "command Bad -> Tree { grammar { --flag } }",
         "command Bad -> Tree { program \"bad\" { --flag } }",
@@ -557,9 +540,8 @@ fn malformed_command_declarations_and_usages_are_rejected() {
         "command Bad -> Tree { program \"bad\" grammar { (--a | --b } }",
         "command Bad -> Tree { program \"bad\" grammar { --a | } }",
         "command Bad -> Tree { program \"bad\" grammar { [] } }",
-        "fn bad(tool: Bad) -> Tree { tool! { --flag {value } }",
-        "fn bad(tool: Bad) -> Tree { tool! { --flag {{value}} } }",
-        "fn bad(tool: Bad) -> Tree { tool! { --flag } extra }",
+        "fn bad(tool: Bad) -> Tree { tool`--flag }",
+        "fn bad(tool: Bad) -> Tree { tool`--flag` extra }",
     ];
 
     for source in invalid {

@@ -1,8 +1,8 @@
-use vix::VixParser;
-use vix::ast::{CommandAtom, Item};
+use vix::surface::SurfaceParser;
+use vix::surface::ast::{CommandAtom, Item};
 
 #[test]
-fn command_declaration_lowers_to_algebraic_ast() {
+fn command_declaration_lowers_to_algebraic_surface_ast() {
     let source = r#"
 enum CrateType { Bin, Lib, ProcMacro }
 
@@ -18,7 +18,7 @@ command Rustc -> Tree {
 }
 "#;
 
-    let file = VixParser::new()
+    let file = SurfaceParser::new()
         .parse(source)
         .expect("command declaration parses");
     assert_eq!(file.items.len(), 2);
@@ -42,7 +42,7 @@ command Rustc -> Tree {
 }
 
 #[test]
-fn command_grammar_supports_alternatives_and_groups() {
+fn command_grammar_supports_alternatives_groups_and_repetition() {
     let source = r#"
 command Cc -> Tree {
     program "cc"
@@ -54,7 +54,7 @@ command Cc -> Tree {
 }
 "#;
 
-    let file = VixParser::new()
+    let file = SurfaceParser::new()
         .parse(source)
         .expect("command alternatives parse");
     let Item::Command(command) = &file.items[0] else {
@@ -74,4 +74,28 @@ command Cc -> Tree {
         panic!("third term is a grouped alternative");
     };
     assert_eq!(group.pattern.alternatives.len(), 2);
+}
+
+#[test]
+fn command_role_payloads_remain_ordinary_surface_types() {
+    let source = r#"
+struct Config { value: String }
+
+command Tool -> Tree {
+    program "tool"
+    grammar {
+        {flag: Flag}*
+        {input: Input<Path>}
+        {config: Config}
+    }
+}
+"#;
+
+    let file = SurfaceParser::new()
+        .parse(source)
+        .expect("command declaration parses");
+    let Item::Command(command) = &file.items[1] else {
+        panic!("second item is a command declaration");
+    };
+    assert_eq!(command.grammar.pattern.alternatives[0].terms.len(), 3);
 }

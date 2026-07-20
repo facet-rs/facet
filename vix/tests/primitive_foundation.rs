@@ -3,9 +3,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use vix::runtime::{
-    EffectAuthority, EffectCtx, EffectTicket, FramedNode, JournalObservation, RawPrimitive,
-    PrimitiveCompletion, PrimitiveDescriptor, PrimitiveDispatchError, PrimitiveDispatcher,
-    PrimitiveEvent, PrimitiveId, PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveRegistry,
+    EffectAuthority, EffectCtx, FramedNode, JournalObservation, PrimitiveCompletion,
+    PrimitiveDescriptor, PrimitiveDispatchError, PrimitiveDispatcher, PrimitiveEvent, PrimitiveId,
+    PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveRegistry, RawEffectTicket, RawPrimitive,
     ReadObservation, ReadProjection, TicketCompletionError, ValueId, WitnessedValue,
 };
 use vix::schema::SchemaRef;
@@ -78,7 +78,7 @@ impl<Ctx> RawPrimitive<Ctx> for EchoPrimitive {
         &self.descriptor
     }
 
-    fn begin(&self, request: ValueId, ctx: EffectCtx, _app: &Ctx) -> EffectTicket {
+    fn begin(&self, request: ValueId, ctx: EffectCtx, _app: &Ctx) -> RawEffectTicket {
         self.begins.fetch_add(1, Ordering::Relaxed);
         let (ticket, completer) = ctx.ticket(|| {});
         let publication = ctx
