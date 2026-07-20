@@ -6,7 +6,7 @@ use crate::vir::{
 };
 
 use super::{
-    EffectCtx, EffectTicket, RawPrimitive, PrimitiveCompletion, PrimitiveDescriptor, PrimitiveField,
+    EffectCtx, RawEffectTicket, RawPrimitive, PrimitiveCompletion, PrimitiveDescriptor, PrimitiveField,
     PrimitiveFieldValue, PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveValue,
     PrimitiveValueBody, ReadProjection, ValueId,
 };
@@ -40,7 +40,7 @@ impl<Ctx> RawPrimitive<Ctx> for DecodePrimitive {
         &self.descriptor
     }
 
-    fn begin(&self, request: ValueId, ctx: EffectCtx, _app: &Ctx) -> EffectTicket {
+    fn begin(&self, request: ValueId, ctx: EffectCtx, _app: &Ctx) -> RawEffectTicket {
         let (ticket, completer) = ctx.ticket(|| {});
         let completion = decode_request(&request, &ctx)
             .and_then(|value| ctx.intern_value(value))

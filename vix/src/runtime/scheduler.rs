@@ -41,7 +41,7 @@ use super::store::{
     StoreJournalLoadReport,
 };
 use super::{
-    DecodePrimitive, EffectCtx, EffectTicket, ObservePrimitive, PinnedFetchPrimitive, RawPrimitive,
+    DecodePrimitive, EffectCtx, RawEffectTicket, ObservePrimitive, PinnedFetchPrimitive, RawPrimitive,
     PrimitiveCompletion, PrimitiveDispatcher, PrimitiveField, PrimitiveFieldValue,
     PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveRegistry, PrimitiveValue,
     PrimitiveValueBody, StagedEffectAuthority, TicketSubscription, TreeReadPrimitive, TypedAdapter,
@@ -353,7 +353,7 @@ enum DriveOutcome {
 struct PrimitivePending {
     /// The demand-owned ticket remains live even if a waiting task is discarded;
     /// replay joins this same ticket instead of beginning a second effect.
-    ticket: EffectTicket,
+    ticket: RawEffectTicket,
     /// The first caller's staged authority; joiners never construct another.
     authority: Arc<StagedEffectAuthority>,
     /// The single ticket subscription that delivers this demand's completion
@@ -8446,7 +8446,7 @@ fn scheduler_decode() -> Stream<Check> {
             &self.descriptor
         }
 
-        fn begin(&self, request: ValueId, ctx: EffectCtx, app: &()) -> EffectTicket {
+        fn begin(&self, request: ValueId, ctx: EffectCtx, app: &()) -> RawEffectTicket {
             self.begins.fetch_add(1, Ordering::AcqRel);
             DecodePrimitive::default().begin(request, ctx, app)
         }
@@ -8468,7 +8468,7 @@ fn scheduler_decode() -> Stream<Check> {
             &self.descriptor
         }
 
-        fn begin(&self, request: ValueId, ctx: EffectCtx, _app: &()) -> EffectTicket {
+        fn begin(&self, request: ValueId, ctx: EffectCtx, _app: &()) -> RawEffectTicket {
             self.begins.fetch_add(1, Ordering::AcqRel);
             let gate = self.gate.clone();
             let cancel_gate = self.gate.clone();

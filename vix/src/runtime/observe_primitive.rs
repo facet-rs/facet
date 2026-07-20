@@ -1,10 +1,9 @@
 use crate::vir::{ExternKind, Type};
 
 use super::{
-    ArgRoleDecl, EffectCtx, EffectTicket, ObserveCoordinate, ObservedClaim, OriginHint,
-    PrimitiveCompletion, PrimitiveDecl, PrimitiveMachineError, PrimitiveMemoPolicy,
-    PrimitivePublication, Receipt, ResponseDecl, SelectorDecl, SelectorVariantDecl, Primitive,
-    ValueId,
+    ArgRoleDecl, BlobHandle, EffectCtx, EffectTicket, ObserveCoordinate, ObservedClaim, OriginHint,
+    Primitive, PrimitiveDecl, PrimitiveMachineError, PrimitiveMemoPolicy, SelectorDecl,
+    SelectorVariantDecl, ValueId,
 };
 // Only the test-only hand parser (the `decode_primitive_value` oracle) walks the
 // wire `PrimitiveValue` structurally now; production `begin` decodes instead.
@@ -63,6 +62,7 @@ const MODE_SELECTOR: SelectorDecl = SelectorDecl {
 
 impl<Ctx> Primitive<Ctx> for ObservePrimitive {
     type Request = ObserveRequest;
+    type Response = BlobHandle;
     type Deps = ();
 
     const DECL: PrimitiveDecl = PrimitiveDecl {
@@ -72,28 +72,18 @@ impl<Ctx> Primitive<Ctx> for ObservePrimitive {
         version: 1,
         memo_policy: PrimitiveMemoPolicy::Observed,
         protocol_version: 1,
-        response: ResponseDecl::Extern(ExternKind::Blob),
         failure_schema_name: "ObserveFailure",
         capabilities: &[ExternKind::Registry],
         args: &[ArgRoleDecl::Value, ArgRoleDecl::Selector(MODE_SELECTOR)],
     };
 
-    fn begin(&self, req: ObserveRequest, ctx: EffectCtx, _deps: ()) -> EffectTicket {
-        let (ticket, completer) = ctx.ticket(|| {});
+    fn begin(&self, req: ObserveRequest, ctx: EffectCtx, _deps: ()) -> EffectTicket<BlobHandle> {
+        let (ticket, completer) = EffectTicket::<BlobHandle>::pair(&ctx, || {});
         std::thread::spawn(move || {
-            let completion = serve(req, &ctx)
-                .map(PrimitiveCompletion::Ok)
-                .unwrap_or_else(PrimitiveCompletion::MachineError);
-            let publication = ctx.finish(completion).unwrap_or_else(|error| PrimitivePublication {
-                completion: PrimitiveCompletion::MachineError(error),
-                receipt: Receipt {
-                    demand: ctx.demand(),
-                    reads: Vec::new(),
-                },
-                journal: Vec::new(),
-                progressive: Vec::new(),
-            });
-            let _ = completer.complete(publication);
+            let _ = match serve(req, &ctx) {
+                Ok(value) => completer.complete_ok(&ctx, BlobHandle(value)),
+                Err(error) => completer.complete_err(&ctx, error),
+            };
         });
         ticket
     }
