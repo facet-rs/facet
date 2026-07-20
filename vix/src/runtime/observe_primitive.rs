@@ -1,38 +1,14 @@
 use crate::vir::{ExternKind, Type};
 
 use super::{
-    ArgRoleDecl, BlobHandle, EffectCtx, EffectTicket, ObserveCoordinate, ObservedClaim, OriginHint,
-    Primitive, PrimitiveDecl, PrimitiveMachineError, PrimitiveMemoPolicy, SelectorDecl,
-    SelectorVariantDecl, ValueId,
+    ArgRoleDecl, BlobHandle, EffectCtx, EffectTicket, ObserveCoordinate, ObserveRequest,
+    ObservedClaim, Primitive, PrimitiveDecl, PrimitiveMachineError, PrimitiveMemoPolicy,
+    SelectorDecl, SelectorVariantDecl, ValueId,
 };
 // Only the test-only hand parser (the `decode_primitive_value` oracle) walks the
 // wire `PrimitiveValue` structurally now; production `begin` decodes instead.
 #[cfg(test)]
 use super::{PrimitiveField, PrimitiveFieldValue, PrimitiveValue, PrimitiveValueBody};
-
-/// The `observe` request shape. There is no other Rust spelling of this struct —
-/// it is authored here so the derived `Type::from_facet::<ObserveRequest>()` is
-/// the single source for both `RequestShape.request_ty` and the descriptor's
-/// `request_schema`.
-///
-/// `refresh == false` = observe (memoized by demand like any effect result);
-/// `refresh == true` = refresh, a distinct demand that forces a fresh receipted
-/// observation past the within-run memo and appends a new head under optimistic
-/// concurrency.
-#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
-pub struct ObserveRequest {
-    pub origin: OriginHint,
-    pub refresh: bool,
-}
-
-#[must_use]
-pub fn observe_primitive_id() -> super::PrimitiveId {
-    super::PrimitiveId {
-        namespace: "vix.machine".to_owned(),
-        name: "observe".to_owned(),
-        version: 1,
-    }
-}
 
 /// The generic `observe` primitive (`machine.primitive.effect-set-v1`). Unlike
 /// `fetch`, an observation does not carry the result identity in its request:

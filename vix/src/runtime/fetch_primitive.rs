@@ -1,93 +1,25 @@
 use sha2::{Digest as _, Sha256};
 
-use crate::schema::SchemaRef;
 use crate::vir::{ExternKind, Type};
 
 use super::{
-    ArgRoleDecl, Digest, EffectCtx, EffectTicket, Primitive, PrimitiveDecl, PrimitiveMachineError,
-    PrimitiveMemoPolicy, ReadProjection, ResponseValue, ValueId,
+    ArgRoleDecl, BlobHandle, EffectCtx, EffectTicket, PinnedBlobRef, PinnedFetchRequest, Primitive,
+    PrimitiveDecl, PrimitiveMachineError, PrimitiveMemoPolicy, ReadProjection, ResponseValue,
+    UpstreamDigest, ValueId,
 };
 // Only the test-only hand parsers (the `decode_primitive_value` oracle) walk the
 // wire `PrimitiveValue` structurally now; production `begin` decodes instead.
 #[cfg(test)]
-use super::{PrimitiveField, PrimitiveFieldValue, PrimitiveValue, PrimitiveValueBody};
-
-#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
-pub struct UpstreamDigest(pub [u8; 32]);
-
-/// A registry capability handle. Wire-side this is `Type::Extern(Registry)`; it
-/// wraps a [`ValueId`] like [`BlobId`], but is a distinct newtype so the derived
-/// schema walker (`Type::from_facet`) can tell the two wire meanings apart —
-/// distinct meanings, distinct types.
-#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
-pub struct RegistryHandle(pub ValueId);
-
-/// A served Blob handle: the typed response of `fetch`/`observe`. Wire-side this
-/// is `Type::Extern(Blob)` (see the `vir` leaf override), and it already *is* an
-/// interned [`ValueId`] — completing with it never re-encodes or re-interns.
-#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
-pub struct BlobHandle(pub ValueId);
+use super::{
+    BlobId, Digest, OriginHint, PrimitiveField, PrimitiveFieldValue, PrimitiveValue,
+    PrimitiveValueBody, RegistryHandle,
+};
+#[cfg(test)]
+use crate::schema::SchemaRef;
 
 impl ResponseValue for BlobHandle {
     fn into_value(self) -> ValueId {
         self.0
-    }
-}
-
-/// A pinned Blob target identity. This is not a resident value but a *reference*
-/// to one, so it decomposes structurally into a `ValueId`'s `{schema, content}`:
-/// the schema is an `Extern(Schema)` store value and the content is the digest
-/// wire-encoded as a hex `String` (see [`Type::from_facet`]'s leaf overrides).
-#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
-pub struct BlobId {
-    pub schema: SchemaRef,
-    pub content: Digest,
-}
-
-impl BlobId {
-    pub fn new(value: ValueId) -> Result<Self, PrimitiveMachineError> {
-        if value.schema != Type::Extern(ExternKind::Blob).schema_ref() {
-            return Err(PrimitiveMachineError::InvalidRequest { request: value });
-        }
-        Ok(Self {
-            schema: value.schema,
-            content: value.content,
-        })
-    }
-
-    #[must_use]
-    pub fn id(&self) -> ValueId {
-        ValueId {
-            schema: self.schema.clone(),
-            content: self.content,
-        }
-    }
-}
-
-#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
-pub struct OriginHint {
-    pub capability: RegistryHandle,
-    pub coordinate: String,
-}
-
-#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
-pub struct PinnedBlobRef {
-    pub value: BlobId,
-    pub origins: Vec<OriginHint>,
-    pub upstream: Option<UpstreamDigest>,
-}
-
-#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
-pub struct PinnedFetchRequest {
-    pub pin: PinnedBlobRef,
-}
-
-#[must_use]
-pub fn pinned_fetch_primitive_id() -> super::PrimitiveId {
-    super::PrimitiveId {
-        namespace: "vix.machine".to_owned(),
-        name: "pinned-fetch".to_owned(),
-        version: 1,
     }
 }
 

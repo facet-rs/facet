@@ -1,37 +1,12 @@
 use crate::schema::SchemaPattern;
-use crate::vir::{ExternKind, RecordField, RecordType, Type};
+use crate::vir::{ExternKind, Type};
 
 use super::{
     EffectCtx, PrimitiveCompletion, PrimitiveDescriptor, PrimitiveField, PrimitiveFieldValue,
     PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveValue, PrimitiveValueBody,
     RawEffectTicket, RawPrimitive, ReadProjection, ValueId, fixture_tree_name,
+    tree_read_primitive_id, tree_read_request_type,
 };
-
-#[must_use]
-pub fn tree_read_request_type() -> Type {
-    Type::Record(RecordType::new(
-        "TreeReadRequest",
-        vec![
-            RecordField {
-                name: "tree".to_owned(),
-                ty: Type::Extern(ExternKind::Tree),
-            },
-            RecordField {
-                name: "path".to_owned(),
-                ty: Type::Path,
-            },
-        ],
-    ))
-}
-
-#[must_use]
-pub fn tree_read_primitive_id() -> super::PrimitiveId {
-    super::PrimitiveId {
-        namespace: "vix.machine".to_owned(),
-        name: "tree-read".to_owned(),
-        version: 1,
-    }
-}
 
 pub struct TreeReadPrimitive {
     descriptor: PrimitiveDescriptor,
