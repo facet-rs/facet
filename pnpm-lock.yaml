@@ -50,7 +50,7 @@ importers:
   editors/monaco-styx:
     dependencies:
       monaco-editor:
-        specifier: ^0.40.0 || ^0.50.0
+        specifier: ^0.40.0 || ^0.50.0 || ^0.56.0
         version: 0.50.0
     devDependencies:
       tsup:
@@ -137,7 +137,7 @@ importers:
         specifier: workspace:*
         version: link:../../styx-wasm
       monaco-editor:
-        specifier: ^0.40.0 || ^0.50.0
+        specifier: ^0.40.0 || ^0.50.0 || ^0.56.0
         version: 0.50.0
       monaco-vim:
         specifier: ^0.4.1
