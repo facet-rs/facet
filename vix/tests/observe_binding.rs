@@ -75,7 +75,7 @@ fn refresh_lives_in_the_stdlib_not_as_a_builtin() {
     // out of the compiler's intrinsic set into stdlib vix source. The error is
     // then unknown-name resolution, never the forwarded observe origin-type check.
     let without_stdlib = Compiler::with_config(CompilerConfig {
-        stdlib: false,
+        prelude: &[],
         ..CompilerConfig::default()
     });
     let err = format!(

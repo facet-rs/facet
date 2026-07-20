@@ -896,6 +896,14 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
         self.fixture_store = self.fixture_store.clone().with_rerun_overlay(rerun_with);
     }
 
+    /// Install the primitive dispatcher the engine dispatches effects through.
+    /// `vix-core` constructs runtimes with an **empty** dispatcher (the bare
+    /// language performs no effects); the `vixen` runtime injects the builtin
+    /// dispatcher (`vixen_runtime::default_primitive_dispatcher`) here.
+    pub fn set_primitive_dispatcher(&mut self, dispatcher: PrimitiveDispatcher<Ctx>) {
+        self.primitive_dispatcher = dispatcher;
+    }
+
     pub fn set_primitive_services(&mut self, services: super::PrimitiveServices) {
         if let Some(fixture_store) = services.fixture_store() {
             self.fixture_store = fixture_store;

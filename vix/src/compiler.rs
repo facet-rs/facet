@@ -46,16 +46,21 @@ pub struct CompilerConfig {
     /// as value inputs, so downstream demand keys are over `ValueId`s rather
     /// than recompute-and-compare results.
     pub force_scalar_call_boundaries: bool,
-    /// Merge the registered standard-library prelude (`crate::stdlib`) into the
-    /// compilation as ordinary top-level items. On by default: the stdlib holds
-    /// the surface `json_decode`/`toml_decode`/`refresh` functions (the retired
-    /// intrinsics), so a compilation needs it to resolve them. An uninstantiated
-    /// *generic* prelude fn costs nothing (it only lowers per call), but a
-    /// non-generic fn (`is_blank`) and the prelude enums (`Format`, `Mode`) are
-    /// always emitted into the module — there is no reachability pruning — so
-    /// turning this on perturbs module counts and the module-set hash. Off only
-    /// for tests that isolate the bare surface.
-    pub stdlib: bool,
+    /// Prelude source functions merged into every compilation as ordinary
+    /// top-level items (each a self-contained `fn`/`enum`/`struct` in vix
+    /// surface syntax), injected *if-absent* so a program shadows any it
+    /// redeclares. This is the language's only knowledge of a "standard
+    /// library": pure data, supplied by the embedder. `vix-core` alone ships an
+    /// **empty** prelude — the bare language — and it is the `vixen` runtime that
+    /// installs `vixen_primitives::PRELUDE_SOURCES` (the surface
+    /// `json_decode`/`toml_decode`/`refresh` functions, retired intrinsics).
+    ///
+    /// An uninstantiated *generic* prelude fn costs nothing (it only lowers per
+    /// call), but a non-generic fn (`is_blank`) and the prelude enums (`Format`,
+    /// `Mode`) are always emitted into the module — there is no reachability
+    /// pruning — so a non-empty prelude perturbs module counts and the
+    /// module-set hash. Empty for tests that isolate the bare surface.
+    pub prelude: &'static [&'static str],
 }
 
 impl Default for CompilerConfig {
@@ -63,7 +68,7 @@ impl Default for CompilerConfig {
         Self {
             force_molten_copy: false,
             force_scalar_call_boundaries: false,
-            stdlib: true,
+            prelude: crate::stdlib::PRELUDE_SOURCES,
         }
     }
 }
@@ -123,8 +128,8 @@ impl Compiler {
             parsed.push((module.name.to_owned(), self.parser.parse(module.source)?));
         }
         let mut merged = crate::modules::merge_module_set(root, &parsed)?;
-        if self.config.stdlib {
-            crate::stdlib::inject_prelude(&self.parser, &mut merged)?;
+        if !self.config.prelude.is_empty() {
+            crate::stdlib::inject_prelude(&self.parser, self.config.prelude, &mut merged)?;
         }
         let module = lower_module(&merged, self.config)?;
         let warnings = lint_module(&module);

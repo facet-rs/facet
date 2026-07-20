@@ -32,7 +32,7 @@ use weavy::{LaneRequest, PayloadKind, RegionShape, ValueShapeKind, WordKind};
 /// path is covered by the corpus differential and the `stdlib` unit tests.
 fn user_program_compiler() -> Compiler {
     Compiler::with_config(CompilerConfig {
-        stdlib: false,
+        prelude: &[],
         ..CompilerConfig::default()
     })
 }
