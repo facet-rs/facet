@@ -401,9 +401,13 @@ module.exports = grammar({
       ),
     splice: ($) => seq("{", field("expr", $._expr), "}"),
     // Anything that isn't whitespace or a brace: flags, subcommands, file names.
-    // Command tokens outrank `//` comments in this lexical mode: Bazel/Buck
-    // labels such as `//app:bin` are argv, not comments.
-    command_token: () => prec(2, /[^{}\s]+/),
+    // Label-shaped `//app:bin` tokens outrank comments in command mode, while
+    // ordinary `// comment` lines remain extras rather than argv.
+    command_token: () =>
+      choice(
+        token(prec(2, /\/\/[^{}\s]+/)),
+        token(prec(-1, /[^{}\s]+/)),
+      ),
 
     // ---- leaves ------------------------------------------------------------
     identifier: () => /[A-Za-z_][A-Za-z0-9_]*/,
@@ -449,10 +453,7 @@ module.exports = grammar({
     tuple_index: () => /[0-9]+/,
     boolean: () => choice("true", "false"),
 
-    // Keep comments below contextual command tokens so `//pkg:target` remains
-    // usable inside Bazel/Buck command blocks. Outside command mode this is
-    // still the only token spanning the full comment and therefore wins.
-    line_comment: () => token(prec(-2, seq("//", /[^\n]*/))),
+    line_comment: () => token(prec(1, seq("//", /[^\n]*/))),
     doc_comment: () => token(prec(2, seq("///", /[^\n]*/))),
   },
 });

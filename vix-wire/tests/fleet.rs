@@ -189,6 +189,16 @@ async fn language_level_pipelining_b_finishes_while_a_still_runs() {
 use vix::{Tree, Path, Target};
 use caps::{Rustc, Cc};
 
+command rustc -> Tree {
+    program "rustc"
+    grammar { {input: Input<Path>} }
+}
+
+command cc -> Tree {
+    program "cc"
+    grammar { {input: Input<Path>} -c {source: Input<Path>} -o {output: Output<Path>} }
+}
+
 fn get_rustc(t: Target) -> Rustc { Rustc::acquire(t) }
 fn get_cc(t: Target) -> Cc { Cc::acquire(t) }
 

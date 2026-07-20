@@ -495,7 +495,10 @@ fn pathological_command_tokens_survive_as_argv_instead_of_language_syntax() {
     let source = r#"
 fn edge_cases(tool: Tool, path: Path) -> Tree {
     let cpp = tool! { -std=c++23 -stdlib=libc++ };
-    let labels = tool! { //app:all //lib/tests:unit };
+    let labels = tool! {
+        // Bazel labels remain argv without sacrificing command-block comments.
+        //app:all //lib/tests:unit
+    };
     let streams = tool! { -map 0:a? -movflags +faststart };
     tool! { /OUT:{path} /DEBUG:FULL @response.rsp }
 }
