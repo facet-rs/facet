@@ -9626,6 +9626,8 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "vixen-primitives",
+ "vixen-runtime",
  "weavy",
  "windows-sys 0.61.2",
 ]
@@ -9639,6 +9641,34 @@ dependencies = [
  "tempfile",
  "ureq",
  "vix-core",
+]
+
+[[package]]
+name = "vixen-primitives"
+version = "0.0.0"
+dependencies = [
+ "facet",
+ "facet-reflect",
+ "hex",
+ "sha2 0.10.9",
+ "vix-core",
+]
+
+[[package]]
+name = "vixen-runtime"
+version = "0.0.0"
+dependencies = [
+ "blake3",
+ "facet",
+ "facet-json",
+ "libc",
+ "semver",
+ "tempfile",
+ "tokio",
+ "vix-core",
+ "vixen-primitives",
+ "weavy",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -1,6 +1,6 @@
 //! The outer, budget-enforcing test runner.
 //!
-//! A `#[test]` budget (`crate::vir::Budget`) is only a gate if something outside
+//! A `#[test]` budget (`vix::vir::Budget`) is only a gate if something outside
 //! the test can *stop* an over-budget run. An in-process `Instant` check cannot
 //! interrupt a stuck native loop; a leaked timeout thread cannot reclaim its
 //! memory; Nextest's own timeout is coarse and does not read the typed budget.
@@ -25,7 +25,7 @@ use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
-use crate::vir::Budget;
+use vix::vir::Budget;
 
 /// The watchdog poll interval. Wall and resident-set ceilings are checked at
 /// this cadence; it bounds enforcement latency, not the budgets themselves.
@@ -185,7 +185,8 @@ const RSS_ENFORCEABLE: bool = false;
 /// [`Budget`] than the `#[test { ... }]` declaration before spawning the child.
 #[must_use]
 pub fn run_source_under_declared_budget(child_exe: &Path, source: &str) -> BudgetOutcome {
-    let compilation = match crate::compiler::Compiler::new().compile(source) {
+    let compilation =
+        match vix::compiler::Compiler::with_config(crate::default_config()).compile(source) {
         Ok(compilation) => compilation,
         Err(diagnostics) => {
             return BudgetOutcome::SourceRejected {

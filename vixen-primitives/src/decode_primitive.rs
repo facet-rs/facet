@@ -1,11 +1,11 @@
-use crate::decode::{self, DecodeError, DecodedValue};
-use crate::schema::{SchemaPattern, SchemaRef};
-use crate::vir::{
+use vix::decode::{self, DecodeError, DecodedValue};
+use vix::schema::{SchemaPattern, SchemaRef};
+use vix::vir::{
     DecodeFormat, RESULT_ERR_VARIANT, RESULT_OK_VARIANT, Type, VariantPayload, decode_error_type,
     decode_primitive_id, decode_request_type,
 };
 
-use super::{
+use crate::rt::{
     EffectCtx, PrimitiveCompletion, PrimitiveDescriptor, PrimitiveField, PrimitiveFieldValue,
     PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveValue, PrimitiveValueBody,
     RawEffectTicket, RawPrimitive, ReadProjection, ValueId,
@@ -48,9 +48,9 @@ impl<Ctx> RawPrimitive<Ctx> for DecodePrimitive {
             .unwrap_or_else(PrimitiveCompletion::MachineError);
         let publication =
             ctx.finish(completion)
-                .unwrap_or_else(|error| super::PrimitivePublication {
+                .unwrap_or_else(|error| crate::rt::PrimitivePublication {
                     completion: PrimitiveCompletion::MachineError(error),
-                    receipt: super::Receipt {
+                    receipt: crate::rt::Receipt {
                         demand: ctx.demand(),
                         reads: Vec::new(),
                     },

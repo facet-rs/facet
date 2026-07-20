@@ -1,14 +1,13 @@
-use crate::vir::{ExternKind, Type};
+use vix::vir::{ExternKind, Type};
 
-use super::{
-    ArgRoleDecl, BlobHandle, EffectCtx, EffectTicket, ObserveCoordinate, ObserveRequest,
-    ObservedClaim, Primitive, PrimitiveDecl, PrimitiveMachineError, PrimitiveMemoPolicy,
-    SelectorDecl, SelectorVariantDecl, ValueId,
+use crate::rt::{
+    BlobHandle, EffectCtx, EffectTicket, ObserveCoordinate, ObserveRequest, ObservedClaim,
+    Primitive, PrimitiveDecl, PrimitiveMachineError, ValueId,
 };
 // Only the test-only hand parser (the `decode_primitive_value` oracle) walks the
 // wire `PrimitiveValue` structurally now; production `begin` decodes instead.
 #[cfg(test)]
-use super::{PrimitiveField, PrimitiveFieldValue, PrimitiveValue, PrimitiveValueBody};
+use crate::rt::{PrimitiveField, PrimitiveFieldValue, PrimitiveValue, PrimitiveValueBody};
 
 /// The generic `observe` primitive (`machine.primitive.effect-set-v1`). Unlike
 /// `fetch`, an observation does not carry the result identity in its request:
@@ -19,39 +18,12 @@ use super::{PrimitiveField, PrimitiveFieldValue, PrimitiveValue, PrimitiveValueB
 /// `Observed`: the identity becomes known through a receipted observation.
 pub struct ObservePrimitive;
 
-/// The `Mode` selector `observe`'s second argument folds to its `refresh` flag:
-/// `Mode::Observe` → `false`, `Mode::Refresh` → `true`.
-const MODE_SELECTOR: SelectorDecl = SelectorDecl {
-    enum_name: "Mode",
-    noun: "observe mode",
-    variants: &[
-        SelectorVariantDecl {
-            variant: "Observe",
-            flag: false,
-        },
-        SelectorVariantDecl {
-            variant: "Refresh",
-            flag: true,
-        },
-    ],
-};
-
 impl<Ctx> Primitive<Ctx> for ObservePrimitive {
     type Request = ObserveRequest;
     type Response = BlobHandle;
     type Deps = ();
 
-    const DECL: PrimitiveDecl = PrimitiveDecl {
-        namespace: "vix.machine",
-        name: "observe",
-        id_name: "observe",
-        version: 1,
-        memo_policy: PrimitiveMemoPolicy::Observed,
-        protocol_version: 1,
-        failure_schema_name: "ObserveFailure",
-        capabilities: &[ExternKind::Registry],
-        args: &[ArgRoleDecl::Value, ArgRoleDecl::Selector(MODE_SELECTOR)],
-    };
+    const DECL: PrimitiveDecl = crate::rt::OBSERVE_DECL;
 
     fn begin(&self, req: ObserveRequest, ctx: EffectCtx, _deps: ()) -> EffectTicket<BlobHandle> {
         let (ticket, completer) = EffectTicket::<BlobHandle>::pair(&ctx, || {});

@@ -68,7 +68,7 @@ impl Default for CompilerConfig {
         Self {
             force_molten_copy: false,
             force_scalar_call_boundaries: false,
-            prelude: crate::stdlib::PRELUDE_SOURCES,
+            prelude: &[],
         }
     }
 }
@@ -129,7 +129,7 @@ impl Compiler {
         }
         let mut merged = crate::modules::merge_module_set(root, &parsed)?;
         if !self.config.prelude.is_empty() {
-            crate::stdlib::inject_prelude(&self.parser, self.config.prelude, &mut merged)?;
+            crate::prelude::inject_prelude(&self.parser, self.config.prelude, &mut merged)?;
         }
         let module = lower_module(&merged, self.config)?;
         let warnings = lint_module(&module);

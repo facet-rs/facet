@@ -9,10 +9,13 @@
 //! embeds the language — the descriptors here are all it needs to compile a
 //! program that calls them.
 
-use crate::schema::SchemaRef;
+use crate::schema::{SchemaPattern, SchemaRef};
 use crate::vir::{ExternKind, RecordField, RecordType, Type};
 
-use super::{Digest, PrimitiveId, PrimitiveMachineError, ValueId};
+use super::{
+    ArgRole, Digest, PrimitiveDescriptor, PrimitiveId, PrimitiveMachineError, PrimitiveMemoPolicy,
+    RequestShape, Selector, SelectorVariant, ValueId,
+};
 
 // ---- fetch / blob ---------------------------------------------------------
 
@@ -142,4 +145,211 @@ pub fn tree_read_primitive_id() -> PrimitiveId {
         name: "tree-read".to_owned(),
         version: 1,
     }
+}
+
+// ---- surface-binding decls (the language's view of a primitive's call shape) --
+//
+// A primitive's *surface contract* — the prelude name it binds, the request
+// record it lowers to, its capabilities and memo policy — is language-level
+// metadata the compiler needs to lower a call, independent of the primitive's
+// implementation. It is authored here as const data; the `vixen` runtime's
+// typed authoring layer (`Primitive`/`TypedAdapter`) reuses the same decls and
+// [`synth_descriptor`]/[`synth_shape`] to build the runtime descriptor, so the
+// two never diverge.
+
+/// One accepted variant of a selector argument and the boolean flag it folds
+/// into the request record — the const-friendly mirror of [`SelectorVariant`].
+pub struct SelectorVariantDecl {
+    pub variant: &'static str,
+    pub flag: bool,
+}
+
+/// A selector argument declared as const data — the mirror of [`Selector`].
+pub struct SelectorDecl {
+    pub enum_name: &'static str,
+    pub noun: &'static str,
+    pub variants: &'static [SelectorVariantDecl],
+}
+
+/// The role a surface argument plays, declared as const data. `Value` carries no
+/// type: its expected [`Type`] is the *i-th* field of `Type::from_facet::<Request>()`,
+/// zipped in order, so the request struct is the single source of the arg types.
+pub enum ArgRoleDecl {
+    Value,
+    Selector(SelectorDecl),
+}
+
+/// Everything a registered primitive's surface contract *is*, as const data.
+/// Consumed to synthesize the [`PrimitiveDescriptor`] and [`RequestShape`];
+/// nothing here is heap-allocated and no [`Type`] is embedded (the types come
+/// from `Type::from_facet::<Request>()`).
+pub struct PrimitiveDecl {
+    pub namespace: &'static str,
+    /// The primitive's surface binding name in the prelude (`RawPrimitive::surface_name`).
+    pub name: &'static str,
+    /// The registered [`PrimitiveId`] name. Usually equal to `name`, but the two
+    /// diverge where the surface spelling differs from the machine id — e.g.
+    /// `fetch` (surface) is registered as `pinned-fetch` (id).
+    pub id_name: &'static str,
+    pub version: u32,
+    pub memo_policy: PrimitiveMemoPolicy,
+    pub protocol_version: u32,
+    pub failure_schema_name: &'static str,
+    /// The primitive's *curated* capability extern kinds — declared here, never
+    /// derived from the request tree.
+    pub capabilities: &'static [ExternKind],
+    pub args: &'static [ArgRoleDecl],
+}
+
+impl PrimitiveDecl {
+    #[must_use]
+    pub fn id(&self) -> PrimitiveId {
+        PrimitiveId {
+            namespace: self.namespace.to_owned(),
+            name: self.id_name.to_owned(),
+            version: self.version,
+        }
+    }
+}
+
+/// Synthesize the runtime descriptor from a decl and its request/response types.
+#[must_use]
+pub fn synth_descriptor(
+    decl: &PrimitiveDecl,
+    request_ty: &Type,
+    response_ty: &Type,
+) -> PrimitiveDescriptor {
+    PrimitiveDescriptor {
+        id: decl.id(),
+        request_schema: SchemaPattern::exact(&request_ty.schema_ref()),
+        response_schema: SchemaPattern::exact(&response_ty.schema_ref()),
+        failure_schema: SchemaPattern::Var {
+            name: decl.failure_schema_name.to_owned(),
+        },
+        memo_policy: decl.memo_policy,
+        protocol_version: decl.protocol_version,
+        capability_schemas: decl
+            .capabilities
+            .iter()
+            .map(|kind| SchemaPattern::exact(&Type::Extern(*kind).schema_ref()))
+            .collect(),
+    }
+}
+
+/// Synthesize the surface [`RequestShape`] the compiler lowers a call through.
+#[must_use]
+pub fn synth_shape(decl: &PrimitiveDecl, request_ty: Type, response_ty: Type) -> RequestShape {
+    let fields = record_fields(&request_ty);
+    let args = decl
+        .args
+        .iter()
+        .zip(fields)
+        .map(|(arg, field)| match arg {
+            ArgRoleDecl::Value => ArgRole::Value {
+                expected: field.ty.clone(),
+            },
+            ArgRoleDecl::Selector(selector) => ArgRole::Selector(Selector {
+                enum_name: selector.enum_name.to_owned(),
+                noun: selector.noun.to_owned(),
+                variants: selector
+                    .variants
+                    .iter()
+                    .map(|variant| SelectorVariant {
+                        variant: variant.variant.to_owned(),
+                        flag: variant.flag,
+                    })
+                    .collect(),
+            }),
+        })
+        .collect();
+    RequestShape {
+        args,
+        result: response_ty,
+        primitive: decl.id(),
+        request_ty,
+    }
+}
+
+/// The record fields a request type contributes, in order. A request is always a
+/// record (one field per surface argument); anything else contributes none.
+fn record_fields(request_ty: &Type) -> &[RecordField] {
+    match request_ty {
+        Type::Record(record) => &record.fields,
+        _ => &[],
+    }
+}
+
+/// The `Mode` selector `observe`'s second argument folds to its `refresh` flag:
+/// `Mode::Observe` → `false`, `Mode::Refresh` → `true`.
+const MODE_SELECTOR: SelectorDecl = SelectorDecl {
+    enum_name: "Mode",
+    noun: "observe mode",
+    variants: &[
+        SelectorVariantDecl {
+            variant: "Observe",
+            flag: false,
+        },
+        SelectorVariantDecl {
+            variant: "Refresh",
+            flag: true,
+        },
+    ],
+};
+
+/// The `fetch` primitive's surface contract (registered id `pinned-fetch`).
+pub const FETCH_DECL: PrimitiveDecl = PrimitiveDecl {
+    namespace: "vix.machine",
+    name: "fetch",
+    id_name: "pinned-fetch",
+    version: 1,
+    memo_policy: PrimitiveMemoPolicy::Pinned,
+    protocol_version: 1,
+    failure_schema_name: "PinnedFetchFailure",
+    capabilities: &[ExternKind::Registry],
+    args: &[ArgRoleDecl::Value],
+};
+
+/// The `observe` primitive's surface contract.
+pub const OBSERVE_DECL: PrimitiveDecl = PrimitiveDecl {
+    namespace: "vix.machine",
+    name: "observe",
+    id_name: "observe",
+    version: 1,
+    memo_policy: PrimitiveMemoPolicy::Observed,
+    protocol_version: 1,
+    failure_schema_name: "ObserveFailure",
+    capabilities: &[ExternKind::Registry],
+    args: &[ArgRoleDecl::Value, ArgRoleDecl::Selector(MODE_SELECTOR)],
+};
+
+/// A builtin primitive's surface projection: the prelude name it binds, its id,
+/// and the request shape the compiler lowers its call through. This is the
+/// language's knowledge of the primitives it can lower — their *contracts*, not
+/// their implementations (which live in `vixen-primitives`).
+pub struct BuiltinPrimitiveSurface {
+    pub surface_name: &'static str,
+    pub id: PrimitiveId,
+    pub shape: RequestShape,
+}
+
+/// The builtin primitives that project a prelude free-function surface: `fetch`
+/// and `observe`. `tree-read` binds only as a `.text()` method (no surface name),
+/// and `decode`/`try_decode` share one hand-registered id — neither appears here.
+#[must_use]
+pub fn builtin_primitive_surfaces() -> Vec<BuiltinPrimitiveSurface> {
+    fn surface<Request: facet::Facet<'static>, Response: facet::Facet<'static>>(
+        decl: &PrimitiveDecl,
+    ) -> BuiltinPrimitiveSurface {
+        let request_ty = Type::from_facet::<Request>();
+        let response_ty = Type::from_facet::<Response>();
+        BuiltinPrimitiveSurface {
+            surface_name: decl.name,
+            id: decl.id(),
+            shape: synth_shape(decl, request_ty, response_ty),
+        }
+    }
+    vec![
+        surface::<PinnedFetchRequest, BlobHandle>(&FETCH_DECL),
+        surface::<ObserveRequest, BlobHandle>(&OBSERVE_DECL),
+    ]
 }

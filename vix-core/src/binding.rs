@@ -251,16 +251,16 @@ impl BindingRegistry {
 pub fn builtin_bindings() -> BindingRegistry {
     let mut reg = BindingRegistry::default();
 
-    // Harvest one binding per registered primitive that projects a surface
-    // name — no second table naming `fetch`/`observe` by hand.
-    for primitive in runtime::builtin_primitives::<()>() {
-        if let Some(name) = primitive.surface_name() {
-            reg.insert(Binding::primitive(
-                Placement::Prelude,
-                name,
-                primitive.descriptor().id.clone(),
-            ));
-        }
+    // Harvest one binding per builtin primitive that projects a surface name —
+    // no second table naming `fetch`/`observe` by hand. The surface contracts
+    // are language data (`runtime::builtin_primitive_surfaces`); the matching
+    // implementations live in `vixen-primitives`.
+    for primitive in runtime::builtin_primitive_surfaces() {
+        reg.insert(Binding::primitive(
+            Placement::Prelude,
+            primitive.surface_name,
+            primitive.id.clone(),
+        ));
     }
 
     // decode/try_decode: one registered primitive, two surface names — not yet
@@ -353,12 +353,9 @@ pub fn request_shape(id: &PrimitiveId) -> Option<RequestShape> {
 }
 
 static REQUEST_SHAPES: LazyLock<BTreeMap<PrimitiveId, RequestShape>> = LazyLock::new(|| {
-    runtime::builtin_primitives::<()>()
+    runtime::builtin_primitive_surfaces()
         .into_iter()
-        .filter_map(|primitive| {
-            let shape = primitive.request_shape()?;
-            Some((primitive.descriptor().id.clone(), shape))
-        })
+        .map(|primitive| (primitive.id.clone(), primitive.shape))
         .collect()
 });
 

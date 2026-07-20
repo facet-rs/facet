@@ -69,6 +69,12 @@ semver = "1.0.28"
 tempfile.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time"] }
 weavy = { path = "../weavy" }
+# The language crate's own tests exercise the runnable system — they need the
+# concrete primitives + stdlib the vixen crates supply. This is a dev-only
+# dependency cycle (vixen-runtime depends on vix-core for the normal build),
+# which Cargo permits.
+vixen-primitives = { path = "../vixen-primitives" }
+vixen-runtime = { path = "../vixen-runtime" }
 
 # The macOS-only Mach-O relocation-walk test (tests/reloc_selection.rs, gated
 # `#![cfg(target_os = "macos")]`) stages temp fixture trees with tempfile. The

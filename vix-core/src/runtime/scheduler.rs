@@ -42,10 +42,9 @@ use super::store::{
 };
 use super::{BlobId, OriginHint};
 use super::{
-    DecodePrimitive, EffectCtx, ObservePrimitive, PinnedFetchPrimitive, PrimitiveCompletion,
-    PrimitiveDispatcher, PrimitiveField, PrimitiveFieldValue, PrimitiveMachineError,
-    PrimitiveMemoPolicy, PrimitiveRegistry, PrimitiveValue, PrimitiveValueBody, RawEffectTicket,
-    RawPrimitive, StagedEffectAuthority, TicketSubscription, TreeReadPrimitive, TypedAdapter,
+    EffectCtx, PrimitiveCompletion, PrimitiveDispatcher, PrimitiveField, PrimitiveFieldValue,
+    PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveValue, PrimitiveValueBody, RawEffectTicket,
+    StagedEffectAuthority, TicketSubscription,
 };
 use super::{MachineAttribution, MachineError, MachineOperation, RuntimeFault};
 
@@ -723,29 +722,11 @@ fn build_memo_suffix_index(
     index
 }
 
-/// The built-in registered primitives, as data: this is the *one* place that
-/// lists them, consumed both to build the default dispatcher and (by
-/// `binding::builtin_bindings`) to harvest their surface projections. Adding a
-/// primitive is one entry here, not a second hand-registration.
-#[must_use]
-pub fn builtin_primitives<Ctx>() -> Vec<Arc<dyn RawPrimitive<Ctx>>> {
-    vec![
-        Arc::new(DecodePrimitive::default()),
-        Arc::new(TypedAdapter::new::<Ctx>(PinnedFetchPrimitive)),
-        Arc::new(TypedAdapter::new::<Ctx>(ObservePrimitive)),
-        Arc::new(TreeReadPrimitive::default()),
-    ]
-}
-
-fn default_primitive_dispatcher<Ctx>() -> PrimitiveDispatcher<Ctx> {
-    let mut registry = PrimitiveRegistry::default();
-    for primitive in builtin_primitives::<Ctx>() {
-        registry
-            .register(primitive)
-            .expect("built-in primitives register once, each under a distinct id");
-    }
-    PrimitiveDispatcher::new(Arc::new(registry))
-}
+// The builtin primitives and the dispatcher that carries them live in
+// `vixen-runtime` (`vixen_runtime::builtin_primitives` /
+// `default_primitive_dispatcher`): the bare language ships none. Every
+// constructor below installs `PrimitiveDispatcher::empty()`; an embedder swaps
+// in the builtins via `Runtime::set_primitive_dispatcher`.
 
 impl<S: EventSink> Runtime<S, ()> {
     #[must_use]
@@ -763,7 +744,7 @@ impl<S: EventSink> Runtime<S, ()> {
             wire_demands: Vec::new(),
             performed_read_paths: BTreeSet::new(),
             fixture_store: FixtureStore::default(),
-            primitive_dispatcher: default_primitive_dispatcher(),
+            primitive_dispatcher: PrimitiveDispatcher::empty(),
             primitive_services: super::PrimitiveServices::default(),
             ctx: (),
             completion_inbox: CompletionInbox::default(),
@@ -803,7 +784,7 @@ impl<S: EventSink> Runtime<S, ()> {
             wire_demands: Vec::new(),
             performed_read_paths: BTreeSet::new(),
             fixture_store: FixtureStore::default(),
-            primitive_dispatcher: default_primitive_dispatcher(),
+            primitive_dispatcher: PrimitiveDispatcher::empty(),
             primitive_services: super::PrimitiveServices::default(),
             ctx: (),
             completion_inbox: CompletionInbox::default(),
@@ -838,7 +819,7 @@ impl<S: EventSink> Runtime<S, ()> {
                 wire_demands: Vec::new(),
                 performed_read_paths: BTreeSet::new(),
                 fixture_store: FixtureStore::default(),
-                primitive_dispatcher: default_primitive_dispatcher(),
+                primitive_dispatcher: PrimitiveDispatcher::empty(),
                 primitive_services: super::PrimitiveServices::default(),
                 ctx: (),
                 completion_inbox: CompletionInbox::default(),
@@ -876,7 +857,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             wire_demands: Vec::new(),
             performed_read_paths: BTreeSet::new(),
             fixture_store: FixtureStore::default(),
-            primitive_dispatcher: default_primitive_dispatcher(),
+            primitive_dispatcher: PrimitiveDispatcher::empty(),
             primitive_services: super::PrimitiveServices::default(),
             ctx,
             completion_inbox: CompletionInbox::default(),
@@ -5823,7 +5804,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
     /// A render fault is a machine invariant (the published structure did not
     /// match the declared type), returned as a typed detail so the harness can
     /// attribute it to the snapshot site instead of aborting the whole run.
-    pub(crate) fn render_snapshot(&self, handle: Handle, ty: &Type) -> Result<String, String> {
+    pub fn render_snapshot(&self, handle: Handle, ty: &Type) -> Result<String, String> {
         let frozen = self
             .store
             .entry(handle)

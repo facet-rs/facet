@@ -3,10 +3,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
-use crate::compiler::{Compiler, CompilerConfig};
-use crate::diagnostic::Diagnostics;
-use crate::lowering::{LoweringCache, LoweringCacheCounters, LoweringError, attribution_for};
-use crate::runtime::{
+use vix::compiler::{Compiler, CompilerConfig};
+use vix::diagnostic::Diagnostics;
+use vix::lowering::{LoweringCache, LoweringCacheCounters, LoweringError, attribution_for};
+use vix::runtime::{
     ChaosPolicy, Counters, DemandState, Evaluation, Event, EventKind, EventLog,
     ExecProjectionRequest, FailureContext, FailureValue, FramedNode, GeneratorOutcome,
     IslandInputs, Location, MachineError, PersistentRuntimeJournal, PersistentRuntimeJournalError,
@@ -14,7 +14,7 @@ use crate::runtime::{
     RealizedWireDemand, RootSubmission, Runtime, SnapshotCapture, SnapshotOutcome, TaskState,
     ValueId, ValueRootRequest, WireDemand,
 };
-use crate::vir::{
+use vix::vir::{
     DescribedWire, FunctionId, Island, Module, Op, PartitionedRecipe, PartitionedValue, TraceCheck,
     ValueIslandId, WireArg, WireSelector,
 };
@@ -22,7 +22,7 @@ use crate::vir::{
 /// The user functions named by a test's described-wire trace checks. A bundled
 /// invocation observation is emitted only for these — the observation is bounded
 /// to the selected observers, never every call.
-fn selected_wire_functions(partitioned: &crate::vir::PartitionedTest) -> BTreeSet<FunctionId> {
+fn selected_wire_functions(partitioned: &vix::vir::PartitionedTest) -> BTreeSet<FunctionId> {
     partitioned
         .sites
         .iter()
@@ -367,16 +367,16 @@ struct TraceSnapshot {
 /// the exact realized argument identity without demanding anything.
 fn wire_arg_identity(arg: &WireArg) -> ValueId {
     let (ty, bytes) = match arg {
-        WireArg::Int(value) => (crate::vir::Type::Int, value.to_le_bytes().to_vec()),
+        WireArg::Int(value) => (vix::vir::Type::Int, value.to_le_bytes().to_vec()),
         WireArg::Bool(value) => (
-            crate::vir::Type::Bool,
+            vix::vir::Type::Bool,
             i64::from(*value).to_le_bytes().to_vec(),
         ),
         WireArg::FixtureTree(name) => {
             let mut bytes = b"fixture-tree\0".to_vec();
             bytes.extend(name.as_bytes());
             (
-                crate::vir::Type::Extern(crate::vir::ExternKind::Tree),
+                vix::vir::Type::Extern(vix::vir::ExternKind::Tree),
                 bytes,
             )
         }
@@ -600,7 +600,7 @@ impl RatchetReport {
 
 /// A source that is parsed, checked, lowered, verified, and natively compiled,
 /// ready to execute. Every island the two lanes will demand is already lowered —
-/// and therefore JIT-compiled, since [`crate::lowering::LoweringArtifact`] holds
+/// and therefore JIT-compiled, since [`vix::lowering::LoweringArtifact`] holds
 /// an eagerly-compiled [`weavy::exec::Executable`] — and cached, so
 /// [`PreparedRun::execute`] performs no compilation and does only the asymptotic
 /// evaluation a budget is meant to gate.
@@ -609,7 +609,7 @@ impl RatchetReport {
 /// preparation is a fixed, O(1) compiler/JIT cost that is not the tested
 /// program's work, so it is completed *before* the wall clock starts.
 pub struct PreparedRun {
-    compilation: crate::compiler::Compilation,
+    compilation: vix::compiler::Compilation,
     cache: LoweringCache,
 }
 
@@ -665,7 +665,7 @@ impl SnapshotExpectations {
 /// r[impl machine.scheduler.chaos-kill-oracle]
 /// r[impl machine.scheduler.replay-is-semantics]
 pub fn run_source(source: &str) -> Result<RatchetReport, RunError> {
-    run_source_with_config(source, CompilerConfig::default())
+    run_source_with_config(source, crate::default_config())
 }
 
 /// Run a root source alongside named library modules (the `//! uses:` harness
@@ -673,7 +673,7 @@ pub fn run_source(source: &str) -> Result<RatchetReport, RunError> {
 /// aspect, with imports resolved against the presented module set.
 pub fn run_source_with_modules(
     source: &str,
-    modules: &[crate::modules::ModuleSource<'_>],
+    modules: &[vix::modules::ModuleSource<'_>],
 ) -> Result<RatchetReport, RunError> {
     prepare_source_with_modules(source, modules)?.execute()
 }
@@ -681,12 +681,12 @@ pub fn run_source_with_modules(
 /// The readiness-boundary form of [`run_source_with_modules`].
 pub fn prepare_source_with_modules(
     source: &str,
-    modules: &[crate::modules::ModuleSource<'_>],
+    modules: &[vix::modules::ModuleSource<'_>],
 ) -> Result<PreparedRun, RunError> {
     prepare_modules_with_cache(
         source,
         modules,
-        CompilerConfig::default(),
+        crate::default_config(),
         LoweringCache::default(),
     )
 }
@@ -697,7 +697,7 @@ pub fn run_source_with_snapshots(
     source: &str,
     expectations: &SnapshotExpectations,
 ) -> Result<RatchetReport, RunError> {
-    prepare_source_with_config(source, CompilerConfig::default())?
+    prepare_source_with_config(source, crate::default_config())?
         .execute_with_snapshots(expectations)
 }
 
@@ -716,7 +716,7 @@ pub fn run_source_with_snapshots_and_lane(
 /// source mark. This is an explicit diagnostic lane: ordinary [`run_source`]
 /// uses bounded Production tracing and preserves only structural task events.
 pub fn run_source_innards(source: &str) -> Result<RatchetReport, RunError> {
-    prepare_source_with_cache(source, CompilerConfig::default(), LoweringCache::innards())?
+    prepare_source_with_cache(source, crate::default_config(), LoweringCache::innards())?
         .execute()
 }
 /// Run every declared test twice under explicit shape-selection configuration.
@@ -753,7 +753,7 @@ pub fn run_source_with_lane(
 }
 
 pub fn run_source_rerun_audit(source: &str) -> Result<RerunAuditReport, RunError> {
-    prepare_source_with_config(source, CompilerConfig::default())?.execute_rerun_audit()
+    prepare_source_with_config(source, crate::default_config())?.execute_rerun_audit()
 }
 
 pub fn run_source_rerun_audit_with_lane(
@@ -777,7 +777,7 @@ pub fn run_source_revision_audit_with_lane(
 ) -> Result<SourceRevisionAuditReport, RunError> {
     let config = CompilerConfig {
         force_scalar_call_boundaries: true,
-        ..CompilerConfig::default()
+        ..crate::default_config()
     };
     let mut first_prepared =
         prepare_source_with_cache(first_source, config, LoweringCache::for_lane(lane))?;
@@ -867,7 +867,7 @@ pub fn prepare_source_with_lane(
 ) -> Result<PreparedRun, RunError> {
     prepare_source_with_cache(
         source,
-        CompilerConfig::default(),
+        crate::default_config(),
         LoweringCache::for_lane(lane),
     )
 }
@@ -878,7 +878,7 @@ pub fn prepare_source_with_lane(
 ///
 /// r[impl machine.scheduler.replay-is-semantics]
 pub fn prepare_source(source: &str) -> Result<PreparedRun, RunError> {
-    prepare_source_with_config(source, CompilerConfig::default())
+    prepare_source_with_config(source, crate::default_config())
 }
 
 /// The configurable form of [`prepare_source`]. This keeps shape-selection
@@ -900,7 +900,7 @@ fn prepare_source_with_cache(
 
 fn prepare_modules_with_cache(
     source: &str,
-    modules: &[crate::modules::ModuleSource<'_>],
+    modules: &[vix::modules::ModuleSource<'_>],
     config: CompilerConfig,
     mut cache: LoweringCache,
 ) -> Result<PreparedRun, RunError> {
@@ -914,7 +914,7 @@ fn prepare_modules_with_cache(
         // snapshot and lowers nothing, so it is skipped here.
         let partitioned = compilation.module.try_partition_test(test)?;
         for value in &partitioned.values {
-            if value.island.purpose != crate::vir::IslandPurpose::Effect {
+            if value.island.purpose != vix::vir::IslandPurpose::Effect {
                 cache.get_or_lower(&value.island)?;
             }
         }
@@ -1200,7 +1200,7 @@ enum FrontierWaiter {
 }
 
 struct ExecProducer {
-    demand: crate::runtime::DemandKey,
+    demand: vix::runtime::DemandKey,
     capability: ValueId,
 }
 
@@ -1231,7 +1231,7 @@ fn evaluate_value_site(
     runtime: &mut Runtime<EventLog>,
     cache: &mut LoweringCache,
     context: &SiteContext<'_>,
-    island: &crate::vir::Island,
+    island: &vix::vir::Island,
     site: u32,
     chaos: ChaosPolicy,
 ) -> Result<CheckRun, RunError> {
@@ -1252,7 +1252,7 @@ fn submit_value_site(
     runtime: &mut Runtime<EventLog>,
     cache: &mut LoweringCache,
     context: &SiteContext<'_>,
-    island: &crate::vir::Island,
+    island: &vix::vir::Island,
     site: u32,
     chaos: ChaosPolicy,
 ) -> Result<(RootSubmission, PendingValueCheck), RunError> {
@@ -1325,7 +1325,7 @@ fn evaluate_snapshot_site(
     runtime: &mut Runtime<EventLog>,
     cache: &mut LoweringCache,
     context: &SiteContext<'_>,
-    island: &crate::vir::Island,
+    island: &vix::vir::Island,
     site: u32,
     name: &str,
     oracle: &SnapshotExpectations,
@@ -1427,7 +1427,7 @@ fn evaluate_snapshot_site(
 
 #[allow(clippy::too_many_arguments)]
 fn run_lane(
-    module: &crate::vir::Module,
+    module: &vix::vir::Module,
     cache: &mut LoweringCache,
     chaos: ChaosPolicy,
     ready_phase: ExecutionPhase,
@@ -1454,6 +1454,9 @@ fn run_lane(
     } else {
         Runtime::new(EventLog::default())
     };
+    // vix-core builds runtimes with an empty dispatcher; install the vixen
+    // builtin primitives so fixtures that fetch/observe/decode/tree-read run.
+    crate::install_builtins(&mut runtime);
     if let Some(services) = primitive_services {
         runtime.set_primitive_services(services.clone());
     }
@@ -1523,7 +1526,7 @@ fn run_lane(
                 .collect::<BTreeSet<_>>()
         };
         let mut completed_flat_checks = BTreeMap::<u32, CheckRun>::new();
-        let mut in_flight = BTreeMap::<crate::runtime::DemandKey, Vec<FrontierWaiter>>::new();
+        let mut in_flight = BTreeMap::<vix::runtime::DemandKey, Vec<FrontierWaiter>>::new();
         let mut completed = vec![None; partitioned.values.len()];
         let mut completed_progressive = vec![None; partitioned.progressive_values.len()];
         let mut exec_producers = BTreeMap::<ValueIslandId, ExecProducer>::new();
@@ -1593,10 +1596,10 @@ fn run_lane(
                         }),
                         preimage: module.invocation_preimage(value.id.function, value.id.node),
                     });
-                    let submission = if value.island.purpose == crate::vir::IslandPurpose::Effect {
+                    let submission = if value.island.purpose == vix::vir::IslandPurpose::Effect {
                         if matches!(
                             value.island.effect_output().map(|node| &node.op),
-                            Some(crate::vir::Op::Exec { .. })
+                            Some(vix::vir::Op::Exec { .. })
                         ) {
                             let capability = arguments
                                 .first()
@@ -1771,7 +1774,7 @@ fn run_lane(
                         island,
                         pending,
                     } => {
-                        if evaluation.memo == crate::runtime::MemoVerdict::Miss {
+                        if evaluation.memo == vix::runtime::MemoVerdict::Miss {
                             evaluated_islands.push(island);
                         }
                         completed_flat_checks

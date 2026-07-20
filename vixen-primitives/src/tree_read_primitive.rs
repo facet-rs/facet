@@ -1,7 +1,7 @@
-use crate::schema::SchemaPattern;
-use crate::vir::{ExternKind, Type};
+use vix::schema::SchemaPattern;
+use vix::vir::{ExternKind, Type};
 
-use super::{
+use crate::rt::{
     EffectCtx, PrimitiveCompletion, PrimitiveDescriptor, PrimitiveField, PrimitiveFieldValue,
     PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveValue, PrimitiveValueBody,
     RawEffectTicket, RawPrimitive, ReadProjection, ValueId, fixture_tree_name,
@@ -45,9 +45,9 @@ impl<Ctx> RawPrimitive<Ctx> for TreeReadPrimitive {
                 .unwrap_or_else(PrimitiveCompletion::MachineError);
             let publication =
                 ctx.finish(completion)
-                    .unwrap_or_else(|error| super::PrimitivePublication {
+                    .unwrap_or_else(|error| crate::rt::PrimitivePublication {
                         completion: PrimitiveCompletion::MachineError(error),
-                        receipt: super::Receipt {
+                        receipt: crate::rt::Receipt {
                             demand: ctx.demand(),
                             reads: Vec::new(),
                         },

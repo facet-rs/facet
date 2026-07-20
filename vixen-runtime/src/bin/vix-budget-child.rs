@@ -7,5 +7,5 @@
 //! auditable entry point.
 
 fn main() {
-    vix::budget::run_child_from_stdio();
+    vixen_runtime::budget::run_child_from_stdio();
 }

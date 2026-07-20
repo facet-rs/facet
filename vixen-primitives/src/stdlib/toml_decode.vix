@@ -1,0 +1,3 @@
+fn toml_decode<T>(text: String) -> T {
+    decode(text, Format::Toml)
+}

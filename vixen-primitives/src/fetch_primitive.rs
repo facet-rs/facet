@@ -1,21 +1,20 @@
 use sha2::{Digest as _, Sha256};
 
-use crate::vir::{ExternKind, Type};
+use vix::vir::{ExternKind, Type};
 
-use super::{
-    ArgRoleDecl, BlobHandle, EffectCtx, EffectTicket, PinnedBlobRef, PinnedFetchRequest, Primitive,
-    PrimitiveDecl, PrimitiveMachineError, PrimitiveMemoPolicy, ReadProjection, ResponseValue,
-    UpstreamDigest, ValueId,
+use crate::rt::{
+    BlobHandle, EffectCtx, EffectTicket, PinnedBlobRef, PinnedFetchRequest, Primitive,
+    PrimitiveDecl, PrimitiveMachineError, ReadProjection, ResponseValue, UpstreamDigest, ValueId,
 };
 // Only the test-only hand parsers (the `decode_primitive_value` oracle) walk the
 // wire `PrimitiveValue` structurally now; production `begin` decodes instead.
 #[cfg(test)]
-use super::{
+use crate::rt::{
     BlobId, Digest, OriginHint, PrimitiveField, PrimitiveFieldValue, PrimitiveValue,
     PrimitiveValueBody, RegistryHandle,
 };
 #[cfg(test)]
-use crate::schema::SchemaRef;
+use vix::schema::SchemaRef;
 
 impl ResponseValue for BlobHandle {
     fn into_value(self) -> ValueId {
@@ -30,17 +29,7 @@ impl<Ctx> Primitive<Ctx> for PinnedFetchPrimitive {
     type Response = BlobHandle;
     type Deps = ();
 
-    const DECL: PrimitiveDecl = PrimitiveDecl {
-        namespace: "vix.machine",
-        name: "fetch",
-        id_name: "pinned-fetch",
-        version: 1,
-        memo_policy: PrimitiveMemoPolicy::Pinned,
-        protocol_version: 1,
-        failure_schema_name: "PinnedFetchFailure",
-        capabilities: &[ExternKind::Registry],
-        args: &[ArgRoleDecl::Value],
-    };
+    const DECL: PrimitiveDecl = crate::rt::FETCH_DECL;
 
     fn begin(
         &self,
@@ -115,7 +104,7 @@ fn admit(
 }
 
 fn blob_identity(bytes: &[u8]) -> ValueId {
-    super::FramedNode::leaf(Type::Extern(ExternKind::Blob).schema_ref(), bytes.to_vec()).identity()
+    crate::rt::FramedNode::leaf(Type::Extern(ExternKind::Blob).schema_ref(), bytes.to_vec()).identity()
 }
 
 fn verify_upstream(
@@ -290,9 +279,9 @@ mod schema_snapshot {
     //! the hand-written constructors; deriving them from the `Facet` shapes must
     //! keep every one byte-identical.
 
-    use super::{BlobId, OriginHint, PinnedBlobRef, PinnedFetchRequest};
-    use crate::runtime::ObserveRequest;
-    use crate::vir::Type;
+    use crate::rt::{BlobId, OriginHint, PinnedBlobRef, PinnedFetchRequest};
+    use crate::rt::ObserveRequest;
+    use vix::vir::Type;
 
     // Captured against the hand-written `*_type()` constructors before they were
     // deleted; the derived `Type::from_facet` types must match byte-for-byte.

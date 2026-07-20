@@ -5,7 +5,6 @@
 //! grammar.
 
 pub mod binding;
-pub mod budget;
 pub mod compiler;
 pub mod decode;
 pub mod diagnostic;
@@ -13,11 +12,10 @@ pub mod exec;
 pub mod fetch;
 pub mod lowering;
 pub mod modules;
-pub mod ratchet;
+pub mod prelude;
 pub mod reloc_selection;
 pub mod runtime;
 pub mod schema;
-pub mod stdlib;
 pub mod surface;
 pub mod vir;
 

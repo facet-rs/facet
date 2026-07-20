@@ -1,4 +1,4 @@
-//! The inverse of [`super::decode_primitive`]'s `decoded_value`: instead of
+//! The inverse of [`crate::decode_primitive`]'s `decoded_value`: instead of
 //! walking a `Type` + dynamic value to BUILD a [`PrimitiveValue`], this walks a
 //! target Rust type's `facet::Shape` and a wire `PrimitiveValue` in PARALLEL,
 //! driving a [`facet_reflect::Partial`] to construct the typed value.
@@ -12,7 +12,7 @@
 //! `value`'s contents is not acceptable anywhere in this module.
 //!
 //! The leaf-override types this decoder must special-case mirror
-//! `crate::vir::Type::from_facet`'s `facet_leaf_override` table exactly, and
+//! `vix::vir::Type::from_facet`'s `facet_leaf_override` table exactly, and
 //! must decode the same bytes the hand-written parsers
 //! (`fetch_primitive::parse_blob_id`/`parse_origins`/`parse_upstream`,
 //! `observe_primitive::parse_request`, `decode_primitive::decode_request`,
@@ -23,9 +23,9 @@
 
 use facet_reflect::Partial;
 
-use crate::schema::SchemaRef;
+use vix::schema::SchemaRef;
 
-use super::{
+use crate::rt::{
     Digest, PrimitiveField, PrimitiveFieldValue, PrimitiveMachineError, PrimitiveValue,
     PrimitiveValueBody, RegistryHandle, UpstreamDigest, ValueId,
 };
@@ -124,7 +124,7 @@ fn field_value(
 }
 
 /// The handful of Rust types whose wire meaning cannot be read off their
-/// `Facet` shape structurally — see `crate::vir::facet_leaf_override`, which
+/// `Facet` shape structurally — see `vix::vir::facet_leaf_override`, which
 /// this must track exactly.
 enum LeafOverride {
     Digest,
@@ -221,7 +221,7 @@ fn decode_scalar(
         }
         // `ISize`/`Str`/`CowStr` and anything else `facet::ScalarType` may add
         // are not produced by any of today's request types
-        // (`crate::vir::facet_scalar` only ever emits `Type::Int`/`Type::Bool`
+        // (`vix::vir::facet_scalar` only ever emits `Type::Int`/`Type::Bool`
         // from `I64`/`ISize` and `Type::String` from `Str`/`String`/`CowStr`,
         // and every request type in this crate uses `i64`/`bool`/`String`
         // exclusively) — a defensive `Err` rather than a guess at their wire
@@ -260,13 +260,13 @@ fn decode_option(
         return Err(invalid(root));
     };
     match (*tag, fields.as_slice()) {
-        (crate::vir::OPTION_SOME_VARIANT, [field]) => {
+        (vix::vir::OPTION_SOME_VARIANT, [field]) => {
             let inner = field_value(field, inner_shape, root)?;
             partial = partial.begin_some().map_err(|_| invalid(root))?;
             partial = decode_shape(partial, inner_shape, &inner, root)?;
             partial.end().map_err(|_| invalid(root))
         }
-        (crate::vir::OPTION_NONE_VARIANT, []) => {
+        (vix::vir::OPTION_NONE_VARIANT, []) => {
             // `Option<T>: Default` unconditionally (`None`), regardless of
             // `T`, so this sets the frame directly rather than needing to
             // enumerate a "no value" case per inner shape.
@@ -339,14 +339,14 @@ fn decode_user(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::fetch_primitive::{
+    use crate::fetch_primitive::{
         parse_blob_id, parse_origins, parse_request as fetch_parse_request, parse_upstream,
     };
-    use crate::runtime::observe_primitive::parse_request as observe_parse_request;
-    use crate::runtime::{
+    use crate::observe_primitive::parse_request as observe_parse_request;
+    use crate::rt::{
         BlobId, ObserveCoordinate, ObserveRequest, OriginHint, PinnedBlobRef, PinnedFetchRequest,
     };
-    use crate::vir::{ExternKind, Type};
+    use vix::vir::{ExternKind, Type};
 
     #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
     struct Pair {
@@ -781,12 +781,12 @@ mod tests {
         match upstream {
             Some(digest) => variant(
                 Type::from_facet::<Option<UpstreamDigest>>().schema_ref(),
-                crate::vir::OPTION_SOME_VARIANT,
+                vix::vir::OPTION_SOME_VARIANT,
                 vec![child(hex_upstream_digest_wire(digest))],
             ),
             None => variant(
                 Type::from_facet::<Option<UpstreamDigest>>().schema_ref(),
-                crate::vir::OPTION_NONE_VARIANT,
+                vix::vir::OPTION_NONE_VARIANT,
                 vec![],
             ),
         }
@@ -1021,7 +1021,7 @@ mod tests {
     fn rejects_upstream_digest_with_non_hex_bytes() {
         let wire = variant(
             Type::from_facet::<Option<UpstreamDigest>>().schema_ref(),
-            crate::vir::OPTION_SOME_VARIANT,
+            vix::vir::OPTION_SOME_VARIANT,
             vec![child(PrimitiveValue::bytes(
                 Type::from_facet::<UpstreamDigest>().schema_ref(),
                 b"zz-not-hex".to_vec(),

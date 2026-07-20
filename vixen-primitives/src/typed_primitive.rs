@@ -17,73 +17,16 @@
 
 use std::marker::PhantomData;
 
-use crate::schema::SchemaPattern;
-use crate::vir::{ExternKind, RecordField, Type};
+use vix::vir::Type;
 
-use super::{
-    ArgRole, EffectCtx, FromRef, PrimitiveCompletion, PrimitiveDescriptor, PrimitiveId,
-    PrimitiveMachineError, PrimitiveMemoPolicy, PrimitivePublication, RawEffectCompleter,
-    RawEffectTicket, RawPrimitive, ReadProjection, Receipt, RequestShape, Selector,
-    SelectorVariant, TicketCompletionError, ValueId, decode_primitive_value,
+use crate::rt::{
+    EffectCtx, FromRef, PrimitiveCompletion, PrimitiveDecl, PrimitiveDescriptor,
+    PrimitiveMachineError, PrimitivePublication, RawEffectCompleter, RawEffectTicket, RawPrimitive,
+    ReadProjection, Receipt, RequestShape, TicketCompletionError, ValueId, synth_descriptor,
+    synth_shape,
 };
 
-/// One accepted variant of a selector argument and the boolean flag it folds
-/// into the request record — the const-friendly mirror of [`SelectorVariant`].
-pub struct SelectorVariantDecl {
-    pub variant: &'static str,
-    pub flag: bool,
-}
-
-/// A selector argument declared as const data — the mirror of [`Selector`]. The
-/// accepted enum, its variants, and the diagnostic noun live here rather than in
-/// a bespoke Rust reader per primitive.
-pub struct SelectorDecl {
-    pub enum_name: &'static str,
-    pub noun: &'static str,
-    pub variants: &'static [SelectorVariantDecl],
-}
-
-/// The role a surface argument plays, declared as const data. `Value` carries no
-/// type: its expected [`Type`] is the *i-th* field of `Type::from_facet::<Request>()`,
-/// zipped in order, so the request struct is the single source of the arg types.
-pub enum ArgRoleDecl {
-    Value,
-    Selector(SelectorDecl),
-}
-
-/// Everything a registered primitive *is*, as const data. Consumed once by
-/// [`TypedAdapter::new`] to synthesize the [`PrimitiveDescriptor`] and
-/// [`RequestShape`]; nothing here is heap-allocated and no [`Type`] is embedded
-/// (the types come from `Type::from_facet::<Request>()`).
-pub struct PrimitiveDecl {
-    pub namespace: &'static str,
-    /// The primitive's surface binding name in the prelude (`RawPrimitive::surface_name`).
-    pub name: &'static str,
-    /// The registered [`PrimitiveId`] name. Usually equal to `name`, but the
-    /// two diverge where the surface spelling differs from the machine id — e.g.
-    /// `fetch` (surface) is registered as `pinned-fetch` (id). Kept distinct so
-    /// the synthesized descriptor id stays byte-identical to the hand-written one.
-    pub id_name: &'static str,
-    pub version: u32,
-    pub memo_policy: PrimitiveMemoPolicy,
-    pub protocol_version: u32,
-    pub failure_schema_name: &'static str,
-    /// The primitive's *curated* capability extern kinds — declared here, never
-    /// derived from the request tree.
-    pub capabilities: &'static [ExternKind],
-    pub args: &'static [ArgRoleDecl],
-}
-
-impl PrimitiveDecl {
-    #[must_use]
-    fn id(&self) -> PrimitiveId {
-        PrimitiveId {
-            namespace: self.namespace.to_owned(),
-            name: self.id_name.to_owned(),
-            version: self.version,
-        }
-    }
-}
+use crate::decode_primitive_value;
 
 /// A primitive declared in one block: its shape data (`DECL`), its typed request
 /// and dependency-slice associated types, and one typed `begin`. The blanket
@@ -231,69 +174,6 @@ impl<P> TypedAdapter<P> {
     }
 }
 
-fn synth_descriptor(
-    decl: &PrimitiveDecl,
-    request_ty: &Type,
-    response_ty: &Type,
-) -> PrimitiveDescriptor {
-    PrimitiveDescriptor {
-        id: decl.id(),
-        request_schema: SchemaPattern::exact(&request_ty.schema_ref()),
-        response_schema: SchemaPattern::exact(&response_ty.schema_ref()),
-        failure_schema: SchemaPattern::Var {
-            name: decl.failure_schema_name.to_owned(),
-        },
-        memo_policy: decl.memo_policy,
-        protocol_version: decl.protocol_version,
-        capability_schemas: decl
-            .capabilities
-            .iter()
-            .map(|kind| SchemaPattern::exact(&Type::Extern(*kind).schema_ref()))
-            .collect(),
-    }
-}
-
-fn synth_shape(decl: &PrimitiveDecl, request_ty: Type, response_ty: Type) -> RequestShape {
-    let fields = record_fields(&request_ty);
-    let args = decl
-        .args
-        .iter()
-        .zip(fields)
-        .map(|(arg, field)| match arg {
-            ArgRoleDecl::Value => ArgRole::Value {
-                expected: field.ty.clone(),
-            },
-            ArgRoleDecl::Selector(selector) => ArgRole::Selector(Selector {
-                enum_name: selector.enum_name.to_owned(),
-                noun: selector.noun.to_owned(),
-                variants: selector
-                    .variants
-                    .iter()
-                    .map(|variant| SelectorVariant {
-                        variant: variant.variant.to_owned(),
-                        flag: variant.flag,
-                    })
-                    .collect(),
-            }),
-        })
-        .collect();
-    RequestShape {
-        args,
-        result: response_ty,
-        primitive: decl.id(),
-        request_ty,
-    }
-}
-
-/// The record fields a request type contributes, in order. A request is always a
-/// record (one field per surface argument); anything else contributes none.
-fn record_fields(request_ty: &Type) -> &[RecordField] {
-    match request_ty {
-        Type::Record(record) => &record.fields,
-        _ => &[],
-    }
-}
-
 impl<Ctx, P> RawPrimitive<Ctx> for TypedAdapter<P>
 where
     P: Primitive<Ctx>,
@@ -347,10 +227,14 @@ mod milestone {
     //! bug, not a stale constant.
 
     use super::*;
-    use crate::runtime::{
-        ObservePrimitive, ObserveRequest, OriginHint, PinnedBlobRef, PinnedFetchPrimitive,
-        PinnedFetchRequest, observe_primitive_id, pinned_fetch_primitive_id,
+    use crate::{ObservePrimitive, PinnedFetchPrimitive};
+    use crate::rt::{
+        ArgRole, ObserveRequest, OriginHint, PinnedBlobRef, PinnedFetchRequest, PrimitiveId,
+        PrimitiveMemoPolicy, Selector, SelectorVariant, observe_primitive_id,
+        pinned_fetch_primitive_id,
     };
+    use vix::schema::SchemaPattern;
+    use vix::vir::ExternKind;
 
     fn old_fetch_descriptor() -> PrimitiveDescriptor {
         PrimitiveDescriptor {

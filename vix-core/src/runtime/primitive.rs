@@ -1157,6 +1157,15 @@ impl<Ctx> PrimitiveDispatcher<Ctx> {
         }
     }
 
+    /// A dispatcher with no primitives registered — the bare language performs no
+    /// effects. `vix-core` constructs every runtime with this; the `vixen`
+    /// runtime replaces it (via [`crate::runtime::Runtime::set_primitive_dispatcher`])
+    /// with one carrying the builtin primitives.
+    #[must_use]
+    pub fn empty() -> Self {
+        Self::new(Arc::new(PrimitiveRegistry::default()))
+    }
+
     pub fn begin_or_join(
         &self,
         id: &PrimitiveId,
