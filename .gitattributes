@@ -5,3 +5,14 @@ phon/conformance/**/*.phon binary
 # autocrlf checkout can't inject CRLF and break the oracle assertion in
 # boa_lua_output_matches_tree_sitter_oracle (Windows CI advisory, PR #2499).
 snark-dsl/tests/fixtures/** text=auto eol=lf
+
+# The vix checker corpus is compared byte-for-byte: fixtures carry expected
+# diagnostic spans as absolute byte offsets, so a Windows autocrlf checkout
+# would shift every offset past a newline and fail checker_corpus_matches_vix_checker.
+vix/tests/checker-corpus/** text=auto eol=lf
+
+# Vendored playground language samples are parsed and their byte offsets / token
+# lengths are pinned (snark-playground vendored_playground_samples_parse_from_rust,
+# vix-lsp semantic_tokens_run_is_pinned_for_types_sample). A CRLF checkout injects
+# a \r into every line, breaking fenced-code parsing and off-by-one token lengths.
+playgrounds/snark/src/bundled/** text=auto eol=lf

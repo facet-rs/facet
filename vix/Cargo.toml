@@ -44,6 +44,16 @@ weavy = { path = "../weavy" }
 [build-dependencies]
 snark-dsl = { path = "../snark-dsl", features = ["typed-ast"] }
 
+# Cross-process resident-set observation for the outer budget runner on Windows.
+# The working-set reader (GetProcessMemoryInfo) is confined behind a typed cfg
+# boundary in src/budget.rs, mirroring the unix /proc and libproc readers.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+  "Win32_Foundation",
+  "Win32_System_Threading",
+  "Win32_System_ProcessStatus",
+] }
+
 # The graph demand engine's driver uses only core::future (vix stays
 # wasm-clean); tokio is DEV-only, an executor + timers for the demand tests.
 [dev-dependencies]
@@ -54,3 +64,10 @@ snark-dsl = { path = "../snark-dsl", features = ["typed-ast"] }
 semver = "1.0.28"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time"] }
 weavy = { path = "../weavy" }
+
+# The macOS-only Mach-O relocation-walk test (tests/reloc_selection.rs, gated
+# `#![cfg(target_os = "macos")]`) stages temp fixture trees with tempfile. The
+# dependency was dropped from vix's manifest alongside the legacy machine engine
+# removal, which left that test unbuildable on macOS; restore it where it is used.
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+tempfile = { workspace = true }

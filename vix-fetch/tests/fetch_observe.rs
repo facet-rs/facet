@@ -133,8 +133,17 @@ impl BlobServer {
                     "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                     body.len()
                 );
-                if stream.write_all(header.as_bytes()).is_ok() && stream.write_all(&body).is_ok() {
+                if stream.write_all(header.as_bytes()).is_ok() {
+                    // Count the transfer before streaming the body. The client's
+                    // fetch completes as soon as it has read the Content-Length
+                    // body; for a body larger than the socket buffer `write_all`
+                    // only returns once the client has drained it, so a
+                    // post-write increment on this server thread races the
+                    // client (and the test) observing completion — surfacing as
+                    // a flaky `transfers()` off-by-one on Windows. Incrementing
+                    // here orders the count before the bytes the client waits on.
                     worker_transfers.fetch_add(1, Ordering::AcqRel);
+                    let _ = stream.write_all(&body);
                 }
             }
         });
