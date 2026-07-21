@@ -7,14 +7,22 @@
 //! stdlib prelude ([`default_config`]), hosts the program-running harness
 //! ([`ratchet`]/[`budget`]), and re-exports the whole surface so a consumer can
 //! depend on this one crate for a working system.
+//!
+//! [`module_graph`] loads a directory of `.vix` files into owned module
+//! sources for the compiler and runner.
 
 pub mod budget;
+pub mod module_graph;
 pub mod ratchet;
 
 use std::sync::Arc;
 
 pub use vix::*;
 pub use vixen_primitives::*;
+
+pub use module_graph::{
+    DEFAULT_ROOT_MODULE, ModuleFile, ModuleGraph, ModuleGraphError, ModuleRoot, load_module_graph,
+};
 
 use vix::compiler::CompilerConfig;
 use vix::runtime::{EventSink, PrimitiveDispatcher, PrimitiveRegistry, RawPrimitive, Runtime};
