@@ -137,15 +137,15 @@ impl Compiler {
         source: &str,
         modules: &[crate::modules::ModuleSource<'_>],
     ) -> Result<Compilation, Diagnostics> {
-        let root = self.parser.parse(source)?;
+        let mut root = self.parser.parse(source)?;
+        if !self.config.prelude.is_empty() {
+            crate::prelude::inject_prelude(&self.parser, self.config.prelude, &mut root)?;
+        }
         let mut parsed = Vec::with_capacity(modules.len());
         for module in modules {
             parsed.push((module.name.to_owned(), self.parser.parse(module.source)?));
         }
-        let mut merged = crate::modules::merge_module_set(root, &parsed)?;
-        if !self.config.prelude.is_empty() {
-            crate::prelude::inject_prelude(&self.parser, self.config.prelude, &mut merged)?;
-        }
+        let merged = crate::modules::merge_module_set(root, &parsed)?;
         let module = lower_module(&merged, self.config, &self.primitive_surfaces)?;
         let warnings = lint_module(&module);
         Ok(Compilation { module, warnings })
@@ -238,7 +238,7 @@ impl ModuleContext<'_> {
             .find(|surface| surface.surface_name == name)
             .map(|surface| surface.shape.clone())
             .or_else(|| {
-                crate::binding::prelude_primitive(name)
+                crate::binding::surface_primitive(name)
                     .and_then(|primitive| crate::binding::request_shape(&primitive))
             })
     }
@@ -3581,16 +3581,18 @@ fn lower_value_expected(
         // surface names (`decode_primitive_id`), so they can't
         // be told apart by `PrimitiveId` the way `fetch`/`observe` can — matched
         // directly by callee name into their existing typed builders.
-        ast::Expr::Call(call) if call.callee.value == "decode" => {
+        ast::Expr::Call(call) if matches!(call.callee.value.as_str(), "decode" | "std::decode") => {
             lower_decode_binding(nodes, bindings, context, call, expected)
         }
-        ast::Expr::Call(call) if call.callee.value == "try_decode" => {
+        ast::Expr::Call(call)
+            if matches!(call.callee.value.as_str(), "try_decode" | "std::try_decode") =>
+        {
             lower_try_decode_binding(nodes, bindings, context, call, expected)
         }
         ast::Expr::Call(call)
-            if crate::binding::prelude_intrinsic(&call.callee.value).is_some() =>
+            if crate::binding::surface_intrinsic(&call.callee.value).is_some() =>
         {
-            let intrinsic = crate::binding::prelude_intrinsic(&call.callee.value)
+            let intrinsic = crate::binding::surface_intrinsic(&call.callee.value)
                 .expect("guard confirmed the callee is a built-in intrinsic");
             lower_effect_intrinsic(nodes, bindings, context, call, intrinsic)
         }
@@ -5403,7 +5405,7 @@ fn read_selector(
             selector.expected(),
         )));
     };
-    if variant.path.type_name.value != selector.enum_name {
+    if !matches_std_qualified_name(&variant.path.type_name.value, &selector.enum_name) {
         return Err(Diagnostics::one(Diagnostic::unsupported(
             variant.path.span,
             selector.expected(),
@@ -5800,7 +5802,7 @@ fn decode_format_arg(arg: &ast::Expr) -> Result<DecodeFormat, Diagnostics> {
             "a decode format `Format::Json` or `Format::Toml`",
         )));
     };
-    if variant.path.type_name.value != "Format" {
+    if !matches_std_qualified_name(&variant.path.type_name.value, "Format") {
         return Err(Diagnostics::one(Diagnostic::unsupported(
             variant.path.span,
             "a decode format `Format::Json` or `Format::Toml`",
@@ -5814,6 +5816,11 @@ fn decode_format_arg(arg: &ast::Expr) -> Result<DecodeFormat, Diagnostics> {
             format!("an unknown decode format `Format::{other}`"),
         ))),
     }
+}
+
+/// Accept the historical prelude spelling and its canonical `std::` spelling.
+fn matches_std_qualified_name(actual: &str, expected: &str) -> bool {
+    actual == expected || actual.strip_prefix("std::") == Some(expected)
 }
 
 /// The decode fold/seam behind the `decode` binding (`lower_decode_binding`

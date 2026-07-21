@@ -37,6 +37,24 @@ fn qualified_module_access() -> Stream<Check> {
 }
 
 #[test]
+fn runtime_std_module_executes_vix_functions() {
+    let source = r#"
+struct Row { name: String }
+
+#[test]
+fn std_module_access() -> Stream<Check> {
+    let row: Row = std::json_decode("{\"name\":\"vix\"}");
+    yield expect_eq(std::is_blank(""), true);
+    yield expect_eq(row.name, "vix");
+}
+"#;
+
+    let report = run_source_with_modules(source, &[]).expect("std module compiles and runs");
+    assert!(report.passed(), "std module checks pass: {report:?}");
+    assert!(report.agrees(), "plain and chaos execution agree");
+}
+
+#[test]
 fn supplied_module_supports_qualified_access_without_an_import() {
     let source = r#"
 #[test]

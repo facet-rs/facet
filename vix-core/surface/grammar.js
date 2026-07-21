@@ -366,7 +366,16 @@ module.exports = grammar({
     arg_list: ($) => seq("(", sepBy(",", field("arg", $._expr)), ")"),
     where_args: ($) => seq("where", "{", sepBy(",", field("field", $.named_value)), "}"),
     variant_path: ($) =>
-      seq(field("type_name", $.identifier), "::", field("variant", $.identifier)),
+      choice(
+        seq(field("type_name", $.identifier), "::", field("variant", $.identifier)),
+        seq(
+          field("module", $.identifier),
+          "::",
+          field("type_name", $.identifier),
+          "::",
+          field("variant", $.identifier),
+        ),
+      ),
     variant_expr: ($) =>
       prec(
         PREC.postfix,

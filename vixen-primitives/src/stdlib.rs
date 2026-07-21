@@ -1,10 +1,8 @@
-//! The pure-vix standard library the `vixen` runtime installs into a
-//! compilation as a prelude.
+//! The pure-vix standard library the `vixen` runtime installs under `std::`.
 //!
-//! Each entry of [`PRELUDE_SOURCES`] is ordinary vix source — a single
-//! top-level item authored in its own `.vix` file under `stdlib/`. They are
-//! merged into every module's root item set before lowering (via
-//! `vix::prelude::inject_prelude`, driven by
+//! Each entry of [`PRELUDE_SOURCES`] is ordinary Vix source assembled from the
+//! items authored under `stdlib/`. They are merged into a compilation before
+//! lowering (via `vix::prelude::inject_prelude`, driven by
 //! `vix::compiler::CompilerConfig::prelude`), so each resolves and lowers through
 //! exactly the same front end as a user-defined function — no bespoke intrinsic,
 //! no parallel machinery. Injection is *if-absent*: a program that declares a
@@ -23,8 +21,23 @@
 //! were vetted against: `is_blank`, `Format`, `json_decode`, `toml_decode`,
 //! `try_json_decode`, `try_toml_decode`, `Mode`, `refresh`.
 
-/// The registered prelude items, one self-contained vix top-level item each, in
-/// the order they are injected.
+/// The canonical `std` module assembled from the separately authored Vix items.
+pub const STD_MODULE_SOURCE: &str = concat!(
+    "mod std {\n",
+    include_str!("stdlib/is_blank.vix"),
+    include_str!("stdlib/format.vix"),
+    include_str!("stdlib/json_decode.vix"),
+    include_str!("stdlib/toml_decode.vix"),
+    include_str!("stdlib/try_json_decode.vix"),
+    include_str!("stdlib/try_toml_decode.vix"),
+    include_str!("stdlib/mode.vix"),
+    include_str!("stdlib/refresh.vix"),
+    "}\n",
+);
+
+/// The registered sources in injection order. The top-level entries retain the
+/// historical unqualified spellings as compatibility aliases; new code should
+/// use the canonical items in [`STD_MODULE_SOURCE`] through `std::`.
 pub const PRELUDE_SOURCES: &[&str] = &[
     include_str!("stdlib/is_blank.vix"),
     include_str!("stdlib/format.vix"),
@@ -34,6 +47,7 @@ pub const PRELUDE_SOURCES: &[&str] = &[
     include_str!("stdlib/try_toml_decode.vix"),
     include_str!("stdlib/mode.vix"),
     include_str!("stdlib/refresh.vix"),
+    STD_MODULE_SOURCE,
 ];
 
 #[cfg(test)]
@@ -69,6 +83,86 @@ mod tests {
             with_stdlib().compile(program).is_ok(),
             "registered prelude fn resolves and lowers like user code"
         );
+    }
+
+    #[test]
+    fn registered_std_fn_is_callable_through_its_module() {
+        let program = "fn check(text: String) -> Bool {\n    std::is_blank(text)\n}\n";
+
+        assert!(
+            without_stdlib().compile(program).is_err(),
+            "std is not available without the vixen standard library"
+        );
+        assert!(
+            with_stdlib().compile(program).is_ok(),
+            "registered std function resolves and lowers through its module"
+        );
+    }
+
+    #[test]
+    fn std_items_can_be_imported() {
+        let program = r#"
+import std::{fetch, fixture_registry};
+
+fn fetch_fixture() -> Blob {
+    fetch(fixture_registry().url("case.crate"))
+}
+
+"#;
+
+        with_stdlib()
+            .compile(program)
+            .unwrap_or_else(|diagnostics| panic!("std imports compile: {diagnostics:#?}"));
+    }
+
+    #[test]
+    fn primitives_and_std_types_resolve_through_std() {
+        let program = r#"
+struct Row { name: String }
+
+fn fetch_from_fixture() -> Blob {
+    std::fetch(std::fixture_registry().url("case.crate"))
+}
+
+fn decode_row() -> Row {
+    std::decode("{\"name\":\"vix\"}", std::Format::Json)
+}
+
+fn fetch_fresh() -> Blob {
+    std::observe(
+        std::fixture_registry().coordinate("case.crate"),
+        std::Mode::Refresh,
+    )
+}
+"#;
+
+        with_stdlib()
+            .compile(program)
+            .unwrap_or_else(|diagnostics| {
+                panic!("primitives, intrinsics, and enum variants resolve through std: {diagnostics:#?}")
+            });
+    }
+
+    #[test]
+    fn adding_std_does_not_shift_user_function_ids() {
+        let program = "fn answer() -> Int { 42 }\n";
+        let bare = without_stdlib()
+            .compile(program)
+            .expect("bare Vix compiles");
+        let with_std = with_stdlib()
+            .compile(program)
+            .expect("Vix with std compiles");
+        let function_id = |compilation: &vix::compiler::Compilation| {
+            compilation
+                .module
+                .functions
+                .iter()
+                .find(|function| function.name == "answer")
+                .expect("answer function")
+                .id
+        };
+
+        assert_eq!(function_id(&bare), function_id(&with_std));
     }
 
     #[test]

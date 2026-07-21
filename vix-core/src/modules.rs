@@ -106,15 +106,20 @@ fn resolve_imports(
                     return Err(unknown_name(module.span, module.value.clone()));
                 };
                 for leaf in import_leaves(import) {
-                    let Some(declared) = exports.get(&leaf.value) else {
+                    let declared = exports.get(&leaf.value);
+                    if declared.is_none()
+                        && !crate::binding::is_qualified_binding(&module.value, &leaf.value)
+                    {
                         return Err(unknown_name(
                             leaf.span,
                             format!("{}::{}", module.value, leaf.value),
                         ));
-                    };
+                    }
                     // r[impl lang.module.use] — public items use `pub`; a
                     // non-pub item is not importable from another module.
-                    if own_module != Some(module.value.as_str()) && !declared.public {
+                    if own_module != Some(module.value.as_str())
+                        && declared.is_some_and(|item| !item.public)
+                    {
                         return Err(Diagnostics::one(Diagnostic {
                             code: DiagnosticCode::PrivateImport,
                             primary: leaf.span,
@@ -194,12 +199,44 @@ fn extract_inline_modules(
     Ok((file, extracted))
 }
 
+fn rewrite_module_items(
+    name: &str,
+    file: &ast::SourceFile,
+    set: &BTreeMap<String, BTreeMap<String, DeclaredItem>>,
+    module_names: &BTreeSet<String>,
+) -> Result<Vec<ast::Item>, Diagnostics> {
+    let aliases = resolve_imports(Some(name), file, set)?;
+    let mut renames: BTreeMap<String, String> = declared_items(file)
+        .into_keys()
+        .map(|item| (item.clone(), format!("{name}::{item}")))
+        .collect();
+    renames.extend(aliases);
+    let mut rewriter = Rewriter {
+        renames: &renames,
+        available_modules: module_names,
+        module_set: set,
+        scopes: Vec::new(),
+    };
+    let mut rewritten = Vec::new();
+    for item in &file.items {
+        if matches!(item, ast::Item::Mod(_) | ast::Item::Import(_)) {
+            continue;
+        }
+        let mut item = item.clone();
+        rewriter.item(&mut item)?;
+        rewritten.push(item);
+    }
+    Ok(rewritten)
+}
+
 /// Merge a parsed module set into one surface AST for the single-file front.
 ///
 /// Library items are renamed to `module::item`; references in every file are
 /// rewritten to the declaring module's spelling; import items are consumed.
-/// Item order is deterministic: library modules in presentation order, root
-/// items last, so `FunctionId` assignment is stable for a given set.
+/// Item order is deterministic: supplied library modules in presentation
+/// order, root items next, and root-inline modules last. Keeping root-inline
+/// modules after the root preserves existing root `FunctionId`s when an
+/// embedder injects a module such as `std`.
 pub(crate) fn merge_module_set(
     root: ast::SourceFile,
     modules: &[(String, ast::SourceFile)],
@@ -218,6 +255,7 @@ pub(crate) fn merge_module_set(
         expanded_modules.extend(inline);
     }
     let (root, root_inline) = extract_inline_modules(root, &mut module_names)?;
+    let root_inline_start = expanded_modules.len();
     expanded_modules.extend(root_inline);
     let modules = &expanded_modules;
 
@@ -228,29 +266,10 @@ pub(crate) fn merge_module_set(
     let module_names: BTreeSet<String> = set.keys().cloned().collect();
 
     let mut merged_items = Vec::new();
-    for (name, file) in modules {
-        let aliases = resolve_imports(Some(name), file, &set)?;
+    for (name, file) in &modules[..root_inline_start] {
         // A library module's own items are spelled fully qualified; its
         // imports alias to their declaring modules.
-        let mut renames: BTreeMap<String, String> = declared_items(file)
-            .into_keys()
-            .map(|item| (item.clone(), format!("{name}::{item}")))
-            .collect();
-        renames.extend(aliases);
-        let mut rewriter = Rewriter {
-            renames: &renames,
-            available_modules: &module_names,
-            module_set: &set,
-            scopes: Vec::new(),
-        };
-        for item in &file.items {
-            if matches!(item, ast::Item::Mod(_) | ast::Item::Import(_)) {
-                continue;
-            }
-            let mut item = item.clone();
-            rewriter.item(&mut item)?;
-            merged_items.push(item);
-        }
+        merged_items.extend(rewrite_module_items(name, file, &set, &module_names)?);
     }
 
     let aliases = resolve_imports(None, &root, &set)?;
@@ -268,6 +287,10 @@ pub(crate) fn merge_module_set(
         let mut item = item;
         rewriter.item(&mut item)?;
         merged_items.push(item);
+    }
+
+    for (name, file) in &modules[root_inline_start..] {
+        merged_items.extend(rewrite_module_items(name, file, &set, &module_names)?);
     }
 
     Ok(ast::SourceFile {
@@ -296,11 +319,14 @@ impl Rewriter<'_> {
         item: &Spanned<String>,
     ) -> Result<String, Diagnostics> {
         let full = format!("{}::{}", module.value, item.value);
-        let Some(declared) = self
+        let declared = self
             .module_set
             .get(&module.value)
-            .and_then(|items| items.get(&item.value))
-        else {
+            .and_then(|items| items.get(&item.value));
+        if declared.is_none() && crate::binding::is_qualified_binding(&module.value, &item.value) {
+            return Ok(full);
+        }
+        let Some(declared) = declared else {
             return Err(unknown_name(item.span, full));
         };
         if !declared.public {
@@ -460,6 +486,15 @@ impl Rewriter<'_> {
         }
     }
 
+    fn variant_path(&mut self, path: &mut ast::VariantPath) -> Result<(), Diagnostics> {
+        if let Some(module) = path.module.take() {
+            path.type_name.value = self.qualified_name(&module, &path.type_name)?;
+        } else {
+            self.reference(&mut path.type_name);
+        }
+        Ok(())
+    }
+
     fn ty(&mut self, ty: &mut ast::Type) -> Result<(), Diagnostics> {
         match ty {
             ast::Type::Path(path) => self.type_path(path),
@@ -529,7 +564,7 @@ impl Rewriter<'_> {
                 Ok(())
             }
             ast::Pattern::Variant(variant) => {
-                self.reference(&mut variant.path.type_name);
+                self.variant_path(&mut variant.path)?;
                 if let Some(payload) = &mut variant.tuple_payload {
                     for element in &mut payload.elems {
                         self.pattern(element)?;
@@ -700,7 +735,7 @@ impl Rewriter<'_> {
                 Ok(())
             }
             ast::Expr::Variant(variant) => {
-                self.reference(&mut variant.path.type_name);
+                self.variant_path(&mut variant.path)?;
                 if let Some(payload) = &mut variant.tuple_payload {
                     for argument in &mut payload.args {
                         self.expr(argument)?;
