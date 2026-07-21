@@ -2,7 +2,7 @@
 //!
 //! This is the language's execution engine and the *raw* primitive protocol
 //! (`RawPrimitive`, `PrimitiveDispatcher`, `EffectCtx`, the descriptor types in
-//! [`primitive_bindings`]). It ships no concrete primitives — those, and the
+//! the `primitive_bindings` module). It ships no concrete primitives — those, and the
 //! typed convenience layer they are written against, live in `vixen-primitives`
 //! and are installed by `vixen-runtime`.
 

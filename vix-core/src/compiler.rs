@@ -36,7 +36,7 @@ pub struct Compiler {
 /// shapes. The molten one-item-append fold is admitted under the as-if law; the
 /// forced-copy differential compiles the same source with the molten shape
 /// disabled so the two value sets can be proven identical.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct CompilerConfig {
     /// When set, every `Array.fold` keeps the semantic copy path even where the
     /// strict one-item-append shape would otherwise be admitted molten.
@@ -61,16 +61,6 @@ pub struct CompilerConfig {
     /// pruning — so a non-empty prelude perturbs module counts and the
     /// module-set hash. Empty for tests that isolate the bare surface.
     pub prelude: &'static [&'static str],
-}
-
-impl Default for CompilerConfig {
-    fn default() -> Self {
-        Self {
-            force_molten_copy: false,
-            force_scalar_call_boundaries: false,
-            prelude: &[],
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -5278,7 +5268,7 @@ fn lower_primitive(
     lower_request_shape(nodes, bindings, context, call, &shape)
 }
 
-/// Build a registered-primitive call from its [`RequestShape`]: check arity, read
+/// Build a registered-primitive call from its [`RequestShape`](crate::binding::RequestShape): check arity, read
 /// every [`Selector`](crate::binding::Selector) *before* enforcing any value-arg
 /// type (a bad mode must beat a wrong-typed origin — see `observe_binding`), then
 /// lower each argument in order into the request record and invoke the primitive.

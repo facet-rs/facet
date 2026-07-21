@@ -904,7 +904,7 @@ impl Type {
     /// through the vix builtin schema wiring and the derived `schema_ref` is
     /// byte-identical to the equivalent hand-written `Type`.
     ///
-    /// A tiny override table (see [`facet_leaf_override`]) carries the handful of
+    /// A tiny override table (see `facet_leaf_override`) carries the handful of
     /// leaf facts Rust's type system cannot express: fixed-byte digests
     /// wire-encode as a hex `String`, and opaque store handles are `Extern`
     /// values keyed by their distinct newtype identity.

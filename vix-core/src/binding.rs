@@ -23,7 +23,7 @@
 //! **The projection lives on the primitive.** Each registered primitive
 //! declares its own [`RawPrimitive::surface_name`](crate::runtime::RawPrimitive) and
 //! [`RawPrimitive::request_shape`](crate::runtime::RawPrimitive); [`builtin_bindings`]
-//! *harvests* the [`BindingRegistry`] from [`runtime::builtin_primitives`]
+//! *harvests* the [`BindingRegistry`] from [`runtime::builtin_primitive_surfaces`]
 //! rather than maintaining a second table that names every primitive by hand.
 //! `compiler::lower_value` recognizes built-in primitives through
 //! [`prelude_primitive`] — the callee name maps to a [`PrimitiveId`] here, in
@@ -230,7 +230,7 @@ impl BindingRegistry {
 ///
 /// Every registered primitive that projects a surface name (`RawPrimitive::
 /// surface_name` returns `Some`) is harvested straight from
-/// [`runtime::builtin_primitives`] — `fetch` and `observe` today. `decode`/
+/// [`runtime::builtin_primitive_surfaces`] — `fetch` and `observe` today. `decode`/
 /// `try_decode` share one primitive under two names and are not yet uniform
 /// (see the module docs), so they stay hand-registered onto
 /// [`decode_primitive_id`]; the `fixture_*`/`untar` dedicated ops are hand-
@@ -245,7 +245,7 @@ impl BindingRegistry {
 ///
 /// Tree text reads (`.text()`) are a *method* binding surface, orthogonal to
 /// free-function placement, and are intentionally omitted here — this is why
-/// `TreeReadPrimitive` (also in `runtime::builtin_primitives`, but with no
+/// `TreeReadPrimitive` (a vixen builtin, but with no
 /// `surface_name`) contributes no binding.
 #[must_use]
 pub fn builtin_bindings() -> BindingRegistry {
@@ -344,7 +344,7 @@ pub fn prelude_intrinsic(name: &str) -> Option<Intrinsic> {
 /// shared `decode`/`try_decode` id — stays in the compiler's typed builders).
 /// Returning `Some` is the contract that a primitive is fully described by
 /// data: the compiler builds its request generically from the shape. Built by
-/// asking every [`runtime::builtin_primitives`] entry for its own
+/// asking every [`runtime::builtin_primitive_surfaces`] entry for its own
 /// [`RawPrimitive::request_shape`](crate::runtime::RawPrimitive) — never a `match`
 /// over a closed enum.
 #[must_use]

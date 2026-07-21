@@ -386,7 +386,7 @@ fn saturating_nanos(duration: Duration) -> u64 {
 const CHILD_STACK_BYTES: usize = 64 * 1024 * 1024;
 
 /// The child entry point. Runs the protocol on a large-stack worker thread (see
-/// [`CHILD_STACK_BYTES`]) so native compilation cannot silently overflow the
+/// `CHILD_STACK_BYTES`) so native compilation cannot silently overflow the
 /// default main-thread stack, then exits with the thread's success. Runaway
 /// workloads never publish `Completed`; the parent watchdog terminates them.
 pub fn run_child_from_stdio() -> ! {
