@@ -244,16 +244,29 @@ Vix source can keep the module namespace instead of importing individual names:
 ```vix
 //! uses: lib/geometry.vix
 
-mod geometry;
+fn squared_length(p: geometry::Point) -> Int {
+    geometry::magnitude_sq(p)
+}
+```
+
+It can also define a namespace inline:
+
+```vix
+mod geometry {
+    pub struct Point { x: Int, y: Int }
+
+    pub fn magnitude_sq(p: Point) -> Int {
+        p.x * p.x + p.y * p.y
+    }
+}
 
 fn squared_length(p: geometry::Point) -> Int {
     geometry::magnitude_sq(p)
 }
 ```
 
-`mod geometry;` declares that an externally supplied source is available for
-qualified access; it does not itself read a file. The host or test harness is
-still responsible for presenting the named module source to the compiler.
+Inline modules and externally supplied files share the same qualified-name and
+`pub` visibility rules.
 
 Fixture selection, rerun mutations, alternate source files, and expected harness
 flags are likewise file-level harness metadata when they describe orchestration

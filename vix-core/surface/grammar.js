@@ -31,10 +31,17 @@ module.exports = grammar({
     _item: ($) =>
       choice($.mod_item, $.import_item, $.enum_item, $.struct_item, $.fn_item, $.command_item),
 
-    // Declare a separately supplied source as a module in this file's scope.
-    // The host remains responsible for loading the source; `mod geometry;`
-    // gives the source named `geometry` a qualified access path.
-    mod_item: ($) => seq("mod", field("name", $.identifier), ";"),
+    // A named inline module: `mod geometry { pub fn magnitude_sq(...) { ... } }`.
+    // Its declarations are reached through `geometry::...` from the containing
+    // file and use their ordinary unqualified spellings inside the module.
+    mod_item: ($) =>
+      seq(
+        "mod",
+        field("name", $.identifier),
+        "{",
+        repeat(field("item", $._item)),
+        "}",
+      ),
 
     // `import geometry::{Point, magnitude_sq};` / `import geometry::Point;`
     // (ratchet rungs 106–110). One module segment, then either a single item

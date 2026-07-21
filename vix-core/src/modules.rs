@@ -1,8 +1,9 @@
 //! Module-set compilation front: import resolution, visibility, and the
 //! source-level merge that feeds a module set through the single-file
 //! compiler front (ratchet rungs 106–110). A file may either bring an item
-//! into local scope with `import geometry::Point` or declare `mod geometry;`
-//! and refer to public items through `geometry::Point`.
+//! into local scope with `import geometry::Point`, refer to a supplied module
+//! through `geometry::Point`, or define that namespace inline with
+//! `mod geometry { … }`.
 //!
 //! Modules compile away before lowering. Every library item is renamed to its
 //! fully-qualified `module::item` spelling — the book's nominal-identity rule
@@ -29,7 +30,7 @@ use crate::surface::ast;
 /// One named library module presented alongside a root compilation.
 #[derive(Clone, Copy, Debug)]
 pub struct ModuleSource<'a> {
-    /// The name used by `import` statements and `mod` declarations (`geometry`).
+    /// The name used by imports and qualified paths (`geometry`).
     pub name: &'a str,
     /// The module's Vix source text.
     pub source: &'a str,
@@ -85,34 +86,20 @@ fn import_leaves(import: &ast::ImportItem) -> Vec<Spanned<String>> {
     }
 }
 
-struct FileResolution {
-    aliases: BTreeMap<String, String>,
-    qualified_modules: BTreeSet<String>,
-}
-
-/// Resolve one file's module declarations and imports against the module set,
-/// in source order and interleaved with the file's own declarations so a name
-/// bound twice is diagnosed at its second binding site (rung 109 anchors at
-/// the local declaration that follows the import).
-fn resolve_file_scope(
+/// Resolve one file's imports against the module set, in source order and
+/// interleaved with the file's own declarations so a name bound twice is
+/// diagnosed at its second binding site (rung 109 anchors at the local
+/// declaration that follows the import).
+fn resolve_imports(
     own_module: Option<&str>,
     file: &ast::SourceFile,
     set: &BTreeMap<String, BTreeMap<String, DeclaredItem>>,
-) -> Result<FileResolution, Diagnostics> {
+) -> Result<BTreeMap<String, String>, Diagnostics> {
     let mut bound: BTreeSet<String> = BTreeSet::new();
     let mut aliases = BTreeMap::new();
-    let mut qualified_modules = BTreeSet::new();
     for item in &file.items {
         match item {
-            ast::Item::Mod(module) => {
-                if !set.contains_key(&module.name.value) {
-                    return Err(unknown_name(module.name.span, module.name.value.clone()));
-                }
-                if !bound.insert(module.name.value.clone()) {
-                    return Err(duplicate_name(module.name.span, &module.name.value));
-                }
-                qualified_modules.insert(module.name.value.clone());
-            }
+            ast::Item::Mod(_) => unreachable!("inline modules are extracted before resolution"),
             ast::Item::Import(import) => {
                 let module = &import.module;
                 let Some(exports) = set.get(&module.value) else {
@@ -174,10 +161,37 @@ fn resolve_file_scope(
             }
         }
     }
-    Ok(FileResolution {
-        aliases,
-        qualified_modules,
-    })
+    Ok(aliases)
+}
+
+/// Remove inline module items from a file and return them as named files for
+/// the ordinary module-set merger. This keeps one namespace/visibility path
+/// for supplied and inline modules.
+fn extract_inline_modules(
+    mut file: ast::SourceFile,
+    module_names: &mut BTreeSet<String>,
+) -> Result<(ast::SourceFile, Vec<(String, ast::SourceFile)>), Diagnostics> {
+    let mut retained = Vec::new();
+    let mut extracted = Vec::new();
+    for item in std::mem::take(&mut file.items) {
+        let ast::Item::Mod(module) = item else {
+            retained.push(item);
+            continue;
+        };
+        if !module_names.insert(module.name.value.clone()) {
+            return Err(duplicate_name(module.name.span, &module.name.value));
+        }
+        let name = module.name.value;
+        let nested_file = ast::SourceFile {
+            span: module.span,
+            items: module.items,
+        };
+        let (nested_file, nested_modules) = extract_inline_modules(nested_file, module_names)?;
+        extracted.push((name, nested_file));
+        extracted.extend(nested_modules);
+    }
+    file.items = retained;
+    Ok((file, extracted))
 }
 
 /// Merge a parsed module set into one surface AST for the single-file front.
@@ -190,6 +204,23 @@ pub(crate) fn merge_module_set(
     root: ast::SourceFile,
     modules: &[(String, ast::SourceFile)],
 ) -> Result<ast::SourceFile, Diagnostics> {
+    let mut module_names = BTreeSet::new();
+    for (name, file) in modules {
+        if !module_names.insert(name.clone()) {
+            return Err(duplicate_name(file.span, name));
+        }
+    }
+
+    let mut expanded_modules = Vec::new();
+    for (name, file) in modules {
+        let (file, inline) = extract_inline_modules(file.clone(), &mut module_names)?;
+        expanded_modules.push((name.clone(), file));
+        expanded_modules.extend(inline);
+    }
+    let (root, root_inline) = extract_inline_modules(root, &mut module_names)?;
+    expanded_modules.extend(root_inline);
+    let modules = &expanded_modules;
+
     let set: BTreeMap<String, BTreeMap<String, DeclaredItem>> = modules
         .iter()
         .map(|(name, file)| (name.clone(), declared_items(file)))
@@ -198,18 +229,17 @@ pub(crate) fn merge_module_set(
 
     let mut merged_items = Vec::new();
     for (name, file) in modules {
-        let resolution = resolve_file_scope(Some(name), file, &set)?;
+        let aliases = resolve_imports(Some(name), file, &set)?;
         // A library module's own items are spelled fully qualified; its
         // imports alias to their declaring modules.
         let mut renames: BTreeMap<String, String> = declared_items(file)
             .into_keys()
             .map(|item| (item.clone(), format!("{name}::{item}")))
             .collect();
-        renames.extend(resolution.aliases);
+        renames.extend(aliases);
         let mut rewriter = Rewriter {
             renames: &renames,
             available_modules: &module_names,
-            qualified_modules: &resolution.qualified_modules,
             module_set: &set,
             scopes: Vec::new(),
         };
@@ -223,11 +253,10 @@ pub(crate) fn merge_module_set(
         }
     }
 
-    let resolution = resolve_file_scope(None, &root, &set)?;
+    let aliases = resolve_imports(None, &root, &set)?;
     let mut rewriter = Rewriter {
-        renames: &resolution.aliases,
+        renames: &aliases,
         available_modules: &module_names,
-        qualified_modules: &resolution.qualified_modules,
         module_set: &set,
         scopes: Vec::new(),
     };
@@ -250,13 +279,12 @@ pub(crate) fn merge_module_set(
 /// Scope-aware reference rewriter: rewrites every free occurrence of a name
 /// in `renames` to its fully-qualified spelling, leaving lexically bound
 /// occurrences (params, lets, closure params, pattern bindings) untouched.
-/// Qualified `module::…` spellings are admitted only for modules explicitly
-/// declared in the current file with `mod module;`. Private items remain
-/// inaccessible through both qualified paths and imports.
+/// Qualified `module::…` spellings resolve against supplied and inline
+/// modules. Private items remain inaccessible through both qualified paths
+/// and imports.
 struct Rewriter<'a> {
     renames: &'a BTreeMap<String, String>,
     available_modules: &'a BTreeSet<String>,
-    qualified_modules: &'a BTreeSet<String>,
     module_set: &'a BTreeMap<String, BTreeMap<String, DeclaredItem>>,
     scopes: Vec<BTreeSet<String>>,
 }
@@ -266,12 +294,8 @@ impl Rewriter<'_> {
         &self,
         module: &Spanned<String>,
         item: &Spanned<String>,
-        span: Span,
     ) -> Result<String, Diagnostics> {
         let full = format!("{}::{}", module.value, item.value);
-        if !self.qualified_modules.contains(&module.value) {
-            return Err(unknown_name(span, full));
-        }
         let Some(declared) = self
             .module_set
             .get(&module.value)
@@ -415,7 +439,7 @@ impl Rewriter<'_> {
                     .join("::");
                 return Err(unknown_name(path.span, full));
             }
-            let qualified = self.qualified_name(&path.segments[0], &path.segments[1], path.span)?;
+            let qualified = self.qualified_name(&path.segments[0], &path.segments[1])?;
             path.segments = vec![Spanned {
                 span: path.span,
                 value: qualified,
@@ -556,7 +580,7 @@ impl Rewriter<'_> {
     fn expr(&mut self, expr: &mut ast::Expr) -> Result<(), Diagnostics> {
         // `module::function(args)` and `Enum::Variant(args)` have the same
         // concrete syntax. The parser deliberately keeps that ambiguity in
-        // the existing `Variant` shape; an explicit `mod module;` declaration
+        // the existing `Variant` shape; a matching supplied or inline module
         // lets module resolution turn the former into an ordinary call.
         let qualified_call = match expr {
             ast::Expr::Variant(variant)
@@ -576,7 +600,7 @@ impl Rewriter<'_> {
             _ => None,
         };
         if let Some((span, module, item, mut args)) = qualified_call {
-            let callee = self.qualified_name(&module, &item, span)?;
+            let callee = self.qualified_name(&module, &item)?;
             for argument in &mut args.args {
                 self.expr(argument)?;
             }
