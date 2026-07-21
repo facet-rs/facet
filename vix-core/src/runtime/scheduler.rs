@@ -5,7 +5,7 @@ use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 
 use weavy::exec::{
     FallbackReason, FaultSite, LaneKind, ResolvedTaskValue, TaskFault, TaskStructuralValue,
@@ -42,9 +42,10 @@ use super::store::{
 };
 use super::{BlobId, OriginHint};
 use super::{
-    EffectCtx, PrimitiveCompletion, PrimitiveDispatcher, PrimitiveField, PrimitiveFieldValue,
-    PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveValue, PrimitiveValueBody, RawEffectTicket,
-    StagedEffectAuthority, TicketSubscription,
+    CallbackError, EffectCtx, PrimitiveCompletion, PrimitiveDispatcher, PrimitiveField,
+    PrimitiveFieldValue, PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveValue,
+    PrimitiveValueBody, RawEffectTicket, StagedEffectAuthority, TicketSubscription,
+    register_callback_transport, unregister_callback_transport,
 };
 use super::{MachineAttribution, MachineError, MachineOperation, RuntimeFault};
 
@@ -112,6 +113,8 @@ struct PrimitiveHostQueue {
     fault: Option<String>,
 }
 
+static NEXT_CALLBACK_TOKEN: AtomicI64 = AtomicI64::new(1);
+
 enum PrimitiveHostFailure {
     Abi(String),
     Machine(PrimitiveMachineError),
@@ -141,6 +144,11 @@ enum DeliveredCompletion {
     RawPrimitive {
         demand: DemandKey,
         publication: super::PrimitivePublication,
+    },
+    Callback {
+        token: i64,
+        request: PrimitiveValue,
+        reply: std::sync::mpsc::SyncSender<Result<PrimitiveValue, CallbackError>>,
     },
     /// An exec process terminated at its isolated worker boundary. The raw
     /// termination is interned by the scheduler thread, never by the worker.
@@ -205,6 +213,21 @@ impl CompletionInbox {
     /// termination for `demand` through the same unified event source.
     fn exec_sender(&self) -> std::sync::mpsc::Sender<DeliveredCompletion> {
         self.sender.clone()
+    }
+
+    fn callback_transport(&self, token: i64) -> super::primitive::CallbackTransport {
+        let sender = self.sender.clone();
+        Arc::new(move |request| {
+            let (reply, response) = std::sync::mpsc::sync_channel(1);
+            sender
+                .send(DeliveredCompletion::Callback {
+                    token,
+                    request,
+                    reply,
+                })
+                .map_err(|_| CallbackError::Expired)?;
+            response.recv().map_err(|_| CallbackError::Expired)?
+        })
     }
 
     /// Block on the one inbox for exactly one delivered completion, whichever
@@ -364,6 +387,18 @@ struct PrimitivePending {
     memo_location: Location,
     memo_preimage: DemandPreimage,
     memo_policy: PrimitiveMemoPolicy,
+    callbacks: Vec<CallbackPlan>,
+}
+
+#[derive(Clone)]
+struct CallbackPlan {
+    token: i64,
+    function: FnId,
+    environment: i64,
+    parameter: Type,
+    result: Type,
+    abi_schemas: Vec<(Type, weavy::SchemaRef)>,
+    lowered: Rc<LoweringArtifact>,
 }
 
 /// One task parked on a registered-primitive completion, plus the ABI plan the
@@ -1871,6 +1906,9 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             .collect::<Vec<_>>();
         for primitive_demand in abandoned_effects {
             if let Some(pending) = self.primitive_pending.remove(&primitive_demand) {
+                for callback in &pending.callbacks {
+                    unregister_callback_transport(callback.token);
+                }
                 drop(pending.subscription);
                 if pending.ticket.cancel_demand() {
                     self.counters.effect_cancellations += 1;
@@ -1955,6 +1993,9 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
         self.root_results.clear();
         let pending = std::mem::take(&mut self.primitive_pending);
         for (demand, pending) in pending {
+            for callback in &pending.callbacks {
+                unregister_callback_transport(callback.token);
+            }
             drop(pending.subscription);
             if pending.ticket.cancel_demand() {
                 self.counters.effect_cancellations += 1;
@@ -3513,6 +3554,36 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 )
             })?,
         };
+        let mut callbacks = Vec::new();
+        let callback_lowered = ctx.lowered.clone();
+        let callback_abi_schemas = plan.abi_schemas.clone();
+        let mut export_callback = |callee: i64,
+                                   environment: i64,
+                                   parameter: &Type,
+                                   result: &Type|
+         -> Result<i64, String> {
+            let function = u32::try_from(callee)
+                .map(FnId)
+                .map_err(|_| format!("callback function id {callee} is invalid"))?;
+            if function.0 as usize >= callback_lowered.program().fns.len() {
+                return Err(format!("callback function id {callee} is out of range"));
+            }
+            let token = NEXT_CALLBACK_TOKEN.fetch_add(1, Ordering::Relaxed);
+            if token <= 0 {
+                return Err("callback token space exhausted".to_owned());
+            }
+            register_callback_transport(token, self.completion_inbox.callback_transport(token));
+            callbacks.push(CallbackPlan {
+                token,
+                function,
+                environment,
+                parameter: parameter.clone(),
+                result: result.clone(),
+                abi_schemas: callback_abi_schemas.clone(),
+                lowered: callback_lowered.clone(),
+            });
+            Ok(token)
+        };
         let request_value = match ctx.task.with_value_resolver(|resolver| {
             primitive_value_from_frame(
                 &request.frame,
@@ -3521,10 +3592,14 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 &self.store,
                 &resolver,
                 &plan.abi_schemas,
+                &mut export_callback,
             )
         }) {
             Ok(value) => value,
             Err(detail) => {
+                for callback in &callbacks {
+                    unregister_callback_transport(callback.token);
+                }
                 return Err(self.terminate_primitive(
                     task_id,
                     demand_key,
@@ -3535,20 +3610,22 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
         let request_id = request_value.identity();
         let primitive_preimage = primitive_demand_preimage(&plan.primitive, &request_id);
         let primitive_demand = DemandKey::from_preimage(&primitive_preimage);
-        let memo_policy = self
-            .primitive_dispatcher
-            .descriptor(&plan.primitive)
-            .map(|descriptor| descriptor.memo_policy)
-            .ok_or_else(|| {
-                self.terminate_primitive(
+        let memo_policy = match self.primitive_dispatcher.descriptor(&plan.primitive) {
+            Some(descriptor) => descriptor.memo_policy,
+            None => {
+                for callback in &callbacks {
+                    unregister_callback_transport(callback.token);
+                }
+                return Err(self.terminate_primitive(
                     task_id,
                     demand_key,
                     PrimitiveHostFailure::Abi(format!(
                         "registered primitive descriptor is absent for {:?}",
                         plan.primitive
                     )),
-                )
-            })?;
+                ));
+            }
+        };
         let memo_site = format!(
             "{}:{}:v{}:f{}:n{}",
             plan.primitive.namespace,
@@ -3567,6 +3644,9 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             && let Some(receipt) = entry.receipt.clone()
             && let Some(stored) = self.store.entry(entry.result)
         {
+            for callback in &callbacks {
+                unregister_callback_transport(callback.token);
+            }
             let value = if let Some(bytes) = stored.resident_bytes() {
                 PrimitiveValue::bytes(stored.identity.schema.clone(), bytes.to_vec())
             } else if let Some(frozen) = stored.frozen() {
@@ -3594,6 +3674,9 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             );
         }
         if let Some(pending) = self.primitive_pending.get_mut(&primitive_demand) {
+            for callback in &callbacks {
+                unregister_callback_transport(callback.token);
+            }
             // Join an in-flight primitive demand: reuse the first caller's single
             // authority and subscription; only add this frame as a waiter.
             pending.ticket.renew_lease();
@@ -3635,6 +3718,9 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             ) {
                 Ok(ticket) => ticket,
                 Err(error) => {
+                    for callback in &callbacks {
+                        unregister_callback_transport(callback.token);
+                    }
                     return Err(self.terminate_primitive(
                         task_id,
                         demand_key,
@@ -3657,6 +3743,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                     memo_location,
                     memo_preimage: primitive_preimage,
                     memo_policy,
+                    callbacks,
                 },
             );
             self.observe_effect_frontier();
@@ -3709,6 +3796,15 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 demand,
                 publication,
             } => self.apply_primitive_completion(demand, publication),
+            DeliveredCompletion::Callback {
+                token,
+                request,
+                reply,
+            } => {
+                let result = self.apply_callback(token, request);
+                let _ = reply.send(result);
+                Ok(())
+            }
             DeliveredCompletion::Exec { demand, output } => {
                 self.apply_exec_completion(demand, output)
             }
@@ -3748,6 +3844,128 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
         Ok(())
     }
 
+    fn apply_callback(
+        &mut self,
+        token: i64,
+        request: PrimitiveValue,
+    ) -> Result<PrimitiveValue, CallbackError> {
+        let plan = self
+            .primitive_pending
+            .values()
+            .flat_map(|pending| &pending.callbacks)
+            .find(|plan| plan.token == token)
+            .cloned()
+            .ok_or(CallbackError::Expired)?;
+        if plan.environment != 0 {
+            return Err(CallbackError::Runtime {
+                detail: "capturing Vix callbacks are not yet exportable".to_owned(),
+            });
+        }
+        if request.schema != plan.parameter.schema_ref() {
+            return Err(CallbackError::RequestCodec {
+                detail: format!(
+                    "callback request schema {} disagrees with {}",
+                    request.schema,
+                    plan.parameter.schema_ref()
+                ),
+            });
+        }
+        let function = plan.function.0 as usize;
+        let contract = plan
+            .lowered
+            .contract()
+            .functions
+            .get(function)
+            .ok_or_else(|| CallbackError::Runtime {
+                detail: "callback function is absent from the executable".to_owned(),
+            })?;
+        if contract.entries.len() != 1 {
+            return Err(CallbackError::Runtime {
+                detail: "callback function does not have exactly one public parameter".to_owned(),
+            });
+        }
+        let mut task = plan
+            .lowered
+            .executable_rc()
+            .spawn(plan.function)
+            .map_err(|error| CallbackError::Runtime {
+                detail: format!("callback spawn failed: {error:?}"),
+            })?;
+        let frozen = primitive_value_to_frozen(&plan.parameter, &request).map_err(|error| {
+            CallbackError::RequestCodec {
+                detail: format!("{error:?}"),
+            }
+        })?;
+        let binding = ValueInputBinding {
+            value: crate::vir::ValueIslandId {
+                function: FunctionId(0),
+                node: NodeId(0),
+            },
+            entry: 0,
+            schema: None,
+            store_schema: plan.parameter.schema_ref(),
+            payload_element_schema: None,
+            ty: plan.parameter.clone(),
+            publication_schemas: plan.abi_schemas.clone(),
+        };
+        let frozen =
+            frozen_to_weavy(&frozen, &plan.parameter, &binding, &self.store).map_err(|()| {
+                CallbackError::RequestCodec {
+                    detail: "callback request disagrees with its executable ABI".to_owned(),
+                }
+            })?;
+        task.write_entry_frozen(0, &frozen)
+            .map_err(|error| CallbackError::RequestCodec {
+                detail: format!("callback entry failed: {error:?}"),
+            })?;
+        let mut primitive_host = PrimitiveHostQueue::default();
+        let step = {
+            let mut call_primitive = |frame: &mut [u8]| primitive_host.call(frame);
+            let mut hosts: [HostFn<'_>; 1] = [&mut call_primitive];
+            task.drive_hosted(&mut [], &[], &mut hosts)
+                .map_err(|error| CallbackError::Runtime {
+                    detail: format!("callback execution failed: {error:?}"),
+                })?
+        };
+        match step {
+            TaskStep::Done => {}
+            TaskStep::Parked { input } => {
+                return Err(CallbackError::Runtime {
+                    detail: format!("callback parked on unsupported wire {input}"),
+                });
+            }
+            TaskStep::Yielded => {
+                return Err(CallbackError::Runtime {
+                    detail: "callback yielded a nested host primitive".to_owned(),
+                });
+            }
+        }
+        task.with_result_value_resolver(|result, resolver| {
+            let result = if plan.lowered.array_outcome.is_some() {
+                let outcome = crate::lowering::ArrayOutcomeAbi::for_value(plan.result.clone());
+                let selector = result.enum_selector()?;
+                if selector != outcome.ok_variant {
+                    return Ok(Err(format!(
+                        "callback returned language-failure outcome variant {selector}"
+                    )));
+                }
+                result.enum_field(selector, 0)?
+            } else {
+                result
+            };
+            Ok(primitive_value_from_task(
+                result,
+                &plan.result,
+                &self.store,
+                &resolver,
+            ))
+        })
+        .map_err(|error| CallbackError::ResponseCodec {
+            detail: format!("callback result access failed: {error:?}"),
+        })?
+        .map_err(|detail| CallbackError::ResponseCodec { detail })
+    }
+
     /// Apply a registered-primitive completion: admit the value once, then
     /// materialize it into every waiter's frame through its own ABI plan and
     /// return each resumed frame to the runnable stack.
@@ -3771,7 +3989,11 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             memo_location,
             memo_preimage,
             memo_policy,
+            callbacks,
         } = pending;
+        for callback in &callbacks {
+            unregister_callback_transport(callback.token);
+        }
         drop(subscription);
         self.primitive_dispatcher.retire(demand);
         self.counters.fetches_performed += publication
@@ -6873,6 +7095,7 @@ fn primitive_value_from_frame(
     store: &Store,
     resolver: &TaskValueResolver<'_>,
     abi_schemas: &[(Type, weavy::SchemaRef)],
+    export_callback: &mut impl FnMut(i64, i64, &Type, &Type) -> Result<i64, String>,
 ) -> Result<PrimitiveValue, String> {
     let expected = ty
         .word_width()
@@ -6885,7 +7108,16 @@ fn primitive_value_from_frame(
             ty.name()
         ));
     }
-    primitive_value_from_frame_at(frame, region, 0, ty, store, resolver, abi_schemas)
+    primitive_value_from_frame_at(
+        frame,
+        region,
+        0,
+        ty,
+        store,
+        resolver,
+        abi_schemas,
+        export_callback,
+    )
 }
 
 fn primitive_value_from_frame_at(
@@ -6896,6 +7128,7 @@ fn primitive_value_from_frame_at(
     store: &Store,
     resolver: &TaskValueResolver<'_>,
     abi_schemas: &[(Type, weavy::SchemaRef)],
+    export_callback: &mut impl FnMut(i64, i64, &Type, &Type) -> Result<i64, String>,
 ) -> Result<PrimitiveValue, String> {
     let schema = ty.schema_ref();
     match ty {
@@ -6944,6 +7177,7 @@ fn primitive_value_from_frame_at(
                     store,
                     resolver,
                     abi_schemas,
+                    export_callback,
                 )?;
                 fields.push(primitive_field(element, value)?);
                 cursor += primitive_type_words(element)?;
@@ -6965,6 +7199,7 @@ fn primitive_value_from_frame_at(
                     store,
                     resolver,
                     abi_schemas,
+                    export_callback,
                 )?;
                 fields.push(primitive_field(&field.ty, value)?);
                 cursor += primitive_type_words(&field.ty)?;
@@ -6994,6 +7229,7 @@ fn primitive_value_from_frame_at(
                     store,
                     resolver,
                     abi_schemas,
+                    export_callback,
                 )?;
                 fields.push(primitive_field(field_ty, value)?);
                 cursor += primitive_type_words(field_ty)?;
@@ -7023,8 +7259,19 @@ fn primitive_value_from_frame_at(
                 },
             })
         }
-        Type::Function { .. }
-        | Type::Map { .. }
+        Type::Function { parameter, result } => {
+            let callee = frame_word(frame, region, offset)?;
+            let environment = frame_word(frame, region, offset + 1)?;
+            let token = export_callback(callee, environment, parameter, result)?;
+            Ok(PrimitiveValue {
+                schema,
+                body: PrimitiveValueBody::Product(vec![PrimitiveField {
+                    schema: Type::Int.schema_ref(),
+                    value: PrimitiveFieldValue::Inline(token.to_le_bytes().to_vec()),
+                }]),
+            })
+        }
+        Type::Map { .. }
         | Type::Set(_)
         | Type::Stream { .. }
         | Type::Order(_)

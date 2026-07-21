@@ -15,5 +15,6 @@ description = "Concrete Vix primitives (decode/fetch/observe/tree-read) and the 
 vix = { path = "../vix-core", package = "vix-core" }
 facet = { path = "../facet" }
 facet-reflect = { workspace = true }
+facet-json = { path = "../facet-json" }
 hex.workspace = true
 sha2.workspace = true

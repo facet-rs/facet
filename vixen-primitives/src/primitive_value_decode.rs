@@ -26,7 +26,7 @@ use facet_reflect::Partial;
 use vix::schema::SchemaRef;
 
 use crate::rt::{
-    Digest, PrimitiveField, PrimitiveFieldValue, PrimitiveMachineError, PrimitiveValue,
+    Callback, Digest, PrimitiveField, PrimitiveFieldValue, PrimitiveMachineError, PrimitiveValue,
     PrimitiveValueBody, RegistryHandle, UpstreamDigest, ValueId,
 };
 
@@ -127,6 +127,7 @@ fn field_value(
 /// `Facet` shape structurally — see `vix::vir::facet_leaf_override`, which
 /// this must track exactly.
 enum LeafOverride {
+    Callback,
     Digest,
     UpstreamDigest,
     SchemaRef,
@@ -134,6 +135,9 @@ enum LeafOverride {
 }
 
 fn leaf_override_kind(shape: &'static facet::Shape) -> Option<LeafOverride> {
+    if shape.decl_id == <Callback<i64, i64> as facet::Facet>::SHAPE.decl_id {
+        return Some(LeafOverride::Callback);
+    }
     if shape.id == <Digest as facet::Facet>::SHAPE.id {
         return Some(LeafOverride::Digest);
     }
@@ -154,12 +158,30 @@ fn leaf_override_kind(shape: &'static facet::Shape) -> Option<LeafOverride> {
 /// `.set(...)` directly on the current frame, or push/pop child frames in
 /// exactly matched pairs.
 fn decode_shape(
-    partial: Partial<'static, false>,
+    mut partial: Partial<'static, false>,
     shape: &'static facet::Shape,
     value: &PrimitiveValue,
     root: &ValueId,
 ) -> Result<Partial<'static, false>, PrimitiveMachineError> {
     match leaf_override_kind(shape) {
+        Some(LeafOverride::Callback) => {
+            let PrimitiveValueBody::Product(fields) = &value.body else {
+                return Err(invalid(root));
+            };
+            let [token] = fields.as_slice() else {
+                return Err(invalid(root));
+            };
+            let PrimitiveFieldValue::Inline(bytes) = &token.value else {
+                return Err(invalid(root));
+            };
+            let token = decode_i64_leaf(bytes, root)?;
+            partial = partial.begin_nth_field(0).map_err(|_| invalid(root))?;
+            partial = partial.set(token).map_err(|_| invalid(root))?;
+            partial = partial.end().map_err(|_| invalid(root))?;
+            partial = partial.begin_nth_field(1).map_err(|_| invalid(root))?;
+            partial = partial.set_default().map_err(|_| invalid(root))?;
+            return partial.end().map_err(|_| invalid(root));
+        }
         Some(LeafOverride::Digest) => {
             let digest = decode_hex_digest(value, root)?;
             return partial.set(Digest(digest)).map_err(|_| invalid(root));

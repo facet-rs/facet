@@ -322,15 +322,19 @@ pub const OBSERVE_DECL: PrimitiveDecl = PrimitiveDecl {
     args: &[ArgRoleDecl::Value, ArgRoleDecl::Selector(MODE_SELECTOR)],
 };
 
-/// A builtin primitive's surface projection: the prelude name it binds, its id,
-/// and the request shape the compiler lowers its call through. This is the
-/// language's knowledge of the primitives it can lower — their *contracts*, not
-/// their implementations (which live in `vixen-primitives`).
-pub struct BuiltinPrimitiveSurface {
+/// A primitive's surface projection: the source name it binds, its id, and the
+/// request shape the compiler lowers its call through. This is the language's
+/// knowledge of a primitive's contract, not its host implementation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrimitiveSurface {
     pub surface_name: &'static str,
     pub id: PrimitiveId,
     pub shape: RequestShape,
 }
+
+/// Backward-compatible name for the statically bundled subset of primitive
+/// surfaces. Custom and bundled primitives share the same contract type.
+pub type BuiltinPrimitiveSurface = PrimitiveSurface;
 
 /// The builtin primitives that project a prelude free-function surface: `fetch`
 /// and `observe`. `tree-read` binds only as a `.text()` method (no surface name),
@@ -339,10 +343,10 @@ pub struct BuiltinPrimitiveSurface {
 pub fn builtin_primitive_surfaces() -> Vec<BuiltinPrimitiveSurface> {
     fn surface<Request: facet::Facet<'static>, Response: facet::Facet<'static>>(
         decl: &PrimitiveDecl,
-    ) -> BuiltinPrimitiveSurface {
+    ) -> PrimitiveSurface {
         let request_ty = Type::from_facet::<Request>();
         let response_ty = Type::from_facet::<Response>();
-        BuiltinPrimitiveSurface {
+        PrimitiveSurface {
             surface_name: decl.name,
             id: decl.id(),
             shape: synth_shape(decl, request_ty, response_ty),

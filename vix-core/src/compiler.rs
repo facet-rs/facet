@@ -30,6 +30,7 @@ use crate::vir::{
 pub struct Compiler {
     parser: SurfaceParser,
     config: CompilerConfig,
+    primitive_surfaces: Vec<crate::runtime::PrimitiveSurface>,
 }
 
 /// Compile-time knobs that select between observationally identical execution
@@ -83,6 +84,7 @@ impl Compiler {
         Self {
             parser: SurfaceParser::new(),
             config: CompilerConfig::default(),
+            primitive_surfaces: Vec::new(),
         }
     }
 
@@ -92,7 +94,30 @@ impl Compiler {
         Self {
             parser: SurfaceParser::new(),
             config,
+            primitive_surfaces: Vec::new(),
         }
+    }
+
+    /// Construct a compiler with additional embedder-provided primitive
+    /// surfaces. Each surface is synthesized by the same typed adapter that is
+    /// registered with the runtime, so source lowering and dispatch cannot
+    /// disagree about the request or response type.
+    #[must_use]
+    pub fn with_config_and_primitive_surfaces(
+        config: CompilerConfig,
+        primitive_surfaces: impl IntoIterator<Item = crate::runtime::PrimitiveSurface>,
+    ) -> Self {
+        Self::with_config(config).with_primitive_surfaces(primitive_surfaces)
+    }
+
+    /// Add embedder-provided primitive surfaces to this compiler.
+    #[must_use]
+    pub fn with_primitive_surfaces(
+        mut self,
+        primitive_surfaces: impl IntoIterator<Item = crate::runtime::PrimitiveSurface>,
+    ) -> Self {
+        self.primitive_surfaces.extend(primitive_surfaces);
+        self
     }
 
     /// Parse, check, and lower to architecture-neutral VIR.
@@ -121,7 +146,7 @@ impl Compiler {
         if !self.config.prelude.is_empty() {
             crate::prelude::inject_prelude(&self.parser, self.config.prelude, &mut merged)?;
         }
-        let module = lower_module(&merged, self.config)?;
+        let module = lower_module(&merged, self.config, &self.primitive_surfaces)?;
         let warnings = lint_module(&module);
         Ok(Compilation { module, warnings })
     }
@@ -203,6 +228,20 @@ struct ModuleContext<'a> {
     types: Cow<'a, BTreeMap<String, Type>>,
     generated: &'a GeneratedFunctions,
     config: CompilerConfig,
+    primitive_surfaces: &'a [crate::runtime::PrimitiveSurface],
+}
+
+impl ModuleContext<'_> {
+    fn primitive_shape(&self, name: &str) -> Option<crate::runtime::RequestShape> {
+        self.primitive_surfaces
+            .iter()
+            .find(|surface| surface.surface_name == name)
+            .map(|surface| surface.shape.clone())
+            .or_else(|| {
+                crate::binding::prelude_primitive(name)
+                    .and_then(|primitive| crate::binding::request_shape(&primitive))
+            })
+    }
 }
 
 /// Shared, interior-mutable state for functions minted during lowering:
@@ -422,6 +461,7 @@ impl<'a> ModuleContext<'a> {
             types: Cow::Owned(types),
             generated: self.generated,
             config: self.config,
+            primitive_surfaces: self.primitive_surfaces,
         }
     }
 }
@@ -1290,7 +1330,11 @@ pub fn exec_outcome_type() -> Type {
     ))
 }
 
-fn lower_module(source: &ast::SourceFile, config: CompilerConfig) -> Result<Module, Diagnostics> {
+fn lower_module(
+    source: &ast::SourceFile,
+    config: CompilerConfig,
+    primitive_surfaces: &[crate::runtime::PrimitiveSurface],
+) -> Result<Module, Diagnostics> {
     let mut types = TypeResolver::new(source)?.resolve_all(source)?;
     for name in CAPABILITY_TYPE_NAMES {
         types
@@ -1358,6 +1402,7 @@ fn lower_module(source: &ast::SourceFile, config: CompilerConfig) -> Result<Modu
         types: Cow::Borrowed(&types),
         generated: &generated,
         config,
+        primitive_surfaces,
     };
     let mut module = Module {
         force_molten_copy: config.force_molten_copy,
@@ -3540,12 +3585,11 @@ fn lower_value_expected(
                 .expect("guard confirmed the callee is a built-in intrinsic");
             lower_effect_intrinsic(nodes, bindings, context, call, intrinsic)
         }
-        ast::Expr::Call(call)
-            if crate::binding::prelude_primitive(&call.callee.value).is_some() =>
-        {
-            let primitive = crate::binding::prelude_primitive(&call.callee.value)
-                .expect("guard confirmed the callee is a built-in primitive");
-            lower_primitive(nodes, bindings, context, call, &primitive)
+        ast::Expr::Call(call) if context.primitive_shape(&call.callee.value).is_some() => {
+            let shape = context
+                .primitive_shape(&call.callee.value)
+                .expect("guard confirmed the callee is a registered primitive");
+            lower_request_shape(nodes, bindings, context, call, &shape)
         }
         ast::Expr::Call(call) => lower_call(nodes, bindings, context, call, expected),
         ast::Expr::WhereCall(call) => lower_where_call(nodes, bindings, context, call),
@@ -5255,19 +5299,6 @@ fn lower_some(
 /// is no per-primitive Rust arm here. `decode`/`try_decode` and the
 /// `fixture_*`/`untar` intrinsics are matched by callee name earlier and never
 /// reach this function; see `lower_value_expected`'s `ast::Expr::Call` arms.
-fn lower_primitive(
-    nodes: &mut Vec<Node>,
-    bindings: &BTreeMap<String, LoweredValue>,
-    context: &ModuleContext<'_>,
-    call: &ast::Call,
-    primitive: &crate::runtime::PrimitiveId,
-) -> Result<LoweredValue, Diagnostics> {
-    let shape = crate::binding::request_shape(primitive).expect(
-        "prelude_primitive only resolves names with a harvested RequestShape (fetch/observe)",
-    );
-    lower_request_shape(nodes, bindings, context, call, &shape)
-}
-
 /// Build a registered-primitive call from its [`RequestShape`](crate::binding::RequestShape): check arity, read
 /// every [`Selector`](crate::binding::Selector) *before* enforcing any value-arg
 /// type (a bad mode must beat a wrong-typed origin — see `observe_binding`), then
