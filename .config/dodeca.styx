@@ -37,8 +37,8 @@ mounts (
     {
         name vix
         path /vix
-        local vix/docs/content
-        repo "https://github.com/facet-rs/facet/tree/main/vix"
+        local vix-core/docs/content
+        repo "https://github.com/facet-rs/facet/tree/main/vix-core"
     }
     {
         name rodin

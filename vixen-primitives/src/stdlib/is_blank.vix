@@ -1,0 +1,3 @@
+fn is_blank(text: String) -> Bool {
+    text == ""
+}

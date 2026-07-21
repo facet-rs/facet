@@ -11,10 +11,13 @@ description = "Real fetch backend for vix archives."
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-vix = { path = "../vix" }
+vix = { path = "../vix-core", package = "vix-core" }
 flate2 = "1.1"
 tar = "0.4"
 ureq = "3.3"
 
 [dev-dependencies]
 tempfile.workspace = true
+# The fetch/observe integration test drives programs through the ratchet harness,
+# which lives in the vixen runtime (it installs the builtin primitives).
+vixen-runtime = { path = "../vixen-runtime" }

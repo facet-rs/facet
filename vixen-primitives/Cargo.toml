@@ -1,0 +1,19 @@
+# vixen-primitives — the concrete primitives and pure-vix stdlib that the vixen
+# runtime installs into the vix language. This is the Node-side "batteries": the
+# RawPrimitive implementations (decode, fetch, observe, tree-read) plus the
+# prelude functions a program gets for free. vix-core (the language) ships none
+# of these.
+
+[package]
+name = "vixen-primitives"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Concrete Vix primitives (decode/fetch/observe/tree-read) and the pure-vix stdlib prelude that the vixen runtime installs into the vix language."
+
+[dependencies]
+vix = { path = "../vix-core", package = "vix-core" }
+facet = { path = "../facet" }
+facet-reflect = { workspace = true }
+hex.workspace = true
+sha2.workspace = true

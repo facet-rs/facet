@@ -1,0 +1,4 @@
+enum Format {
+    Json,
+    Toml,
+}

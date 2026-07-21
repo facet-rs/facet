@@ -60,41 +60,41 @@ comm -13 "$OUT/lock-pkgs.tsv" "$OUT/metadata-pkgs.tsv" > "$OUT/metadata-only.tsv
 comm -23 "$OUT/lock-registry-pkgs.tsv" "$OUT/metadata-registry-pkgs.tsv" > "$OUT/lock-only-registry.tsv"
 comm -13 "$OUT/lock-registry-pkgs.tsv" "$OUT/metadata-registry-pkgs.tsv" > "$OUT/metadata-only-registry.tsv"
 
-cargo nextest list "${nextest_timeout[@]}" -p vix -E 'test(=real_workspace_metadata_baseline_is_counted) | test(=real_workspace_dependency_probe_shard_0) | test(=direct_resolved_unit_adapter_gap_is_pinned)' \
+cargo nextest list "${nextest_timeout[@]}" -p vix-core -E 'test(=real_workspace_metadata_baseline_is_counted) | test(=real_workspace_dependency_probe_shard_0) | test(=direct_resolved_unit_adapter_gap_is_pinned)' \
   > "$OUT/vix-frontier-list.txt" 2>&1
-cargo nextest run "${nextest_timeout[@]}" -p vix -E 'test(=real_workspace_metadata_baseline_is_counted) | test(=real_workspace_dependency_probe_shard_0) | test(=direct_resolved_unit_adapter_gap_is_pinned)' \
+cargo nextest run "${nextest_timeout[@]}" -p vix-core -E 'test(=real_workspace_metadata_baseline_is_counted) | test(=real_workspace_dependency_probe_shard_0) | test(=direct_resolved_unit_adapter_gap_is_pinned)' \
   > "$OUT/vix-frontier-run.txt" 2>&1
 
-cargo nextest list "${nextest_timeout[@]}" -p vix -E 'test(=projected_member_manifests_are_read_from_granted_root) | test(=dependency_declarations_extract_workspace_and_detailed_forms) | test(=real_workspace_member_only_index_builds_bounded_ring)' \
+cargo nextest list "${nextest_timeout[@]}" -p vix-core -E 'test(=projected_member_manifests_are_read_from_granted_root) | test(=dependency_declarations_extract_workspace_and_detailed_forms) | test(=real_workspace_member_only_index_builds_bounded_ring)' \
   > "$OUT/vix-composed-member-ring-list.txt" 2>&1
-cargo nextest run "${nextest_timeout[@]}" -p vix -E 'test(=projected_member_manifests_are_read_from_granted_root) | test(=dependency_declarations_extract_workspace_and_detailed_forms) | test(=real_workspace_member_only_index_builds_bounded_ring)' \
+cargo nextest run "${nextest_timeout[@]}" -p vix-core -E 'test(=projected_member_manifests_are_read_from_granted_root) | test(=dependency_declarations_extract_workspace_and_detailed_forms) | test(=real_workspace_member_only_index_builds_bounded_ring)' \
   > "$OUT/vix-composed-member-ring-run.txt" 2>&1
 
-cargo nextest list "${nextest_timeout[@]}" -p vix --run-ignored only -E "$member_solve_expr" \
+cargo nextest list "${nextest_timeout[@]}" -p vix-core --run-ignored only -E "$member_solve_expr" \
   > "$OUT/vix-member-solve-rings-list.txt" 2>&1
-cargo nextest run "${nextest_timeout[@]}" -p vix --run-ignored only --no-fail-fast -E "$member_solve_expr" \
+cargo nextest run "${nextest_timeout[@]}" -p vix-core --run-ignored only --no-fail-fast -E "$member_solve_expr" \
   > "$OUT/vix-member-solve-rings-run.txt" 2>&1
 
-cargo nextest list "${nextest_timeout[@]}" -p vix -E 'test(=tiny_workspace_solve_diff_is_categorized_against_real_cargo_lock)' \
+cargo nextest list "${nextest_timeout[@]}" -p vix-core -E 'test(=tiny_workspace_solve_diff_is_categorized_against_real_cargo_lock)' \
   > "$OUT/vix-lock-diff-list.txt" 2>&1
-cargo nextest run "${nextest_timeout[@]}" -p vix -E 'test(=tiny_workspace_solve_diff_is_categorized_against_real_cargo_lock)' \
+cargo nextest run "${nextest_timeout[@]}" -p vix-core -E 'test(=tiny_workspace_solve_diff_is_categorized_against_real_cargo_lock)' \
   > "$OUT/vix-lock-diff-run.txt" 2>&1
 
 direct_sparse_solve_expr='test(=real_workspace_member_direct_sparse_solve_ring_lock_diff_8) | test(=real_workspace_member_direct_sparse_solve_ring_lock_diff_16)'
 
-cargo nextest list "${nextest_timeout[@]}" -p vix --run-ignored only -E "$direct_sparse_solve_expr" \
+cargo nextest list "${nextest_timeout[@]}" -p vix-core --run-ignored only -E "$direct_sparse_solve_expr" \
   > "$OUT/vix-direct-ring-solve-diff-list.txt" 2>&1
-cargo nextest run "${nextest_timeout[@]}" -p vix --run-ignored only -E "$direct_sparse_solve_expr" \
+cargo nextest run "${nextest_timeout[@]}" -p vix-core --run-ignored only -E "$direct_sparse_solve_expr" \
   > "$OUT/vix-direct-ring-solve-diff-run.txt" 2>&1
 
-cargo nextest list "${nextest_timeout[@]}" -p vix --features real-process -E 'test(=solution_walk_derives_units_from_rodin_and_matches_cargo_oracle)' \
+cargo nextest list "${nextest_timeout[@]}" -p vix-core --features real-process -E 'test(=solution_walk_derives_units_from_rodin_and_matches_cargo_oracle)' \
   > "$OUT/vix-derived-unit-list.txt" 2>&1
-cargo nextest run "${nextest_timeout[@]}" -p vix --features real-process -E 'test(=solution_walk_derives_units_from_rodin_and_matches_cargo_oracle)' \
+cargo nextest run "${nextest_timeout[@]}" -p vix-core --features real-process -E 'test(=solution_walk_derives_units_from_rodin_and_matches_cargo_oracle)' \
   > "$OUT/vix-derived-unit-run.txt" 2>&1
 
-cargo nextest list "${nextest_timeout[@]}" -p vix --run-ignored only -E 'test(=real_workspace_member_direct_sparse_unit_diff_8)' \
+cargo nextest list "${nextest_timeout[@]}" -p vix-core --run-ignored only -E 'test(=real_workspace_member_direct_sparse_unit_diff_8)' \
   > "$OUT/vix-direct-ring-unit-diff-list.txt" 2>&1
-cargo nextest run "${nextest_timeout[@]}" -p vix --run-ignored only -E 'test(=real_workspace_member_direct_sparse_unit_diff_8)' \
+cargo nextest run "${nextest_timeout[@]}" -p vix-core --run-ignored only -E 'test(=real_workspace_member_direct_sparse_unit_diff_8)' \
   > "$OUT/vix-direct-ring-unit-diff-run.txt" 2>&1
 
 {

@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use tempfile::TempDir;
-use vix::ratchet::{RunError, prepare_source};
+use vixen_runtime::ratchet::{RunError, prepare_source};
 use vix::runtime::{
     CanonicalBlobPersistence, ClaimHistory, FixtureStore, FramedNode, MachineCause,
     ObserveCoordinate, ObservedClaim, OriginAdapter, PrimitiveMachineError, PrimitiveServices,
@@ -193,7 +193,7 @@ impl Drop for BlobServer {
 fn archive_bytes() -> Vec<u8> {
     std::fs::read(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../vix/tests/fixtures/registry/tokio-1.52.3.crate"),
+            .join("../vix-core/tests/fixtures/registry/tokio-1.52.3.crate"),
     )
     .expect("read pinned archive fixture")
 }

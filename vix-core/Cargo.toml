@@ -1,0 +1,72 @@
+# vix — the demand-driven language.
+#
+# build.rs generates the authoritative surface grammar and typed AST. No
+# evaluator hand-writes a syntax tree.
+
+[package]
+name = "vix-core"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "The Vix demand-driven language: parse, compile, lower, and execute — with no primitives (the vixen runtime supplies those)."
+
+# The language crate is imported as `vix` (the raw language, à la V8); the
+# `vixen` runtime crates that embed it re-export this surface. Package name and
+# import name differ so dependents keep `use vix::…`.
+[lib]
+name = "vix"
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+snark = { path = "../snark", features = ["json-import"] }
+facet = { path = "../facet" }
+facet-format = { path = "../facet-format" }
+facet-json = { path = "../facet-json" }
+facet-toml = { path = "../facet-toml" }
+facet-reflect = { workspace = true }
+facet-value = { path = "../facet-value", default-features = false, features = ["alloc"] }
+hex.workspace = true
+blake3.workspace = true
+# reloc_selection.rs walks Mach-O relocations with `object`.
+object.workspace = true
+phon = { path = "../phon/rust/phon" }
+rustc-demangle = "0.1.26"
+sha2.workspace = true
+taxon.workspace = true
+tracing.workspace = true
+# vix lowers to weavy (portability is weavy's concern — constitution
+# A6); the dependency activates when the typed instruction vocabulary
+# lands via the fable-teeth work.
+weavy = { path = "../weavy" }
+
+[build-dependencies]
+snark-dsl = { path = "../snark-dsl", features = ["typed-ast"] }
+
+# The graph demand engine's driver uses only core::future (vix stays
+# wasm-clean); tokio is DEV-only, an executor + timers for the demand tests.
+[dev-dependencies]
+# The live-Cargo oracle harness (tests/rodin_fixtures.rs) reads `cargo metadata`
+# and parses it with facet-json — no serde. facet/facet-json/semver are already
+# normal deps and are nameable from integration tests, so no extra dev-dep is
+# needed for it.
+semver = "1.0.28"
+tempfile.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time"] }
+weavy = { path = "../weavy" }
+# The language crate's own tests exercise the runnable system — they need the
+# concrete primitives + stdlib the vixen crates supply. This is a dev-only
+# dependency cycle (vixen-runtime depends on vix-core for the normal build),
+# which Cargo permits.
+vixen-primitives = { path = "../vixen-primitives" }
+vixen-runtime = { path = "../vixen-runtime" }
+
+# The macOS-only Mach-O relocation-walk test (tests/reloc_selection.rs, gated
+# `#![cfg(target_os = "macos")]`) stages temp fixture trees with tempfile. The
+# dependency was dropped from vix's manifest alongside the legacy machine engine
+# removal, which left that test unbuildable on macOS; restore it where it is used.
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+tempfile = { workspace = true }

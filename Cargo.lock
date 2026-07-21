@@ -9603,7 +9603,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
-name = "vix"
+name = "vix-core"
 version = "0.0.0"
 dependencies = [
  "blake3",
@@ -9614,7 +9614,6 @@ dependencies = [
  "facet-toml",
  "facet-value",
  "hex",
- "libc",
  "object 0.39.1",
  "phon",
  "rustc-demangle",
@@ -9626,8 +9625,9 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "vixen-primitives",
+ "vixen-runtime",
  "weavy",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -9638,7 +9638,36 @@ dependencies = [
  "tar",
  "tempfile",
  "ureq",
- "vix",
+ "vix-core",
+ "vixen-runtime",
+]
+
+[[package]]
+name = "vixen-primitives"
+version = "0.0.0"
+dependencies = [
+ "facet",
+ "facet-reflect",
+ "hex",
+ "sha2 0.10.9",
+ "vix-core",
+]
+
+[[package]]
+name = "vixen-runtime"
+version = "0.0.0"
+dependencies = [
+ "blake3",
+ "facet",
+ "facet-json",
+ "libc",
+ "semver",
+ "tempfile",
+ "tokio",
+ "vix-core",
+ "vixen-primitives",
+ "weavy",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

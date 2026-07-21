@@ -1,0 +1,38 @@
+# vixen-runtime — the runnable Vix system: the vix language (vix-core) with the
+# concrete primitives + stdlib (vixen-primitives) installed. This is the "Node"
+# to vix's "V8": it registers the builtin primitives into the engine, installs
+# the stdlib prelude, hosts the program-running harness (ratchet/budget), and
+# re-exports the whole surface.
+
+[package]
+name = "vixen-runtime"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "The runnable Vix system: the vix language with the vixen primitives and stdlib installed, plus the ratchet/budget program-running harness."
+
+[dependencies]
+vix = { path = "../vix-core", package = "vix-core" }
+vixen-primitives = { path = "../vixen-primitives" }
+facet = { path = "../facet" }
+facet-json = { path = "../facet-json" }
+blake3.workspace = true
+# Cross-process resident-set observation for the outer budget runner. Only the
+# unix RSS readers use it, behind typed cfg boundaries in src/budget.rs.
+libc.workspace = true
+# vix lowers to weavy; ratchet threads the weavy lane authority per-executable.
+weavy = { path = "../weavy" }
+
+# Cross-process resident-set observation for the outer budget runner on Windows
+# (GetProcessMemoryInfo), confined behind a typed cfg boundary in src/budget.rs.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+  "Win32_Foundation",
+  "Win32_System_Threading",
+  "Win32_System_ProcessStatus",
+] }
+
+[dev-dependencies]
+semver = "1.0.28"
+tempfile.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time"] }
