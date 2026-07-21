@@ -239,6 +239,22 @@ lines before compiling — they are orchestration, not source — so `//! at:`
 line numbers in reject headers refer to the file as compiled, with its `uses:`
 lines removed.
 
+Vix source can keep the module namespace instead of importing individual names:
+
+```vix
+//! uses: lib/geometry.vix
+
+mod geometry;
+
+fn squared_length(p: geometry::Point) -> Int {
+    geometry::magnitude_sq(p)
+}
+```
+
+`mod geometry;` declares that an externally supplied source is available for
+qualified access; it does not itself read a file. The host or test harness is
+still responsible for presenting the named module source to the compiler.
+
 Fixture selection, rerun mutations, alternate source files, and expected harness
 flags are likewise file-level harness metadata when they describe orchestration
 rather than a Vix value. They remain leading `//!` directives until the ratchet

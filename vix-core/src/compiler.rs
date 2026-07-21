@@ -495,7 +495,9 @@ fn semantic_schema_set(source: &ast::SourceFile) -> Result<SchemaSet, Diagnostic
         let (name, span) = match item {
             ast::Item::Struct(record) => (&record.name.value, record.name.span),
             ast::Item::Enum(enumeration) => (&enumeration.name.value, enumeration.name.span),
-            ast::Item::Fn(_) | ast::Item::Import(_) | ast::Item::Command(_) => continue,
+            ast::Item::Fn(_) | ast::Item::Mod(_) | ast::Item::Import(_) | ast::Item::Command(_) => {
+                continue;
+            }
         };
         if batch.named_ref(name).is_some() || declarations.insert(name.clone(), span).is_some() {
             return Err(Diagnostics::one(Diagnostic {
@@ -602,7 +604,8 @@ fn semantic_schema_set(source: &ast::SourceFile) -> Result<SchemaSet, Diagnostic
                     },
                 );
             }
-            ast::Item::Fn(_) | ast::Item::Import(_) | ast::Item::Command(_) => {}
+            ast::Item::Fn(_) | ast::Item::Mod(_) | ast::Item::Import(_) | ast::Item::Command(_) => {
+            }
         }
     }
     Ok(batch.finish())
@@ -687,9 +690,12 @@ impl<'a> TypeResolver<'a> {
                     enumeration.name.span,
                     TypeDeclaration::Enum(enumeration),
                 ),
-                // Imports are consumed by the module front before lowering;
-                // a stray one contributes no type declaration.
-                ast::Item::Fn(_) | ast::Item::Import(_) | ast::Item::Command(_) => continue,
+                // Module declarations and imports are consumed by the module
+                // front before lowering; a stray one contributes no type.
+                ast::Item::Fn(_)
+                | ast::Item::Mod(_)
+                | ast::Item::Import(_)
+                | ast::Item::Command(_) => continue,
             };
             if name == "Ordering" {
                 return Err(Diagnostics::one(Diagnostic {
@@ -1347,7 +1353,9 @@ fn lower_module(
         .filter_map(|item| match item {
             ast::Item::Struct(record) => Some(record.name.value.as_str()),
             ast::Item::Enum(enumeration) => Some(enumeration.name.value.as_str()),
-            ast::Item::Fn(_) | ast::Item::Import(_) | ast::Item::Command(_) => None,
+            ast::Item::Fn(_) | ast::Item::Mod(_) | ast::Item::Import(_) | ast::Item::Command(_) => {
+                None
+            }
         })
         .collect::<BTreeSet<_>>();
     let mut signatures = BTreeMap::new();
@@ -1417,6 +1425,7 @@ fn lower_module(
                 },
                 ast::Item::Enum(_)
                 | ast::Item::Fn(_)
+                | ast::Item::Mod(_)
                 | ast::Item::Import(_)
                 | ast::Item::Command(_) => None,
             })

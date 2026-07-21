@@ -29,7 +29,12 @@ module.exports = grammar({
     source_file: ($) => repeat(field("item", $._item)),
 
     _item: ($) =>
-      choice($.import_item, $.enum_item, $.struct_item, $.fn_item, $.command_item),
+      choice($.mod_item, $.import_item, $.enum_item, $.struct_item, $.fn_item, $.command_item),
+
+    // Declare a separately supplied source as a module in this file's scope.
+    // The host remains responsible for loading the source; `mod geometry;`
+    // gives the source named `geometry` a qualified access path.
+    mod_item: ($) => seq("mod", field("name", $.identifier), ";"),
 
     // `import geometry::{Point, magnitude_sq};` / `import geometry::Point;`
     // (ratchet rungs 106–110). One module segment, then either a single item
