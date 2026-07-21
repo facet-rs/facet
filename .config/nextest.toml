@@ -143,7 +143,7 @@ filter = 'test(declared_value_checker_reports_required_errors) | test(declared_t
 slow-timeout = { period = "120s", terminate-after = 5 }
 
 [[profile.default.overrides]]
-filter = 'package(vix) & binary(reloc_selection)'
+filter = 'package(vix-core) & binary(reloc_selection)'
 threads-required = "num-cpus"
 
 # This certificate measures the source-declared execution wall/RSS budget after
@@ -152,7 +152,7 @@ threads-required = "num-cpus"
 # active rather than allowing scheduler contention to consume the program's
 # unchanged five-second wall budget.
 [[profile.default.overrides]]
-filter = 'package(vix) & binary(ratchet_runner) & test(=rung_050_deep_tail_recursion_runs_under_its_declared_budget)'
+filter = 'package(vixen-runtime) & binary(rung050_trace_budget) & test(=rung_050_deep_tail_recursion_runs_under_its_declared_budget)'
 threads-required = "num-cpus"
 
 # The vendored-playground sweeps now shell out to a real JS runtime (node)
@@ -170,7 +170,7 @@ test-group = 'node-subprocess'
 
 # Same coverage-instrumentation slowdown as the fable checker tests above.
 [[profile.default.overrides]]
-filter = 'package(vix) & test(ast_structural_projection_contracts_are_pinned)'
+filter = 'package(vix-core) & test(ast_structural_projection_contracts_are_pinned)'
 slow-timeout = { period = "120s", terminate-after = 5 }
 
 # The accepted-rungs certificate compiles, verifies, and executes the whole
@@ -180,7 +180,7 @@ slow-timeout = { period = "120s", terminate-after = 5 }
 # bounded and always passing; give it the same longer leash as the other heavy
 # vix certificates.
 [[profile.default.overrides]]
-filter = 'package(vix) & test(accepted_rungs_verify_and_execute_through_one_executable)'
+filter = 'package(vix-core) & test(accepted_rungs_verify_and_execute_through_one_executable)'
 slow-timeout = { period = "120s", terminate-after = 5 }
 
 # The rung-110 module-boundary identity oracle compiles three module-set
@@ -190,7 +190,7 @@ slow-timeout = { period = "120s", terminate-after = 5 }
 # two concurrent workspace builds). Bounded and always passing; same leash as
 # the other heavy vix certificates.
 [[profile.default.overrides]]
-filter = 'package(vix) & test(=rung_110_recipe_identity_is_importer_independent)'
+filter = 'package(vix-core) & test(=rung_110_recipe_identity_is_importer_independent)'
 slow-timeout = { period = "120s", terminate-after = 5 }
 
 # The cross-lane differential (F1) compiles the accepted canonical corpus
@@ -205,5 +205,5 @@ slow-timeout = { period = "120s", terminate-after = 5 }
 # workspace contention or coverage cannot flake it, on the same shape as the
 # other heavy vix certificates.
 [[profile.default.overrides]]
-filter = 'package(vix) & test(accepted_corpus_agrees_across_native_and_interpreter_lanes)'
+filter = 'package(vix-core) & test(accepted_corpus_agrees_across_native_and_interpreter_lanes)'
 slow-timeout = { period = "300s", terminate-after = 4 }
