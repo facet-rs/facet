@@ -381,7 +381,12 @@ module.exports = grammar({
         PREC.postfix,
         seq(
           field("path", $.variant_path),
-          optional(field("tuple_payload", $.arg_list)),
+          optional(
+            seq(
+              field("tuple_payload", $.arg_list),
+              optional(field("named_args", $.where_args)),
+            ),
+          ),
         ),
       ),
     record_expr: ($) =>

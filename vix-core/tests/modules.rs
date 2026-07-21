@@ -37,6 +37,36 @@ fn qualified_module_access() -> Stream<Check> {
 }
 
 #[test]
+fn qualified_functions_support_named_arguments_callbacks_and_private_self_access() {
+    let source = r#"
+mod arithmetic {
+    pub fn add(a: Int) where { b: Int } -> Int { a + b }
+
+    pub fn twice(n: Int) -> Int { n * 2 }
+
+    fn hidden() -> Int { 42 }
+
+    pub fn reveal() -> Int { arithmetic::hidden() }
+}
+
+#[test]
+fn qualified_function_surfaces() -> Stream<Check> {
+    yield expect_eq(arithmetic::add(1) where { b: 2 }, 3);
+    yield expect_eq([1, 2].map(arithmetic::twice), [2, 4]);
+    yield expect_eq(arithmetic::reveal(), 42);
+}
+"#;
+
+    let report =
+        run_source_with_modules(source, &[]).expect("qualified function forms compile and run");
+    assert!(
+        report.passed(),
+        "qualified function checks pass: {report:?}"
+    );
+    assert!(report.agrees(), "plain and chaos execution agree");
+}
+
+#[test]
 fn runtime_std_module_executes_vix_functions() {
     let source = r#"
 struct Row { name: String }
@@ -170,6 +200,34 @@ mod geometry {}
         diagnostics.entries[0].payload,
         DiagnosticPayload::Name {
             name: "geometry".to_owned(),
+        }
+    );
+}
+
+#[test]
+fn nested_inline_modules_are_rejected_instead_of_hoisted() {
+    let source = r#"
+mod outer {
+    mod inner {
+        pub fn answer() -> Int { 42 }
+    }
+}
+
+fn root() -> Int { inner::answer() }
+"#;
+    let diagnostics = Compiler::new()
+        .compile(source)
+        .expect_err("nested inline modules are not silently hoisted");
+
+    assert_eq!(diagnostics.entries.len(), 1);
+    assert_eq!(
+        diagnostics.entries[0].code,
+        DiagnosticCode::UnsupportedExpression
+    );
+    assert_eq!(
+        diagnostics.entries[0].payload,
+        DiagnosticPayload::Unsupported {
+            construct: "nested inline modules are not supported".to_owned(),
         }
     );
 }

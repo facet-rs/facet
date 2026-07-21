@@ -7818,6 +7818,12 @@ fn lower_variant(
     expression: &ast::VariantExpr,
     expected: Option<&Type>,
 ) -> Result<LoweredValue, Diagnostics> {
+    if let Some(named) = &expression.named_args {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            named.span,
+            "enum variants do not accept named arguments",
+        )));
+    }
     let enumeration = if let Some(expected) = expected {
         let Type::Enum(enumeration) = expected else {
             return Err(type_mismatch(
