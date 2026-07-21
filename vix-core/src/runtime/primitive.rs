@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::marker::PhantomData;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::schema::{SchemaPattern, SchemaRef};
 use crate::vir::Type;
@@ -208,6 +209,80 @@ pub struct WitnessedValue {
 pub struct PrimitiveValue {
     pub schema: SchemaRef,
     pub body: PrimitiveValueBody,
+}
+
+/// A type-safe handle to a Vix function retained by the runtime for a host
+/// primitive. `Req` and `Resp` are part of both the Rust type and the Vix
+/// `fn(Req) -> Resp` schema; the numeric token is process-local transport state
+/// and is never a callable address.
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Callback<Req, Resp> {
+    token: i64,
+    #[facet(skip)]
+    marker: PhantomData<fn(Req) -> Resp>,
+}
+
+impl<Req, Resp> Callback<Req, Resp> {
+    #[doc(hidden)]
+    pub fn call_raw(&self, request: PrimitiveValue) -> Result<PrimitiveValue, CallbackError> {
+        let transport = callback_transports()
+            .lock()
+            .expect("callback transport mutex poisoned")
+            .get(&self.token)
+            .cloned()
+            .ok_or(CallbackError::Expired)?;
+        transport(request)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CallbackError {
+    Expired,
+    Runtime { detail: String },
+    RequestCodec { detail: String },
+    ResponseCodec { detail: String },
+}
+
+impl core::fmt::Display for CallbackError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Expired => formatter.write_str("the Vix callback has expired"),
+            Self::Runtime { detail } => {
+                write!(formatter, "Vix callback execution failed: {detail}")
+            }
+            Self::RequestCodec { detail } => {
+                write!(formatter, "Vix callback request encoding failed: {detail}")
+            }
+            Self::ResponseCodec { detail } => {
+                write!(formatter, "Vix callback response decoding failed: {detail}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for CallbackError {}
+
+pub(crate) type CallbackTransport =
+    Arc<dyn Fn(PrimitiveValue) -> Result<PrimitiveValue, CallbackError> + Send + Sync>;
+
+fn callback_transports() -> &'static Mutex<BTreeMap<i64, CallbackTransport>> {
+    static TRANSPORTS: OnceLock<Mutex<BTreeMap<i64, CallbackTransport>>> = OnceLock::new();
+    TRANSPORTS.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+pub(crate) fn register_callback_transport(token: i64, transport: CallbackTransport) {
+    let previous = callback_transports()
+        .lock()
+        .expect("callback transport mutex poisoned")
+        .insert(token, transport);
+    assert!(previous.is_none(), "callback tokens are process-unique");
+}
+
+pub(crate) fn unregister_callback_transport(token: i64) {
+    callback_transports()
+        .lock()
+        .expect("callback transport mutex poisoned")
+        .remove(&token);
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]

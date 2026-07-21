@@ -28,6 +28,48 @@ use crate::rt::{
 
 use crate::decode_primitive_value;
 
+fn encode_primitive_value<T: facet::Facet<'static>>(
+    value: &T,
+) -> Result<crate::rt::PrimitiveValue, crate::rt::CallbackError> {
+    let ty = Type::from_facet::<T>();
+    let json =
+        facet_json::to_string(value).map_err(|error| crate::rt::CallbackError::RequestCodec {
+            detail: error.to_string(),
+        })?;
+    let decoded =
+        vix::decode::decode(vix::vir::DecodeFormat::Json, &json, &ty).map_err(|error| {
+            crate::rt::CallbackError::RequestCodec {
+                detail: error.render(),
+            }
+        })?;
+    crate::rt::primitive_value_from_decoded(&ty, &decoded).map_err(|error| {
+        crate::rt::CallbackError::RequestCodec {
+            detail: format!("{error:?}"),
+        }
+    })
+}
+
+/// Type-safe invocation of a Vix callback exported through a primitive request.
+/// The request and response types are fixed by the [`Callback`] itself; Facet
+/// supplies their Vix wire types and codecs.
+pub trait CallbackExt<Req, Resp> {
+    fn call(&self, request: Req) -> Result<Resp, crate::rt::CallbackError>;
+}
+
+impl<Req, Resp> CallbackExt<Req, Resp> for crate::rt::Callback<Req, Resp>
+where
+    Req: facet::Facet<'static>,
+    Resp: facet::Facet<'static>,
+{
+    fn call(&self, request: Req) -> Result<Resp, crate::rt::CallbackError> {
+        let request = encode_primitive_value(&request)?;
+        let response = self.call_raw(request)?;
+        decode_primitive_value(&response).map_err(|error| crate::rt::CallbackError::ResponseCodec {
+            detail: format!("{error:?}"),
+        })
+    }
+}
+
 /// A primitive declared in one block: its shape data (`DECL`), its typed request
 /// and dependency-slice associated types, and one typed `begin`. The blanket
 /// [`RawPrimitive`] bridge lives on [`TypedAdapter`], not here, because
@@ -63,9 +105,9 @@ pub struct EffectTicket<T> {
     _marker: PhantomData<fn() -> T>,
 }
 
-/// The typed completing half of an [`EffectTicket`]. Completing it goes through
-/// [`ResponseValue`], the seam that keeps generic-response encoding out of scope:
-/// every response today is a handle that already names an interned [`ValueId`].
+/// The typed completing half of an [`EffectTicket`]. Existing handle responses
+/// may use [`ResponseValue`]; any Facet response can use
+/// [`EffectCompleter::complete_value`].
 pub struct EffectCompleter<T> {
     inner: RawEffectCompleter,
     _marker: PhantomData<fn(T)>,
@@ -98,10 +140,9 @@ impl<T> EffectTicket<T> {
     }
 }
 
-/// The seam between a typed response and the erased [`ValueId`] the runtime
-/// completes with. Only handle-shaped responses — a newtype already wrapping an
-/// interned `ValueId` — are convertible today; a future record-shaped response
-/// would need a real `T: Facet -> PrimitiveValue` encoder, deliberately out of scope.
+/// The zero-copy seam between a typed handle response and the erased [`ValueId`]
+/// the runtime completes with. Ordinary records and other Facet values use
+/// [`EffectCompleter::complete_value`] instead.
 pub trait ResponseValue {
     fn into_value(self) -> ValueId;
 }
@@ -122,6 +163,28 @@ impl<T> EffectCompleter<T> {
         error: PrimitiveMachineError,
     ) -> Result<(), TicketCompletionError> {
         let publication = publication_or_fallback(ctx, PrimitiveCompletion::MachineError(error));
+        self.inner.complete(publication)
+    }
+
+    /// Complete with an ordinary Facet value. The value is encoded against its
+    /// exact Vix type and admitted through the effect authority before the
+    /// erased scheduler publication is built.
+    pub fn complete_value(self, ctx: &EffectCtx, response: T) -> Result<(), TicketCompletionError>
+    where
+        T: facet::Facet<'static>,
+    {
+        let completion = match encode_primitive_value(&response) {
+            Ok(value) => match ctx.intern_value(value) {
+                Ok(value) => PrimitiveCompletion::Ok(value),
+                Err(error) => PrimitiveCompletion::MachineError(error),
+            },
+            Err(error) => {
+                PrimitiveCompletion::MachineError(PrimitiveMachineError::AuthorityViolation {
+                    detail: format!("typed primitive response codec failed: {error:?}"),
+                })
+            }
+        };
+        let publication = publication_or_fallback(ctx, completion);
         self.inner.complete(publication)
     }
 }
@@ -153,6 +216,7 @@ pub struct TypedAdapter<P> {
     inner: P,
     descriptor: PrimitiveDescriptor,
     shape: RequestShape,
+    surface_name: &'static str,
 }
 
 impl<P> TypedAdapter<P> {
@@ -170,6 +234,18 @@ impl<P> TypedAdapter<P> {
             inner,
             descriptor,
             shape,
+            surface_name: decl.name,
+        }
+    }
+
+    /// The compiler-facing surface synthesized from the same typed declaration
+    /// and Facet request/response types as the runtime descriptor.
+    #[must_use]
+    pub fn surface(&self) -> crate::rt::PrimitiveSurface {
+        crate::rt::PrimitiveSurface {
+            surface_name: self.surface_name,
+            id: self.descriptor.id.clone(),
+            shape: self.shape.clone(),
         }
     }
 }
@@ -227,11 +303,12 @@ mod milestone {
     //! bug, not a stale constant.
 
     use super::*;
-    use crate::{ObservePrimitive, PinnedFetchPrimitive};
     use crate::rt::{
-        ArgRole, ObserveRequest, OriginHint, PinnedBlobRef, PinnedFetchRequest, PrimitiveMemoPolicy,
-        Selector, SelectorVariant, observe_primitive_id, pinned_fetch_primitive_id,
+        ArgRole, ObserveRequest, OriginHint, PinnedBlobRef, PinnedFetchRequest,
+        PrimitiveMemoPolicy, Selector, SelectorVariant, observe_primitive_id,
+        pinned_fetch_primitive_id,
     };
+    use crate::{ObservePrimitive, PinnedFetchPrimitive};
     use vix::schema::SchemaPattern;
     use vix::vir::ExternKind;
 

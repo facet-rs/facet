@@ -65,7 +65,7 @@ pub fn decode_request(
 
     match decode::decode(format, document, &target) {
         Ok(decoded) => {
-            let decoded = decoded_value(&target, &decoded)?;
+            let decoded = primitive_value_from_decoded(&target, &decoded)?;
             if fallible {
                 Ok(result_value(
                     Type::result(target, decode_error_type()),
@@ -122,7 +122,10 @@ fn result_value(result: Type, tag: u32, payload: PrimitiveValue) -> PrimitiveVal
     }
 }
 
-fn decoded_value(ty: &Type, value: &DecodedValue) -> Result<PrimitiveValue, PrimitiveMachineError> {
+pub fn primitive_value_from_decoded(
+    ty: &Type,
+    value: &DecodedValue,
+) -> Result<PrimitiveValue, PrimitiveMachineError> {
     match (ty, value) {
         (Type::Int, DecodedValue::Int(value)) => Ok(PrimitiveValue::bytes(
             ty.schema_ref(),
@@ -143,7 +146,9 @@ fn decoded_value(ty: &Type, value: &DecodedValue) -> Result<PrimitiveValue, Prim
                 .fields
                 .iter()
                 .zip(values)
-                .map(|(field, value)| decoded_value(&field.ty, value).map(field_value))
+                .map(|(field, value)| {
+                    primitive_value_from_decoded(&field.ty, value).map(field_value)
+                })
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(PrimitiveValue {
                 schema: ty.schema_ref(),
@@ -153,7 +158,7 @@ fn decoded_value(ty: &Type, value: &DecodedValue) -> Result<PrimitiveValue, Prim
         (_, DecodedValue::OptionSome(value)) if ty.option_inner().is_some() => Ok(result_value(
             ty.clone(),
             0,
-            decoded_value(ty.option_inner().expect("guarded option"), value)?,
+            primitive_value_from_decoded(ty.option_inner().expect("guarded option"), value)?,
         )),
         (_, DecodedValue::OptionNone) if ty.option_inner().is_some() => Ok(PrimitiveValue {
             schema: ty.schema_ref(),
@@ -178,7 +183,7 @@ fn decoded_value(ty: &Type, value: &DecodedValue) -> Result<PrimitiveValue, Prim
             let fields = types
                 .into_iter()
                 .zip(fields)
-                .map(|(ty, value)| decoded_value(ty, value).map(field_value))
+                .map(|(ty, value)| primitive_value_from_decoded(ty, value).map(field_value))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(PrimitiveValue {
                 schema: ty.schema_ref(),

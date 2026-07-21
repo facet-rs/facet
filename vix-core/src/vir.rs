@@ -779,7 +779,21 @@ impl ExternKind {
 /// type identity ([`facet::ConstTypeId`]), so distinct wire meanings are distinct
 /// Rust newtypes rather than one reused type with a hidden discriminator.
 fn facet_leaf_override(shape: &'static facet::Shape) -> Option<Type> {
-    use crate::runtime::{BlobHandle, Digest, RegistryHandle, UpstreamDigest};
+    use crate::runtime::{BlobHandle, Callback, Digest, RegistryHandle, UpstreamDigest};
+
+    // A host-retained Vix callback is represented in Rust by a process-local
+    // token, but its semantic wire type is the fully parameterized Vix function
+    // type. Match the generic declaration (not one monomorphized type id) and
+    // recover the request/response types from Facet's reflected parameters.
+    if shape.decl_id == <Callback<i64, i64> as facet::Facet>::SHAPE.decl_id {
+        let [parameter, result] = shape.type_params else {
+            panic!("Callback must expose its request and response type parameters");
+        };
+        return Some(Type::Function {
+            parameter: Box::new(Type::from_facet_shape(parameter.shape())),
+            result: Box::new(Type::from_facet_shape(result.shape())),
+        });
+    }
 
     // Fixed 32-byte digests have no vix `Type` primitive; they wire-encode as a
     // hex `String` (see `fetch_primitive` parse/verify: `hex::encode`/`decode`).
