@@ -26,9 +26,9 @@
 //! *harvests* the [`BindingRegistry`] from [`runtime::builtin_primitive_surfaces`]
 //! rather than maintaining a second table that names every primitive by hand.
 //! `compiler::lower_value` recognizes built-in primitives through
-//! [`prelude_primitive`] — the callee name maps to a [`PrimitiveId`] here, in
-//! data, instead of scattered `== "decode"` / `effect_intrinsic` string
-//! matches.
+//! [`surface_primitive`] — the unqualified compatibility spelling and the
+//! canonical `std::` spelling map to a [`PrimitiveId`] here, in data, instead
+//! of scattered string matches.
 //!
 //! **Request construction is data for the uniform primitives.** `fetch` and
 //! `observe` lower through a [`RequestShape`] ([`request_shape`], keyed by
@@ -45,13 +45,12 @@
 //! [`Intrinsic`]s, matched here by name and dispatched to the compiler's
 //! existing typed builder.
 //!
-//! Still on the compiler side: the binder consults [`is_prelude_name`] (a name
-//! set derived from these bindings) but does not yet route full prelude/module
-//! *resolution* through [`BindingRegistry::prelude`]/[`BindingRegistry::qualified`],
-//! and the vix-fn `source` strings here are documentation — the actual injection
-//! is `crate::stdlib`'s `PRELUDE_FUNCTIONS`. Language constructs (`Some`, `None`,
-//! `by_key`, `range`, the `expect*`/trace checks) and the `.text()` method
-//! surface are deliberately outside this registry.
+//! Name resolution consults [`is_prelude_name`] for compatibility names and
+//! [`BindingRegistry::qualified`] for canonical module paths. The vix-fn
+//! `source` strings here document the matching sources injected by
+//! `vixen-primitives`. Language constructs (`Some`, `None`, `by_key`, `range`,
+//! the `expect*`/trace checks) and the `.text()` method surface are deliberately
+//! outside this registry.
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -226,7 +225,7 @@ impl BindingRegistry {
     }
 }
 
-/// The built-in prelude bindings, encoded as data.
+/// The built-in surface bindings, encoded as data.
 ///
 /// Every registered primitive that projects a surface name (`RawPrimitive::
 /// surface_name` returns `Some`) is harvested straight from
@@ -238,10 +237,10 @@ impl BindingRegistry {
 /// `observe`; `json_decode`/`toml_decode`/`try_json_decode`/`try_toml_decode`
 /// over `decode`/`try_decode`) are vix functions over the single primitive
 /// rather than extra primitives or intrinsics. The compiler consumes this in
-/// place of hardcoded name matches: [`prelude_primitive`]/[`prelude_intrinsic`]
-/// map a name to its target for lowering, and [`is_prelude_name`] gates binder
-/// resolution. The vix-fn `source` strings mirror `crate::stdlib`'s
-/// `PRELUDE_FUNCTIONS`, which is what actually injects them.
+/// place of hardcoded name matches: [`surface_primitive`]/[`surface_intrinsic`]
+/// map a name to its target for lowering, and [`is_prelude_name`] gates legacy
+/// unqualified resolution. The vix-fn `source` strings mirror the
+/// `vixen-primitives` stdlib sources, which are what actually inject them.
 ///
 /// Tree text reads (`.text()`) are a *method* binding surface, orthogonal to
 /// free-function placement, and are intentionally omitted here — this is why
@@ -250,28 +249,29 @@ impl BindingRegistry {
 #[must_use]
 pub fn builtin_bindings() -> BindingRegistry {
     let mut reg = BindingRegistry::default();
+    let std = ModulePath::new(["std"]).expect("std is a valid module path");
 
     // Harvest one binding per builtin primitive that projects a surface name —
     // no second table naming `fetch`/`observe` by hand. The surface contracts
     // are language data (`runtime::builtin_primitive_surfaces`); the matching
     // implementations live in `vixen-primitives`.
     for primitive in runtime::builtin_primitive_surfaces() {
-        reg.insert(Binding::primitive(
-            Placement::Prelude,
-            primitive.surface_name,
-            primitive.id.clone(),
-        ));
+        for placement in [Placement::Prelude, Placement::Module(std.clone())] {
+            reg.insert(Binding::primitive(
+                placement,
+                primitive.surface_name,
+                primitive.id.clone(),
+            ));
+        }
     }
 
     // decode/try_decode: one registered primitive, two surface names — not yet
     // uniform (compile-time constant folding, expected-type-derived target), so
     // hand-registered onto the shared id rather than harvested.
     for name in ["decode", "try_decode"] {
-        reg.insert(Binding::primitive(
-            Placement::Prelude,
-            name,
-            decode_primitive_id(),
-        ));
+        for placement in [Placement::Prelude, Placement::Module(std.clone())] {
+            reg.insert(Binding::primitive(placement, name, decode_primitive_id()));
+        }
     }
 
     // fixture_tree/fixture_registry/untar: dedicated VIR ops, not primitives.
@@ -281,6 +281,11 @@ pub fn builtin_bindings() -> BindingRegistry {
         ("untar", Intrinsic::Untar),
     ] {
         reg.insert(Binding::intrinsic(Placement::Prelude, name, kind));
+        reg.insert(Binding::intrinsic(
+            Placement::Module(std.clone()),
+            name,
+            kind,
+        ));
     }
 
     // Modes-as-aliases: vix functions over the single primitive, not new
@@ -308,6 +313,11 @@ pub fn builtin_bindings() -> BindingRegistry {
         ),
     ] {
         reg.insert(Binding::vix_fn(Placement::Prelude, name, source));
+        reg.insert(Binding::vix_fn(
+            Placement::Module(std.clone()),
+            name,
+            source,
+        ));
     }
 
     reg
@@ -334,6 +344,45 @@ pub fn prelude_primitive(name: &str) -> Option<PrimitiveId> {
 #[must_use]
 pub fn prelude_intrinsic(name: &str) -> Option<Intrinsic> {
     match &BUILTIN_BINDINGS.prelude(name)?.target {
+        BindingTarget::Intrinsic(kind) => Some(*kind),
+        BindingTarget::Primitive(_) | BindingTarget::VixFunction { .. } => None,
+    }
+}
+
+/// Whether `module::name` is a registered built-in surface binding.
+#[must_use]
+pub fn is_qualified_binding(module: &str, name: &str) -> bool {
+    let Some(path) = ModulePath::new([module]) else {
+        return false;
+    };
+    BUILTIN_BINDINGS.qualified(&path, name).is_some()
+}
+
+/// Resolve a primitive by either its compatibility prelude name or its
+/// canonical qualified name (for example `std::fetch`).
+#[must_use]
+pub fn surface_primitive(name: &str) -> Option<PrimitiveId> {
+    if let Some(primitive) = prelude_primitive(name) {
+        return Some(primitive);
+    }
+    let (module, leaf) = name.rsplit_once("::")?;
+    let path = ModulePath::new(module.split("::"))?;
+    match &BUILTIN_BINDINGS.qualified(&path, leaf)?.target {
+        BindingTarget::Primitive(id) => Some(id.clone()),
+        BindingTarget::Intrinsic(_) | BindingTarget::VixFunction { .. } => None,
+    }
+}
+
+/// Resolve an intrinsic by either its compatibility prelude name or its
+/// canonical qualified name (for example `std::untar`).
+#[must_use]
+pub fn surface_intrinsic(name: &str) -> Option<Intrinsic> {
+    if let Some(intrinsic) = prelude_intrinsic(name) {
+        return Some(intrinsic);
+    }
+    let (module, leaf) = name.rsplit_once("::")?;
+    let path = ModulePath::new(module.split("::"))?;
+    match &BUILTIN_BINDINGS.qualified(&path, leaf)?.target {
         BindingTarget::Intrinsic(kind) => Some(*kind),
         BindingTarget::Primitive(_) | BindingTarget::VixFunction { .. } => None,
     }
@@ -395,6 +444,7 @@ mod tests {
     #[test]
     fn builtins_project_one_prelude_name_per_primitive() {
         let reg = builtin_bindings();
+        let std = ModulePath::new(["std"]).expect("std module path");
 
         // fetch/observe are harvested from the registered primitives, one name
         // each, and `prelude_primitive` maps each to its `PrimitiveId`.
@@ -404,7 +454,9 @@ mod tests {
         ] {
             let binding = reg.prelude(name).expect("prelude primitive");
             assert!(matches!(binding.target, BindingTarget::Primitive(_)));
-            assert_eq!(prelude_primitive(name), Some(id));
+            assert_eq!(prelude_primitive(name), Some(id.clone()));
+            assert!(reg.qualified(&std, name).is_some());
+            assert_eq!(surface_primitive(&format!("std::{name}")), Some(id));
         }
 
         // decode/try_decode are hand-registered onto the same shared id.

@@ -1,6 +1,9 @@
 //! Module-set compilation front: import resolution, visibility, and the
 //! source-level merge that feeds a module set through the single-file
-//! compiler front (ratchet rungs 106–110).
+//! compiler front (ratchet rungs 106–110). A file may either bring an item
+//! into local scope with `import geometry::Point`, refer to a supplied module
+//! through `geometry::Point`, or define that namespace inline with
+//! `mod geometry { … }`.
 //!
 //! Modules compile away before lowering. Every library item is renamed to its
 //! fully-qualified `module::item` spelling — the book's nominal-identity rule
@@ -27,28 +30,53 @@ use crate::surface::ast;
 /// One named library module presented alongside a root compilation.
 #[derive(Clone, Copy, Debug)]
 pub struct ModuleSource<'a> {
-    /// The module name `import` statements refer to (`geometry`).
+    /// The name used by imports and qualified paths (`geometry`).
     pub name: &'a str,
     /// The module's Vix source text.
     pub source: &'a str,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DeclaredItemKind {
+    Function,
+    Other,
+}
+
 struct DeclaredItem {
     public: bool,
+    kind: DeclaredItemKind,
 }
 
 /// The declared (non-import) items of one file: name → visibility.
 fn declared_items(file: &ast::SourceFile) -> BTreeMap<String, DeclaredItem> {
     let mut items = BTreeMap::new();
     for item in &file.items {
-        let (name, public) = match item {
-            ast::Item::Fn(function) => (&function.name.value, function.vis.is_some()),
-            ast::Item::Struct(record) => (&record.name.value, record.vis.is_some()),
-            ast::Item::Enum(enumeration) => (&enumeration.name.value, enumeration.vis.is_some()),
-            ast::Item::Command(command) => (&command.name.value, command.vis.is_some()),
-            ast::Item::Import(_) => continue,
+        let (name, public, kind) = match item {
+            ast::Item::Fn(function) => (
+                &function.name.value,
+                function.vis.is_some(),
+                DeclaredItemKind::Function,
+            ),
+            ast::Item::Struct(record) => (
+                &record.name.value,
+                record.vis.is_some(),
+                DeclaredItemKind::Other,
+            ),
+            ast::Item::Enum(enumeration) => (
+                &enumeration.name.value,
+                enumeration.vis.is_some(),
+                DeclaredItemKind::Other,
+            ),
+            ast::Item::Command(command) => (
+                &command.name.value,
+                command.vis.is_some(),
+                DeclaredItemKind::Other,
+            ),
+            ast::Item::Mod(_) | ast::Item::Import(_) => continue,
         };
-        items.entry(name.clone()).or_insert(DeclaredItem { public });
+        items
+            .entry(name.clone())
+            .or_insert(DeclaredItem { public, kind });
     }
     items
 }
@@ -73,6 +101,27 @@ fn unknown_name(span: Span, name: impl Into<String>) -> Diagnostics {
     })
 }
 
+fn first_inline_module(items: &[ast::Item]) -> Option<&ast::ModItem> {
+    items.iter().find_map(|item| match item {
+        ast::Item::Mod(module) => Some(module.as_ref()),
+        ast::Item::Fn(_)
+        | ast::Item::Struct(_)
+        | ast::Item::Enum(_)
+        | ast::Item::Import(_)
+        | ast::Item::Command(_) => None,
+    })
+}
+
+fn reject_nested_module(items: &[ast::Item]) -> Result<(), Diagnostics> {
+    let Some(nested) = first_inline_module(items) else {
+        return Ok(());
+    };
+    Err(Diagnostics::one(Diagnostic::unsupported(
+        nested.span,
+        "nested inline modules are not supported",
+    )))
+}
+
 /// The imported leaves of one `import` item, each with the span of its own
 /// name occurrence.
 fn import_leaves(import: &ast::ImportItem) -> Vec<Spanned<String>> {
@@ -84,13 +133,9 @@ fn import_leaves(import: &ast::ImportItem) -> Vec<Spanned<String>> {
 }
 
 /// Resolve one file's imports against the module set, in source order and
-/// interleaved with the file's own declarations so a name bound twice —
-/// import-then-declaration or declaration-then-import — is diagnosed at its
-/// *second* binding site (rung 109 anchors at the local declaration that
-/// follows the import).
-///
-/// Returns the file's import aliases: local spelling → fully-qualified
-/// declaring-module spelling.
+/// interleaved with the file's own declarations so a name bound twice is
+/// diagnosed at its second binding site (rung 109 anchors at the local
+/// declaration that follows the import).
 fn resolve_imports(
     own_module: Option<&str>,
     file: &ast::SourceFile,
@@ -100,21 +145,27 @@ fn resolve_imports(
     let mut aliases = BTreeMap::new();
     for item in &file.items {
         match item {
+            ast::Item::Mod(_) => unreachable!("inline modules are extracted before resolution"),
             ast::Item::Import(import) => {
                 let module = &import.module;
                 let Some(exports) = set.get(&module.value) else {
                     return Err(unknown_name(module.span, module.value.clone()));
                 };
                 for leaf in import_leaves(import) {
-                    let Some(declared) = exports.get(&leaf.value) else {
+                    let declared = exports.get(&leaf.value);
+                    if declared.is_none()
+                        && !crate::binding::is_qualified_binding(&module.value, &leaf.value)
+                    {
                         return Err(unknown_name(
                             leaf.span,
                             format!("{}::{}", module.value, leaf.value),
                         ));
-                    };
+                    }
                     // r[impl lang.module.use] — public items use `pub`; a
                     // non-pub item is not importable from another module.
-                    if own_module != Some(module.value.as_str()) && !declared.public {
+                    if own_module != Some(module.value.as_str())
+                        && declared.is_some_and(|item| !item.public)
+                    {
                         return Err(Diagnostics::one(Diagnostic {
                             code: DiagnosticCode::PrivateImport,
                             primary: leaf.span,
@@ -164,16 +215,96 @@ fn resolve_imports(
     Ok(aliases)
 }
 
+/// Remove root-inline module items and return them as named files for the
+/// ordinary module-set merger. Nested modules are not part of the current
+/// one-segment module surface, so reject them instead of silently hoisting
+/// them into the root namespace.
+fn extract_inline_modules(
+    mut file: ast::SourceFile,
+    module_names: &mut BTreeSet<String>,
+) -> Result<(ast::SourceFile, Vec<(String, ast::SourceFile)>), Diagnostics> {
+    let mut retained = Vec::new();
+    let mut extracted = Vec::new();
+    for item in std::mem::take(&mut file.items) {
+        let ast::Item::Mod(module) = item else {
+            retained.push(item);
+            continue;
+        };
+        if !module_names.insert(module.name.value.clone()) {
+            return Err(duplicate_name(module.name.span, &module.name.value));
+        }
+        reject_nested_module(&module.items)?;
+        let name = module.name.value;
+        let nested_file = ast::SourceFile {
+            span: module.span,
+            items: module.items,
+        };
+        extracted.push((name, nested_file));
+    }
+    file.items = retained;
+    Ok((file, extracted))
+}
+
+fn rewrite_module_items(
+    name: &str,
+    file: &ast::SourceFile,
+    set: &BTreeMap<String, BTreeMap<String, DeclaredItem>>,
+    module_names: &BTreeSet<String>,
+) -> Result<Vec<ast::Item>, Diagnostics> {
+    let aliases = resolve_imports(Some(name), file, set)?;
+    let mut renames: BTreeMap<String, String> = declared_items(file)
+        .into_keys()
+        .map(|item| (item.clone(), format!("{name}::{item}")))
+        .collect();
+    renames.extend(aliases);
+    let mut rewriter = Rewriter {
+        renames: &renames,
+        available_modules: module_names,
+        module_set: set,
+        own_module: Some(name),
+        scopes: Vec::new(),
+    };
+    let mut rewritten = Vec::new();
+    for item in &file.items {
+        if matches!(item, ast::Item::Mod(_) | ast::Item::Import(_)) {
+            continue;
+        }
+        let mut item = item.clone();
+        rewriter.item(&mut item)?;
+        rewritten.push(item);
+    }
+    Ok(rewritten)
+}
+
 /// Merge a parsed module set into one surface AST for the single-file front.
 ///
 /// Library items are renamed to `module::item`; references in every file are
 /// rewritten to the declaring module's spelling; import items are consumed.
-/// Item order is deterministic: library modules in presentation order, root
-/// items last, so `FunctionId` assignment is stable for a given set.
+/// Item order is deterministic: supplied library modules in presentation
+/// order, root items next, and root-inline modules last. Keeping root-inline
+/// modules after the root preserves existing root `FunctionId`s when an
+/// embedder injects a module such as `std`.
 pub(crate) fn merge_module_set(
     root: ast::SourceFile,
     modules: &[(String, ast::SourceFile)],
 ) -> Result<ast::SourceFile, Diagnostics> {
+    let mut module_names = BTreeSet::new();
+    for (name, file) in modules {
+        if !module_names.insert(name.clone()) {
+            return Err(duplicate_name(file.span, name));
+        }
+    }
+
+    let mut expanded_modules = Vec::new();
+    for (name, file) in modules {
+        reject_nested_module(&file.items)?;
+        expanded_modules.push((name.clone(), file.clone()));
+    }
+    let (root, root_inline) = extract_inline_modules(root, &mut module_names)?;
+    let root_inline_start = expanded_modules.len();
+    expanded_modules.extend(root_inline);
+    let modules = &expanded_modules;
+
     let set: BTreeMap<String, BTreeMap<String, DeclaredItem>> = modules
         .iter()
         .map(|(name, file)| (name.clone(), declared_items(file)))
@@ -181,44 +312,32 @@ pub(crate) fn merge_module_set(
     let module_names: BTreeSet<String> = set.keys().cloned().collect();
 
     let mut merged_items = Vec::new();
-    for (name, file) in modules {
-        let aliases = resolve_imports(Some(name), file, &set)?;
+    for (name, file) in &modules[..root_inline_start] {
         // A library module's own items are spelled fully qualified; its
         // imports alias to their declaring modules.
-        let mut renames: BTreeMap<String, String> = declared_items(file)
-            .into_keys()
-            .map(|item| (item.clone(), format!("{name}::{item}")))
-            .collect();
-        renames.extend(aliases);
-        let mut rewriter = Rewriter {
-            renames: &renames,
-            modules: &module_names,
-            scopes: Vec::new(),
-        };
-        for item in &file.items {
-            if matches!(item, ast::Item::Import(_)) {
-                continue;
-            }
-            let mut item = item.clone();
-            rewriter.item(&mut item)?;
-            merged_items.push(item);
-        }
+        merged_items.extend(rewrite_module_items(name, file, &set, &module_names)?);
     }
 
     let aliases = resolve_imports(None, &root, &set)?;
     let mut rewriter = Rewriter {
         renames: &aliases,
-        modules: &module_names,
+        available_modules: &module_names,
+        module_set: &set,
+        own_module: None,
         scopes: Vec::new(),
     };
     let span = root.span;
     for item in root.items {
-        if matches!(item, ast::Item::Import(_)) {
+        if matches!(item, ast::Item::Mod(_) | ast::Item::Import(_)) {
             continue;
         }
         let mut item = item;
         rewriter.item(&mut item)?;
         merged_items.push(item);
+    }
+
+    for (name, file) in &modules[root_inline_start..] {
+        merged_items.extend(rewrite_module_items(name, file, &set, &module_names)?);
     }
 
     Ok(ast::SourceFile {
@@ -230,16 +349,61 @@ pub(crate) fn merge_module_set(
 /// Scope-aware reference rewriter: rewrites every free occurrence of a name
 /// in `renames` to its fully-qualified spelling, leaving lexically bound
 /// occurrences (params, lets, closure params, pattern bindings) untouched.
-/// Qualified `module::…` spellings are rejected outright — `import` is the
-/// only way to reach another module's items, so a private item cannot be
-/// reached by spelling its qualified name either.
+/// Qualified `module::…` spellings resolve against supplied and inline
+/// modules. Private items remain inaccessible through both qualified paths
+/// and imports.
 struct Rewriter<'a> {
     renames: &'a BTreeMap<String, String>,
-    modules: &'a BTreeSet<String>,
+    available_modules: &'a BTreeSet<String>,
+    module_set: &'a BTreeMap<String, BTreeMap<String, DeclaredItem>>,
+    own_module: Option<&'a str>,
     scopes: Vec<BTreeSet<String>>,
 }
 
 impl Rewriter<'_> {
+    fn qualified_name(
+        &self,
+        module: &Spanned<String>,
+        item: &Spanned<String>,
+    ) -> Result<String, Diagnostics> {
+        let full = format!("{}::{}", module.value, item.value);
+        let declared = self
+            .module_set
+            .get(&module.value)
+            .and_then(|items| items.get(&item.value));
+        if declared.is_none() && crate::binding::is_qualified_binding(&module.value, &item.value) {
+            return Ok(full);
+        }
+        let Some(declared) = declared else {
+            return Err(unknown_name(item.span, full));
+        };
+        if !declared.public && self.own_module != Some(module.value.as_str()) {
+            return Err(Diagnostics::one(Diagnostic {
+                code: DiagnosticCode::PrivateImport,
+                primary: item.span,
+                labels: Vec::new(),
+                payload: DiagnosticPayload::Name { name: full },
+            }));
+        }
+        Ok(full)
+    }
+
+    fn qualified_function_name(
+        &self,
+        module: &Spanned<String>,
+        item: &Spanned<String>,
+    ) -> Result<Option<String>, Diagnostics> {
+        let is_function = self
+            .module_set
+            .get(&module.value)
+            .and_then(|items| items.get(&item.value))
+            .is_some_and(|declared| declared.kind == DeclaredItemKind::Function);
+        if !is_function {
+            return Ok(None);
+        }
+        self.qualified_name(module, item).map(Some)
+    }
+
     fn in_scope(&self, name: &str) -> bool {
         self.scopes.iter().any(|scope| scope.contains(name))
     }
@@ -263,7 +427,9 @@ impl Rewriter<'_> {
 
     fn item(&mut self, item: &mut ast::Item) -> Result<(), Diagnostics> {
         match item {
-            ast::Item::Import(_) => unreachable!("imports are consumed before rewriting"),
+            ast::Item::Mod(_) | ast::Item::Import(_) => {
+                unreachable!("module declarations and imports are consumed before rewriting")
+            }
             ast::Item::Fn(function) => {
                 self.reference(&mut function.name);
                 self.scopes.push(BTreeSet::new());
@@ -353,6 +519,24 @@ impl Rewriter<'_> {
     }
 
     fn type_path(&mut self, path: &mut ast::TypePath) -> Result<(), Diagnostics> {
+        if path.segments.len() >= 2 && self.available_modules.contains(&path.segments[0].value) {
+            if path.segments.len() != 2 {
+                let full = path
+                    .segments
+                    .iter()
+                    .map(|segment| segment.value.as_str())
+                    .collect::<Vec<_>>()
+                    .join("::");
+                return Err(unknown_name(path.span, full));
+            }
+            let qualified = self.qualified_name(&path.segments[0], &path.segments[1])?;
+            path.segments = vec![Spanned {
+                span: path.span,
+                value: qualified,
+            }];
+            return Ok(());
+        }
+
         match path.segments.as_mut_slice() {
             [single] => {
                 if !self.in_scope(&single.value)
@@ -362,20 +546,17 @@ impl Rewriter<'_> {
                 }
                 Ok(())
             }
-            // A `module::…` path spelled in source: modules have no qualified
-            // access surface, only imports — so a private item cannot be
-            // reached by spelling its qualified name either.
-            [head, ..] if self.modules.contains(&head.value) => {
-                let full = path
-                    .segments
-                    .iter()
-                    .map(|segment| segment.value.as_str())
-                    .collect::<Vec<_>>()
-                    .join("::");
-                Err(unknown_name(path.span, full))
-            }
             _ => Ok(()),
         }
+    }
+
+    fn variant_path(&mut self, path: &mut ast::VariantPath) -> Result<(), Diagnostics> {
+        if let Some(module) = path.module.take() {
+            path.type_name.value = self.qualified_name(&module, &path.type_name)?;
+        } else {
+            self.reference(&mut path.type_name);
+        }
+        Ok(())
     }
 
     fn ty(&mut self, ty: &mut ast::Type) -> Result<(), Diagnostics> {
@@ -447,7 +628,7 @@ impl Rewriter<'_> {
                 Ok(())
             }
             ast::Pattern::Variant(variant) => {
-                self.reference(&mut variant.path.type_name);
+                self.variant_path(&mut variant.path)?;
                 if let Some(payload) = &mut variant.tuple_payload {
                     for element in &mut payload.elems {
                         self.pattern(element)?;
@@ -496,6 +677,57 @@ impl Rewriter<'_> {
     }
 
     fn expr(&mut self, expr: &mut ast::Expr) -> Result<(), Diagnostics> {
+        // Qualified function calls/references and enum variants share the
+        // existing `Variant` syntax shape. A matching supplied or inline
+        // module lets resolution turn the former into an ordinary call or
+        // identifier while leaving actual enum variants intact.
+        let qualified = match expr {
+            ast::Expr::Variant(variant)
+                if self
+                    .available_modules
+                    .contains(&variant.path.type_name.value) =>
+            {
+                Some((
+                    variant.span,
+                    variant.path.type_name.clone(),
+                    variant.path.variant.clone(),
+                    variant.tuple_payload.clone(),
+                    variant.named_args.clone(),
+                ))
+            }
+            _ => None,
+        };
+        if let Some((span, module, item, args, named_args)) = qualified {
+            if let Some(mut args) = args {
+                let callee = self.qualified_name(&module, &item)?;
+                for argument in &mut args.args {
+                    self.expr(argument)?;
+                }
+                let mut named_args = named_args;
+                if let Some(named) = &mut named_args {
+                    self.named_values(&mut named.fields)?;
+                }
+                *expr = ast::Expr::Call(Box::new(ast::Call {
+                    span,
+                    callee: Spanned {
+                        span: item.span,
+                        value: callee,
+                    },
+                    type_args: None,
+                    args,
+                    named_args,
+                }));
+                return Ok(());
+            }
+            if let Some(function) = self.qualified_function_name(&module, &item)? {
+                *expr = ast::Expr::Identifier(Spanned {
+                    span,
+                    value: function,
+                });
+                return Ok(());
+            }
+        }
+
         match expr {
             ast::Expr::Identifier(name) => {
                 self.reference(name);
@@ -579,11 +811,14 @@ impl Rewriter<'_> {
                 Ok(())
             }
             ast::Expr::Variant(variant) => {
-                self.reference(&mut variant.path.type_name);
+                self.variant_path(&mut variant.path)?;
                 if let Some(payload) = &mut variant.tuple_payload {
                     for argument in &mut payload.args {
                         self.expr(argument)?;
                     }
+                }
+                if let Some(named) = &mut variant.named_args {
+                    self.named_values(&mut named.fields)?;
                 }
                 Ok(())
             }

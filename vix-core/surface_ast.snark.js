@@ -13,6 +13,7 @@ ast({
   _command_atom: { enum: "CommandAtom" },
 
   fn_item: { as: "Fn" },
+  mod_item: { as: "Mod" },
   import_item: { as: "Import" },
   struct_item: { as: "Struct" },
   enum_item: { as: "Enum" },
