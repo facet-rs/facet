@@ -25,8 +25,8 @@ use weavy::{LaneRequest, PayloadKind, RegionShape, ValueShapeKind, WordKind};
 
 /// A compiler with the stdlib prelude disabled, for structural assertions that
 /// inspect only the user program's items (exact function/enum counts and names).
-/// The prelude is on by default, so `Compiler::new()` injects `is_blank`,
-/// `Format`, `Mode`, … which would perturb those counts. The default (prelude-on)
+/// The prelude is on by default, so `Compiler::new()` injects `Format`,
+/// `Mode`, … which would perturb those counts. The default (prelude-on)
 /// path is covered by the corpus differential and the `stdlib` unit tests.
 fn user_program_compiler() -> Compiler {
     Compiler::with_config(CompilerConfig {

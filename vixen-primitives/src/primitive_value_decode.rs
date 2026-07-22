@@ -364,10 +364,7 @@ mod tests {
     use crate::fetch_primitive::{
         parse_blob_id, parse_origins, parse_request as fetch_parse_request, parse_upstream,
     };
-    use crate::observe_primitive::parse_request as observe_parse_request;
-    use crate::rt::{
-        BlobId, ObserveCoordinate, ObserveRequest, OriginHint, PinnedBlobRef, PinnedFetchRequest,
-    };
+    use crate::rt::{BlobId, OriginHint, PinnedBlobRef, PinnedFetchRequest};
     use vix::vir::{ExternKind, Type};
 
     #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -954,70 +951,6 @@ mod tests {
             panic!("pin_wire fields are always Child in these tests");
         };
         (**child).clone()
-    }
-
-    #[test]
-    fn round_trips_observe_request_against_hand_parser() {
-        let capability = registry_capability_wire("registry:primary");
-        let origin = OriginHint {
-            capability: RegistryHandle(capability.identity()),
-            coordinate: "coordinate/path".to_owned(),
-        };
-        let origin_wire_value = origin_hint_wire(&origin, capability);
-
-        let wire = product(
-            Type::from_facet::<ObserveRequest>().schema_ref(),
-            vec![child(origin_wire_value), inline_bool(true)],
-        );
-
-        let expected = ObserveRequest {
-            origin: origin.clone(),
-            refresh: true,
-        };
-
-        let decoded: ObserveRequest =
-            decode_primitive_value(&wire).expect("well-formed observe wire value");
-        assert_eq!(decoded, expected);
-
-        let (hand_coordinate, hand_refresh) = observe_parse_request(wire.clone(), wire.identity())
-            .expect("hand parser accepts the same wire value");
-        assert_eq!(hand_refresh, expected.refresh);
-        assert_eq!(
-            hand_coordinate,
-            ObserveCoordinate {
-                capability: origin.capability.0,
-                coordinate: origin.coordinate,
-            },
-            "decode_primitive_value disagrees with observe_primitive::parse_request"
-        );
-    }
-
-    #[test]
-    fn round_trips_observe_request_refresh_false() {
-        let capability = registry_capability_wire("registry:mirror");
-        let origin = OriginHint {
-            capability: RegistryHandle(capability.identity()),
-            coordinate: "coordinate/other".to_owned(),
-        };
-        let origin_wire_value = origin_hint_wire(&origin, capability);
-
-        let wire = product(
-            Type::from_facet::<ObserveRequest>().schema_ref(),
-            vec![child(origin_wire_value), inline_bool(false)],
-        );
-
-        let expected = ObserveRequest {
-            origin: origin.clone(),
-            refresh: false,
-        };
-
-        let decoded: ObserveRequest =
-            decode_primitive_value(&wire).expect("well-formed observe wire value");
-        assert_eq!(decoded, expected);
-
-        let (_, hand_refresh) = observe_parse_request(wire.clone(), wire.identity())
-            .expect("hand parser accepts the same wire value");
-        assert_eq!(hand_refresh, expected.refresh);
     }
 
     // -- adversarial: leaf-override paths, never panic, always Err -----------

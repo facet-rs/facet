@@ -303,12 +303,10 @@ mod milestone {
     //! bug, not a stale constant.
 
     use super::*;
+    use crate::PinnedFetchPrimitive;
     use crate::rt::{
-        ArgRole, ObserveRequest, OriginHint, PinnedBlobRef, PinnedFetchRequest,
-        PrimitiveMemoPolicy, Selector, SelectorVariant, observe_primitive_id,
-        pinned_fetch_primitive_id,
+        ArgRole, PinnedBlobRef, PinnedFetchRequest, PrimitiveMemoPolicy, pinned_fetch_primitive_id,
     };
-    use crate::{ObservePrimitive, PinnedFetchPrimitive};
     use vix::schema::SchemaPattern;
     use vix::vir::ExternKind;
 
@@ -341,51 +339,6 @@ mod milestone {
         }
     }
 
-    fn old_observe_descriptor() -> PrimitiveDescriptor {
-        PrimitiveDescriptor {
-            id: observe_primitive_id(),
-            request_schema: SchemaPattern::exact(
-                &Type::from_facet::<ObserveRequest>().schema_ref(),
-            ),
-            response_schema: SchemaPattern::exact(&Type::Extern(ExternKind::Blob).schema_ref()),
-            failure_schema: SchemaPattern::Var {
-                name: "ObserveFailure".to_owned(),
-            },
-            memo_policy: PrimitiveMemoPolicy::Observed,
-            protocol_version: 1,
-            capability_schemas: vec![SchemaPattern::exact(
-                &Type::Extern(ExternKind::Registry).schema_ref(),
-            )],
-        }
-    }
-
-    fn old_observe_shape() -> RequestShape {
-        RequestShape {
-            args: vec![
-                ArgRole::Value {
-                    expected: Type::from_facet::<OriginHint>(),
-                },
-                ArgRole::Selector(Selector {
-                    enum_name: "Mode".to_owned(),
-                    noun: "observe mode".to_owned(),
-                    variants: vec![
-                        SelectorVariant {
-                            variant: "Observe".to_owned(),
-                            flag: false,
-                        },
-                        SelectorVariant {
-                            variant: "Refresh".to_owned(),
-                            flag: true,
-                        },
-                    ],
-                }),
-            ],
-            request_ty: Type::from_facet::<ObserveRequest>(),
-            result: Type::Extern(ExternKind::Blob),
-            primitive: observe_primitive_id(),
-        }
-    }
-
     #[test]
     fn fetch_adapter_is_byte_identical_to_the_hand_written_primitive() {
         let adapter = TypedAdapter::new::<()>(PinnedFetchPrimitive);
@@ -398,19 +351,5 @@ mod milestone {
             Some(old_fetch_shape())
         );
         assert_eq!(RawPrimitive::<()>::surface_name(&adapter), Some("fetch"));
-    }
-
-    #[test]
-    fn observe_adapter_is_byte_identical_to_the_hand_written_primitive() {
-        let adapter = TypedAdapter::new::<()>(ObservePrimitive);
-        assert_eq!(
-            *RawPrimitive::<()>::descriptor(&adapter),
-            old_observe_descriptor()
-        );
-        assert_eq!(
-            RawPrimitive::<()>::request_shape(&adapter),
-            Some(old_observe_shape())
-        );
-        assert_eq!(RawPrimitive::<()>::surface_name(&adapter), Some("observe"));
     }
 }

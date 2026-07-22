@@ -280,7 +280,6 @@ mod schema_snapshot {
     //! keep every one byte-identical.
 
     use crate::rt::{BlobId, OriginHint, PinnedBlobRef, PinnedFetchRequest};
-    use crate::rt::ObserveRequest;
     use vix::vir::Type;
 
     // Captured against the hand-written `*_type()` constructors before they were
@@ -289,7 +288,6 @@ mod schema_snapshot {
     const ORIGIN_HINT: &str = "ecd3ac5ba264e915";
     const PINNED_BLOB_REF: &str = "a077429ce555df22";
     const PINNED_FETCH_REQUEST: &str = "053ce66d21abed59";
-    const OBSERVE_REQUEST: &str = "d0e09706fdc08ace";
 
     #[test]
     fn request_schemas_are_byte_identical() {
@@ -310,12 +308,6 @@ mod schema_snapshot {
                 .schema_ref()
                 .to_string(),
             PINNED_FETCH_REQUEST
-        );
-        assert_eq!(
-            Type::from_facet::<ObserveRequest>()
-                .schema_ref()
-                .to_string(),
-            OBSERVE_REQUEST
         );
     }
 }
