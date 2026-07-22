@@ -174,7 +174,8 @@ as a typed stale completion.
 
 `PrimitiveRegistry` and generic dispatcher lookup are implemented. The
 production runtime currently assembles the built-in registry for decode,
-pinned fetch, observe, and tree text reads during runtime construction.
+pinned fetch, and tree text reads during runtime construction. (`observe` was
+removed for the 0.1 surface — see the note under "Existing implementations".)
 
 The public manifest-driven extension surface is not implemented yet. In
 particular, external code cannot currently:
@@ -287,9 +288,16 @@ The production examples are:
 
 - `DecodePrimitive`: synchronous typed document decoding;
 - `PinnedFetchPrimitive`: asynchronous identity-first value retrieval;
-- `ObservePrimitive`: asynchronous coordinate observation and append-only
-  claim publication;
 - `TreeReadPrimitive`: witnessed text reads from capability-controlled trees.
 
 They all implement the same trait and cross the same Weavy yield, ticket,
 completion-inbox, and frame-resume path.
+
+> **`observe`/`refresh` retired for 0.1.** The `observe`/`refresh` discussion
+> above documents the binding-layer *principle* (behavioural modes are request
+> fields of one effect, not extra primitives) using observe as its worked
+> example. `ObservePrimitive` and its claim-history seam were **removed** for the
+> 0.1 surface — 0.1 consumes an existing lockfile, so it never observes a live
+> coordinate. The example is retained because the design rule it illustrates
+> still governs any future effect with modes. See the design memo
+> `surface-0.1-scope-and-layering`.

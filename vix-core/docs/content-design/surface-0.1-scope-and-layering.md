@@ -82,15 +82,21 @@ vix function can still be method-called via the UFCS fallback in
 
 **Parked** (lock-time / resolve machinery — correct, just not now):
 
-- `observe`, `refresh`, `Mode`, `Registry.coordinate` — how you'd read a live
-  index to *produce* a lock. You are given a lock.
 - rodin solver + `Version` / `VersionSet` (`vix-core/std/version.vix`) — a lock
   has exact versions; no interval/requirement solving is reachable.
 
-**Deleted now:** `is_blank` — trivial (`text == ""`), zero corpus call sites. It
-was pure filler serving only as a test fixture (the sole non-generic pure std
-function); the injection-mechanism tests that used it are re-rooted onto a
-throwaway `demo_blank` prelude so nothing real ships it.
+**Deleted:**
+
+- `is_blank` — trivial (`text == ""`), zero corpus call sites. It was pure
+  filler serving only as a test fixture (the sole non-generic pure std
+  function); the injection-mechanism tests that used it are re-rooted onto a
+  throwaway `demo_blank` prelude so nothing real ships it.
+- the **observe bundle** — `observe`, `refresh`, `Mode`, `Registry.coordinate`,
+  and all the observe-only claim-history machinery (see the entanglement map
+  below). This is how you'd read a live index to *produce* a lock; you are given
+  one. Removed outright rather than parked — by the time we need it back the API
+  will have shifted, and the shared value-persistence layer stayed intact for
+  `fetch`.
 
 ## Retirement entanglement map
 
@@ -102,13 +108,19 @@ tree:
   (in `stdlib.rs` and `vix-core/tests/modules.rs`) onto a throwaway `demo_blank`
   fixture, then deleting the `.vix` and dropping it from `STD_MODULE_SOURCE` +
   `PRELUDE_SOURCES`.
-- **`observe` bundle = `observe` + `refresh` + `coordinate` + `Mode`** — one
-  deliberate surgery. `refresh` is exercised by `fetch_observe.rs` and
-  `observe_binding.rs`; it calls `.coordinate()` (which produces the observe
-  origin `OriginHint`); `observe` itself is woven through the scheduler (~62
-  lines), the store, blob-persistence, and **shares the value-persistence layer
-  with `fetch`** — so this is a project, not a snip. Do not remove any piece
-  alone.
+- **`observe` bundle = `observe` + `refresh` + `coordinate` + `Mode`** — removed
+  as one deliberate surgery (~1,300 lines). The clean separation held: the
+  observe-only claim-history seam (`ClaimHistory`/`ObserveCoordinate`/
+  `ObservedClaim`, `observe_origin`, `claim_head`/`append_claim`) came out while
+  the shared value-persistence + origin-adapter layer that `fetch` relies on
+  stayed intact. Guardrails that were *kept* (they only look observe-shaped):
+  `runtime/observe.rs` (the observability event log, unrelated),
+  `EffectCtx::observe(JournalObservation)` (journal plumbing), the memo-journal /
+  `PersistentMemoClaim` machinery (used by all memoized effects), and
+  `PrimitiveMemoPolicy::Observed` (also used by tree-read). The now-unreachable
+  `Selector`/`ArgRole::Selector` request-shape path and
+  `PrimitiveMachineError::RefreshConflict` were deleted too (`ArgRole`/
+  `ArgRoleDecl` are now single-variant `Value`) — no dead code left behind.
 - **rodin / version** — not wired into any Rust build (only the unwired
   `corpus-next/` `use`s them), so safe to leave dormant until decided.
 

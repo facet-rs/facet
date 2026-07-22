@@ -14,7 +14,7 @@ use crate::vir::{ExternKind, RecordField, RecordType, Type};
 
 use super::{
     ArgRole, Digest, PrimitiveDescriptor, PrimitiveId, PrimitiveMachineError, PrimitiveMemoPolicy,
-    RequestShape, Selector, SelectorVariant, ValueId,
+    RequestShape, ValueId,
 };
 
 // ---- fetch / blob ---------------------------------------------------------
@@ -93,32 +93,6 @@ pub fn pinned_fetch_primitive_id() -> PrimitiveId {
     }
 }
 
-// ---- observe --------------------------------------------------------------
-
-/// The `observe` request shape. There is no other Rust spelling of this struct —
-/// it is authored here so the derived `Type::from_facet::<ObserveRequest>()` is
-/// the single source for both `RequestShape.request_ty` and the descriptor's
-/// `request_schema`.
-///
-/// `refresh == false` = observe (memoized by demand like any effect result);
-/// `refresh == true` = refresh, a distinct demand that forces a fresh receipted
-/// observation past the within-run memo and appends a new head under optimistic
-/// concurrency.
-#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
-pub struct ObserveRequest {
-    pub origin: OriginHint,
-    pub refresh: bool,
-}
-
-#[must_use]
-pub fn observe_primitive_id() -> PrimitiveId {
-    PrimitiveId {
-        namespace: "vix.machine".to_owned(),
-        name: "observe".to_owned(),
-        version: 1,
-    }
-}
-
 // ---- tree-read ------------------------------------------------------------
 
 #[must_use]
@@ -157,26 +131,11 @@ pub fn tree_read_primitive_id() -> PrimitiveId {
 // [`synth_descriptor`]/[`synth_shape`] to build the runtime descriptor, so the
 // two never diverge.
 
-/// One accepted variant of a selector argument and the boolean flag it folds
-/// into the request record — the const-friendly mirror of [`SelectorVariant`].
-pub struct SelectorVariantDecl {
-    pub variant: &'static str,
-    pub flag: bool,
-}
-
-/// A selector argument declared as const data — the mirror of [`Selector`].
-pub struct SelectorDecl {
-    pub enum_name: &'static str,
-    pub noun: &'static str,
-    pub variants: &'static [SelectorVariantDecl],
-}
-
 /// The role a surface argument plays, declared as const data. `Value` carries no
 /// type: its expected [`Type`] is the *i-th* field of `Type::from_facet::<Request>()`,
 /// zipped in order, so the request struct is the single source of the arg types.
 pub enum ArgRoleDecl {
     Value,
-    Selector(SelectorDecl),
 }
 
 /// Everything a registered primitive's surface contract *is*, as const data.
@@ -248,18 +207,6 @@ pub fn synth_shape(decl: &PrimitiveDecl, request_ty: Type, response_ty: Type) ->
             ArgRoleDecl::Value => ArgRole::Value {
                 expected: field.ty.clone(),
             },
-            ArgRoleDecl::Selector(selector) => ArgRole::Selector(Selector {
-                enum_name: selector.enum_name.to_owned(),
-                noun: selector.noun.to_owned(),
-                variants: selector
-                    .variants
-                    .iter()
-                    .map(|variant| SelectorVariant {
-                        variant: variant.variant.to_owned(),
-                        flag: variant.flag,
-                    })
-                    .collect(),
-            }),
         })
         .collect();
     RequestShape {
@@ -279,23 +226,6 @@ fn record_fields(request_ty: &Type) -> &[RecordField] {
     }
 }
 
-/// The `Mode` selector `observe`'s second argument folds to its `refresh` flag:
-/// `Mode::Observe` → `false`, `Mode::Refresh` → `true`.
-const MODE_SELECTOR: SelectorDecl = SelectorDecl {
-    enum_name: "Mode",
-    noun: "observe mode",
-    variants: &[
-        SelectorVariantDecl {
-            variant: "Observe",
-            flag: false,
-        },
-        SelectorVariantDecl {
-            variant: "Refresh",
-            flag: true,
-        },
-    ],
-};
-
 /// The `fetch` primitive's surface contract (registered id `pinned-fetch`).
 pub const FETCH_DECL: PrimitiveDecl = PrimitiveDecl {
     namespace: "vix.machine",
@@ -307,19 +237,6 @@ pub const FETCH_DECL: PrimitiveDecl = PrimitiveDecl {
     failure_schema_name: "PinnedFetchFailure",
     capabilities: &[ExternKind::Registry],
     args: &[ArgRoleDecl::Value],
-};
-
-/// The `observe` primitive's surface contract.
-pub const OBSERVE_DECL: PrimitiveDecl = PrimitiveDecl {
-    namespace: "vix.machine",
-    name: "observe",
-    id_name: "observe",
-    version: 1,
-    memo_policy: PrimitiveMemoPolicy::Observed,
-    protocol_version: 1,
-    failure_schema_name: "ObserveFailure",
-    capabilities: &[ExternKind::Registry],
-    args: &[ArgRoleDecl::Value, ArgRoleDecl::Selector(MODE_SELECTOR)],
 };
 
 /// A primitive's surface projection: the source name it binds, its id, and the
@@ -336,9 +253,9 @@ pub struct PrimitiveSurface {
 /// surfaces. Custom and bundled primitives share the same contract type.
 pub type BuiltinPrimitiveSurface = PrimitiveSurface;
 
-/// The builtin primitives that project a prelude free-function surface: `fetch`
-/// and `observe`. `tree-read` binds only as a `.text()` method (no surface name),
-/// and `decode`/`try_decode` share one hand-registered id — neither appears here.
+/// The builtin primitives that project a prelude free-function surface: `fetch`.
+/// `tree-read` binds only as a `.text()` method (no surface name), and
+/// `decode`/`try_decode` share one hand-registered id — neither appears here.
 #[must_use]
 pub fn builtin_primitive_surfaces() -> Vec<BuiltinPrimitiveSurface> {
     fn surface<Request: facet::Facet<'static>, Response: facet::Facet<'static>>(
@@ -352,8 +269,5 @@ pub fn builtin_primitive_surfaces() -> Vec<BuiltinPrimitiveSurface> {
             shape: synth_shape(decl, request_ty, response_ty),
         }
     }
-    vec![
-        surface::<PinnedFetchRequest, BlobHandle>(&FETCH_DECL),
-        surface::<ObserveRequest, BlobHandle>(&OBSERVE_DECL),
-    ]
+    vec![surface::<PinnedFetchRequest, BlobHandle>(&FETCH_DECL)]
 }
