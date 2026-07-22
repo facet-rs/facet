@@ -61,7 +61,7 @@ use crate::vir::decode_primitive_id;
 // Re-exported so existing call sites (`compiler.rs`) can keep spelling these
 // `crate::binding::RequestShape` etc. — the types now live next to
 // `RawPrimitive` in `runtime`, since it is the primitive that declares them.
-pub use crate::runtime::{ArgRole, RequestShape, Selector, SelectorVariant};
+pub use crate::runtime::{ArgRole, RequestShape};
 
 /// A non-empty `::`-separated module path (`caps`, `some::ns::inner`).
 ///

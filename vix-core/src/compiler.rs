@@ -5287,10 +5287,9 @@ fn lower_some(
 /// is no per-primitive Rust arm here. `decode`/`try_decode` and the
 /// `fixture_*`/`untar` intrinsics are matched by callee name earlier and never
 /// reach this function; see `lower_value_expected`'s `ast::Expr::Call` arms.
-/// Build a registered-primitive call from its [`RequestShape`](crate::binding::RequestShape): check arity, read
-/// every [`Selector`](crate::binding::Selector) *before* enforcing any value-arg
-/// type (a bad mode must beat a wrong-typed origin — see `observe_binding`), then
-/// lower each argument in order into the request record and invoke the primitive.
+/// Build a registered-primitive call from its [`RequestShape`](crate::binding::RequestShape):
+/// check arity, then lower each argument in order into the request record and
+/// invoke the primitive.
 ///
 /// This is the one generic replacement for the former per-primitive arms in
 /// `lower_effect_intrinsic`. The request record and the `InvokePrimitive` node are
@@ -5312,15 +5311,6 @@ fn lower_request_shape(
     }
     check_arity(call, shape.args.len())?;
 
-    // Read selectors first: a `Mode::Spin` must be rejected as an unknown mode
-    // before an origin of the wrong type is rejected as a type mismatch.
-    let mut flags: BTreeMap<usize, bool> = BTreeMap::new();
-    for (index, role) in shape.args.iter().enumerate() {
-        if let ArgRole::Selector(selector) = role {
-            flags.insert(index, read_selector(&call.args.args[index], selector)?);
-        }
-    }
-
     let mut inputs = Vec::with_capacity(shape.args.len());
     for (index, role) in shape.args.iter().enumerate() {
         let arg = &call.args.args[index];
@@ -5330,14 +5320,6 @@ fn lower_request_shape(
                 require_type(&value, expected, expr_span(arg))?;
                 value.node
             }
-            ArgRole::Selector(_) => push_node(
-                nodes,
-                call.span,
-                Type::Bool,
-                EffectFacts::PURE,
-                Vec::new(),
-                Op::Bool(flags[&index]),
-            ),
         };
         inputs.push(node);
     }
@@ -5364,42 +5346,6 @@ fn lower_request_shape(
         ),
         ty,
     })
-}
-
-/// Read a [`Selector`](crate::binding::Selector) argument: an enum variant named
-/// at lower time and folded to its request flag, never lowered as a value. The
-/// data form of the former `observe_mode_arg`/`decode_format_arg` readers — the
-/// accepted enum, its variants, and the diagnostic wording all come from the
-/// selector. An unknown or non-matching variant is rejected here, not by the
-/// checker (which never sees it in a value position).
-fn read_selector(
-    arg: &ast::Expr,
-    selector: &crate::binding::Selector,
-) -> Result<bool, Diagnostics> {
-    let ast::Expr::Variant(variant) = arg else {
-        return Err(Diagnostics::one(Diagnostic::unsupported(
-            expr_span(arg),
-            selector.expected(),
-        )));
-    };
-    if !matches_std_qualified_name(&variant.path.type_name.value, &selector.enum_name) {
-        return Err(Diagnostics::one(Diagnostic::unsupported(
-            variant.path.span,
-            selector.expected(),
-        )));
-    }
-    let chosen = variant.path.variant.value.as_str();
-    selector
-        .variants
-        .iter()
-        .find(|candidate| candidate.variant == chosen)
-        .map(|candidate| candidate.flag)
-        .ok_or_else(|| {
-            Diagnostics::one(Diagnostic::unsupported(
-                variant.path.variant.span,
-                selector.unknown(chosen),
-            ))
-        })
 }
 
 /// The dedicated-op tree primitives (`fixture_tree`, `fixture_registry`, `untar`).

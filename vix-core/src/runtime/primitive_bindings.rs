@@ -14,7 +14,7 @@ use crate::vir::{ExternKind, RecordField, RecordType, Type};
 
 use super::{
     ArgRole, Digest, PrimitiveDescriptor, PrimitiveId, PrimitiveMachineError, PrimitiveMemoPolicy,
-    RequestShape, Selector, SelectorVariant, ValueId,
+    RequestShape, ValueId,
 };
 
 // ---- fetch / blob ---------------------------------------------------------
@@ -131,26 +131,11 @@ pub fn tree_read_primitive_id() -> PrimitiveId {
 // [`synth_descriptor`]/[`synth_shape`] to build the runtime descriptor, so the
 // two never diverge.
 
-/// One accepted variant of a selector argument and the boolean flag it folds
-/// into the request record — the const-friendly mirror of [`SelectorVariant`].
-pub struct SelectorVariantDecl {
-    pub variant: &'static str,
-    pub flag: bool,
-}
-
-/// A selector argument declared as const data — the mirror of [`Selector`].
-pub struct SelectorDecl {
-    pub enum_name: &'static str,
-    pub noun: &'static str,
-    pub variants: &'static [SelectorVariantDecl],
-}
-
 /// The role a surface argument plays, declared as const data. `Value` carries no
 /// type: its expected [`Type`] is the *i-th* field of `Type::from_facet::<Request>()`,
 /// zipped in order, so the request struct is the single source of the arg types.
 pub enum ArgRoleDecl {
     Value,
-    Selector(SelectorDecl),
 }
 
 /// Everything a registered primitive's surface contract *is*, as const data.
@@ -222,18 +207,6 @@ pub fn synth_shape(decl: &PrimitiveDecl, request_ty: Type, response_ty: Type) ->
             ArgRoleDecl::Value => ArgRole::Value {
                 expected: field.ty.clone(),
             },
-            ArgRoleDecl::Selector(selector) => ArgRole::Selector(Selector {
-                enum_name: selector.enum_name.to_owned(),
-                noun: selector.noun.to_owned(),
-                variants: selector
-                    .variants
-                    .iter()
-                    .map(|variant| SelectorVariant {
-                        variant: variant.variant.to_owned(),
-                        flag: variant.flag,
-                    })
-                    .collect(),
-            }),
         })
         .collect();
     RequestShape {

@@ -48,7 +48,6 @@ pub enum PrimitiveMachineError {
     Exhausted { detail: String },
     PolicyRejected { detail: String },
     CorruptCandidate { source: ValueId },
-    RefreshConflict { current: ValueId },
     InvalidRequest { request: ValueId },
     AuthorityViolation { detail: String },
 }
@@ -799,62 +798,13 @@ impl<Ctx> FromRef<Ctx> for () {
     fn from_ref(_ctx: &Ctx) {}
 }
 
-/// One accepted variant of a [`Selector`] argument and the boolean flag it folds
-/// into the request record. (`Mode::Observe` → `false`, `Mode::Refresh` → `true`.)
-///
-/// Selectors fold to a boolean today because the only one — observe's `Mode` — is
-/// binary. Decode's `Format` is an integer tag; when it migrates onto a shape this
-/// widens to a general constant. Until then, "selector" means "enum → flag".
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SelectorVariant {
-    pub variant: String,
-    pub flag: bool,
-}
-
-/// A selector argument: an enum-variant read at *lower time* into a constant and
-/// folded into the request record, never lowered as a runtime value. The
-/// accepted `enum_name`, its variants, and the diagnostic wording all live here
-/// rather than as a bespoke Rust reader per primitive.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Selector {
-    /// The enum the variant must name (`Mode`).
-    pub enum_name: String,
-    /// How the selector reads in diagnostics (`observe mode`) — the noun the
-    /// "expected …" and "unknown …" messages are built from.
-    pub noun: String,
-    pub variants: Vec<SelectorVariant>,
-}
-
-impl Selector {
-    /// What a non-variant or wrong-enum argument should say it expected, e.g.
-    /// `an observe mode `Mode::Observe` or `Mode::Refresh``.
-    #[must_use]
-    pub fn expected(&self) -> String {
-        let choices: Vec<String> = self
-            .variants
-            .iter()
-            .map(|candidate| format!("`{}::{}`", self.enum_name, candidate.variant))
-            .collect();
-        format!("an {} {}", self.noun, choices.join(" or "))
-    }
-
-    /// The message for a known enum but unrecognized variant, e.g.
-    /// `an unknown observe mode `Mode::Spin``.
-    #[must_use]
-    pub fn unknown(&self, variant: &str) -> String {
-        format!("an unknown {} `{}::{variant}`", self.noun, self.enum_name)
-    }
-}
-
 /// The structural role a surface argument plays in a primitive's request record.
 /// The request record has one field per argument, in this order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ArgRole {
     /// Lowered as an ordinary value and required to have the given type
-    /// (`fetch`'s `PinnedBlobRef`, `observe`'s `OriginHint`).
+    /// (`fetch`'s `PinnedBlobRef`).
     Value { expected: Type },
-    /// An enum-variant selector folded to a constant request field.
-    Selector(Selector),
 }
 
 /// How a registered primitive builds its request from its surface arguments — the
