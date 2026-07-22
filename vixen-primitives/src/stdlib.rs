@@ -13,13 +13,12 @@
 //! is a request field, and the target `T` is forwarded from the caller's
 //! expected type by return-position inference. `try_json_decode`/`try_toml_decode`
 //! are the fallible twins over `try_decode(document, Format)`, returning
-//! `Result<T, DecodeError>`. `refresh` is the retired observe *mode* intrinsic,
-//! now `observe(origin, Mode::Refresh)`.
+//! `Result<T, DecodeError>`.
 //!
 //! Order is significant — it affects function ids, module counts, and the
 //! constant-fold of literal decodes — so it must match what the ratchet goldens
 //! were vetted against: `Format`, `json_decode`, `toml_decode`,
-//! `try_json_decode`, `try_toml_decode`, `Mode`, `refresh`.
+//! `try_json_decode`, `try_toml_decode`.
 
 /// The canonical `std` module assembled from the separately authored Vix items.
 pub const STD_MODULE_SOURCE: &str = concat!(
@@ -29,8 +28,6 @@ pub const STD_MODULE_SOURCE: &str = concat!(
     include_str!("stdlib/toml_decode.vix"),
     include_str!("stdlib/try_json_decode.vix"),
     include_str!("stdlib/try_toml_decode.vix"),
-    include_str!("stdlib/mode.vix"),
-    include_str!("stdlib/refresh.vix"),
     "}\n",
 );
 
@@ -43,8 +40,6 @@ pub const PRELUDE_SOURCES: &[&str] = &[
     include_str!("stdlib/toml_decode.vix"),
     include_str!("stdlib/try_json_decode.vix"),
     include_str!("stdlib/try_toml_decode.vix"),
-    include_str!("stdlib/mode.vix"),
-    include_str!("stdlib/refresh.vix"),
     STD_MODULE_SOURCE,
 ];
 
@@ -140,13 +135,6 @@ fn fetch_from_fixture() -> Blob {
 
 fn decode_row() -> Row {
     std::decode("{\"name\":\"vix\"}", std::Format::Json)
-}
-
-fn fetch_fresh() -> Blob {
-    std::observe(
-        std::fixture_registry().coordinate("case.crate"),
-        std::Mode::Refresh,
-    )
 }
 "#;
 

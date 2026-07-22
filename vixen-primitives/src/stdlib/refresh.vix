@@ -1,3 +1,0 @@
-pub fn refresh<Origin>(origin: Origin) -> Blob {
-    observe(origin, Mode::Refresh)
-}

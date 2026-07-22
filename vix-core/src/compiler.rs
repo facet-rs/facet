@@ -11,7 +11,7 @@ use taxon::{
 
 use crate::decode::{self, DecodeFormat, DecodedValue};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics, Label};
-use crate::runtime::{OriginHint, PinnedBlobRef, tree_read_primitive_id, tree_read_request_type};
+use crate::runtime::{PinnedBlobRef, tree_read_primitive_id, tree_read_request_type};
 use crate::schema::{SchemaBatch, SchemaRef, SchemaSet};
 use crate::support::{Span, Spanned};
 use crate::surface::{SurfaceParser, ast};
@@ -3201,7 +3201,6 @@ enum PreludeMethod {
     TreeEntryText,
     BlobLen,
     RegistryUrl,
-    RegistryCoordinate,
 }
 
 #[derive(Clone, Copy)]
@@ -3458,12 +3457,6 @@ impl PreludeMethodRegistry {
                 name: "url",
                 arity: 1,
                 method: PreludeMethod::RegistryUrl,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::Registry,
-                name: "coordinate",
-                arity: 1,
-                method: PreludeMethod::RegistryCoordinate,
             },
         ],
     };
@@ -5048,22 +5041,6 @@ fn lower_method_call(
                     EffectFacts::EFFECT,
                     vec![receiver.node, name.node],
                     Op::RegistryUrl,
-                ),
-                ty,
-            })
-        }
-        PreludeMethod::RegistryCoordinate => {
-            let name = lower_value(nodes, bindings, context, &positional[0])?;
-            require_type(&name, &Type::String, expr_span(&positional[0]))?;
-            let ty = Type::from_facet::<OriginHint>();
-            Ok(LoweredValue {
-                node: push_node(
-                    nodes,
-                    call.span,
-                    ty.clone(),
-                    EffectFacts::EFFECT,
-                    vec![receiver.node, name.node],
-                    Op::RegistryCoordinate,
                 ),
                 ty,
             })

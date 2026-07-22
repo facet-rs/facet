@@ -1535,11 +1535,6 @@ pub enum Op {
     /// `PinnedUrl`: provenance URL plus the REQUIRED vix ContentHash
     /// (`machine.primitive.fetch-is-pinned`).
     RegistryUrl,
-    /// Resolve an artifact name against the registry manifest into an
-    /// observation coordinate (`OriginHint`): a provenance URL with NO pinned
-    /// identity, because an observation names its value only after the bytes
-    /// arrive (`machine.primitive.fetch-is-pinned`, the `observe` counterpart).
-    RegistryCoordinate,
     /// Extract an archive Blob into a Tree whose identity is the canonical
     /// tree encoding — never the archive bytes' ContentHash.
     ///
@@ -4089,7 +4084,6 @@ fn is_effect_root(node: &Node) -> bool {
             | Op::TreeEntryText
             | Op::FixtureRegistry
             | Op::RegistryUrl
-            | Op::RegistryCoordinate
             | Op::Untar
             | Op::BlobLen
     ) || (node.effect.kind == EffectKind::Effect
@@ -4626,7 +4620,6 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::TreeGlob => op.push(93),
         Op::FixtureRegistry => op.push(94),
         Op::RegistryUrl => op.push(95),
-        Op::RegistryCoordinate => op.push(102),
         Op::Untar => op.push(97),
         Op::BlobLen => op.push(98),
     }

@@ -3213,51 +3213,6 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 )
                 .map(EffectTerm::Value)
             }
-            Op::RegistryCoordinate => {
-                let EffectTerm::Value(registry) = input(0, self)? else {
-                    return effect_fault("registry coordinate receiver was codata");
-                };
-                let EffectTerm::Value(name) = input(1, self)? else {
-                    return effect_fault("registry coordinate name was codata");
-                };
-                let name = String::from_utf8(name.resident)
-                    .map_err(|_| effect_machine_error("registry artifact name was not UTF-8"))?;
-                let manifest = self.fixture_store.registry_manifest().map_err(|_| {
-                    effect_machine_error("fixture registry manifest was unavailable")
-                })?;
-                reads.push(super::model::ReadWitness {
-                    source: registry.identity.clone(),
-                    projection: ReadProjection::RegistryManifest,
-                    observation: ReadObservation::Value(
-                        effect_leaf(&Type::String, manifest.clone().into_bytes()).identity,
-                    ),
-                });
-                let url = manifest
-                    .lines()
-                    .find_map(|line| {
-                        let mut fields = line.split_whitespace();
-                        let artifact = fields.next()?;
-                        let url = fields.next()?;
-                        (artifact == name).then(|| url.to_owned())
-                    })
-                    .ok_or_else(|| effect_machine_error("fixture registry artifact was absent"))?;
-                let capability =
-                    primitive_value_from_effect(&Type::Extern(ExternKind::Registry), &registry)?;
-                effect_value_from_primitive(
-                    &node.ty,
-                    PrimitiveValue {
-                        schema: node.ty.schema_ref(),
-                        body: PrimitiveValueBody::Product(vec![
-                            primitive_child_field(capability),
-                            primitive_child_field(PrimitiveValue::bytes(
-                                Type::String.schema_ref(),
-                                url.into_bytes(),
-                            )),
-                        ]),
-                    },
-                )
-                .map(EffectTerm::Value)
-            }
             Op::Untar => {
                 let EffectTerm::Value(blob) = input(0, self)? else {
                     return effect_fault("untar input was codata");
@@ -3700,9 +3655,6 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 .with_fixture_store(self.fixture_store.clone());
             if let Some(persistence) = self.primitive_services.value_persistence() {
                 authority = authority.with_value_persistence(persistence);
-            }
-            if let Some(claims) = self.primitive_services.claim_history() {
-                authority = authority.with_claim_history(claims);
             }
             authority = authority.with_origin_adapter(
                 self.primitive_services

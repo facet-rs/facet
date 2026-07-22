@@ -4,10 +4,10 @@
 //! # Design contract
 //!
 //! One Rust primitive projects exactly **one** binding with **one** name.
-//! Behavioural modes (`observe`/`refresh`, `json`/`toml` decode) are *request
-//! fields the primitive reads* — never extra primitives, and never extra
-//! compiler intrinsics. Ergonomic aliases are ordinary vix functions bound over
-//! that single primitive (`refresh(x) = observe(x, refresh: true)`).
+//! Behavioural modes (`json`/`toml` decode) are *request fields the primitive
+//! reads* — never extra primitives, and never extra compiler intrinsics.
+//! Ergonomic aliases are ordinary vix functions bound over that single
+//! primitive (`json_decode(x) = decode(x, Format::Json)`).
 //!
 //! This separates three concerns the codebase currently tangles:
 //!   - **registry identity** — a primitive is a [`PrimitiveId`] matched by
@@ -30,12 +30,11 @@
 //! canonical `std::` spelling map to a [`PrimitiveId`] here, in data, instead
 //! of scattered string matches.
 //!
-//! **Request construction is data for the uniform primitives.** `fetch` and
-//! `observe` lower through a [`RequestShape`] ([`request_shape`], keyed by
-//! [`PrimitiveId`]): their arity, per-argument roles (a lowered
-//! [`ArgRole::Value`] with its required type, or a [`Selector`] enum read at
-//! lower time), request record, result type, and target primitive are all
-//! data, consumed by one generic builder rather than a bespoke Rust arm each.
+//! **Request construction is data for the uniform primitives.** `fetch` lowers
+//! through a [`RequestShape`] ([`request_shape`], keyed by [`PrimitiveId`]): its
+//! arity, per-argument roles (a lowered [`ArgRole::Value`] with its required
+//! type), request record, result type, and target primitive are all data,
+//! consumed by one generic builder rather than a bespoke Rust arm each.
 //!
 //! Not yet on a shape: `decode`/`try_decode` (compile-time constant folding and
 //! expected-type-derived targets don't reduce to a record shape) — both are
@@ -100,8 +99,8 @@ impl ModulePath {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Placement {
     /// Injected into every module's scope; callable with no `use` (today's
-    /// `fetch`, `observe`). This is the prelude layer the binder currently
-    /// defers rather than resolves.
+    /// `fetch`). This is the prelude layer the binder currently defers rather
+    /// than resolves.
     Prelude,
     /// Reached through a qualified path or `use module::name` — e.g.
     /// `some::ns::cool_function`.
@@ -137,8 +136,8 @@ pub enum BindingTarget {
     /// `untar`) — not a primitive at all.
     Intrinsic(Intrinsic),
     /// A vix-source function bound under a placement. This is the sanctioned way
-    /// to add an alias or convenience wrapper (`refresh` over `observe`) and to
-    /// "nicely add a pure vix function" to the prelude or a namespace. The
+    /// to add an alias or convenience wrapper (`json_decode` over `decode`) and
+    /// to "nicely add a pure vix function" to the prelude or a namespace. The
     /// function is effectful when its body invokes an effectful primitive; vix
     /// effect tracking flows through the call as it does for any wrapper.
     VixFunction { source: String },
@@ -229,14 +228,14 @@ impl BindingRegistry {
 ///
 /// Every registered primitive that projects a surface name (`RawPrimitive::
 /// surface_name` returns `Some`) is harvested straight from
-/// [`runtime::builtin_primitive_surfaces`] — `fetch` and `observe` today. `decode`/
+/// [`runtime::builtin_primitive_surfaces`] — `fetch` today. `decode`/
 /// `try_decode` share one primitive under two names and are not yet uniform
 /// (see the module docs), so they stay hand-registered onto
 /// [`decode_primitive_id`]; the `fixture_*`/`untar` dedicated ops are hand-
-/// registered as [`Intrinsic`]s. The behavioural modes (`refresh` over
-/// `observe`; `json_decode`/`toml_decode`/`try_json_decode`/`try_toml_decode`
-/// over `decode`/`try_decode`) are vix functions over the single primitive
-/// rather than extra primitives or intrinsics. The compiler consumes this in
+/// registered as [`Intrinsic`]s. The decode aliases
+/// (`json_decode`/`toml_decode`/`try_json_decode`/`try_toml_decode` over
+/// `decode`/`try_decode`) are vix functions over the single primitive rather
+/// than extra primitives or intrinsics. The compiler consumes this in
 /// place of hardcoded name matches: [`surface_primitive`]/[`surface_intrinsic`]
 /// map a name to its target for lowering, and [`is_prelude_name`] gates legacy
 /// unqualified resolution. The vix-fn `source` strings mirror the
@@ -291,10 +290,6 @@ pub fn builtin_bindings() -> BindingRegistry {
     // Modes-as-aliases: vix functions over the single primitive, not new
     // primitives and not new compiler intrinsics (mirroring `stdlib`).
     for (name, source) in [
-        (
-            "refresh",
-            "fn refresh<Origin>(origin: Origin) -> Blob { observe(origin, Mode::Refresh) }",
-        ),
         (
             "json_decode",
             "fn json_decode<T>(text: String) -> T { decode(text, Format::Json) }",
@@ -420,8 +415,8 @@ static PRELUDE_NAMES: LazyLock<BTreeSet<String>> = LazyLock::new(|| {
 });
 
 /// Is `name` a prelude-placed surface binding? The binder consults this to
-/// resolve prelude names (`fetch`, `observe`, …) rather than leaving them in
-/// its `unresolved` bucket — the "prelude layer" its module docs describe.
+/// resolve prelude names (`fetch`, …) rather than leaving them in its
+/// `unresolved` bucket — the "prelude layer" its module docs describe.
 #[must_use]
 pub fn is_prelude_name(name: &str) -> bool {
     PRELUDE_NAMES.contains(name)
@@ -430,7 +425,7 @@ pub fn is_prelude_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::{observe_primitive_id, pinned_fetch_primitive_id};
+    use crate::runtime::pinned_fetch_primitive_id;
     use crate::vir::{ExternKind, Type};
 
     #[test]
@@ -446,12 +441,9 @@ mod tests {
         let reg = builtin_bindings();
         let std = ModulePath::new(["std"]).expect("std module path");
 
-        // fetch/observe are harvested from the registered primitives, one name
-        // each, and `prelude_primitive` maps each to its `PrimitiveId`.
-        for (name, id) in [
-            ("fetch", pinned_fetch_primitive_id()),
-            ("observe", observe_primitive_id()),
-        ] {
+        // fetch is harvested from the registered primitives, one name, and
+        // `prelude_primitive` maps it to its `PrimitiveId`.
+        for (name, id) in [("fetch", pinned_fetch_primitive_id())] {
             let binding = reg.prelude(name).expect("prelude primitive");
             assert!(matches!(binding.target, BindingTarget::Primitive(_)));
             assert_eq!(prelude_primitive(name), Some(id.clone()));
@@ -478,9 +470,8 @@ mod tests {
             assert_eq!(prelude_primitive(name), None);
         }
 
-        // The mode aliases are vix functions, not primitives.
+        // The decode aliases are vix functions, not primitives.
         for alias in [
-            "refresh",
             "json_decode",
             "toml_decode",
             "try_json_decode",
@@ -500,7 +491,7 @@ mod tests {
         reg.insert(Binding::vix_fn(
             Placement::Module(path.clone()),
             "cool_function",
-            "fn cool_function<Origin>(origin: Origin) -> Blob { observe(origin, Mode::Observe) }",
+            "fn cool_function(text: String) -> String { text }",
         ));
 
         // Reachable by its qualified path...
@@ -511,10 +502,9 @@ mod tests {
 
     #[test]
     fn only_the_uniform_primitives_have_a_request_shape() {
-        // fetch/observe are fully data — the compiler builds their request from
-        // the shape. decode/try_decode share an id whose shape is still `None`.
+        // fetch is fully data — the compiler builds its request from the shape.
+        // decode/try_decode share an id whose shape is still `None`.
         assert!(request_shape(&pinned_fetch_primitive_id()).is_some());
-        assert!(request_shape(&observe_primitive_id()).is_some());
         assert!(
             request_shape(&decode_primitive_id()).is_none(),
             "decode should have no shape yet"
@@ -528,41 +518,5 @@ mod tests {
         assert!(matches!(shape.args[0], ArgRole::Value { .. }));
         assert_eq!(shape.result, Type::Extern(ExternKind::Blob));
         assert_eq!(shape.primitive, pinned_fetch_primitive_id());
-    }
-
-    #[test]
-    fn observe_shape_is_a_value_then_a_mode_selector() {
-        let shape = request_shape(&observe_primitive_id()).expect("observe shape");
-        assert_eq!(shape.args.len(), 2);
-        assert!(matches!(shape.args[0], ArgRole::Value { .. }));
-        let ArgRole::Selector(selector) = &shape.args[1] else {
-            panic!("observe's second argument is the Mode selector");
-        };
-        assert_eq!(selector.enum_name, "Mode");
-        // The selector carries its own accepted variants and folded flags.
-        assert_eq!(
-            selector
-                .variants
-                .iter()
-                .find(|v| v.variant == "Refresh")
-                .map(|v| v.flag),
-            Some(true),
-        );
-    }
-
-    #[test]
-    fn selector_builds_its_own_diagnostic_wording() {
-        let shape = request_shape(&observe_primitive_id()).expect("observe shape");
-        let ArgRole::Selector(selector) = &shape.args[1] else {
-            panic!("expected the Mode selector");
-        };
-        assert_eq!(
-            selector.expected(),
-            "an observe mode `Mode::Observe` or `Mode::Refresh`",
-        );
-        assert_eq!(
-            selector.unknown("Spin"),
-            "an unknown observe mode `Mode::Spin`"
-        );
     }
 }
