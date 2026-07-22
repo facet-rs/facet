@@ -126,6 +126,98 @@ pub enum Intrinsic {
     Untar,
 }
 
+/// The vix type a method dispatches on — the kind of its receiver. Moved here
+/// from the compiler so that method dispatch is data in the binding layer, not a
+/// second hardcoded registry parallel to this one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReceiverType {
+    Array,
+    String,
+    Map,
+    Set,
+    Stream,
+    Int,
+    Path,
+    ByteStream,
+    Tree,
+    TreeEntry,
+    Blob,
+    Registry,
+}
+
+impl ReceiverType {
+    /// Classify a lowered receiver's [`crate::vir::Type`] into the method
+    /// dispatch key, or `None` if the type carries no builtin methods.
+    #[must_use]
+    pub fn from_vir_type(ty: &crate::vir::Type) -> Option<Self> {
+        use crate::vir::{ExternKind, Type};
+        match ty {
+            Type::Array(_) => Some(Self::Array),
+            Type::String => Some(Self::String),
+            Type::Map { .. } => Some(Self::Map),
+            Type::Set(_) => Some(Self::Set),
+            Type::Stream { .. } => Some(Self::Stream),
+            Type::Int => Some(Self::Int),
+            Type::Path => Some(Self::Path),
+            Type::Record(record) if record.name == "ByteStream" => Some(Self::ByteStream),
+            Type::Extern(ExternKind::Tree) => Some(Self::Tree),
+            Type::Extern(ExternKind::TreeEntry) => Some(Self::TreeEntry),
+            Type::Extern(ExternKind::Blob) => Some(Self::Blob),
+            Type::Extern(ExternKind::Registry) => Some(Self::Registry),
+            _ => None,
+        }
+    }
+}
+
+/// Which dedicated VIR op a receiver method lowers to. The compiler owns the
+/// bespoke per-op lowering (`compiler::lower_method_call`); this enum is only the
+/// name → which-arm map, so that map is data in the binding layer rather than a
+/// second closed registry in `compiler.rs`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MethodOp {
+    ArrayLen,
+    ArrayMap,
+    ArrayFold,
+    ArraySplitLast,
+    ArrayAll,
+    ArrayAny,
+    ArrayContains,
+    StringTrim,
+    StringContains,
+    StringSplitOnce,
+    StringParseInt,
+    StringIsNumeric,
+    StringLines,
+    ArraySorted,
+    ArrayStream,
+    IntRem,
+    MapGet,
+    MapHas,
+    MapLen,
+    MapKeys,
+    MapValues,
+    MapWith,
+    SetHas,
+    SetLen,
+    SetValues,
+    StreamFilter,
+    StreamFilterMap,
+    StreamFlatMap,
+    StreamCollect,
+    StreamFindMin,
+    StreamFindMax,
+    StreamSplitMin,
+    PathToString,
+    IntToString,
+    ByteStreamCollect,
+    ByteStreamTrim,
+    TreeGlob,
+    TreeEntryText,
+    BlobLen,
+    RegistryUrl,
+    RegistryCoordinate,
+}
+
 /// What a surface name resolves to.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BindingTarget {
@@ -143,14 +235,26 @@ pub enum BindingTarget {
     /// function is effectful when its body invokes an effectful primitive; vix
     /// effect tracking flows through the call as it does for any wrapper.
     VixFunction { source: String },
+    /// A receiver method that lowers to a dedicated VIR op. The compiler keeps
+    /// the bespoke per-op lowering; this only records *which* op arm the
+    /// `(receiver, name)` selects, so the method table is data here rather than a
+    /// second registry in `compiler.rs`. Always paired with `Some(receiver)` on
+    /// the [`Binding`].
+    DedicatedOp(MethodOp),
 }
 
 /// One projected name: placement + leaf name + what it resolves to.
+///
+/// `receiver`/`arity` are `Some` for receiver-method bindings (dispatched by
+/// receiver type + name) and `None` for free-function bindings (dispatched by
+/// name + placement, arity carried by their [`RequestShape`] or signature).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Binding {
     pub placement: Placement,
     pub name: String,
     pub target: BindingTarget,
+    pub receiver: Option<ReceiverType>,
+    pub arity: Option<usize>,
 }
 
 impl Binding {
@@ -162,6 +266,8 @@ impl Binding {
             placement,
             name: name.into(),
             target: BindingTarget::Primitive(id),
+            receiver: None,
+            arity: None,
         }
     }
 
@@ -172,6 +278,8 @@ impl Binding {
             placement,
             name: name.into(),
             target: BindingTarget::Intrinsic(kind),
+            receiver: None,
+            arity: None,
         }
     }
 
@@ -188,6 +296,27 @@ impl Binding {
             target: BindingTarget::VixFunction {
                 source: source.into(),
             },
+            receiver: None,
+            arity: None,
+        }
+    }
+
+    /// Bind a receiver method to a dedicated VIR op. Method bindings are placed
+    /// in the prelude (globally available like the builtin methods they replace)
+    /// and dispatched by `receiver` + `name`, never by placement.
+    #[must_use]
+    pub fn method(
+        receiver: ReceiverType,
+        name: impl Into<String>,
+        arity: usize,
+        op: MethodOp,
+    ) -> Self {
+        Self {
+            placement: Placement::Prelude,
+            name: name.into(),
+            target: BindingTarget::DedicatedOp(op),
+            receiver: Some(receiver),
+            arity: Some(arity),
         }
     }
 }
@@ -209,20 +338,33 @@ impl BindingRegistry {
         &self.bindings
     }
 
-    /// Resolve an unqualified name against the prelude.
+    /// Resolve an unqualified name against the prelude. Free-function bindings
+    /// only — method bindings (`receiver.is_some()`) share the same registry but
+    /// resolve through [`method`](Self::method), so a free function and a
+    /// same-named method never collide.
     #[must_use]
     pub fn prelude(&self, name: &str) -> Option<&Binding> {
-        self.bindings
-            .iter()
-            .find(|b| b.name == name && b.placement == Placement::Prelude)
+        self.bindings.iter().find(|b| {
+            b.name == name && b.placement == Placement::Prelude && b.receiver.is_none()
+        })
     }
 
-    /// Resolve a fully-qualified `module::name`.
+    /// Resolve a fully-qualified `module::name` (free-function bindings only).
     #[must_use]
     pub fn qualified(&self, path: &ModulePath, name: &str) -> Option<&Binding> {
+        self.bindings.iter().find(|b| {
+            b.name == name
+                && b.receiver.is_none()
+                && matches!(&b.placement, Placement::Module(p) if p == path)
+        })
+    }
+
+    /// Resolve a receiver method by its receiver type and name.
+    #[must_use]
+    pub fn method(&self, receiver: ReceiverType, name: &str) -> Option<&Binding> {
         self.bindings
             .iter()
-            .find(|b| b.name == name && matches!(&b.placement, Placement::Module(p) if p == path))
+            .find(|b| b.receiver == Some(receiver) && b.name == name)
     }
 }
 
@@ -310,7 +452,86 @@ pub fn builtin_bindings() -> BindingRegistry {
         reg.insert(Binding::vix_fn(Placement::Prelude, name, source));
     }
 
+    // Receiver methods: `(receiver, name)` → dedicated VIR op. These were a
+    // second hardcoded registry in `compiler.rs` (`PreludeMethodRegistry`); they
+    // now live in the same registry as the free-function bindings, dispatched by
+    // receiver type. The bespoke per-op lowering stays in `lower_method_call`.
+    for &(receiver, name, arity, op) in METHOD_BINDINGS {
+        reg.insert(Binding::method(receiver, name, arity, op));
+    }
+
     reg
+}
+
+/// The builtin receiver methods, as data: `(receiver, name, arity, op)`. One row
+/// per [`MethodOp`]. Lookup is by `(receiver, name)`; arity is validated by the
+/// compiler after resolution.
+const METHOD_BINDINGS: &[(ReceiverType, &str, usize, MethodOp)] = &[
+    (ReceiverType::Array, "len", 0, MethodOp::ArrayLen),
+    (ReceiverType::Array, "map", 1, MethodOp::ArrayMap),
+    (ReceiverType::Array, "fold", 2, MethodOp::ArrayFold),
+    (ReceiverType::Array, "split_last", 0, MethodOp::ArraySplitLast),
+    (ReceiverType::Array, "all", 1, MethodOp::ArrayAll),
+    (ReceiverType::Array, "any", 1, MethodOp::ArrayAny),
+    (ReceiverType::Array, "contains", 1, MethodOp::ArrayContains),
+    (ReceiverType::String, "trim", 0, MethodOp::StringTrim),
+    (ReceiverType::String, "contains", 1, MethodOp::StringContains),
+    (ReceiverType::String, "split_once", 1, MethodOp::StringSplitOnce),
+    (ReceiverType::String, "parse_int", 0, MethodOp::StringParseInt),
+    (ReceiverType::String, "is_numeric", 0, MethodOp::StringIsNumeric),
+    (ReceiverType::String, "lines", 0, MethodOp::StringLines),
+    (ReceiverType::Array, "sorted", 0, MethodOp::ArraySorted),
+    (ReceiverType::Array, "stream", 0, MethodOp::ArrayStream),
+    (ReceiverType::Int, "rem", 1, MethodOp::IntRem),
+    (ReceiverType::Map, "get", 1, MethodOp::MapGet),
+    (ReceiverType::Map, "has", 1, MethodOp::MapHas),
+    (ReceiverType::Map, "len", 0, MethodOp::MapLen),
+    (ReceiverType::Map, "keys", 0, MethodOp::MapKeys),
+    (ReceiverType::Map, "values", 0, MethodOp::MapValues),
+    (ReceiverType::Map, "with", 2, MethodOp::MapWith),
+    (ReceiverType::Set, "has", 1, MethodOp::SetHas),
+    (ReceiverType::Set, "len", 0, MethodOp::SetLen),
+    (ReceiverType::Set, "values", 0, MethodOp::SetValues),
+    (ReceiverType::Stream, "filter", 1, MethodOp::StreamFilter),
+    (ReceiverType::Stream, "filter_map", 1, MethodOp::StreamFilterMap),
+    (ReceiverType::Stream, "flat_map", 1, MethodOp::StreamFlatMap),
+    (ReceiverType::Stream, "collect", 0, MethodOp::StreamCollect),
+    (ReceiverType::ByteStream, "collect", 0, MethodOp::ByteStreamCollect),
+    (ReceiverType::ByteStream, "trim", 0, MethodOp::ByteStreamTrim),
+    (ReceiverType::Stream, "find_min", 1, MethodOp::StreamFindMin),
+    (ReceiverType::Stream, "find_max", 1, MethodOp::StreamFindMax),
+    (ReceiverType::Stream, "split_min", 0, MethodOp::StreamSplitMin),
+    (ReceiverType::Path, "to_string", 0, MethodOp::PathToString),
+    (ReceiverType::Int, "to_string", 0, MethodOp::IntToString),
+    (ReceiverType::Tree, "glob", 1, MethodOp::TreeGlob),
+    (ReceiverType::TreeEntry, "text", 0, MethodOp::TreeEntryText),
+    (ReceiverType::Blob, "len", 0, MethodOp::BlobLen),
+    (ReceiverType::Registry, "url", 1, MethodOp::RegistryUrl),
+    (ReceiverType::Registry, "coordinate", 1, MethodOp::RegistryCoordinate),
+];
+
+/// The dedicated op and arity a receiver method resolves to, or `None` if the
+/// receiver type carries no builtin method of that name. The compiler dispatches
+/// method lowering off this instead of a second hardcoded registry — mirroring
+/// [`prelude_primitive`] for the free-function rail.
+#[must_use]
+pub fn prelude_method(receiver_ty: &crate::vir::Type, name: &str) -> Option<MethodResolution> {
+    let receiver = ReceiverType::from_vir_type(receiver_ty)?;
+    let binding = BUILTIN_BINDINGS.method(receiver, name)?;
+    let BindingTarget::DedicatedOp(method) = binding.target else {
+        return None;
+    };
+    Some(MethodResolution {
+        method,
+        arity: binding.arity?,
+    })
+}
+
+/// A resolved receiver method: which dedicated op to lower to, and its arity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MethodResolution {
+    pub method: MethodOp,
+    pub arity: usize,
 }
 
 /// The built-in bindings, built once. The single source of truth for which
@@ -325,7 +546,9 @@ static BUILTIN_BINDINGS: LazyLock<BindingRegistry> = LazyLock::new(builtin_bindi
 pub fn prelude_primitive(name: &str) -> Option<PrimitiveId> {
     match &BUILTIN_BINDINGS.prelude(name)?.target {
         BindingTarget::Primitive(id) => Some(id.clone()),
-        BindingTarget::Intrinsic(_) | BindingTarget::VixFunction { .. } => None,
+        BindingTarget::Intrinsic(_)
+        | BindingTarget::VixFunction { .. }
+        | BindingTarget::DedicatedOp(_) => None,
     }
 }
 
@@ -335,7 +558,9 @@ pub fn prelude_primitive(name: &str) -> Option<PrimitiveId> {
 pub fn prelude_intrinsic(name: &str) -> Option<Intrinsic> {
     match &BUILTIN_BINDINGS.prelude(name)?.target {
         BindingTarget::Intrinsic(kind) => Some(*kind),
-        BindingTarget::Primitive(_) | BindingTarget::VixFunction { .. } => None,
+        BindingTarget::Primitive(_)
+        | BindingTarget::VixFunction { .. }
+        | BindingTarget::DedicatedOp(_) => None,
     }
 }
 
@@ -368,7 +593,9 @@ static PRELUDE_NAMES: LazyLock<BTreeSet<String>> = LazyLock::new(|| {
     BUILTIN_BINDINGS
         .bindings()
         .iter()
-        .filter(|binding| binding.placement == Placement::Prelude)
+        .filter(|binding| {
+            binding.placement == Placement::Prelude && binding.receiver.is_none()
+        })
         .map(|binding| binding.name.clone())
         .collect()
 });
