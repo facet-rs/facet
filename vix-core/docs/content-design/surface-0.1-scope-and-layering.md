@@ -117,10 +117,10 @@ tree:
   `runtime/observe.rs` (the observability event log, unrelated),
   `EffectCtx::observe(JournalObservation)` (journal plumbing), the memo-journal /
   `PersistentMemoClaim` machinery (used by all memoized effects), and
-  `PrimitiveMemoPolicy::Observed` (also used by tree-read). Left as documented
-  dead code for a follow-up: the now-unused `Selector`/`ArgRole::Selector` path
-  and `PrimitiveMachineError::RefreshConflict` (removing the latter would shift
-  `#[repr(u8)]` wire tags).
+  `PrimitiveMemoPolicy::Observed` (also used by tree-read). The now-unreachable
+  `Selector`/`ArgRole::Selector` request-shape path and
+  `PrimitiveMachineError::RefreshConflict` were deleted too (`ArgRole`/
+  `ArgRoleDecl` are now single-variant `Value`) — no dead code left behind.
 - **rodin / version** — not wired into any Rust build (only the unwired
   `corpus-next/` `use`s them), so safe to leave dormant until decided.
 
