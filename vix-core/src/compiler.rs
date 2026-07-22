@@ -57,10 +57,10 @@ pub struct CompilerConfig {
     /// `json_decode`/`toml_decode`/`refresh` functions, retired intrinsics).
     ///
     /// An uninstantiated *generic* prelude fn costs nothing (it only lowers per
-    /// call), but a non-generic fn (`is_blank`) and the prelude enums (`Format`,
-    /// `Mode`) are always emitted into the module — there is no reachability
-    /// pruning — so a non-empty prelude perturbs module counts and the
-    /// module-set hash. Empty for tests that isolate the bare surface.
+    /// call), but the prelude enums (`Format`, `Mode`) are always emitted into
+    /// the module — there is no reachability pruning — so a non-empty prelude
+    /// perturbs module counts and the module-set hash. Empty for tests that
+    /// isolate the bare surface.
     pub prelude: &'static [&'static str],
 }
 

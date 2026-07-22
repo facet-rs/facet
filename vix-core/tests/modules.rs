@@ -74,7 +74,6 @@ struct Row { name: String }
 #[test]
 fn std_module_access() -> Stream<Check> {
     let row: Row = std::json_decode("{\"name\":\"vix\"}");
-    yield expect_eq(std::is_blank(""), true);
     yield expect_eq(row.name, "vix");
 }
 "#;

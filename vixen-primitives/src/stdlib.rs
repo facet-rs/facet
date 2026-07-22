@@ -18,13 +18,12 @@
 //!
 //! Order is significant — it affects function ids, module counts, and the
 //! constant-fold of literal decodes — so it must match what the ratchet goldens
-//! were vetted against: `is_blank`, `Format`, `json_decode`, `toml_decode`,
+//! were vetted against: `Format`, `json_decode`, `toml_decode`,
 //! `try_json_decode`, `try_toml_decode`, `Mode`, `refresh`.
 
 /// The canonical `std` module assembled from the separately authored Vix items.
 pub const STD_MODULE_SOURCE: &str = concat!(
     "mod std {\n",
-    include_str!("stdlib/is_blank.vix"),
     include_str!("stdlib/format.vix"),
     include_str!("stdlib/json_decode.vix"),
     include_str!("stdlib/toml_decode.vix"),
@@ -39,7 +38,6 @@ pub const STD_MODULE_SOURCE: &str = concat!(
 /// historical unqualified spellings as compatibility aliases; new code should
 /// use the canonical items in [`STD_MODULE_SOURCE`] through `std::`.
 pub const PRELUDE_SOURCES: &[&str] = &[
-    include_str!("stdlib/is_blank.vix"),
     include_str!("stdlib/format.vix"),
     include_str!("stdlib/json_decode.vix"),
     include_str!("stdlib/toml_decode.vix"),
@@ -68,33 +66,49 @@ mod tests {
         })
     }
 
+    // Throwaway prelude items standing in for "some registered stdlib function",
+    // so the injection-mechanism tests below don't depend on which real stdlib
+    // functions ship. Mirrors the real prelude's shape: an unqualified compat
+    // alias plus the canonical item under `std`.
+    const DEMO_PRELUDE: &[&str] = &[
+        "pub fn demo_blank(text: String) -> Bool {\n    text == \"\"\n}\n",
+        "mod std {\n    pub fn demo_blank(text: String) -> Bool {\n        text == \"\"\n    }\n}\n",
+    ];
+
+    fn with_prelude(prelude: &'static [&'static str]) -> Compiler {
+        Compiler::with_config(CompilerConfig {
+            prelude,
+            ..CompilerConfig::default()
+        })
+    }
+
     #[test]
     fn registered_prelude_fn_is_callable_like_user_code() {
-        let program = "fn check(text: String) -> Bool {\n    is_blank(text)\n}\n";
+        let program = "fn check(text: String) -> Bool {\n    demo_blank(text)\n}\n";
 
-        // Without the stdlib, `is_blank` is an unknown name…
+        // Without a prelude, `demo_blank` is an unknown name…
         assert!(
-            without_stdlib().compile(program).is_err(),
-            "is_blank is not available without the stdlib"
+            with_prelude(&[]).compile(program).is_err(),
+            "demo_blank is not available without the prelude"
         );
-        // …with it registered, the program compiles as if `is_blank` were
+        // …with it registered, the program compiles as if `demo_blank` were
         // written right here — no special path.
         assert!(
-            with_stdlib().compile(program).is_ok(),
+            with_prelude(DEMO_PRELUDE).compile(program).is_ok(),
             "registered prelude fn resolves and lowers like user code"
         );
     }
 
     #[test]
     fn registered_std_fn_is_callable_through_its_module() {
-        let program = "fn check(text: String) -> Bool {\n    std::is_blank(text)\n}\n";
+        let program = "fn check(text: String) -> Bool {\n    std::demo_blank(text)\n}\n";
 
         assert!(
-            without_stdlib().compile(program).is_err(),
-            "std is not available without the vixen standard library"
+            with_prelude(&[]).compile(program).is_err(),
+            "std is not available without a prelude"
         );
         assert!(
-            with_stdlib().compile(program).is_ok(),
+            with_prelude(DEMO_PRELUDE).compile(program).is_ok(),
             "registered std function resolves and lowers through its module"
         );
     }
@@ -167,12 +181,12 @@ fn fetch_fresh() -> Blob {
 
     #[test]
     fn a_program_may_shadow_a_registered_prelude_fn() {
-        // The program declares its own `is_blank`; injection is if-absent, so
+        // The program declares its own `demo_blank`; injection is if-absent, so
         // this compiles rather than raising a duplicate definition.
         let program = concat!(
-            "fn is_blank(text: String) -> Bool {\n    text == \"nope\"\n}\n",
-            "fn check(text: String) -> Bool {\n    is_blank(text)\n}\n",
+            "fn demo_blank(text: String) -> Bool {\n    text == \"nope\"\n}\n",
+            "fn check(text: String) -> Bool {\n    demo_blank(text)\n}\n",
         );
-        assert!(with_stdlib().compile(program).is_ok());
+        assert!(with_prelude(DEMO_PRELUDE).compile(program).is_ok());
     }
 }
