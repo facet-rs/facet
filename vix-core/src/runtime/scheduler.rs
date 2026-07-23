@@ -17,8 +17,8 @@ use crate::lowering::{LoweringArtifact, LoweringAttribution, ValueInputBinding};
 use crate::schema::SchemaRef;
 use crate::support::Span;
 use crate::vir::{
-    CommandPiece, ExternKind, Function, FunctionId, Island, IslandId, NodeId, OPTION_NONE_VARIANT,
-    OPTION_SOME_VARIANT, Op, ProgressiveProjection, Type, VariantPayload,
+    CommandPiece, ExternKind, Function, FunctionId, Island, IslandId, NodeId, Op,
+    ProgressiveProjection, Type, VariantPayload,
 };
 
 use super::fixture::{
@@ -40,7 +40,6 @@ use super::store::{
     FrozenValue, Handle, Interned, Store, StoreEntry, StoreJournal, StoreJournalError,
     StoreJournalLoadReport,
 };
-use super::{BlobId, OriginHint};
 use super::{
     CallbackError, EffectCtx, PrimitiveCompletion, PrimitiveDispatcher, PrimitiveField,
     PrimitiveFieldValue, PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveValue,
@@ -3143,95 +3142,6 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                     node: Some(map_node),
                 }))
             }
-            Op::RegistryUrl => {
-                let EffectTerm::Value(registry) = input(0, self)? else {
-                    return effect_fault("registry URL receiver was codata");
-                };
-                let EffectTerm::Value(name) = input(1, self)? else {
-                    return effect_fault("registry URL name was codata");
-                };
-                let name = String::from_utf8(name.resident)
-                    .map_err(|_| effect_machine_error("registry artifact name was not UTF-8"))?;
-                let manifest = self.fixture_store.registry_manifest().map_err(|_| {
-                    effect_machine_error("fixture registry manifest was unavailable")
-                })?;
-                reads.push(super::model::ReadWitness {
-                    source: registry.identity.clone(),
-                    projection: ReadProjection::RegistryManifest,
-                    observation: ReadObservation::Value(
-                        effect_leaf(&Type::String, manifest.clone().into_bytes()).identity,
-                    ),
-                });
-                let row = manifest.lines().find_map(|line| {
-                    let mut fields = line.split_whitespace();
-                    let artifact = fields.next()?;
-                    let url = fields.next()?;
-                    let hash = fields.next()?;
-                    let upstream = fields.next().map(str::to_owned);
-                    (artifact == name).then(|| (url.to_owned(), hash.to_owned(), upstream))
-                });
-                let (url, hash, upstream) = row
-                    .ok_or_else(|| effect_machine_error("fixture registry artifact was absent"))?;
-                let blob_schema = Type::Extern(ExternKind::Blob).schema_ref();
-                let blob_id = PrimitiveValue {
-                    schema: Type::from_facet::<BlobId>().schema_ref(),
-                    body: PrimitiveValueBody::Product(vec![
-                        primitive_child_field(PrimitiveValue::bytes(
-                            Type::Extern(ExternKind::Schema).schema_ref(),
-                            blob_schema.canonical_bytes(),
-                        )),
-                        primitive_child_field(PrimitiveValue::bytes(
-                            Type::String.schema_ref(),
-                            hash.into_bytes(),
-                        )),
-                    ]),
-                };
-                let capability =
-                    primitive_value_from_effect(&Type::Extern(ExternKind::Registry), &registry)?;
-                let origin = PrimitiveValue {
-                    schema: Type::from_facet::<OriginHint>().schema_ref(),
-                    body: PrimitiveValueBody::Product(vec![
-                        primitive_child_field(capability),
-                        primitive_child_field(PrimitiveValue::bytes(
-                            Type::String.schema_ref(),
-                            url.into_bytes(),
-                        )),
-                    ]),
-                };
-                effect_value_from_primitive(
-                    &node.ty,
-                    PrimitiveValue {
-                        schema: node.ty.schema_ref(),
-                        body: PrimitiveValueBody::Product(vec![
-                            primitive_child_field(blob_id),
-                            primitive_child_field(PrimitiveValue {
-                                schema: Type::array(Type::from_facet::<OriginHint>()).schema_ref(),
-                                body: PrimitiveValueBody::Sequence {
-                                    element_schema: Type::from_facet::<OriginHint>().schema_ref(),
-                                    elements: vec![origin],
-                                },
-                            }),
-                            primitive_child_field(PrimitiveValue {
-                                schema: Type::option(Type::String).schema_ref(),
-                                body: upstream.map_or_else(
-                                    || PrimitiveValueBody::Variant {
-                                        tag: OPTION_NONE_VARIANT,
-                                        fields: Vec::new(),
-                                    },
-                                    |upstream| PrimitiveValueBody::Variant {
-                                        tag: OPTION_SOME_VARIANT,
-                                        fields: vec![primitive_child_field(PrimitiveValue::bytes(
-                                            Type::String.schema_ref(),
-                                            upstream.into_bytes(),
-                                        ))],
-                                    },
-                                ),
-                            }),
-                        ]),
-                    },
-                )
-                .map(EffectTerm::Value)
-            }
             Op::Untar => {
                 let EffectTerm::Value(blob) = input(0, self)? else {
                     return effect_fault("untar input was codata");
@@ -3993,6 +3903,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             value,
             &mut self.store,
             &mut interned,
+            &plan.abi_schemas,
         ) {
             return Err(self.terminate_primitive(
                 ctx.task_id,
@@ -7350,6 +7261,7 @@ fn abi_schema_for_type(
         .ok_or_else(|| format!("{} is absent from the primitive ABI catalog", ty.name()))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_primitive_value(
     task: &mut weavy::exec::ExecTask,
     region: super::FrameRegion,
@@ -7358,6 +7270,7 @@ fn write_primitive_value(
     value: &PrimitiveValue,
     store: &mut Store,
     interned: &mut Vec<Interned>,
+    abi_schemas: &[(Type, weavy::SchemaRef)],
 ) -> Result<(), String> {
     if value.schema != ty.schema_ref() {
         return Err(format!(
@@ -7365,6 +7278,21 @@ fn write_primitive_value(
             value.schema,
             ty.schema_ref()
         ));
+    }
+    // A dense-array result field (e.g. a `PinnedBlobRef`'s `origins: [OriginHint]`)
+    // is materialized into the resuming task's molten arena and referenced by a
+    // single handle word — the write counterpart to the array read path. Every
+    // other aggregate (Record/Tuple/Enum) stays inline in the frame words below.
+    if let (Type::Array(element), PrimitiveValueBody::Sequence { elements, .. }) = (ty, &value.body) {
+        let array_schema = abi_schema_for_type(ty, abi_schemas)?;
+        let element_bytes = elements
+            .iter()
+            .map(|value| primitive_inline_bytes(task, element, value, store, interned, abi_schemas))
+            .collect::<Result<Vec<_>, _>>()?;
+        let handle = task
+            .import_dense_host_array(array_schema, &element_bytes)
+            .map_err(|fault| format!("primitive array materialization failed: {fault:?}"))?;
+        return write_primitive_word(task, region, offset, handle);
     }
     match (ty, &value.body) {
         (Type::Bool | Type::Int | Type::Check, PrimitiveValueBody::Bytes(bytes)) => {
@@ -7390,7 +7318,9 @@ fn write_primitive_value(
         {
             let mut cursor = offset;
             for (element, field) in elements.iter().zip(fields) {
-                write_primitive_field(task, region, cursor, element, field, store, interned)?;
+                write_primitive_field(
+                    task, region, cursor, element, field, store, interned, abi_schemas,
+                )?;
                 cursor += primitive_type_words(element)?;
             }
             Ok(())
@@ -7400,7 +7330,16 @@ fn write_primitive_value(
         {
             let mut cursor = offset;
             for (declared, field) in record.fields.iter().zip(fields) {
-                write_primitive_field(task, region, cursor, &declared.ty, field, store, interned)?;
+                write_primitive_field(
+                    task,
+                    region,
+                    cursor,
+                    &declared.ty,
+                    field,
+                    store,
+                    interned,
+                    abi_schemas,
+                )?;
                 cursor += primitive_type_words(&declared.ty)?;
             }
             Ok(())
@@ -7419,7 +7358,9 @@ fn write_primitive_value(
             write_primitive_word(task, region, offset, i64::from(*tag))?;
             let mut cursor = offset + 1;
             for (field_ty, field) in field_types.into_iter().zip(fields) {
-                write_primitive_field(task, region, cursor, field_ty, field, store, interned)?;
+                write_primitive_field(
+                    task, region, cursor, field_ty, field, store, interned, abi_schemas,
+                )?;
                 cursor += primitive_type_words(field_ty)?;
             }
             Ok(())
@@ -7431,6 +7372,7 @@ fn write_primitive_value(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_primitive_field(
     task: &mut weavy::exec::ExecTask,
     region: super::FrameRegion,
@@ -7439,6 +7381,7 @@ fn write_primitive_field(
     field: &PrimitiveField,
     store: &mut Store,
     interned: &mut Vec<Interned>,
+    abi_schemas: &[(Type, weavy::SchemaRef)],
 ) -> Result<(), String> {
     if field.schema != ty.schema_ref() {
         return Err(format!(
@@ -7453,7 +7396,137 @@ fn write_primitive_field(
         }
         PrimitiveFieldValue::Child(value) => (**value).clone(),
     };
-    write_primitive_value(task, region, offset, ty, &value, store, interned)
+    write_primitive_value(task, region, offset, ty, &value, store, interned, abi_schemas)
+}
+
+/// The inline (frame-word) byte encoding of a primitive result `value` of type
+/// `ty`, for use as a dense-array element: scalars are their little-endian words,
+/// reference leaves (`String`/`Path`/`Extern`) are interned into the Store and
+/// encoded as their handle word, nested records/tuples/enums concatenate their
+/// fields, and a nested array is itself materialized into molten and encoded as
+/// its handle word. This mirrors the frame layout `write_primitive_value` writes,
+/// but into a byte buffer rather than the frame region.
+fn primitive_inline_bytes(
+    task: &mut weavy::exec::ExecTask,
+    ty: &Type,
+    value: &PrimitiveValue,
+    store: &mut Store,
+    interned: &mut Vec<Interned>,
+    abi_schemas: &[(Type, weavy::SchemaRef)],
+) -> Result<Vec<u8>, String> {
+    if value.schema != ty.schema_ref() {
+        return Err(format!(
+            "primitive element schema {} disagrees with {}",
+            value.schema,
+            ty.schema_ref()
+        ));
+    }
+    match (ty, &value.body) {
+        (Type::Bool | Type::Int | Type::Check, PrimitiveValueBody::Bytes(bytes)) => {
+            if bytes.len() != size_of::<i64>() {
+                return Err(format!("primitive scalar {} is not one word", ty.name()));
+            }
+            Ok(bytes.clone())
+        }
+        (Type::String | Type::Path | Type::Extern(_), PrimitiveValueBody::Bytes(bytes)) => {
+            let stored = store.intern_realized(ty.schema_ref(), bytes);
+            let handle = store
+                .weavy_handle(stored.handle)
+                .ok_or_else(|| "new primitive element has no Store handle".to_owned())?;
+            interned.push(stored);
+            Ok(handle.as_i64().to_le_bytes().to_vec())
+        }
+        (Type::Tuple(elements), PrimitiveValueBody::Product(fields))
+            if elements.len() == fields.len() =>
+        {
+            let mut out = Vec::new();
+            for (element, field) in elements.iter().zip(fields) {
+                out.extend(primitive_field_inline_bytes(
+                    task, element, field, store, interned, abi_schemas,
+                )?);
+            }
+            Ok(out)
+        }
+        (Type::Record(record), PrimitiveValueBody::Product(fields))
+            if record.fields.len() == fields.len() =>
+        {
+            let mut out = Vec::new();
+            for (declared, field) in record.fields.iter().zip(fields) {
+                out.extend(primitive_field_inline_bytes(
+                    task,
+                    &declared.ty,
+                    field,
+                    store,
+                    interned,
+                    abi_schemas,
+                )?);
+            }
+            Ok(out)
+        }
+        (Type::Enum(enumeration), PrimitiveValueBody::Variant { tag, fields }) => {
+            let variant = enumeration
+                .variants
+                .get(*tag as usize)
+                .ok_or_else(|| format!("primitive element enum tag {tag} is out of range"))?;
+            let field_types = variant_field_types(&variant.payload);
+            if field_types.len() != fields.len() {
+                return Err(
+                    "primitive element variant field count disagrees with its type".to_owned(),
+                );
+            }
+            let mut out = i64::from(*tag).to_le_bytes().to_vec();
+            for (field_ty, field) in field_types.into_iter().zip(fields) {
+                out.extend(primitive_field_inline_bytes(
+                    task, field_ty, field, store, interned, abi_schemas,
+                )?);
+            }
+            // Pad to the enum's full inline width so every variant occupies the
+            // same fixed element footprint the reader expects.
+            out.resize(primitive_type_words(ty)? * size_of::<i64>(), 0);
+            Ok(out)
+        }
+        (Type::Array(element), PrimitiveValueBody::Sequence { elements, .. }) => {
+            let array_schema = abi_schema_for_type(ty, abi_schemas)?;
+            let element_bytes = elements
+                .iter()
+                .map(|value| {
+                    primitive_inline_bytes(task, element, value, store, interned, abi_schemas)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let handle = task
+                .import_dense_host_array(array_schema, &element_bytes)
+                .map_err(|fault| format!("nested array materialization failed: {fault:?}"))?;
+            Ok(handle.to_le_bytes().to_vec())
+        }
+        _ => Err(format!(
+            "primitive element body disagrees with frame type {}",
+            ty.name()
+        )),
+    }
+}
+
+fn primitive_field_inline_bytes(
+    task: &mut weavy::exec::ExecTask,
+    ty: &Type,
+    field: &PrimitiveField,
+    store: &mut Store,
+    interned: &mut Vec<Interned>,
+    abi_schemas: &[(Type, weavy::SchemaRef)],
+) -> Result<Vec<u8>, String> {
+    if field.schema != ty.schema_ref() {
+        return Err(format!(
+            "primitive element field schema {} disagrees with {}",
+            field.schema,
+            ty.schema_ref()
+        ));
+    }
+    let value = match &field.value {
+        PrimitiveFieldValue::Inline(bytes) => {
+            PrimitiveValue::bytes(field.schema.clone(), bytes.clone())
+        }
+        PrimitiveFieldValue::Child(value) => (**value).clone(),
+    };
+    primitive_inline_bytes(task, ty, &value, store, interned, abi_schemas)
 }
 
 fn write_primitive_word(
@@ -7573,13 +7646,6 @@ fn primitive_field_from_effect(
             schema: value.schema.clone(),
             value: PrimitiveFieldValue::Child(Box::new(value)),
         })
-    }
-}
-
-fn primitive_child_field(value: PrimitiveValue) -> PrimitiveField {
-    PrimitiveField {
-        schema: value.schema.clone(),
-        value: PrimitiveFieldValue::Child(Box::new(value)),
     }
 }
 
