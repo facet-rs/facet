@@ -7239,6 +7239,13 @@ fn bad() -> Stream<Check> {
 /// `never_read` / `fetched` trace descriptors all resolve.
 #[test]
 fn tree_fetch_band_compiles_to_typed_vir() {
+    // The tree methods (`.glob`/`.text`/`.len`/`.url`) are declared by the
+    // embedder, not the bare language, so the compiler is configured with the
+    // injected domain methods — as the runnable system does (issue 2520).
+    let compiler = Compiler::with_config(CompilerConfig {
+        methods: vixen_primitives::DOMAIN_METHODS,
+        ..CompilerConfig::default()
+    });
     for (rung, source) in [
         ("071", RUNG_071),
         ("072", RUNG_072),
@@ -7246,7 +7253,7 @@ fn tree_fetch_band_compiles_to_typed_vir() {
         ("076", RUNG_076),
         ("077", RUNG_077),
     ] {
-        let module = Compiler::new()
+        let module = compiler
             .compile(source)
             .unwrap_or_else(|error| panic!("rung {rung} compiles to VIR: {error:?}"));
         assert_eq!(module.tests.len(), 1, "rung {rung} declares one test");

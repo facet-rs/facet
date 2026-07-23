@@ -507,11 +507,44 @@ const METHOD_BINDINGS: &[(ReceiverType, &str, usize, MethodOp)] = &[
     (ReceiverType::Stream, "split_min", 0, MethodOp::StreamSplitMin),
     (ReceiverType::Path, "to_string", 0, MethodOp::PathToString),
     (ReceiverType::Int, "to_string", 0, MethodOp::IntToString),
-    (ReceiverType::Tree, "glob", 1, MethodOp::TreeGlob),
-    (ReceiverType::TreeEntry, "text", 0, MethodOp::TreeEntryText),
-    (ReceiverType::Blob, "len", 0, MethodOp::BlobLen),
-    (ReceiverType::Registry, "url", 1, MethodOp::RegistryUrl),
+    // The domain methods (`Tree.glob`, `TreeEntry.text`, `Blob.len`,
+    // `Registry.url`) are no longer builtin: they are declared by
+    // `vixen-primitives` and injected through [`CompilerConfig::methods`]
+    // (issue 2520). `vix-core` ships only the axiom methods above.
 ];
+
+/// A receiver-method declaration the embedder injects into the compiler
+/// ([`CompilerConfig::methods`]), so a host type's methods are declared by
+/// `vixen-primitives` rather than hardcoded in `vix-core`. Its `op` names the
+/// dedicated VIR op the bespoke lowering in `compiler::lower_method_call` still
+/// owns — the *declaration* moves out; the machine engine stays in core.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MethodDecl {
+    pub receiver: ReceiverType,
+    pub name: &'static str,
+    pub arity: usize,
+    pub op: MethodOp,
+}
+
+/// Resolve a receiver method against an embedder-injected declaration set, or
+/// `None` if none matches. The compiler consults this alongside
+/// [`prelude_method`] (the axiom methods), the way `primitive_shape` consults
+/// injected primitive surfaces alongside the builtin ones.
+#[must_use]
+pub fn injected_method(
+    methods: &[MethodDecl],
+    receiver_ty: &crate::vir::Type,
+    name: &str,
+) -> Option<MethodResolution> {
+    let receiver = ReceiverType::from_vir_type(receiver_ty)?;
+    let decl = methods
+        .iter()
+        .find(|decl| decl.receiver == receiver && decl.name == name)?;
+    Some(MethodResolution {
+        method: decl.op,
+        arity: decl.arity,
+    })
+}
 
 /// The dedicated op and arity a receiver method resolves to, or `None` if the
 /// receiver type carries no builtin method of that name. The compiler dispatches

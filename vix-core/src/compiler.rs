@@ -62,6 +62,12 @@ pub struct CompilerConfig {
     /// perturbs module counts and the module-set hash. Empty for tests that
     /// isolate the bare surface.
     pub prelude: &'static [&'static str],
+    /// Receiver-method declarations the embedder injects — a host type's methods
+    /// (`Tree.glob`, `TreeEntry.text`, …) declared by `vixen-primitives` rather
+    /// than hardcoded in `vix-core`. Consulted by `lower_method_call` alongside
+    /// the builtin axiom methods; each names the dedicated op its bespoke
+    /// lowering owns. `vix-core` alone ships **none** — the bare language.
+    pub methods: &'static [crate::binding::MethodDecl],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -3905,8 +3911,11 @@ fn lower_method_call(
         return lower_tree_text_projection(nodes, bindings, context, call, base, &segments);
     }
     let receiver = lower_value(nodes, bindings, context, &call.receiver)?;
-    let Some(entry) = crate::binding::prelude_method(&receiver.ty, &call.name.value)
-    else {
+    // Axiom methods resolve against the builtin registry; the embedder's injected
+    // host-type methods (`Tree.glob`, …) resolve against `config.methods`.
+    let Some(entry) = crate::binding::prelude_method(&receiver.ty, &call.name.value).or_else(|| {
+        crate::binding::injected_method(context.config.methods, &receiver.ty, &call.name.value)
+    }) else {
         // Uniform function-call syntax: `recv.method(args)` on a value with no
         // builtin method of that name resolves to the free function `method`
         // whose sole positional parameter is the receiver, with the method's

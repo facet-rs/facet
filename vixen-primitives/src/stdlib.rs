@@ -50,6 +50,7 @@ mod tests {
     fn with_stdlib() -> Compiler {
         Compiler::with_config(CompilerConfig {
             prelude: super::PRELUDE_SOURCES,
+            methods: crate::DOMAIN_METHODS,
             ..CompilerConfig::default()
         })
     }

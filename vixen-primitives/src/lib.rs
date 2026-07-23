@@ -28,6 +28,38 @@ pub(crate) mod rt {
     pub use vix::runtime::*;
 }
 
+/// The host-type methods `vixen` declares on the domain types, injected into the
+/// compiler through [`vix::compiler::CompilerConfig::methods`]. The dedicated ops
+/// they name are still lowered and executed by `vix-core` (the machine engine);
+/// only the *declaration* lives here, so `vix-core` no longer hardcodes
+/// `.glob`/`.text`/`.len`/`.url` (issue 2520).
+pub const DOMAIN_METHODS: &[vix::binding::MethodDecl] = &[
+    vix::binding::MethodDecl {
+        receiver: vix::binding::ReceiverType::Tree,
+        name: "glob",
+        arity: 1,
+        op: vix::binding::MethodOp::TreeGlob,
+    },
+    vix::binding::MethodDecl {
+        receiver: vix::binding::ReceiverType::TreeEntry,
+        name: "text",
+        arity: 0,
+        op: vix::binding::MethodOp::TreeEntryText,
+    },
+    vix::binding::MethodDecl {
+        receiver: vix::binding::ReceiverType::Blob,
+        name: "len",
+        arity: 0,
+        op: vix::binding::MethodOp::BlobLen,
+    },
+    vix::binding::MethodDecl {
+        receiver: vix::binding::ReceiverType::Registry,
+        name: "url",
+        arity: 1,
+        op: vix::binding::MethodOp::RegistryUrl,
+    },
+];
+
 pub use decode_primitive::*;
 pub use fetch_primitive::*;
 pub use primitive_value_decode::*;

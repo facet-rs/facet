@@ -68,6 +68,7 @@ pub fn install_builtins<S: EventSink, Ctx>(runtime: &mut Runtime<S, Ctx>) {
 pub fn default_config() -> CompilerConfig {
     CompilerConfig {
         prelude: vixen_primitives::stdlib::PRELUDE_SOURCES,
+        methods: vixen_primitives::DOMAIN_METHODS,
         ..CompilerConfig::default()
     }
 }
