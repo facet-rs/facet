@@ -102,7 +102,7 @@ pub fn tree_read_request_type() -> Type {
         vec![
             RecordField {
                 name: "tree".to_owned(),
-                ty: Type::Extern(ExternKind::Tree),
+                ty: Type::Extern(ExternKind::Host(crate::binding::TREE)),
             },
             RecordField {
                 name: "path".to_owned(),

@@ -495,7 +495,7 @@ impl EffectAuthority for StagedEffectAuthority {
                 })?
         };
         if let ReadProjection::TreePath { path } = projection {
-            if value.schema != Type::Extern(crate::vir::ExternKind::Tree).schema_ref() {
+            if value.schema != Type::Extern(crate::vir::ExternKind::Host(crate::binding::TREE)).schema_ref() {
                 return Err(PrimitiveMachineError::AuthorityViolation {
                     detail: "tree-path read source was not a Tree".to_owned(),
                 });

@@ -69,6 +69,7 @@ pub fn default_config() -> CompilerConfig {
     CompilerConfig {
         prelude: vixen_primitives::stdlib::PRELUDE_SOURCES,
         methods: vixen_primitives::DOMAIN_METHODS,
+        host_types: vixen_primitives::HOST_TYPES,
         ..CompilerConfig::default()
     }
 }

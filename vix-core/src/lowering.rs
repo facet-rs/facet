@@ -6271,7 +6271,7 @@ fn lower_node(
         }
         Op::FixtureTree(name) => {
             require_input_count(node, 0)?;
-            let tree_ty = Type::Extern(crate::vir::ExternKind::Tree);
+            let tree_ty = Type::Extern(crate::vir::ExternKind::Host(crate::binding::TREE));
             require_node_type(node, tree_ty.clone())?;
             let constant = NodeRef {
                 function: lowering.function.id,

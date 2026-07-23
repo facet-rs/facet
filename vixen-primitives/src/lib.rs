@@ -28,6 +28,23 @@ pub(crate) mod rt {
     pub use vix::runtime::*;
 }
 
+/// The host types `vixen` declares — the domain types `Tree` and `TreeEntry`,
+/// injected into the compiler through [`vix::compiler::CompilerConfig::host_types`]
+/// so the bare language no longer hardcodes them as `ExternKind` variants (issue
+/// 2520). They remain extern-backed opaque values with byte-stable `vix.Tree` /
+/// `vix.TreeEntry` identity; only the *declaration* moves here. Both are
+/// path-projectable and yield a `TreeEntry` under `receiver / segment`.
+pub const HOST_TYPES: &[vix::binding::HostTypeDecl] = &[
+    vix::binding::HostTypeDecl {
+        name: vix::binding::TREE,
+        projects_to: Some(vix::binding::TREE_ENTRY),
+    },
+    vix::binding::HostTypeDecl {
+        name: vix::binding::TREE_ENTRY,
+        projects_to: Some(vix::binding::TREE_ENTRY),
+    },
+];
+
 /// The host-type methods `vixen` declares on the domain types, injected into the
 /// compiler through [`vix::compiler::CompilerConfig::methods`]. The dedicated ops
 /// they name are still lowered and executed by `vix-core` (the machine engine);
@@ -35,13 +52,13 @@ pub(crate) mod rt {
 /// `.glob`/`.text`/`.len`/`.url` (issue 2520).
 pub const DOMAIN_METHODS: &[vix::binding::MethodDecl] = &[
     vix::binding::MethodDecl {
-        receiver: vix::binding::ReceiverType::Tree,
+        receiver: vix::binding::ReceiverType::Host(vix::binding::TREE),
         name: "glob",
         arity: 1,
         op: vix::binding::MethodOp::TreeGlob,
     },
     vix::binding::MethodDecl {
-        receiver: vix::binding::ReceiverType::TreeEntry,
+        receiver: vix::binding::ReceiverType::Host(vix::binding::TREE_ENTRY),
         name: "text",
         arity: 0,
         op: vix::binding::MethodOp::TreeEntryText,

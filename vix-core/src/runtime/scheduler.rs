@@ -5772,7 +5772,11 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             }
             _ => {
                 let lines_ty = Type::map(Type::Int, Type::String);
-                (Type::Extern(ExternKind::Tree), outcome_ty.clone(), lines_ty)
+                (
+                    Type::Extern(ExternKind::Host(crate::binding::TREE)),
+                    outcome_ty.clone(),
+                    lines_ty,
+                )
             }
         };
         let int_schema = semantic_schema_ref(&Type::Int);
@@ -7842,7 +7846,7 @@ fn effect_value_from_frozen(
             effect.frozen = Some(frozen);
             Ok(effect)
         }
-        (FrozenValue::Opaque(bytes), Type::Extern(ExternKind::Tree)) => {
+        (FrozenValue::Opaque(bytes), Type::Extern(ExternKind::Host(crate::binding::TREE))) => {
             parse_ustar(bytes)
                 .map_err(|_| effect_machine_error("frozen Tree was not plain ustar"))?;
             let canonical = canonical_archive_tree(bytes);

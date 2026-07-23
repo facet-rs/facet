@@ -137,10 +137,33 @@ pub enum ReceiverType {
     Int,
     Path,
     ByteStream,
-    Tree,
-    TreeEntry,
     Blob,
     Registry,
+    /// A declared host type ([`crate::vir::ExternKind::Host`]), dispatched by its
+    /// name. `Tree`/`TreeEntry` are the two the embedder declares today; they are
+    /// no longer core `ReceiverType` variants, so a host type's methods are
+    /// injected declarations ([`MethodDecl`]) rather than compiler-hardcoded.
+    Host(&'static str),
+}
+
+/// The nominal name of the `Tree` host type — its identity string, hashed as
+/// `builtin_schema("Tree")` / `b"extern" + "Tree"`. The machine engine (the tree
+/// ops) still names it here; the *type declaration* is injected by the embedder.
+pub const TREE: &str = "Tree";
+/// The nominal name of the `TreeEntry` host type. See [`TREE`].
+pub const TREE_ENTRY: &str = "TreeEntry";
+
+/// A host-type declaration the embedder injects into the compiler
+/// ([`crate::compiler::CompilerConfig::host_types`]), so a domain type like
+/// `Tree` is declared by `vixen-primitives` rather than hardcoded as a variant
+/// of the language core's `ExternKind`. `name` is the type's nominal identity;
+/// `projects_to` names the host type that `receiver / segment` path projection
+/// yields (both `Tree` and a directory `TreeEntry` project to a `TreeEntry`), or
+/// `None` for a non-projectable host type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HostTypeDecl {
+    pub name: &'static str,
+    pub projects_to: Option<&'static str>,
 }
 
 impl ReceiverType {
@@ -158,13 +181,42 @@ impl ReceiverType {
             Type::Int => Some(Self::Int),
             Type::Path => Some(Self::Path),
             Type::Record(record) if record.name == "ByteStream" => Some(Self::ByteStream),
-            Type::Extern(ExternKind::Tree) => Some(Self::Tree),
-            Type::Extern(ExternKind::TreeEntry) => Some(Self::TreeEntry),
             Type::Extern(ExternKind::Blob) => Some(Self::Blob),
             Type::Extern(ExternKind::Registry) => Some(Self::Registry),
+            // A declared host type dispatches by its name.
+            Type::Extern(ExternKind::Host(name)) => Some(Self::Host(name)),
             _ => None,
         }
     }
+}
+
+/// The [`crate::vir::Type`] for an injected host type named `name`, or `None` if
+/// `name` is not a declared host type. The type-annotation parsers use this in
+/// place of hardcoded `Tree`/`TreeEntry` arms.
+#[must_use]
+pub fn host_type_vir(host_types: &[HostTypeDecl], name: &str) -> Option<crate::vir::Type> {
+    host_types
+        .iter()
+        .find(|decl| decl.name == name)
+        .map(|decl| crate::vir::Type::Extern(crate::vir::ExternKind::Host(decl.name)))
+}
+
+/// The host type that projecting `receiver / segment` yields, or `None` if the
+/// receiver is not a path-projectable injected host type.
+#[must_use]
+pub fn host_projection(
+    host_types: &[HostTypeDecl],
+    receiver_ty: &crate::vir::Type,
+) -> Option<crate::vir::Type> {
+    use crate::vir::{ExternKind, Type};
+    let Type::Extern(ExternKind::Host(name)) = receiver_ty else {
+        return None;
+    };
+    let target = host_types
+        .iter()
+        .find(|decl| decl.name == *name)?
+        .projects_to?;
+    host_type_vir(host_types, target)
 }
 
 /// Which dedicated VIR op a receiver method lowers to. The compiler owns the

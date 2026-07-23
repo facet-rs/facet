@@ -7244,6 +7244,7 @@ fn tree_fetch_band_compiles_to_typed_vir() {
     // injected domain methods — as the runnable system does (issue 2520).
     let compiler = Compiler::with_config(CompilerConfig {
         methods: vixen_primitives::DOMAIN_METHODS,
+        host_types: vixen_primitives::HOST_TYPES,
         ..CompilerConfig::default()
     });
     for (rung, source) in [

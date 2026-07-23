@@ -68,6 +68,13 @@ pub struct CompilerConfig {
     /// the builtin axiom methods; each names the dedicated op its bespoke
     /// lowering owns. `vix-core` alone ships **none** — the bare language.
     pub methods: &'static [crate::binding::MethodDecl],
+    /// Host-type declarations the embedder injects — the domain types (`Tree`,
+    /// `TreeEntry`) declared by `vixen-primitives` rather than hardcoded as
+    /// `ExternKind` variants. The type-annotation parser resolves these names,
+    /// and `/`-projection reads their `projects_to` here. `vix-core` alone ships
+    /// **none**; the axiom externs (`Blob`/`Registry`/`Schema`/`PinnedUrl`) stay
+    /// hardcoded.
+    pub host_types: &'static [crate::binding::HostTypeDecl],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -678,10 +685,14 @@ struct TypeResolver<'a> {
     resolving: BTreeSet<String>,
     resolved: BTreeMap<String, Type>,
     schemas: SchemaSet,
+    host_types: &'a [crate::binding::HostTypeDecl],
 }
 
 impl<'a> TypeResolver<'a> {
-    fn new(source: &'a ast::SourceFile) -> Result<Self, Diagnostics> {
+    fn new(
+        source: &'a ast::SourceFile,
+        host_types: &'a [crate::binding::HostTypeDecl],
+    ) -> Result<Self, Diagnostics> {
         let schemas = semantic_schema_set(source)?;
         let mut declarations = BTreeMap::new();
         for item in &source.items {
@@ -725,6 +736,7 @@ impl<'a> TypeResolver<'a> {
             resolving: BTreeSet::new(),
             resolved: BTreeMap::from([("Ordering".to_owned(), Type::ordering())]),
             schemas,
+            host_types,
         })
     }
 
@@ -1162,9 +1174,19 @@ impl<'a> TypeResolver<'a> {
             ast::Type::Path(path) if path_is(path, "Int") => Ok(Type::Int),
             ast::Type::Path(path) if path_is(path, "String") => Ok(Type::String),
             ast::Type::Path(path) if path_is(path, "Path") => Ok(Type::Path),
-            ast::Type::Path(path) if path_is(path, "Tree") => Ok(Type::Extern(ExternKind::Tree)),
-            ast::Type::Path(path) if path_is(path, "TreeEntry") => {
-                Ok(Type::Extern(ExternKind::TreeEntry))
+            ast::Type::Path(path)
+                if self
+                    .host_types
+                    .iter()
+                    .any(|decl| path_is(path, decl.name)) =>
+            {
+                let name = self
+                    .host_types
+                    .iter()
+                    .find(|decl| path_is(path, decl.name))
+                    .expect("guarded by the injected host types above")
+                    .name;
+                Ok(Type::Extern(ExternKind::Host(name)))
             }
             ast::Type::Path(path) if path_is(path, "Blob") => Ok(Type::Extern(ExternKind::Blob)),
             ast::Type::Path(path) if path_is(path, "Registry") => {
@@ -1328,7 +1350,7 @@ pub fn exec_outcome_type() -> Type {
         vec![
             RecordField {
                 name: "tree".to_owned(),
-                ty: Type::Extern(ExternKind::Tree),
+                ty: Type::Extern(ExternKind::Host(crate::binding::TREE)),
             },
             RecordField {
                 name: "stdout".to_owned(),
@@ -1347,11 +1369,20 @@ fn lower_module(
     config: CompilerConfig,
     primitive_surfaces: &[crate::runtime::PrimitiveSurface],
 ) -> Result<Module, Diagnostics> {
-    let mut types = TypeResolver::new(source)?.resolve_all(source)?;
+    let mut types = TypeResolver::new(source, config.host_types)?.resolve_all(source)?;
     for name in CAPABILITY_TYPE_NAMES {
         types
             .entry((*name).to_owned())
             .or_insert_with(|| capability_type(name));
+    }
+    // Injected host types (`Tree`, `TreeEntry`) are nameable like any declared
+    // type — the language no longer hardcodes them. Their extern-backed value
+    // hashes identically to the retired `ExternKind` variants (`name()` is
+    // unchanged), so recipe/value identity is byte-stable.
+    for decl in config.host_types {
+        types
+            .entry(decl.name.to_owned())
+            .or_insert_with(|| Type::Extern(ExternKind::Host(decl.name)));
     }
     let declared_type_names = source
         .items
@@ -2004,10 +2035,9 @@ fn lower_declared_type(
         ast::Type::Path(path) if path_is(path, "Int") => Ok(Type::Int),
         ast::Type::Path(path) if path_is(path, "String") => Ok(Type::String),
         ast::Type::Path(path) if path_is(path, "Path") => Ok(Type::Path),
-        ast::Type::Path(path) if path_is(path, "Tree") => Ok(Type::Extern(ExternKind::Tree)),
-        ast::Type::Path(path) if path_is(path, "TreeEntry") => {
-            Ok(Type::Extern(ExternKind::TreeEntry))
-        }
+        // `Tree`/`TreeEntry` are injected host types, resolved through the `types`
+        // environment fallback below (populated in `lower_module`) rather than
+        // hardcoded here — the language core no longer knows them by name.
         ast::Type::Path(path) if path_is(path, "Blob") => Ok(Type::Extern(ExternKind::Blob)),
         ast::Type::Path(path) if path_is(path, "Registry") => {
             Ok(Type::Extern(ExternKind::Registry))
@@ -3804,7 +3834,11 @@ fn lower_tree_text_projection(
     segments: &[&ast::Expr],
 ) -> Result<LoweredValue, Diagnostics> {
     let tree = lower_value(nodes, bindings, context, base)?;
-    require_type(&tree, &Type::Extern(ExternKind::Tree), expr_span(base))?;
+    require_type(
+        &tree,
+        &Type::Extern(ExternKind::Host(crate::binding::TREE)),
+        expr_span(base),
+    )?;
 
     let mut paths = Vec::with_capacity(segments.len());
     for segment in segments {
@@ -3835,7 +3869,7 @@ fn lower_tree_text_projection(
             entry = push_node(
                 nodes,
                 call.span,
-                Type::Extern(ExternKind::TreeEntry),
+                Type::Extern(ExternKind::Host(crate::binding::TREE_ENTRY)),
                 EffectFacts::EFFECT,
                 vec![entry, path.node],
                 Op::TreeProject,
@@ -5043,7 +5077,7 @@ fn lower_effect_intrinsic(
                 )));
             };
             (
-                Type::Extern(ExternKind::Tree),
+                Type::Extern(ExternKind::Host(crate::binding::TREE)),
                 Op::FixtureTree(name.value.clone()),
                 Vec::new(),
             )
@@ -5064,7 +5098,11 @@ fn lower_effect_intrinsic(
                 &Type::Extern(ExternKind::Blob),
                 expr_span(&call.args.args[0]),
             )?;
-            (Type::Extern(ExternKind::Tree), Op::Untar, vec![blob.node])
+            (
+                Type::Extern(ExternKind::Host(crate::binding::TREE)),
+                Op::Untar,
+                vec![blob.node],
+            )
         }
     };
     Ok(LoweredValue {
@@ -9234,14 +9272,14 @@ fn lower_binary(
             require_type(&right, &Type::Int, expr_span(&binary.right))?;
             (Type::Int, Op::Mul)
         }
-        "/" if matches!(
-            left.ty,
-            Type::Extern(ExternKind::Tree) | Type::Extern(ExternKind::TreeEntry)
-        ) =>
-        {
-            // Tree projection: one Name segment (a string literal) or a Path
-            // (projection through several maps). The projection resolves
-            // lazily; undemanded siblings are never read.
+        "/" if crate::binding::host_projection(context.config.host_types, &left.ty).is_some() => {
+            // Host-type path projection (`Tree`/`TreeEntry`): one Name segment (a
+            // string literal) or a Path (projection through several maps). The
+            // projection resolves lazily; undemanded siblings are never read.
+            // Which host type it yields is data on the injected host-type
+            // declaration, not a hardcoded `TreeEntry`.
+            let projected = crate::binding::host_projection(context.config.host_types, &left.ty)
+                .expect("guarded by host_projection above");
             let projector = match &right.ty {
                 Type::String => {
                     let literal = nodes
@@ -9269,7 +9307,7 @@ fn lower_binary(
                     ));
                 }
             };
-            let ty = Type::Extern(ExternKind::TreeEntry);
+            let ty = projected;
             return Ok(LoweredValue {
                 node: push_node(
                     nodes,

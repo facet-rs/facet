@@ -51,6 +51,7 @@ mod tests {
         Compiler::with_config(CompilerConfig {
             prelude: super::PRELUDE_SOURCES,
             methods: crate::DOMAIN_METHODS,
+            host_types: crate::HOST_TYPES,
             ..CompilerConfig::default()
         })
     }

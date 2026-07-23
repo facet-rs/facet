@@ -748,8 +748,6 @@ pub enum Type {
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ExternKind {
-    Tree,
-    TreeEntry,
     Blob,
     Registry,
     PinnedUrl,
@@ -758,18 +756,28 @@ pub enum ExternKind {
     /// so registered primitive requests can name schemas without a task-local
     /// type handle or an ontology string.
     Schema,
+    /// A declared host type supplied by the embedder (`Tree`, `TreeEntry`, …)
+    /// rather than an axiom of the language core. The core does not enumerate
+    /// these — it carries only the declared name, which is the type's nominal
+    /// identity: `name()` feeds both the value schema (`builtin_schema(name)`)
+    /// and the recipe encoding (`b"extern" + name`) exactly as a hardcoded
+    /// variant did, so a host type hashes identically whether it was a core
+    /// variant or an injected declaration. The set of host types is data the
+    /// embedder injects through [`crate::compiler::CompilerConfig::host_types`];
+    /// the machine engine (the tree ops) still names them, but the language no
+    /// longer hardcodes them as types.
+    Host(&'static str),
 }
 
 impl ExternKind {
     #[must_use]
     pub fn name(self) -> &'static str {
         match self {
-            Self::Tree => "Tree",
-            Self::TreeEntry => "TreeEntry",
             Self::Blob => "Blob",
             Self::Registry => "Registry",
             Self::PinnedUrl => "PinnedUrl",
             Self::Schema => "Schema",
+            Self::Host(name) => name,
         }
     }
 }
