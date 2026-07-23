@@ -1,3 +1,14 @@
+// The array/stream combinators, as ordinary std vix over `fold` and the stream
+// core — no longer dedicated compiler ops (issue 2520). Trade-offs, accepted as
+// part of retiring the ops: `any`/`all`/`contains` fold the whole array and no
+// longer short-circuit, and `find_min`/`find_max` materialize-then-sort
+// (O(n log n)) rather than a single running-extremum scan.
+//
+// `first`/`last` are deliberately part of the public std surface: they are the
+// natural array head/tail accessors and the building blocks `find_min`/`find_max`
+// are expressed over. This widens the 0.1 surface by two names on purpose — a
+// considered addition, not incidental leakage.
+
 pub fn any<T>(xs: [T]) where { predicate: fn(T) -> Bool } -> Bool {
     xs.fold(false, |acc, x| acc || predicate(x))
 }
@@ -18,7 +29,7 @@ pub fn first<T>(xs: [T]) -> Option<T> {
 }
 
 pub fn last<T>(xs: [T]) -> Option<T> {
-    xs.fold(None, |acc, x| Some(x))
+    xs.fold(None, |_, x| Some(x))
 }
 
 pub fn find_min<K, V>(s: Stream<K, V>) where { predicate: fn(V) -> Bool } -> Option<V> {

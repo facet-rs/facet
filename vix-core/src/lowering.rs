@@ -4041,6 +4041,7 @@ fn array_split_last_temporary_types(node: &Node, nodes: &[Node]) -> Result<Vec<T
     ])
 }
 
+/// The value type a keyed-codata stream operation ranges over.
 fn stream_value_type(node: &Node, nodes: &[Node]) -> Result<Type, Diagnostics> {
     let stream = node
         .inputs
@@ -4056,9 +4057,12 @@ fn stream_value_type(node: &Node, nodes: &[Node]) -> Result<Type, Diagnostics> {
     Ok(value.as_ref().clone())
 }
 
-/// `find_min`/`find_max` keep a running structural extremum: the current best
-/// value, the freshly loaded value, the loop's `one` increment, the ordering
-/// discriminant, and whatever leaves the structural-order comparison needs.
+/// `split_min` selects the least value (stable key tie-break), then realizes the
+/// remaining values as a fresh dense array in canonical key order. It needs the
+/// running best value, the loaded value, the loop `one`, the ordering
+/// discriminant, the selected index, the found flag, the surviving-row count,
+/// the remainder array, the remainder write cursor, the `(V, [V])` payload, and
+/// the structural-order comparison leaves the min-scan needs.
 fn stream_split_min_temporary_types(node: &Node, nodes: &[Node]) -> Result<Vec<Type>, Diagnostics> {
     let value = stream_value_type(node, nodes)?;
     let rest = Type::array(value.clone());
@@ -8220,8 +8224,8 @@ fn lower_checked_array_split_last_node(
     Ok(ValueRepresentation::InlineComposite)
 }
 
-/// Test authored array positions left-to-right through one typed predicate,
-/// short-circuiting as soon as the outcome (`all`/`any`) is decided.
+/// A synthesized one-word Bool slot aliasing the outcome-scratch condition word,
+/// used to receive a predicate's checked-call result before branching on it.
 fn outcome_condition_slot(
     scratch: OutcomeScratch,
     assigned: AssignedOutcomeScratch,
@@ -8235,9 +8239,12 @@ fn outcome_condition_slot(
     }
 }
 
-/// `find_min`/`find_max`: walk the resolved recipe, keep the structural extremum
-/// among values whose row survives the recipe filter and satisfies the selection
-/// predicate, break ties by the stable (ascending) key, and return `Option<V>`.
+/// `split_min` selects the structurally-least value (stable ascending-key
+/// tie-break), then realizes the remaining values as a fresh dense array in
+/// canonical key order with exactly the selected row omitted. Equal duplicate
+/// values at other keys remain. Realization is explicit in the `(V, [V])`
+/// result type; no stream recipe is placed inside the `Option`. Empty streams
+/// yield `None`.
 fn lower_checked_stream_split_min_node(
     node: &Node,
     dst_region_id: WeavyRegionId,

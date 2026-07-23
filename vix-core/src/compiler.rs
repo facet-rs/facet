@@ -66,7 +66,7 @@ pub struct CompilerConfig {
     /// isolate the bare surface.
     pub prelude: &'static [&'static str],
     /// Receiver-method declarations the embedder injects — a host type's methods
-    /// (`Tree.glob`, `TreeEntry.text`, …) declared by `vixen-primitives` rather
+    /// (`Tree.glob`, `Registry.url`, …) declared by `vixen-primitives` rather
     /// than hardcoded in `vix-core`. Consulted by `lower_method_call` alongside
     /// the builtin axiom methods; each names the dedicated op its bespoke
     /// lowering owns. `vix-core` alone ships **none** — the bare language.
@@ -1190,6 +1190,24 @@ impl<'a> TypeResolver<'a> {
             ast::Type::Path(path) if path_is(path, "Int") => Ok(Type::Int),
             ast::Type::Path(path) if path_is(path, "String") => Ok(Type::String),
             ast::Type::Path(path) if path_is(path, "Path") => Ok(Type::Path),
+            ast::Type::Path(path) if path_is(path, "Blob") => Ok(Type::Extern(ExternKind::Blob)),
+            ast::Type::Path(path) if path_is(path, "Registry") => {
+                Ok(Type::Extern(ExternKind::Registry))
+            }
+            ast::Type::Path(path) if path_is(path, "PinnedUrl") => {
+                Ok(Type::Extern(ExternKind::PinnedUrl))
+            }
+            ast::Type::Path(path) if path_is(path, "Check") => Ok(Type::Check),
+            ast::Type::Path(path)
+                if CAPABILITY_TYPE_NAMES.iter().any(|name| path_is(path, name)) =>
+            {
+                Ok(capability_type(&path_name(path)))
+            }
+            // Injected host types resolve after every hardcoded core type, so a
+            // core name always wins its own spelling — matching the axiom-first
+            // order `lower_declared_type` uses (host types are its `types`-env
+            // fallback). `lower_module` has already rejected any host type whose
+            // name is not a reserved builtin schema.
             ast::Type::Path(path)
                 if self
                     .host_types
@@ -1203,19 +1221,6 @@ impl<'a> TypeResolver<'a> {
                     .expect("guarded by the injected host types above")
                     .name;
                 Ok(Type::Extern(ExternKind::Host(name)))
-            }
-            ast::Type::Path(path) if path_is(path, "Blob") => Ok(Type::Extern(ExternKind::Blob)),
-            ast::Type::Path(path) if path_is(path, "Registry") => {
-                Ok(Type::Extern(ExternKind::Registry))
-            }
-            ast::Type::Path(path) if path_is(path, "PinnedUrl") => {
-                Ok(Type::Extern(ExternKind::PinnedUrl))
-            }
-            ast::Type::Path(path) if path_is(path, "Check") => Ok(Type::Check),
-            ast::Type::Path(path)
-                if CAPABILITY_TYPE_NAMES.iter().any(|name| path_is(path, name)) =>
-            {
-                Ok(capability_type(&path_name(path)))
             }
             ast::Type::Generic(_) if is_stream_check_type(ty) => Ok(Type::StreamCheck),
             ast::Type::Generic(generic) if path_is(&generic.base, "Option") => {
@@ -1394,8 +1399,22 @@ fn lower_module(
     // Injected host types (`Tree`, `TreeEntry`) are nameable like any declared
     // type — the language no longer hardcodes them. Their extern-backed value
     // hashes identically to the retired `ExternKind` variants (`name()` is
-    // unchanged), so recipe/value identity is byte-stable.
+    // unchanged), so recipe/value identity is byte-stable. A host type's nominal
+    // identity must still be reserved in the core schema batch: validate it up
+    // front so a misconfigured embedder gets a diagnostic here rather than a
+    // panic deep inside schema hashing when `Host(name).schema_ref()` is first
+    // computed.
     for decl in config.host_types {
+        if !crate::schema::is_builtin_schema(decl.name) {
+            return Err(Diagnostics::one(Diagnostic::unsupported(
+                Span { start: 0, end: 0 },
+                format!(
+                    "injected host type `{}` is not a registered builtin schema (reserve its \
+                     name in vix-core's schema batch before declaring it)",
+                    decl.name
+                ),
+            )));
+        }
         types
             .entry(decl.name.to_owned())
             .or_insert_with(|| Type::Extern(ExternKind::Host(decl.name)));
@@ -4178,7 +4197,7 @@ fn lower_tree_text_projection(
     let progressive = progressive_exec_tree_root(nodes, tree.node)
         && segments
             .iter()
-            .all(|segment| matches!(segment, ast::Expr::Str(_)));
+            .all(|segment| matches!(segment, ast::Expr::Str(_) | ast::Expr::Path(_)));
 
     let mut paths = paths.into_iter();
     let mut path = paths
@@ -8924,6 +8943,14 @@ fn lower_call(
     if let Some(callee) = bindings.get(&call.callee.value) {
         return lower_value_call(nodes, bindings, context, call, callee.clone());
     }
+    // Receiver-based overloading (a concrete `foo(recv: T)` coexisting with a
+    // generic `foo<U>`) is resolved by *receiver type*, which only free-function
+    // call syntax lacks. So the coexistence is method-syntax-only: `recv.foo(..)`
+    // consults `receiver_matches || !has_generic` (see `lower_method_call`),
+    // whereas a free `foo(..)` call binds the concrete signature whenever one
+    // exists and only falls through to the generic when it does not. A program
+    // that wants the generic overload of a name it has also defined concretely
+    // must therefore spell it in method position.
     if let Some(signature) = context.signatures.get(&call.callee.value) {
         return lower_direct_call(nodes, bindings, context, call, signature);
     }

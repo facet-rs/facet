@@ -37,7 +37,16 @@ fn item_name(item: &ast::Item) -> Option<&str> {
 /// both spelled `.contains`, resolved by receiver type), while a program that
 /// redefines a combinator (its own `any`) still shadows the prelude one.
 fn item_shadow_key(item: &ast::Item) -> Option<(&str, bool)> {
-    let generic = matches!(item, ast::Item::Fn(function) if function.generics.is_some());
+    // The generic-ness classification must match the one `compiler::lower_module`
+    // and `modules::resolve_imports` use for the same overloading key: a generic
+    // `#[test]` has no instantiation surface and is treated as concrete, so it is
+    // rejected downstream rather than coexisting.
+    let generic = matches!(item, ast::Item::Fn(function)
+        if function.generics.is_some()
+            && !function
+                .attributes
+                .iter()
+                .any(|attribute| attribute.name.value == "test"));
     item_name(item).map(|name| (name, generic))
 }
 

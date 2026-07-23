@@ -157,6 +157,14 @@ pub const TREE_ENTRY: &str = "TreeEntry";
 /// ([`crate::compiler::CompilerConfig::host_types`]), so a domain type like
 /// `Tree` is declared by `vixen-primitives` rather than hardcoded as a variant
 /// of the language core's `ExternKind`. `name` is the type's nominal identity.
+///
+/// `name` must be a builtin schema name the core reserves (see
+/// `schema::SchemaBatch::vix_builtins`) — the schema *registration* is the one
+/// piece of a host type that still lives in `vix-core`, since it anchors
+/// byte-stable identity; the compiler rejects an unregistered name with a
+/// diagnostic rather than panicking. A `name` that collides with a core type
+/// (`Blob`, `Registry`, …) is shadowed by that core type, which always wins its
+/// own spelling, so host-type names must be distinct from the core surface.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostTypeDecl {
     pub name: &'static str,
@@ -184,17 +192,6 @@ impl ReceiverType {
             _ => None,
         }
     }
-}
-
-/// The [`crate::vir::Type`] for an injected host type named `name`, or `None` if
-/// `name` is not a declared host type. The type-annotation parsers use this in
-/// place of hardcoded `Tree`/`TreeEntry` arms.
-#[must_use]
-pub fn host_type_vir(host_types: &[HostTypeDecl], name: &str) -> Option<crate::vir::Type> {
-    host_types
-        .iter()
-        .find(|decl| decl.name == name)
-        .map(|decl| crate::vir::Type::Extern(crate::vir::ExternKind::Host(decl.name)))
 }
 
 /// Which dedicated VIR op a receiver method lowers to. The compiler owns the

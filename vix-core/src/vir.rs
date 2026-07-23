@@ -740,11 +740,13 @@ pub enum Type {
     Extern(ExternKind),
 }
 
-/// The machine-plane value kinds of the tree/fetch band. `Tree` and
-/// `TreeEntry` projections resolve lazily against the store or an external
-/// fixture root; `Blob` is immutable bytes named by its vix ContentHash
-/// (`machine.identity.blake3`); `Registry`/`PinnedUrl` are the lock-time
-/// fixture-registry surface (`machine.primitive.fetch-is-pinned`).
+/// The machine-plane value kinds of the tree/fetch band. `Host(name)` is an
+/// embedder-declared domain type (e.g. `vixen`'s `Tree`/`TreeEntry`), injected
+/// through [`crate::compiler::CompilerConfig::host_types`] rather than hardcoded
+/// here; its identity is name-keyed, so a `Host("Tree")` value hashes exactly as
+/// the retired `Tree` variant did. `Blob` is immutable bytes named by its vix
+/// ContentHash (`machine.identity.blake3`); `Registry`/`PinnedUrl` are the
+/// lock-time fixture-registry surface (`machine.primitive.fetch-is-pinned`).
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ExternKind {
@@ -4903,4 +4905,39 @@ pub(crate) fn canonical_type(ty: &Type) -> Vec<u8> {
 fn frame(out: &mut Vec<u8>, bytes: &[u8]) {
     out.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
     out.extend_from_slice(bytes);
+}
+
+#[cfg(test)]
+mod extern_identity {
+    use super::*;
+
+    // The recipe-identity encoding of the injected host-type externs. Issue 2520
+    // moves `Tree`/`TreeEntry` out of the hardcoded `ExternKind`, and the whole
+    // move rests on `Host("Tree")` hashing byte-for-byte as the retired
+    // `ExternKind::Tree` did: `b"extern" + frame(name)`, name-keyed with no `Host`
+    // discriminant. Get that wrong and every build's recipe hash silently shifts,
+    // so the exact bytes are pinned here rather than left to relative comparison.
+    fn expected_extern(name: &str) -> Vec<u8> {
+        let mut bytes = b"extern".to_vec();
+        frame(&mut bytes, name.as_bytes());
+        bytes
+    }
+
+    #[test]
+    fn host_extern_canonical_type_is_name_keyed_and_stable() {
+        assert_eq!(
+            canonical_type(&Type::Extern(ExternKind::Host(crate::binding::TREE))),
+            expected_extern("Tree"),
+        );
+        assert_eq!(
+            canonical_type(&Type::Extern(ExternKind::Host(crate::binding::TREE_ENTRY))),
+            expected_extern("TreeEntry"),
+        );
+        // Spelled out, so a change to the encoding (e.g. a new `Host` marker byte)
+        // breaks this test rather than silently rehashing every recipe.
+        assert_eq!(
+            canonical_type(&Type::Extern(ExternKind::Host(crate::binding::TREE))),
+            b"extern\x04\x00\x00\x00\x00\x00\x00\x00Tree".to_vec(),
+        );
+    }
 }
