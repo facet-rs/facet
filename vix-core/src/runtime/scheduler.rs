@@ -3047,42 +3047,6 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 &node.ty,
                 b"fixture-registry".to_vec(),
             ))),
-            Op::TreeProject => {
-                let EffectTerm::Value(tree) = input(0, self)? else {
-                    return effect_fault("tree projection receiver was codata");
-                };
-                let EffectTerm::Value(path) = input(1, self)? else {
-                    return effect_fault("tree projection path was codata");
-                };
-                let (root, prefix) = if tree.resident.starts_with(b"tree-entry\0") {
-                    let (root, prefix) = split_tree_entry(&tree.resident)?;
-                    (root.to_vec(), prefix.to_vec())
-                } else {
-                    (tree.resident, Vec::new())
-                };
-                let mut resident = b"tree-entry\0".to_vec();
-                resident.extend_from_slice(&(root.len() as u64).to_le_bytes());
-                resident.extend(root);
-                if !prefix.is_empty() {
-                    resident.extend(prefix);
-                    resident.push(b'/');
-                }
-                resident.extend(path.resident);
-                Ok(EffectTerm::Value(effect_leaf(&node.ty, resident)))
-            }
-            Op::TreeEntryText => {
-                let EffectTerm::Value(entry) = input(0, self)? else {
-                    return effect_fault("tree text receiver was codata");
-                };
-                let (source, projection, bytes) = self.tree_entry_text(&entry)?;
-                let value = effect_leaf(&node.ty, bytes);
-                reads.push(super::model::ReadWitness {
-                    source,
-                    projection: ReadProjection::TreePath { path: projection },
-                    observation: ReadObservation::Value(value.identity.clone()),
-                });
-                Ok(EffectTerm::Value(value))
-            }
             Op::TreeGlob => {
                 let EffectTerm::Value(tree) = input(0, self)? else {
                     return effect_fault("tree glob receiver was codata");
@@ -3263,40 +3227,6 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 None,
             ))),
         }
-    }
-
-    fn tree_entry_text(
-        &self,
-        entry: &EffectValue,
-    ) -> Result<(ValueId, String, Vec<u8>), Box<MachineError>> {
-        let (tree, path) = split_tree_entry(&entry.resident)?;
-        if let Some(name) = fixture_tree_name(tree) {
-            let name = core::str::from_utf8(name)
-                .map_err(|_| effect_machine_error("fixture tree name was not UTF-8"))?;
-            let path = core::str::from_utf8(path)
-                .map_err(|_| effect_machine_error("tree path was not UTF-8"))?;
-            let projection = format!("{name}/{path}");
-            let bytes = self
-                .fixture_store
-                .tree_file_bytes(&projection)
-                .map_err(|_| effect_machine_error("fixture tree entry was not a file"))?;
-            return Ok((entry.identity.clone(), projection, bytes));
-        }
-        let path = core::str::from_utf8(path)
-            .map_err(|_| effect_machine_error("archive tree path was not UTF-8"))?;
-        let member = parse_ustar(tree)
-            .map_err(|_| effect_machine_error("archive tree resident bytes were malformed"))?
-            .into_iter()
-            .find_map(|member| match member {
-                TarMember::File {
-                    path: candidate,
-                    bytes,
-                    ..
-                } if candidate == path => Some(bytes),
-                _ => None,
-            })
-            .ok_or_else(|| effect_machine_error("archive tree entry was not a file"))?;
-        Ok((entry.identity.clone(), path.to_owned(), member))
     }
 
     fn tree_glob_paths(
@@ -7982,29 +7912,6 @@ fn effect_machine_error(detail: &'static str) -> Box<MachineError> {
 
 fn effect_fault<T>(detail: &'static str) -> Result<T, Box<MachineError>> {
     Err(effect_machine_error(detail))
-}
-
-fn split_tree_entry(bytes: &[u8]) -> Result<(&[u8], &[u8]), Box<MachineError>> {
-    let prefix = b"tree-entry\0";
-    let header = prefix
-        .len()
-        .checked_add(8)
-        .ok_or_else(|| effect_machine_error("tree entry header overflow"))?;
-    if !bytes.starts_with(prefix) || bytes.len() < header {
-        return effect_fault("tree entry payload was malformed");
-    }
-    let length = u64::from_le_bytes(
-        bytes[prefix.len()..header]
-            .try_into()
-            .expect("eight-byte tree entry length"),
-    );
-    let length =
-        usize::try_from(length).map_err(|_| effect_machine_error("tree entry length overflow"))?;
-    let tree_end = header
-        .checked_add(length)
-        .filter(|end| *end <= bytes.len())
-        .ok_or_else(|| effect_machine_error("tree entry payload was truncated"))?;
-    Ok((&bytes[header..tree_end], &bytes[tree_end..]))
 }
 
 fn read_exec_stdout(

@@ -6091,9 +6091,7 @@ fn lower_node(
                  frame",
             ));
         }
-        Op::TreeProject
-        | Op::TreeEntryText
-        | Op::TreeGlob
+        Op::TreeGlob
         | Op::FixtureRegistry
         | Op::RegistryUrl
         | Op::Untar
