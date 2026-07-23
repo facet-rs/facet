@@ -353,6 +353,62 @@ pub fn is_qualified_binding(module: &str, name: &str) -> bool {
     BUILTIN_BINDINGS.qualified(&path, name).is_some()
 }
 
+/// The module an embedder-injected primitive surface is reachable under,
+/// mirroring the `Placement::Module(std)` half of [`builtin_bindings`]'s static
+/// harvest (each surface is placed at both the prelude and `std`). Injected and
+/// bundled surfaces share one placement rule, kept in this single spot.
+fn injected_surface_module() -> ModulePath {
+    ModulePath::new(["std"]).expect("std is a valid module path")
+}
+
+/// Whether `module::name` is a registered built-in surface binding **or** is
+/// projected by one of the embedder-injected primitive `surfaces`.
+///
+/// This is the qualified-name analogue of the call-lowering seam in
+/// `ModuleContext::primitive_shape`, which already consults injected surfaces
+/// before the static fallback. Module resolution (`resolve_imports` and the
+/// qualified-path rewriter) calls this so that a primitive whose surface is
+/// *injected* from the runtime — rather than bundled into
+/// [`runtime::builtin_primitive_surfaces`] — still resolves as `std::name` and
+/// through `use std::{name}`, exactly as a bundled one does.
+#[must_use]
+pub fn is_qualified_binding_with(
+    surfaces: &[runtime::PrimitiveSurface],
+    module: &str,
+    name: &str,
+) -> bool {
+    if is_qualified_binding(module, name) {
+        return true;
+    }
+    ModulePath::new([module]).is_some_and(|path| {
+        path == injected_surface_module()
+            && surfaces.iter().any(|surface| surface.surface_name == name)
+    })
+}
+
+/// Resolve a possibly-qualified surface `name` against the embedder-injected
+/// primitive `surfaces`. Mirrors [`surface_primitive`]'s dual spelling: an
+/// injected surface answers to both its bare prelude name (`grab`) and its
+/// canonical qualified name (`std::grab`). Returns `None` for a qualified
+/// spelling under any module other than `std`.
+#[must_use]
+pub fn injected_surface<'a>(
+    surfaces: &'a [runtime::PrimitiveSurface],
+    name: &str,
+) -> Option<&'a runtime::PrimitiveSurface> {
+    let leaf = match name.rsplit_once("::") {
+        Some((module, leaf)) => {
+            let path = ModulePath::new(module.split("::"))?;
+            if path != injected_surface_module() {
+                return None;
+            }
+            leaf
+        }
+        None => name,
+    };
+    surfaces.iter().find(|surface| surface.surface_name == leaf)
+}
+
 /// Resolve a primitive by either its compatibility prelude name or its
 /// canonical qualified name (for example `std::fetch`).
 #[must_use]
@@ -518,5 +574,51 @@ mod tests {
         assert!(matches!(shape.args[0], ArgRole::Value { .. }));
         assert_eq!(shape.result, Type::Extern(ExternKind::Blob));
         assert_eq!(shape.primitive, pinned_fetch_primitive_id());
+    }
+
+    /// A surface standing in for one the embedder injects rather than bundling
+    /// into `builtin_primitive_surfaces` — its name (`grab`) is deliberately not
+    /// in the static table. It reuses fetch's real shape so a lowered call is
+    /// well-typed.
+    fn injected_grab() -> runtime::PrimitiveSurface {
+        let fetch = runtime::builtin_primitive_surfaces()
+            .into_iter()
+            .next()
+            .expect("fetch surface");
+        runtime::PrimitiveSurface {
+            surface_name: "grab",
+            ..fetch
+        }
+    }
+
+    #[test]
+    fn injected_surface_is_a_qualified_binding_only_under_std() {
+        let surfaces = [injected_grab()];
+
+        // `grab` is not in the static table, so plain `is_qualified_binding`
+        // never sees it…
+        assert!(!is_qualified_binding("std", "grab"));
+        // …but the injected-aware seam resolves it under `std`, and only there.
+        assert!(is_qualified_binding_with(&surfaces, "std", "grab"));
+        assert!(!is_qualified_binding_with(&surfaces, "other", "grab"));
+        assert!(!is_qualified_binding_with(&surfaces, "std", "not_injected"));
+
+        // The static bundled names still resolve through the same seam.
+        assert!(is_qualified_binding_with(&surfaces, "std", "fetch"));
+    }
+
+    #[test]
+    fn injected_surface_answers_bare_and_std_spellings() {
+        let surfaces = [injected_grab()];
+
+        // Both the prelude spelling and the canonical `std::` spelling resolve,
+        // mirroring `surface_primitive`'s dual spelling for bundled primitives.
+        assert!(injected_surface(&surfaces, "grab").is_some());
+        assert!(injected_surface(&surfaces, "std::grab").is_some());
+
+        // A qualified spelling under any other module does not.
+        assert!(injected_surface(&surfaces, "other::grab").is_none());
+        // An unknown leaf does not.
+        assert!(injected_surface(&surfaces, "std::nope").is_none());
     }
 }
