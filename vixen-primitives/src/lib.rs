@@ -14,6 +14,7 @@ pub mod typed_primitive;
 mod decode_primitive;
 mod fetch_primitive;
 mod primitive_value_decode;
+mod tree_glob_primitive;
 mod tree_read_primitive;
 
 pub mod stdlib;
@@ -31,5 +32,6 @@ pub(crate) mod rt {
 pub use decode_primitive::*;
 pub use fetch_primitive::*;
 pub use primitive_value_decode::*;
+pub use tree_glob_primitive::*;
 pub use tree_read_primitive::*;
 pub use typed_primitive::*;
