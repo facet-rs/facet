@@ -121,6 +121,42 @@ pub fn tree_read_primitive_id() -> PrimitiveId {
     }
 }
 
+// ---- tree-glob (codata) ---------------------------------------------------
+//
+// `glob` is the build language's "find files" op: `Tree.glob(pattern) ->
+// Stream<Path, Path>`. Its result is codata, so it is realized by a
+// [`crate::runtime::CodataPrimitive`] rather than a [`crate::runtime::RawPrimitive`]
+// — but its *identity* is language data all the same: the `Op::TreeGlob` recipe
+// names this well-known id when the scheduler drains the stream at `.collect()`.
+// The contract lives here (in `vix-core`); the implementation lives in
+// `vixen-primitives`, exactly as `tree-read`'s does.
+
+#[must_use]
+pub fn tree_glob_request_type() -> Type {
+    Type::Record(RecordType::new(
+        "TreeGlobRequest",
+        vec![
+            RecordField {
+                name: "tree".to_owned(),
+                ty: Type::Extern(ExternKind::Host(crate::binding::TREE)),
+            },
+            RecordField {
+                name: "pattern".to_owned(),
+                ty: Type::String,
+            },
+        ],
+    ))
+}
+
+#[must_use]
+pub fn tree_glob_primitive_id() -> PrimitiveId {
+    PrimitiveId {
+        namespace: "vix.machine".to_owned(),
+        name: "tree-glob".to_owned(),
+        version: 1,
+    }
+}
+
 // ---- surface-binding decls (the language's view of a primitive's call shape) --
 //
 // A primitive's *surface contract* — the prelude name it binds, the request

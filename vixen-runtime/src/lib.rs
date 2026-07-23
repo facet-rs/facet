@@ -25,9 +25,11 @@ pub use module_graph::{
 };
 
 use vix::compiler::CompilerConfig;
-use vix::runtime::{EventSink, PrimitiveDispatcher, PrimitiveRegistry, RawPrimitive, Runtime};
-// DecodePrimitive / PinnedFetchPrimitive / TreeReadPrimitive / TypedAdapter come
-// from the `pub use vixen_primitives::*` above.
+use vix::runtime::{
+    CodataRegistry, EventSink, PrimitiveDispatcher, PrimitiveRegistry, RawPrimitive, Runtime,
+};
+// DecodePrimitive / PinnedFetchPrimitive / TreeGlobPrimitive / TreeReadPrimitive /
+// TypedAdapter come from the `pub use vixen_primitives::*` above.
 
 /// The built-in registered primitives, as data: this is the *one* place that
 /// lists them. Adding a primitive is one entry here, not a second
@@ -55,10 +57,24 @@ pub fn default_primitive_dispatcher<Ctx>() -> PrimitiveDispatcher<Ctx> {
     PrimitiveDispatcher::new(Arc::new(registry))
 }
 
+/// A registry carrying the builtin codata primitives (`glob`) — what `vix-core`'s
+/// empty [`CodataRegistry`] is replaced with so effect streams can be realized.
+/// Codata primitives are not `Ctx`-generic (draining a stream needs nothing from
+/// the embedder context), so this is the single, monomorphic builtin list.
+#[must_use]
+pub fn default_codata_registry() -> CodataRegistry {
+    let mut registry = CodataRegistry::default();
+    registry
+        .register(Arc::new(TreeGlobPrimitive::default()))
+        .expect("built-in codata primitives register once, each under a distinct id");
+    registry
+}
+
 /// Install the builtin primitives into a runtime constructed by `vix-core` (which
-/// ships an empty dispatcher).
+/// ships an empty dispatcher and an empty codata registry).
 pub fn install_builtins<S: EventSink, Ctx>(runtime: &mut Runtime<S, Ctx>) {
     runtime.set_primitive_dispatcher(default_primitive_dispatcher());
+    runtime.set_codata_registry(default_codata_registry());
 }
 
 /// The compiler config for the runnable system: the `vix-core` defaults plus the

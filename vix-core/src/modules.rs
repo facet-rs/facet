@@ -24,6 +24,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics};
+use crate::runtime::PrimitiveSurface;
 use crate::support::{Span, Spanned};
 use crate::surface::ast;
 
@@ -140,6 +141,7 @@ fn resolve_imports(
     own_module: Option<&str>,
     file: &ast::SourceFile,
     set: &BTreeMap<String, BTreeMap<String, DeclaredItem>>,
+    surfaces: &[PrimitiveSurface],
 ) -> Result<BTreeMap<String, String>, Diagnostics> {
     let mut bound: BTreeSet<String> = BTreeSet::new();
     // Function shapes bound in this file, keyed by (name, is-generic-template). A
@@ -161,7 +163,11 @@ fn resolve_imports(
                 for leaf in import_leaves(import) {
                     let declared = exports.get(&leaf.value);
                     if declared.is_none()
-                        && !crate::binding::is_qualified_binding(&module.value, &leaf.value)
+                        && !crate::binding::is_qualified_binding_with(
+                            surfaces,
+                            &module.value,
+                            &leaf.value,
+                        )
                     {
                         return Err(unknown_name(
                             leaf.span,
@@ -274,8 +280,9 @@ fn rewrite_module_items(
     file: &ast::SourceFile,
     set: &BTreeMap<String, BTreeMap<String, DeclaredItem>>,
     module_names: &BTreeSet<String>,
+    surfaces: &[PrimitiveSurface],
 ) -> Result<Vec<ast::Item>, Diagnostics> {
-    let aliases = resolve_imports(Some(name), file, set)?;
+    let aliases = resolve_imports(Some(name), file, set, surfaces)?;
     let mut renames: BTreeMap<String, String> = declared_items(file)
         .into_keys()
         .map(|item| (item.clone(), format!("{name}::{item}")))
@@ -286,6 +293,7 @@ fn rewrite_module_items(
         available_modules: module_names,
         module_set: set,
         own_module: Some(name),
+        surfaces,
         scopes: Vec::new(),
     };
     let mut rewritten = Vec::new();
@@ -311,6 +319,7 @@ fn rewrite_module_items(
 pub(crate) fn merge_module_set(
     root: ast::SourceFile,
     modules: &[(String, ast::SourceFile)],
+    surfaces: &[PrimitiveSurface],
 ) -> Result<ast::SourceFile, Diagnostics> {
     let mut module_names = BTreeSet::new();
     for (name, file) in modules {
@@ -339,15 +348,22 @@ pub(crate) fn merge_module_set(
     for (name, file) in &modules[..root_inline_start] {
         // A library module's own items are spelled fully qualified; its
         // imports alias to their declaring modules.
-        merged_items.extend(rewrite_module_items(name, file, &set, &module_names)?);
+        merged_items.extend(rewrite_module_items(
+            name,
+            file,
+            &set,
+            &module_names,
+            surfaces,
+        )?);
     }
 
-    let aliases = resolve_imports(None, &root, &set)?;
+    let aliases = resolve_imports(None, &root, &set, surfaces)?;
     let mut rewriter = Rewriter {
         renames: &aliases,
         available_modules: &module_names,
         module_set: &set,
         own_module: None,
+        surfaces,
         scopes: Vec::new(),
     };
     let span = root.span;
@@ -361,7 +377,13 @@ pub(crate) fn merge_module_set(
     }
 
     for (name, file) in &modules[root_inline_start..] {
-        merged_items.extend(rewrite_module_items(name, file, &set, &module_names)?);
+        merged_items.extend(rewrite_module_items(
+            name,
+            file,
+            &set,
+            &module_names,
+            surfaces,
+        )?);
     }
 
     Ok(ast::SourceFile {
@@ -381,6 +403,9 @@ struct Rewriter<'a> {
     available_modules: &'a BTreeSet<String>,
     module_set: &'a BTreeMap<String, BTreeMap<String, DeclaredItem>>,
     own_module: Option<&'a str>,
+    /// Embedder-injected primitive surfaces, consulted alongside the static
+    /// binding table so an injected surface resolves through its `std::` path.
+    surfaces: &'a [PrimitiveSurface],
     scopes: Vec<BTreeSet<String>>,
 }
 
@@ -395,7 +420,13 @@ impl Rewriter<'_> {
             .module_set
             .get(&module.value)
             .and_then(|items| items.get(&item.value));
-        if declared.is_none() && crate::binding::is_qualified_binding(&module.value, &item.value) {
+        if declared.is_none()
+            && crate::binding::is_qualified_binding_with(
+                self.surfaces,
+                &module.value,
+                &item.value,
+            )
+        {
             return Ok(full);
         }
         let Some(declared) = declared else {

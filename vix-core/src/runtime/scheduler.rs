@@ -72,6 +72,45 @@ enum EffectTerm {
     Glob { tree: EffectValue, pattern: String },
 }
 
+/// The scheduler-side [`CodataDrainCtx`] a `tree-glob` codata primitive drains
+/// through. It borrows the effect island's source value, the fixture store, and
+/// the island's read log, so the primitive owns only the domain enumeration
+/// while every directory listing it demands is recorded as a witnessed read —
+/// the scheduler keeps the witness discipline the memo/receipt path relies on.
+struct GlobDrainCtx<'a> {
+    fixture_store: &'a FixtureStore,
+    source: &'a EffectValue,
+    reads: &'a mut Vec<super::model::ReadWitness>,
+}
+
+impl super::CodataDrainCtx for GlobDrainCtx<'_> {
+    fn source_bytes(&self) -> &[u8] {
+        &self.source.resident
+    }
+
+    fn fixture_directory(
+        &mut self,
+        projection: &str,
+    ) -> Result<Vec<(String, super::FixtureEntryKind)>, super::PrimitiveMachineError> {
+        let entries = self
+            .fixture_store
+            .tree_dir_entries(projection)
+            .map_err(|_| super::PrimitiveMachineError::Unavailable {
+                detail: format!("fixture glob directory {projection} is unavailable"),
+            })?;
+        self.reads.push(super::model::ReadWitness {
+            source: self.source.identity.clone(),
+            projection: ReadProjection::TreePath {
+                path: projection.to_owned(),
+            },
+            observation: ReadObservation::Directory {
+                digest: directory_observation_digest(&entries),
+            },
+        });
+        Ok(entries)
+    }
+}
+
 struct DemandExecution<'a> {
     artifact: &'a LoweringArtifact,
     demand_key: DemandKey,
@@ -607,6 +646,11 @@ pub struct Runtime<S, Ctx = ()> {
     performed_read_paths: BTreeSet<String>,
     fixture_store: FixtureStore,
     primitive_dispatcher: PrimitiveDispatcher<Ctx>,
+    /// The registered codata primitives (`glob`) that realize effect streams.
+    /// `vix-core` ships an empty registry — the bare language realizes no
+    /// streams; the `vixen` runtime installs the builtins via
+    /// [`Runtime::set_codata_registry`].
+    codata_registry: super::CodataRegistry,
     primitive_services: super::PrimitiveServices,
     /// The embedder-installed shared runtime context — an ambient authority
     /// (executor, pool, client) that primitives project a slice out of via
@@ -779,6 +823,7 @@ impl<S: EventSink> Runtime<S, ()> {
             wire_demands: Vec::new(),
             performed_read_paths: BTreeSet::new(),
             fixture_store: FixtureStore::default(),
+            codata_registry: super::CodataRegistry::default(),
             primitive_dispatcher: PrimitiveDispatcher::empty(),
             primitive_services: super::PrimitiveServices::default(),
             ctx: (),
@@ -819,6 +864,7 @@ impl<S: EventSink> Runtime<S, ()> {
             wire_demands: Vec::new(),
             performed_read_paths: BTreeSet::new(),
             fixture_store: FixtureStore::default(),
+            codata_registry: super::CodataRegistry::default(),
             primitive_dispatcher: PrimitiveDispatcher::empty(),
             primitive_services: super::PrimitiveServices::default(),
             ctx: (),
@@ -854,6 +900,7 @@ impl<S: EventSink> Runtime<S, ()> {
                 wire_demands: Vec::new(),
                 performed_read_paths: BTreeSet::new(),
                 fixture_store: FixtureStore::default(),
+                codata_registry: super::CodataRegistry::default(),
                 primitive_dispatcher: PrimitiveDispatcher::empty(),
                 primitive_services: super::PrimitiveServices::default(),
                 ctx: (),
@@ -892,6 +939,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             wire_demands: Vec::new(),
             performed_read_paths: BTreeSet::new(),
             fixture_store: FixtureStore::default(),
+            codata_registry: super::CodataRegistry::default(),
             primitive_dispatcher: PrimitiveDispatcher::empty(),
             primitive_services: super::PrimitiveServices::default(),
             ctx,
@@ -918,6 +966,13 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
     /// dispatcher (`vixen_runtime::default_primitive_dispatcher`) here.
     pub fn set_primitive_dispatcher(&mut self, dispatcher: PrimitiveDispatcher<Ctx>) {
         self.primitive_dispatcher = dispatcher;
+    }
+
+    /// Install the registered codata primitives (`glob`) that realize effect
+    /// streams. `vix-core` ships an empty registry; the `vixen` runtime swaps in
+    /// one carrying the builtins, mirroring [`Self::set_primitive_dispatcher`].
+    pub fn set_codata_registry(&mut self, registry: super::CodataRegistry) {
+        self.codata_registry = registry;
     }
 
     pub fn set_primitive_services(&mut self, services: super::PrimitiveServices) {
@@ -3098,7 +3153,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 let EffectTerm::Glob { tree, pattern } = input(0, self)? else {
                     return effect_fault("effect Stream.collect receiver was not a tree glob");
                 };
-                let paths = self.tree_glob_paths(&tree, &pattern, reads)?;
+                let paths = self.drain_glob_codata(&tree, &pattern, reads)?;
                 let mut rows = Vec::with_capacity(paths.len());
                 let mut frozen = Vec::with_capacity(paths.len());
                 for path in paths {
@@ -3299,71 +3354,36 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
         Ok((entry.identity.clone(), path.to_owned(), member))
     }
 
-    fn tree_glob_paths(
+    /// Realize a `Tree.glob(pattern)` stream by dispatching to the registered
+    /// `tree-glob` codata primitive and returning its ordered path elements. The
+    /// domain logic — pattern matching plus fixture/archive enumeration — lives
+    /// in the primitive (`vixen-primitives`); the scheduler supplies the source
+    /// value and records directory read witnesses through [`GlobDrainCtx`]. This
+    /// is the codata analogue of dispatching a `RawPrimitive`: the recipe's
+    /// identity (`Op::TreeGlob`) is unchanged, only its execution moved out.
+    fn drain_glob_codata(
         &self,
         tree: &EffectValue,
         pattern: &str,
         reads: &mut Vec<super::model::ReadWitness>,
     ) -> Result<Vec<String>, Box<MachineError>> {
-        let (directory, wildcard) = pattern
-            .rsplit_once('/')
-            .map_or(("", pattern), |(directory, wildcard)| (directory, wildcard));
-        let (prefix, suffix) = wildcard.split_once('*').unwrap_or((wildcard, ""));
-        let matches = |path: &str| {
-            let name = path.rsplit('/').next().unwrap_or(path);
-            (directory.is_empty()
-                || path
-                    .strip_prefix(directory)
-                    .is_some_and(|rest| rest.starts_with('/')))
-                && name.starts_with(prefix)
-                && name.ends_with(suffix)
+        let primitive = self
+            .codata_registry
+            .get(&super::tree_glob_primitive_id())
+            .ok_or_else(|| effect_machine_error("no tree-glob codata primitive is registered"))?;
+        let mut ctx = GlobDrainCtx {
+            fixture_store: &self.fixture_store,
+            source: tree,
+            reads,
         };
-        if let Some(name) = fixture_tree_name(&tree.resident) {
-            let name = core::str::from_utf8(name)
-                .map_err(|_| effect_machine_error("fixture tree name was not UTF-8"))?;
-            let projection = if directory.is_empty() {
-                name.to_owned()
-            } else {
-                format!("{name}/{directory}")
-            };
-            let entries = self
-                .fixture_store
-                .tree_dir_entries(&projection)
-                .map_err(|_| effect_machine_error("fixture glob directory was unavailable"))?;
-            reads.push(super::model::ReadWitness {
-                source: tree.identity.clone(),
-                projection: ReadProjection::TreePath { path: projection },
-                observation: ReadObservation::Directory {
-                    digest: directory_observation_digest(&entries),
-                },
-            });
-            let mut paths = entries
-                .into_iter()
-                .filter_map(|(entry, kind)| {
-                    (kind == super::fixture::FixtureEntryKind::File).then_some(entry)
-                })
-                .map(|entry| {
-                    if directory.is_empty() {
-                        entry
-                    } else {
-                        format!("{directory}/{entry}")
-                    }
-                })
-                .filter(|path| matches(path))
-                .collect::<Vec<_>>();
-            paths.sort();
-            return Ok(paths);
-        }
-        let mut paths = parse_ustar(&tree.resident)
-            .map_err(|_| effect_machine_error("archive tree resident bytes were malformed"))?
-            .into_iter()
-            .filter_map(|member| match member {
-                TarMember::File { path, .. } if matches(&path) => Some(path),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        paths.sort();
-        Ok(paths)
+        primitive.drain(pattern, &mut ctx).map_err(|error| {
+            Box::new(MachineError::runtime(
+                MachineOperation::Effect,
+                RuntimeFault::PrimitiveMachine { error },
+                None,
+                None,
+            ))
+        })
     }
 
     /// Terminate a task whose registered-primitive request violated the machine

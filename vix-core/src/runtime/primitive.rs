@@ -1144,6 +1144,95 @@ pub enum PrimitiveDispatchError {
     },
 }
 
+// ---- codata primitives ----------------------------------------------------
+//
+// A [`RawPrimitive`] completes an asynchronous ticket with exactly one interned
+// value (`PrimitiveCompletion::Ok(ValueId)`). A stream is *codata*: per
+// `r[machine.identity.streams-cross-island-edges]` a stream "has recipe identity
+// and no value identity of its own", so it can never be a single `ValueId` and a
+// `RawPrimitive` can never hand one back. `glob` — the build language's "find
+// files" op — is exactly this shape: `Tree.glob(pattern) -> Stream<Path, Path>`,
+// whose elements are realized only when a later `.collect()` drains it.
+//
+// A [`CodataPrimitive`] is the codata analogue of `RawPrimitive`: where a raw
+// primitive begins an async effect and completes with one value, a codata
+// primitive *synchronously realizes a stream recipe* into its ordered elements
+// when the scheduler drains it. It runs inside the effect-island interpreter (a
+// straight-line `&mut self` evaluator), so it is synchronous by construction —
+// `glob` over an already-materialized tree performs only local directory reads.
+// The scheduler assembles the drained elements into the stream's canonical
+// collected value (an `OrderedMap`); the primitive owns only the *domain* logic
+// (pattern matching, directory/archive enumeration).
+
+/// The context a [`CodataPrimitive`] drains through: it exposes the stream's
+/// source value and enumerates fixture-backed tree directories, recording each
+/// listing as a witnessed read. It is the codata analogue of [`EffectCtx`],
+/// scoped to the synchronous effect-island interpreter. The scheduler owns the
+/// concrete implementation (it holds the fixture store and the read log); the
+/// primitive sees only this trait.
+pub trait CodataDrainCtx {
+    /// The resident bytes of the stream's source value (e.g. the `Tree` a glob
+    /// matches against). For a fixture-backed tree these are the
+    /// `fixture-tree\0<name>` handle; for an archive tree they are the ustar
+    /// bytes the drain enumerates directly.
+    fn source_bytes(&self) -> &[u8];
+
+    /// List a directory within a fixture-backed source, recording the listing as
+    /// a witnessed `Directory` read against [`Self::source_id`]. `projection` is
+    /// the fixture-relative directory path (`<fixture-name>/<dir>`).
+    fn fixture_directory(
+        &mut self,
+        projection: &str,
+    ) -> Result<Vec<(String, super::FixtureEntryKind)>, PrimitiveMachineError>;
+}
+
+/// A registered producer of effect codata. Unlike [`RawPrimitive`], a codata
+/// primitive needs nothing from the embedder context: draining a stream is a
+/// local, deterministic function of the source value plus witnessed directory
+/// reads, so the trait is not `Ctx`-generic.
+pub trait CodataPrimitive: Send + Sync {
+    fn descriptor(&self) -> &PrimitiveDescriptor;
+
+    /// Realize the stream recipe into its ordered elements. `pattern` is the
+    /// recipe's sole non-source operand (the glob pattern); each returned string
+    /// is one element key/value the scheduler interns as a `Path` and collects
+    /// into the canonical stream value. The returned order is authoritative —
+    /// the scheduler sorts keys when building the `OrderedMap`, but the drain is
+    /// expected to yield a deterministic, path-ordered set.
+    fn drain(
+        &self,
+        pattern: &str,
+        ctx: &mut dyn CodataDrainCtx,
+    ) -> Result<Vec<String>, PrimitiveMachineError>;
+}
+
+/// The registered codata primitives, keyed by id. `vix-core` constructs every
+/// runtime with an empty registry (the bare language realizes no streams); the
+/// `vixen` runtime installs one carrying the builtin codata primitives (`glob`)
+/// via [`crate::runtime::Runtime::set_codata_registry`].
+#[derive(Default)]
+pub struct CodataRegistry {
+    primitives: BTreeMap<PrimitiveId, Arc<dyn CodataPrimitive>>,
+}
+
+impl CodataRegistry {
+    pub fn register(
+        &mut self,
+        primitive: Arc<dyn CodataPrimitive>,
+    ) -> Result<(), PrimitiveRegistrationError> {
+        let id = primitive.descriptor().id.clone();
+        if self.primitives.insert(id.clone(), primitive).is_some() {
+            return Err(PrimitiveRegistrationError::Duplicate(id));
+        }
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn get(&self, id: &PrimitiveId) -> Option<Arc<dyn CodataPrimitive>> {
+        self.primitives.get(id).cloned()
+    }
+}
+
 #[cfg(test)]
 mod from_ref_tests {
     use super::*;
