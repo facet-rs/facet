@@ -156,14 +156,10 @@ pub const TREE_ENTRY: &str = "TreeEntry";
 /// A host-type declaration the embedder injects into the compiler
 /// ([`crate::compiler::CompilerConfig::host_types`]), so a domain type like
 /// `Tree` is declared by `vixen-primitives` rather than hardcoded as a variant
-/// of the language core's `ExternKind`. `name` is the type's nominal identity;
-/// `projects_to` names the host type that `receiver / segment` path projection
-/// yields (both `Tree` and a directory `TreeEntry` project to a `TreeEntry`), or
-/// `None` for a non-projectable host type.
+/// of the language core's `ExternKind`. `name` is the type's nominal identity.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostTypeDecl {
     pub name: &'static str,
-    pub projects_to: Option<&'static str>,
 }
 
 impl ReceiverType {
@@ -199,24 +195,6 @@ pub fn host_type_vir(host_types: &[HostTypeDecl], name: &str) -> Option<crate::v
         .iter()
         .find(|decl| decl.name == name)
         .map(|decl| crate::vir::Type::Extern(crate::vir::ExternKind::Host(decl.name)))
-}
-
-/// The host type that projecting `receiver / segment` yields, or `None` if the
-/// receiver is not a path-projectable injected host type.
-#[must_use]
-pub fn host_projection(
-    host_types: &[HostTypeDecl],
-    receiver_ty: &crate::vir::Type,
-) -> Option<crate::vir::Type> {
-    use crate::vir::{ExternKind, Type};
-    let Type::Extern(ExternKind::Host(name)) = receiver_ty else {
-        return None;
-    };
-    let target = host_types
-        .iter()
-        .find(|decl| decl.name == *name)?
-        .projects_to?;
-    host_type_vir(host_types, target)
 }
 
 /// Which dedicated VIR op a receiver method lowers to. The compiler owns the
@@ -257,7 +235,6 @@ pub enum MethodOp {
     ByteStreamCollect,
     ByteStreamTrim,
     TreeGlob,
-    TreeEntryText,
     BlobLen,
     RegistryUrl,
 }

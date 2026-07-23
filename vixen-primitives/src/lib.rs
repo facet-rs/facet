@@ -34,16 +34,16 @@ pub(crate) mod rt {
 /// injected into the compiler through [`vix::compiler::CompilerConfig::host_types`]
 /// so the bare language no longer hardcodes them as `ExternKind` variants (issue
 /// 2520). They remain extern-backed opaque values with byte-stable `vix.Tree` /
-/// `vix.TreeEntry` identity; only the *declaration* moves here. Both are
-/// path-projectable and yield a `TreeEntry` under `receiver / segment`.
+/// `vix.TreeEntry` identity; only the *declaration* moves here. `TreeEntry` is now
+/// vestigial — the standalone `receiver / segment` projection and `TreeEntry.text()`
+/// method were retired once exec-origin reads moved onto the `tree_read` primitive
+/// — but it stays declared to keep its nominal identity stable.
 pub const HOST_TYPES: &[vix::binding::HostTypeDecl] = &[
     vix::binding::HostTypeDecl {
         name: vix::binding::TREE,
-        projects_to: Some(vix::binding::TREE_ENTRY),
     },
     vix::binding::HostTypeDecl {
         name: vix::binding::TREE_ENTRY,
-        projects_to: Some(vix::binding::TREE_ENTRY),
     },
 ];
 
@@ -51,19 +51,14 @@ pub const HOST_TYPES: &[vix::binding::HostTypeDecl] = &[
 /// compiler through [`vix::compiler::CompilerConfig::methods`]. The dedicated ops
 /// they name are still lowered and executed by `vix-core` (the machine engine);
 /// only the *declaration* lives here, so `vix-core` no longer hardcodes
-/// `.glob`/`.text`/`.len`/`.url` (issue 2520).
+/// `.glob`/`.len`/`.url` (issue 2520). (`.text()` is no longer a dedicated method:
+/// exec-origin tree reads spell the `tree_read` primitive request directly.)
 pub const DOMAIN_METHODS: &[vix::binding::MethodDecl] = &[
     vix::binding::MethodDecl {
         receiver: vix::binding::ReceiverType::Host(vix::binding::TREE),
         name: "glob",
         arity: 1,
         op: vix::binding::MethodOp::TreeGlob,
-    },
-    vix::binding::MethodDecl {
-        receiver: vix::binding::ReceiverType::Host(vix::binding::TREE_ENTRY),
-        name: "text",
-        arity: 0,
-        op: vix::binding::MethodOp::TreeEntryText,
     },
     vix::binding::MethodDecl {
         receiver: vix::binding::ReceiverType::Blob,

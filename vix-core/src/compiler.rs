@@ -70,10 +70,9 @@ pub struct CompilerConfig {
     pub methods: &'static [crate::binding::MethodDecl],
     /// Host-type declarations the embedder injects — the domain types (`Tree`,
     /// `TreeEntry`) declared by `vixen-primitives` rather than hardcoded as
-    /// `ExternKind` variants. The type-annotation parser resolves these names,
-    /// and `/`-projection reads their `projects_to` here. `vix-core` alone ships
-    /// **none**; the axiom externs (`Blob`/`Registry`/`Schema`/`PinnedUrl`) stay
-    /// hardcoded.
+    /// `ExternKind` variants. The type-annotation parser resolves these names.
+    /// `vix-core` alone ships **none**; the axiom externs
+    /// (`Blob`/`Registry`/`Schema`/`PinnedUrl`) stay hardcoded.
     pub host_types: &'static [crate::binding::HostTypeDecl],
 }
 
@@ -4159,30 +4158,24 @@ fn lower_tree_text_projection(
         paths.push(path);
     }
 
-    if progressive_exec_tree_root(nodes, tree.node) {
-        let mut entry = tree.node;
-        for path in paths {
-            entry = push_node(
-                nodes,
-                call.span,
-                Type::Extern(ExternKind::Host(crate::binding::TREE_ENTRY)),
-                EffectFacts::EFFECT,
-                vec![entry, path.node],
-                Op::TreeProject,
-            );
-        }
-        return Ok(LoweredValue {
-            node: push_node(
-                nodes,
-                call.span,
-                Type::String,
-                EffectFacts::EFFECT,
-                vec![entry],
-                Op::TreeEntryText,
-            ),
-            ty: Type::String,
-        });
-    }
+    // An exec-origin projection off a still-running `ProgressiveSh` tree is read
+    // progressively: the value island is realized by the exec engine's
+    // command-protocol projection (`submit_exec_projection`) so one subfile can
+    // land before the whole process exits. Every other tree (fixture, extracted
+    // archive, completed exec output) is a settled, interned value the store-
+    // backed `TreeReadPrimitive` reads directly. Both spell the same tree-read
+    // request; only the effect facts differ — `EFFECT` marks the exec-origin
+    // read as an effect root the partitioner hoists and hands to the engine,
+    // while `PURE` keeps the settled read an ordinary in-frame primitive call.
+    // The progressive rail is only reachable when the projection path is a
+    // compile-time constant: the exec engine subscribes to a named product
+    // (`out/early.txt`), which the partitioner reads back off the request. A
+    // computed path cannot name a product ahead of time, so it falls back to a
+    // settled read of the completed exec tree (identical to a fixture read).
+    let progressive = progressive_exec_tree_root(nodes, tree.node)
+        && segments
+            .iter()
+            .all(|segment| matches!(segment, ast::Expr::Str(_)));
 
     let mut paths = paths.into_iter();
     let mut path = paths
@@ -4211,12 +4204,17 @@ fn lower_tree_text_projection(
         vec![tree.node, path.node],
         Op::Record,
     );
+    let facts = if progressive {
+        EffectFacts::EFFECT
+    } else {
+        EffectFacts::PURE
+    };
     Ok(LoweredValue {
         node: push_node(
             nodes,
             call.span,
             Type::String,
-            EffectFacts::PURE,
+            facts,
             vec![request],
             Op::InvokePrimitive {
                 primitive: tree_read_primitive_id(),
@@ -4947,20 +4945,6 @@ fn lower_method_call(
                     EffectFacts::EFFECT,
                     vec![receiver.node, pattern.node],
                     Op::TreeGlob,
-                ),
-                ty,
-            })
-        }
-        PreludeMethod::TreeEntryText => {
-            let ty = Type::String;
-            Ok(LoweredValue {
-                node: push_node(
-                    nodes,
-                    call.span,
-                    ty.clone(),
-                    EffectFacts::EFFECT,
-                    vec![receiver.node],
-                    Op::TreeEntryText,
                 ),
                 ty,
             })
@@ -9518,54 +9502,6 @@ fn lower_binary(
             require_type(&left, &Type::Int, expr_span(&binary.left))?;
             require_type(&right, &Type::Int, expr_span(&binary.right))?;
             (Type::Int, Op::Mul)
-        }
-        "/" if crate::binding::host_projection(context.config.host_types, &left.ty).is_some() => {
-            // Host-type path projection (`Tree`/`TreeEntry`): one Name segment (a
-            // string literal) or a Path (projection through several maps). The
-            // projection resolves lazily; undemanded siblings are never read.
-            // Which host type it yields is data on the injected host-type
-            // declaration, not a hardcoded `TreeEntry`.
-            let projected = crate::binding::host_projection(context.config.host_types, &left.ty)
-                .expect("guarded by host_projection above");
-            let projector = match &right.ty {
-                Type::String => {
-                    let literal = nodes
-                        .iter()
-                        .find(|node| node.id == right.node)
-                        .and_then(|node| match &node.op {
-                            Op::String(value) => Some(value.clone()),
-                            _ => None,
-                        })
-                        .ok_or_else(|| {
-                            Diagnostics::one(Diagnostic::unsupported(
-                                expr_span(&binary.right),
-                                "dynamic tree Name segments",
-                            ))
-                        })?;
-                    validate_path_segment(&literal, expr_span(&binary.right))?;
-                    right.node
-                }
-                Type::Path => right.node,
-                _ => {
-                    return Err(type_mismatch(
-                        expr_span(&binary.right),
-                        "a Name segment literal or Path",
-                        right.ty.name(),
-                    ));
-                }
-            };
-            let ty = projected;
-            return Ok(LoweredValue {
-                node: push_node(
-                    nodes,
-                    binary.span,
-                    ty.clone(),
-                    EffectFacts::EFFECT,
-                    vec![left.node, projector],
-                    Op::TreeProject,
-                ),
-                ty,
-            });
         }
         "/" if left.ty == Type::Path => {
             let ast::Expr::Str(segment) = &binary.right else {

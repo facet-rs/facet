@@ -1566,13 +1566,6 @@ pub enum Op {
     /// fixture-tree reference; projections resolve — and record reads — only
     /// where demanded.
     FixtureTree(String),
-    /// Project one segment (String) or a segment path (Path) through a Tree
-    /// or a Dir TreeEntry. Resolves lazily: it reads directory listings along
-    /// the projected path only, never sibling entries or file contents.
-    TreeProject,
-    /// Decode a File TreeEntry's content as UTF-8 text. This is the explicit
-    /// read of the file's bytes; it records the read in the demand's receipt.
-    TreeEntryText,
     /// Glob over a Tree: a keyed codata recipe (`Stream<Path, Path>`) whose
     /// collection reads only the directory listings the pattern traverses.
     TreeGlob,
@@ -2262,12 +2255,15 @@ impl Module {
         // Registered primitive invocations are eager value publications. Their
         // Weavy task must suspend and resume through the generic host boundary;
         // a downstream legacy effect island may consume the published value,
-        // but can never absorb and reinterpret the invocation itself.
-        for node in function
-            .nodes
-            .iter()
-            .filter(|node| matches!(node.op, Op::InvokePrimitive { .. }))
-        {
+        // but can never absorb and reinterpret the invocation itself. An
+        // exec-origin tree read (`(exec.tree / ..).text()`) is the exception:
+        // it is a tree-read primitive marked `EFFECT` that the exec engine
+        // realizes progressively, so it is already a progressive value and must
+        // not also be hoisted as a settled shared publication.
+        for node in function.nodes.iter().filter(|node| {
+            matches!(node.op, Op::InvokePrimitive { .. })
+                && !progressive_ids.contains_key(&node.id)
+        }) {
             if !shared.iter().any(|candidate| candidate.id == node.id) {
                 shared.push(node);
             }
@@ -3447,10 +3443,20 @@ fn progressive_exec_tree_text_values(function: &Function) -> Vec<PartitionedProg
         .nodes
         .iter()
         .filter_map(|node| {
-            let Op::TreeEntryText = node.op else {
+            // The exec-origin `.text()` rail lowers to a tree-read primitive
+            // marked `EFFECT` (see `is_effect_root`); a settled fixture/archive
+            // read is the same primitive marked `PURE`. Only the effectful one
+            // can name a still-running `ProgressiveSh` producer.
+            if node.effect.kind != EffectKind::Effect {
+                return None;
+            }
+            let Op::InvokePrimitive { primitive } = &node.op else {
                 return None;
             };
-            let (exec, path) = progressive_exec_tree_path(function, node.inputs[0])?;
+            if *primitive != crate::runtime::tree_read_primitive_id() {
+                return None;
+            }
+            let (exec, path) = progressive_exec_tree_path(function, *node.inputs.first()?)?;
             Some(PartitionedProgressiveValue {
                 id: ValueIslandId {
                     function: function.id,
@@ -3467,58 +3473,93 @@ fn progressive_exec_tree_text_values(function: &Function) -> Vec<PartitionedProg
         .collect()
 }
 
-fn progressive_exec_tree_path(function: &Function, mut node: NodeId) -> Option<(NodeId, String)> {
-    let mut segments = Vec::new();
-    loop {
-        let current = function.nodes.get(node.0 as usize)?;
-        match &current.op {
-            Op::TreeProject => {
-                let segment = function.nodes.get(current.inputs[1].0 as usize)?;
-                match &segment.op {
-                    Op::String(value) | Op::Path(value) => segments.push(value.clone()),
-                    _ => return None,
-                }
-                node = current.inputs[0];
-            }
-            Op::Project { index: 0 } => {
-                let exec = function.nodes.get(current.inputs[0].0 as usize)?;
-                if !matches!(exec.op, Op::Exec { .. }) {
-                    return None;
-                }
-                let capability = function.nodes.get(exec.inputs[0].0 as usize)?;
-                let Type::Record(capability) = &capability.ty else {
-                    return None;
-                };
-                if capability.name != "ProgressiveSh" {
-                    return None;
-                }
-                segments.reverse();
-                return Some((exec.id, segments.join("/")));
-            }
-            _ => return None,
+/// Match a tree-read request `Record { tree, path }` whose `tree` field projects
+/// a still-running `ProgressiveSh` exec output. Returns the exec producer node
+/// and the constant projection path, or `None` when the tree is not exec-origin
+/// or the path is not a compile-time constant (either falls back to a settled,
+/// interned tree read).
+fn progressive_exec_tree_path(function: &Function, request: NodeId) -> Option<(NodeId, String)> {
+    let request = function.nodes.get(request.0 as usize)?;
+    if !matches!(request.op, Op::Record) {
+        return None;
+    }
+    let tree = *request.inputs.first()?;
+    let path = constant_path(function, *request.inputs.get(1)?)?;
+
+    let tree = function.nodes.get(tree.0 as usize)?;
+    let Op::Project { index: 0 } = tree.op else {
+        return None;
+    };
+    let exec = function.nodes.get(tree.inputs.first()?.0 as usize)?;
+    if !matches!(exec.op, Op::Exec { .. }) {
+        return None;
+    }
+    let capability = function.nodes.get(exec.inputs.first()?.0 as usize)?;
+    let Type::Record(capability) = &capability.ty else {
+        return None;
+    };
+    if capability.name != "ProgressiveSh" {
+        return None;
+    }
+    Some((exec.id, path))
+}
+
+/// Fold a `Path`/`PathJoin` tree of segment literals into its `/`-joined
+/// spelling, or `None` if any segment is a runtime value.
+fn constant_path(function: &Function, node: NodeId) -> Option<String> {
+    let current = function.nodes.get(node.0 as usize)?;
+    match &current.op {
+        Op::Path(value) | Op::String(value) => Some(value.clone()),
+        Op::PathJoin => {
+            let left = constant_path(function, *current.inputs.first()?)?;
+            let right = constant_path(function, *current.inputs.get(1)?)?;
+            Some(format!("{left}/{right}"))
         }
+        _ => None,
     }
 }
 
+/// The exec-origin tree-read nodes the progressive projection realizes, so the
+/// ordinary partition does not also hoist the primitive as a settled effect
+/// island. Only the primitive invocation is an effect root; its pure request
+/// record and path literals are collected too so they never form dead islands.
+/// The `tree` field (the exec output projection) is left alone — it is the
+/// producer boundary, hoisted as the exec island itself.
 fn progressive_projection_effect_nodes(function: &Function, output: NodeId) -> Vec<NodeId> {
     let mut nodes = vec![output];
-    let Some(output) = function.nodes.get(output.0 as usize) else {
+    let Some(invocation) = function.nodes.get(output.0 as usize) else {
         return nodes;
     };
-    let Some(mut node) = output.inputs.first().copied() else {
+    let Some(request_id) = invocation.inputs.first().copied() else {
         return nodes;
     };
-    while let Some(current) = function.nodes.get(node.0 as usize) {
-        match current.op {
-            Op::TreeProject => {
-                nodes.push(current.id);
-                node = current.inputs[0];
-            }
-            Op::Project { index: 0 } => break,
-            _ => break,
-        }
+    let Some(request) = function.nodes.get(request_id.0 as usize) else {
+        return nodes;
+    };
+    if !matches!(request.op, Op::Record) {
+        return nodes;
+    }
+    nodes.push(request_id);
+    if let Some(path_id) = request.inputs.get(1).copied() {
+        collect_constant_path_nodes(function, path_id, &mut nodes);
     }
     nodes
+}
+
+fn collect_constant_path_nodes(function: &Function, node: NodeId, nodes: &mut Vec<NodeId>) {
+    let Some(current) = function.nodes.get(node.0 as usize) else {
+        return;
+    };
+    match &current.op {
+        Op::Path(_) | Op::String(_) => nodes.push(node),
+        Op::PathJoin => {
+            nodes.push(node);
+            for input in current.inputs.clone() {
+                collect_constant_path_nodes(function, input, nodes);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// The parameter positions of `callee` that are demand wires, in declaration
@@ -4127,8 +4168,6 @@ fn is_effect_root(node: &Node) -> bool {
     matches!(
         node.op,
         Op::Exec { .. }
-            | Op::TreeProject
-            | Op::TreeEntryText
             | Op::FixtureRegistry
             | Op::RegistryUrl
             | Op::Untar
@@ -4136,6 +4175,13 @@ fn is_effect_root(node: &Node) -> bool {
     ) || (node.effect.kind == EffectKind::Effect
         && matches!(node.op, Op::StreamCollect)
         && !matches!(node.ty, Type::Stream { .. }))
+        // An exec-origin tree-read (`(exec.tree / ..).text()`) lowers to a
+        // tree-read primitive marked `EFFECT`: it is realized progressively by
+        // the exec engine, never lowered to Weavy, so it is an island boundary.
+        // Settled tree-reads (fixture/archive/completed-exec) stay `PURE` and
+        // are ordinary in-frame primitive calls, not roots.
+        || (node.effect.kind == EffectKind::Effect
+            && matches!(node.op, Op::InvokePrimitive { .. }))
 }
 
 fn is_shared_publication_candidate(node: &Node) -> bool {
@@ -4657,8 +4703,6 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
             op.push(90);
             frame(&mut op, name.as_bytes());
         }
-        Op::TreeProject => op.push(91),
-        Op::TreeEntryText => op.push(92),
         Op::TreeGlob => op.push(93),
         Op::FixtureRegistry => op.push(94),
         Op::RegistryUrl => op.push(95),

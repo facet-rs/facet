@@ -6430,12 +6430,13 @@ fn progressive_tree(sh: ProgressiveSh) -> Stream<Check> {
     );
     assert!(
         partitioned.values.iter().all(|value| {
-            !matches!(
-                value.island.effect_output().map(|node| &node.op),
-                Some(VirOp::TreeProject | VirOp::TreeEntryText)
-            )
+            value.island.effect_output().is_none_or(|node| {
+                !(matches!(node.op, VirOp::InvokePrimitive { .. })
+                    && node.effect.kind == vix::vir::EffectKind::Effect)
+            })
         }),
-        "the projection chain is not serialized as whole-value effect islands",
+        "the exec-origin tree read is realized progressively, never serialized as \
+         a whole-value effect island",
     );
     let producer = projection.producer;
     let progressive = projection.id;
