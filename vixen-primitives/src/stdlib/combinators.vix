@@ -1,0 +1,30 @@
+pub fn any<T>(xs: [T]) where { predicate: fn(T) -> Bool } -> Bool {
+    xs.fold(false, |acc, x| acc || predicate(x))
+}
+
+pub fn all<T>(xs: [T]) where { predicate: fn(T) -> Bool } -> Bool {
+    xs.fold(true, |acc, x| acc && predicate(x))
+}
+
+pub fn contains<T>(xs: [T]) where { value: T } -> Bool {
+    xs.fold(false, |acc, x| acc || x == value)
+}
+
+pub fn first<T>(xs: [T]) -> Option<T> {
+    xs.fold(None, |acc, x| match acc {
+        None => Some(x),
+        Some(y) => Some(y),
+    })
+}
+
+pub fn last<T>(xs: [T]) -> Option<T> {
+    xs.fold(None, |acc, x| Some(x))
+}
+
+pub fn find_min<K, V>(s: Stream<K, V>) where { predicate: fn(V) -> Bool } -> Option<V> {
+    s.filter(predicate).collect().values().sorted().first()
+}
+
+pub fn find_max<K, V>(s: Stream<K, V>) where { predicate: fn(V) -> Bool } -> Option<V> {
+    s.filter(predicate).collect().values().sorted().last()
+}

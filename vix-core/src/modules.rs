@@ -142,6 +142,13 @@ fn resolve_imports(
     set: &BTreeMap<String, BTreeMap<String, DeclaredItem>>,
 ) -> Result<BTreeMap<String, String>, Diagnostics> {
     let mut bound: BTreeSet<String> = BTreeSet::new();
+    // Function shapes bound in this file, keyed by (name, is-generic-template). A
+    // concrete function and a generic template may share a name — they dispatch
+    // by receiver type (a receiver-typed `contains` alongside the array
+    // `contains<T>`) — so the strict `bound` collision is relaxed for that one
+    // case; every other rebind (of an import, a type, or a same-shape function)
+    // stays an error.
+    let mut function_shapes: BTreeSet<(String, bool)> = BTreeSet::new();
     let mut aliases = BTreeMap::new();
     for item in &file.items {
         match item {
@@ -187,8 +194,25 @@ fn resolve_imports(
             ast::Item::Fn(function) => {
                 // r[impl lang.module.use] — unqualified collisions are
                 // compile errors: a local declaration may not rebind an
-                // imported name.
-                if !bound.insert(function.name.value.clone()) {
+                // imported name. Exception: a concrete function and a generic
+                // template may share a name (receiver-dispatched overloading).
+                let is_test = function
+                    .attributes
+                    .iter()
+                    .any(|attribute| attribute.name.value == "test");
+                let is_generic = function.generics.is_some() && !is_test;
+                if !function_shapes.insert((function.name.value.clone(), is_generic)) {
+                    return Err(duplicate_name(function.name.span, &function.name.value));
+                }
+                // A same-name function of the *other* shape is allowed; a
+                // collision with an import or type (which are only in `bound`) is
+                // not.
+                let shares_with_other_function = function_shapes
+                    .iter()
+                    .filter(|(name, _)| name == &function.name.value)
+                    .count()
+                    > 1;
+                if !bound.insert(function.name.value.clone()) && !shares_with_other_function {
                     return Err(duplicate_name(function.name.span, &function.name.value));
                 }
             }

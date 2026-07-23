@@ -951,7 +951,8 @@ fn rung_034_stream_filter_preserves_survivor_keys() {
 // tie-breaker, so a duplicate equal value remains in the rest.
 #[test]
 fn rung_038_selection_and_decomposition_compiles() {
-    let module = Compiler::new()
+    // `find_min`/`find_max` are std vix now, so the compiler needs the prelude.
+    let module = decode_compiler()
         .compile(RUNG_038)
         .expect("rung 038 compiles selection and decomposition into typed stream VIR");
     assert_eq!(module.tests.len(), 1);
@@ -959,21 +960,25 @@ fn rung_038_selection_and_decomposition_compiles() {
     assert_eq!(test.name, "find_split_min_max");
     let function = &module.functions[test.function.0 as usize];
 
-    // `find_min`/`find_max` are structural-order selections over the retained
-    // stream: each is a distinct op returning `Option<Int>` while the stream is
-    // not consumed.
-    let find_min = function
-        .nodes
-        .iter()
-        .find(|node| matches!(node.op, VirOp::StreamFindMin))
-        .expect("find_min is a distinct selection op");
-    let find_max = function
-        .nodes
-        .iter()
-        .find(|node| matches!(node.op, VirOp::StreamFindMax))
-        .expect("find_max is a distinct selection op");
-    assert_eq!(find_min.ty, VirType::option(VirType::Int));
-    assert_eq!(find_max.ty, VirType::option(VirType::Int));
+    // `find_min`/`find_max` are no longer dedicated ops — they are std vix over
+    // the stream core + `sorted` (issue 2520), inlined at the call site because
+    // they take a `Stream`. Their composition materializes the filtered stream
+    // (`StreamCollect`) and sorts it (`ArraySorted`), so the function now contains
+    // those ops instead of a dedicated selection op.
+    assert!(
+        function
+            .nodes
+            .iter()
+            .any(|node| matches!(node.op, VirOp::StreamCollect)),
+        "the inlined find_min/find_max collect their filtered streams"
+    );
+    assert!(
+        function
+            .nodes
+            .iter()
+            .any(|node| matches!(node.op, VirOp::ArraySorted)),
+        "the inlined find_min/find_max sort the collected values"
+    );
 
     // `split_min` decomposes the stream into the selected value and the ordered
     // dense remainder, keeping duplicate equal values: `Option<(Int, [Int])>`.

@@ -1412,12 +1412,6 @@ pub enum Op {
     ArrayFold,
     /// Partition the final authored position from the remaining prefix.
     ArraySplitLast,
-    /// Test whether every authored array position satisfies one typed predicate.
-    ArrayAll,
-    /// Test whether any authored array position satisfies one typed predicate.
-    ArrayAny,
-    /// Test whether an array holds an element structurally equal to a given value.
-    ArrayContains,
     /// Permute a dense array into ascending structural-semantic order,
     /// preserving every duplicate element.
     ArraySorted,
@@ -1474,12 +1468,6 @@ pub enum Op {
     StreamFlatMap,
     /// Materialize a keyed codata recipe as its canonical Map value.
     StreamCollect,
-    /// Select the structurally-least value whose row satisfies a typed
-    /// predicate, breaking ties by the stable stream key, retaining the stream.
-    StreamFindMin,
-    /// Select the structurally-greatest value whose row satisfies a typed
-    /// predicate, breaking ties by the stable stream key, retaining the stream.
-    StreamFindMax,
     /// Remove exactly the structurally-least row (stable key tie-break) from a
     /// keyed codata recipe, realizing the remaining values as a fresh dense
     /// array in canonical structural key order with the selected row omitted.
@@ -4575,9 +4563,6 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::StreamFilter => op.push(49),
         Op::MapValues => op.push(50),
         Op::ArraySplitLast => op.push(51),
-        Op::ArrayAll => op.push(52),
-        Op::ArrayAny => op.push(53),
-        Op::ArrayContains => op.push(54),
         Op::ArraySorted => op.push(55),
         Op::StreamFilterMap => op.push(56),
         Op::StreamFlatMap => op.push(57),
@@ -4585,8 +4570,6 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
             op.push(58);
             op.extend_from_slice(&site.0.to_le_bytes());
         }
-        Op::StreamFindMin => op.push(59),
-        Op::StreamFindMax => op.push(60),
         Op::StreamSplitMin => op.push(61),
         Op::StringContains => op.push(62),
         Op::StringSplitOnce => op.push(63),
