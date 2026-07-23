@@ -1571,10 +1571,6 @@ pub enum Op {
     TreeGlob,
     /// Open the offline harness fixture registry (the lock-time manifest).
     FixtureRegistry,
-    /// Resolve an artifact name against the registry manifest into a
-    /// `PinnedUrl`: provenance URL plus the REQUIRED vix ContentHash
-    /// (`machine.primitive.fetch-is-pinned`).
-    RegistryUrl,
     /// Extract an archive Blob into a Tree whose identity is the canonical
     /// tree encoding — never the archive bytes' ContentHash.
     ///
@@ -4169,7 +4165,6 @@ fn is_effect_root(node: &Node) -> bool {
         node.op,
         Op::Exec { .. }
             | Op::FixtureRegistry
-            | Op::RegistryUrl
             | Op::Untar
             | Op::BlobLen
     ) || (node.effect.kind == EffectKind::Effect
@@ -4705,7 +4700,6 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         }
         Op::TreeGlob => op.push(93),
         Op::FixtureRegistry => op.push(94),
-        Op::RegistryUrl => op.push(95),
         Op::Untar => op.push(97),
         Op::BlobLen => op.push(98),
     }

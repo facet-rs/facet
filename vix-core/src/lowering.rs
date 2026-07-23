@@ -5998,7 +5998,6 @@ fn lower_node(
         }
         Op::TreeGlob
         | Op::FixtureRegistry
-        | Op::RegistryUrl
         | Op::Untar
         | Op::BlobLen => {
             return Err(lowering_diagnostic(

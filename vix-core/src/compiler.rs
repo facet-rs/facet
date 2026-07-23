@@ -11,7 +11,10 @@ use taxon::{
 
 use crate::decode::{self, DecodeFormat, DecodedValue};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics, Label};
-use crate::runtime::{PinnedBlobRef, tree_read_primitive_id, tree_read_request_type};
+use crate::runtime::{
+    PinnedBlobRef, registry_url_primitive_id, registry_url_request_type, tree_read_primitive_id,
+    tree_read_request_type,
+};
 use crate::schema::{SchemaBatch, SchemaRef, SchemaSet};
 use crate::support::{Span, Spanned};
 use crate::surface::{SurfaceParser, ast};
@@ -4966,15 +4969,32 @@ fn lower_method_call(
         PreludeMethod::RegistryUrl => {
             let name = lower_value(nodes, bindings, context, &positional[0])?;
             require_type(&name, &Type::String, expr_span(&positional[0]))?;
+            // `Registry.url(name)` resolves the artifact against the offline
+            // registry manifest — domain logic that lives in the `registry-url`
+            // primitive (`vixen-primitives`), reached like a settled tree read:
+            // build the request record, then invoke the primitive. The
+            // invocation node is PURE (an ordinary in-frame primitive demand,
+            // staged by the scheduler); the manifest read is the effect, recorded
+            // as a witness *inside* the primitive via `ctx.read(RegistryManifest)`.
+            let request = push_node(
+                nodes,
+                call.span,
+                registry_url_request_type(),
+                EffectFacts::PURE,
+                vec![receiver.node, name.node],
+                Op::Record,
+            );
             let ty = Type::from_facet::<PinnedBlobRef>();
             Ok(LoweredValue {
                 node: push_node(
                     nodes,
                     call.span,
                     ty.clone(),
-                    EffectFacts::EFFECT,
-                    vec![receiver.node, name.node],
-                    Op::RegistryUrl,
+                    EffectFacts::PURE,
+                    vec![request],
+                    Op::InvokePrimitive {
+                        primitive: registry_url_primitive_id(),
+                    },
                 ),
                 ty,
             })

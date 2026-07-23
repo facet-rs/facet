@@ -28,8 +28,8 @@ use vix::compiler::CompilerConfig;
 use vix::runtime::{
     CodataRegistry, EventSink, PrimitiveDispatcher, PrimitiveRegistry, RawPrimitive, Runtime,
 };
-// DecodePrimitive / PinnedFetchPrimitive / TreeGlobPrimitive / TreeReadPrimitive /
-// TypedAdapter come from the `pub use vixen_primitives::*` above.
+// DecodePrimitive / PinnedFetchPrimitive / RegistryUrlPrimitive / TreeGlobPrimitive /
+// TreeReadPrimitive / TypedAdapter come from the `pub use vixen_primitives::*` above.
 
 /// The built-in registered primitives, as data: this is the *one* place that
 /// lists them. Adding a primitive is one entry here, not a second
@@ -41,6 +41,7 @@ pub fn builtin_primitives<Ctx>() -> Vec<Arc<dyn RawPrimitive<Ctx>>> {
         Arc::new(DecodePrimitive::default()),
         Arc::new(TypedAdapter::new::<Ctx>(PinnedFetchPrimitive)),
         Arc::new(TreeReadPrimitive::default()),
+        Arc::new(RegistryUrlPrimitive::default()),
     ]
 }
 

@@ -121,6 +121,41 @@ pub fn tree_read_primitive_id() -> PrimitiveId {
     }
 }
 
+// ---- registry-url ---------------------------------------------------------
+//
+// `Registry.url(name)` resolves an artifact name against the offline harness
+// registry manifest into a `PinnedBlobRef` (provenance URL + the REQUIRED pinned
+// ContentHash). The manifest lookup is domain logic, so it is a primitive whose
+// implementation lives in `vixen-primitives`; the contract (request shape + id)
+// lives here, exactly as `tree-read`'s does. The manifest bytes reach the
+// primitive through `EffectCtx::read(registry, ReadProjection::RegistryManifest)`.
+
+#[must_use]
+pub fn registry_url_request_type() -> Type {
+    Type::Record(RecordType::new(
+        "RegistryUrlRequest",
+        vec![
+            RecordField {
+                name: "registry".to_owned(),
+                ty: Type::Extern(ExternKind::Registry),
+            },
+            RecordField {
+                name: "name".to_owned(),
+                ty: Type::String,
+            },
+        ],
+    ))
+}
+
+#[must_use]
+pub fn registry_url_primitive_id() -> PrimitiveId {
+    PrimitiveId {
+        namespace: "vix.machine".to_owned(),
+        name: "registry-url".to_owned(),
+        version: 1,
+    }
+}
+
 // ---- tree-glob (codata) ---------------------------------------------------
 //
 // `glob` is the build language's "find files" op: `Tree.glob(pattern) ->

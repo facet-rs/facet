@@ -15,6 +15,7 @@ mod decode_primitive;
 mod leaf_overrides;
 mod fetch_primitive;
 mod primitive_value_decode;
+mod registry_url_primitive;
 mod tree_glob_primitive;
 mod tree_read_primitive;
 
@@ -78,6 +79,7 @@ pub use decode_primitive::*;
 pub use fetch_primitive::*;
 pub use leaf_overrides::LEAF_OVERRIDES;
 pub use primitive_value_decode::*;
+pub use registry_url_primitive::*;
 pub use tree_glob_primitive::*;
 pub use tree_read_primitive::*;
 pub use typed_primitive::*;

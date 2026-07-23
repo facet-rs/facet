@@ -537,6 +537,32 @@ impl EffectAuthority for StagedEffectAuthority {
                 observation: ReadObservation::Value(identity),
             });
         }
+        if let ReadProjection::RegistryManifest = projection {
+            if value.schema != Type::Extern(crate::vir::ExternKind::Registry).schema_ref() {
+                return Err(PrimitiveMachineError::AuthorityViolation {
+                    detail: "registry-manifest read source was not a Registry".to_owned(),
+                });
+            }
+            let manifest = self
+                .fixture_store
+                .as_ref()
+                .ok_or_else(|| PrimitiveMachineError::Unavailable {
+                    detail: "no fixture store is installed for this effect snapshot".to_owned(),
+                })?
+                .registry_manifest()
+                .map_err(|_| PrimitiveMachineError::Unavailable {
+                    detail: "fixture registry manifest is unavailable".to_owned(),
+                })?;
+            let bytes = manifest.into_bytes();
+            let value = PrimitiveValue::bytes(Type::String.schema_ref(), bytes.clone());
+            let identity = value.identity();
+            return Ok(WitnessedValue {
+                identity: identity.clone(),
+                bytes,
+                value,
+                observation: ReadObservation::Value(identity),
+            });
+        }
         if !matches!(projection, ReadProjection::Whole) {
             return Err(PrimitiveMachineError::AuthorityViolation {
                 detail: "staged authority does not admit this projected read".to_owned(),
