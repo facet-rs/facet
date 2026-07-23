@@ -782,12 +782,42 @@ impl ExternKind {
     }
 }
 
+/// An embedder-supplied leaf override: a wire type whose vix `Type` cannot be
+/// read off its `Facet` shape, declared by the embedder rather than hardcoded in
+/// the core walker. Keyed by nominal type identity ([`facet::ConstTypeId`], i.e.
+/// `shape.id`), so distinct wire meanings are distinct Rust newtypes. The target
+/// `Type` is produced by a thunk because `Type` is not a `const` value.
+///
+/// This is the seam that lets the **domain** wire types (`BlobHandle` →
+/// `Extern(Blob)`, `RegistryHandle` → `Extern(Registry)`, `UpstreamDigest` →
+/// `String`) live outside `vix-core`: the core walker no longer has to *name*
+/// them, it just consults the injected list. See [`Type::from_facet_with`].
+pub struct LeafOverrideDecl {
+    /// Nominal identity of the wire type this override matches, compared against
+    /// `shape.id`. Build with `facet::ConstTypeId::of::<T>()`.
+    pub type_id: facet::ConstTypeId,
+    /// The wire `Type` the matched shape maps to.
+    pub ty: fn() -> Type,
+}
+
 /// The leaf-override table for [`Type::from_facet`]: the handful of Rust types
 /// whose wire `Type` cannot be read off their `Facet` shape. Keyed by nominal
 /// type identity ([`facet::ConstTypeId`]), so distinct wire meanings are distinct
 /// Rust newtypes rather than one reused type with a hidden discriminator.
-fn facet_leaf_override(shape: &'static facet::Shape) -> Option<Type> {
+///
+/// Embedder-injected `overrides` are consulted first, so a host crate can map a
+/// wire type the core does not name; the hardcoded fallback below then covers
+/// the language's own axiom leaves (callbacks, digests, schema refs) and — until
+/// the domain wire types complete their move out of core — the domain handles.
+fn facet_leaf_override(
+    shape: &'static facet::Shape,
+    overrides: &[LeafOverrideDecl],
+) -> Option<Type> {
     use crate::runtime::{BlobHandle, Callback, Digest, RegistryHandle, UpstreamDigest};
+
+    if let Some(decl) = overrides.iter().find(|decl| shape.id == decl.type_id) {
+        return Some((decl.ty)());
+    }
 
     // A host-retained Vix callback is represented in Rust by a process-local
     // token, but its semantic wire type is the fully parameterized Vix function
@@ -798,8 +828,8 @@ fn facet_leaf_override(shape: &'static facet::Shape) -> Option<Type> {
             panic!("Callback must expose its request and response type parameters");
         };
         return Some(Type::Function {
-            parameter: Box::new(Type::from_facet_shape(parameter.shape())),
-            result: Box::new(Type::from_facet_shape(result.shape())),
+            parameter: Box::new(Type::from_facet_shape(parameter.shape(), overrides)),
+            result: Box::new(Type::from_facet_shape(result.shape(), overrides)),
         });
     }
 
@@ -855,27 +885,33 @@ fn facet_scalar(scalar: facet::ScalarType, shape: &'static facet::Shape) -> Type
     }
 }
 
-fn facet_fields(fields: &'static [facet::Field]) -> Vec<RecordField> {
+fn facet_fields(
+    fields: &'static [facet::Field],
+    overrides: &[LeafOverrideDecl],
+) -> Vec<RecordField> {
     fields
         .iter()
         .map(|field| RecordField {
             name: field.effective_name().to_owned(),
-            ty: Type::from_facet_shape(field.shape()),
+            ty: Type::from_facet_shape(field.shape(), overrides),
         })
         .collect()
 }
 
-fn facet_variant_payload(variant: &'static facet::Variant) -> VariantPayload {
+fn facet_variant_payload(
+    variant: &'static facet::Variant,
+    overrides: &[LeafOverrideDecl],
+) -> VariantPayload {
     let fields = variant.data.fields;
     if fields.is_empty() {
         return VariantPayload::Unit;
     }
     match variant.data.kind {
-        facet::StructKind::Struct => VariantPayload::Record(facet_fields(fields)),
+        facet::StructKind::Struct => VariantPayload::Record(facet_fields(fields, overrides)),
         facet::StructKind::Tuple | facet::StructKind::TupleStruct => VariantPayload::Tuple(
             fields
                 .iter()
-                .map(|field| Type::from_facet_shape(field.shape()))
+                .map(|field| Type::from_facet_shape(field.shape(), overrides))
                 .collect(),
         ),
         facet::StructKind::Unit => VariantPayload::Unit,
@@ -932,24 +968,36 @@ impl Type {
     /// values keyed by their distinct newtype identity.
     #[must_use]
     pub fn from_facet<T: facet::Facet<'static>>() -> Self {
-        Self::from_facet_shape(T::SHAPE)
+        Self::from_facet_shape(T::SHAPE, &[])
     }
 
-    fn from_facet_shape(shape: &'static facet::Shape) -> Self {
-        if let Some(ty) = facet_leaf_override(shape) {
+    /// Like [`Type::from_facet`], but with an embedder-supplied list of
+    /// [`LeafOverrideDecl`]s consulted before the core's own leaf table. This is
+    /// the seam a host crate uses to map its **domain** wire types (which it
+    /// owns, and the language core no longer names) onto their vix `Type` — see
+    /// [`LeafOverrideDecl`]. Passing `&[]` is exactly [`Type::from_facet`].
+    #[must_use]
+    pub fn from_facet_with<T: facet::Facet<'static>>(overrides: &[LeafOverrideDecl]) -> Self {
+        Self::from_facet_shape(T::SHAPE, overrides)
+    }
+
+    fn from_facet_shape(shape: &'static facet::Shape, overrides: &[LeafOverrideDecl]) -> Self {
+        if let Some(ty) = facet_leaf_override(shape, overrides) {
             return ty;
         }
         if let Some(pointee) = facet_transparent_pointee(shape) {
-            return Self::from_facet_shape(pointee);
+            return Self::from_facet_shape(pointee, overrides);
         }
         if let Some(scalar) = shape.scalar_type() {
             return facet_scalar(scalar, shape);
         }
         match shape.def {
-            facet::Def::List(list) => Self::array(Self::from_facet_shape(list.t())),
-            facet::Def::Slice(slice) => Self::array(Self::from_facet_shape(slice.t())),
-            facet::Def::Option(option) => Self::option(Self::from_facet_shape(option.t())),
-            facet::Def::Scalar | facet::Def::Undefined => Self::from_facet_user(shape),
+            facet::Def::List(list) => Self::array(Self::from_facet_shape(list.t(), overrides)),
+            facet::Def::Slice(slice) => Self::array(Self::from_facet_shape(slice.t(), overrides)),
+            facet::Def::Option(option) => {
+                Self::option(Self::from_facet_shape(option.t(), overrides))
+            }
+            facet::Def::Scalar | facet::Def::Undefined => Self::from_facet_user(shape, overrides),
             _ => panic!(
                 "Type::from_facet: unsupported def for `{}`",
                 shape.type_identifier
@@ -957,17 +1005,20 @@ impl Type {
         }
     }
 
-    fn from_facet_user(shape: &'static facet::Shape) -> Self {
+    fn from_facet_user(shape: &'static facet::Shape, overrides: &[LeafOverrideDecl]) -> Self {
         match shape.ty {
             facet::Type::User(facet::UserType::Struct(struct_type)) => match struct_type.kind {
-                facet::StructKind::Unit | facet::StructKind::Struct => Self::Record(
-                    RecordType::new(shape.type_identifier, facet_fields(struct_type.fields)),
-                ),
+                facet::StructKind::Unit | facet::StructKind::Struct => {
+                    Self::Record(RecordType::new(
+                        shape.type_identifier,
+                        facet_fields(struct_type.fields, overrides),
+                    ))
+                }
                 facet::StructKind::Tuple | facet::StructKind::TupleStruct => Self::Tuple(
                     struct_type
                         .fields
                         .iter()
-                        .map(|field| Self::from_facet_shape(field.shape()))
+                        .map(|field| Self::from_facet_shape(field.shape(), overrides))
                         .collect(),
                 ),
             },
@@ -978,7 +1029,7 @@ impl Type {
                     .iter()
                     .map(|variant| EnumVariant {
                         name: variant.effective_name().to_owned(),
-                        payload: facet_variant_payload(variant),
+                        payload: facet_variant_payload(variant, overrides),
                     })
                     .collect(),
             )),

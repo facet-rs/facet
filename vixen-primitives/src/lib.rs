@@ -12,6 +12,7 @@
 pub mod typed_primitive;
 
 mod decode_primitive;
+mod leaf_overrides;
 mod fetch_primitive;
 mod primitive_value_decode;
 mod tree_glob_primitive;
@@ -80,6 +81,7 @@ pub const DOMAIN_METHODS: &[vix::binding::MethodDecl] = &[
 
 pub use decode_primitive::*;
 pub use fetch_primitive::*;
+pub use leaf_overrides::LEAF_OVERRIDES;
 pub use primitive_value_decode::*;
 pub use tree_glob_primitive::*;
 pub use tree_read_primitive::*;
