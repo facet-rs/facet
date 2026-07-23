@@ -145,7 +145,7 @@ impl Compiler {
         for module in modules {
             parsed.push((module.name.to_owned(), self.parser.parse(module.source)?));
         }
-        let merged = crate::modules::merge_module_set(root, &parsed)?;
+        let merged = crate::modules::merge_module_set(root, &parsed, &self.primitive_surfaces)?;
         let module = lower_module(&merged, self.config, &self.primitive_surfaces)?;
         let warnings = lint_module(&module);
         Ok(Compilation { module, warnings })
@@ -233,9 +233,11 @@ struct ModuleContext<'a> {
 
 impl ModuleContext<'_> {
     fn primitive_shape(&self, name: &str) -> Option<crate::runtime::RequestShape> {
-        self.primitive_surfaces
-            .iter()
-            .find(|surface| surface.surface_name == name)
+        // Injected surfaces answer to both their bare (`grab`) and qualified
+        // (`std::grab`) spellings, the same as the static `surface_primitive`
+        // fallback — so a call keeps lowering after a surface leaves the static
+        // table, whichever way module resolution left the callee spelled.
+        crate::binding::injected_surface(self.primitive_surfaces, name)
             .map(|surface| surface.shape.clone())
             .or_else(|| {
                 crate::binding::surface_primitive(name)
