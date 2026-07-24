@@ -6405,6 +6405,16 @@ fn completed_exec_tree(sh: Sh) -> Stream<Check> {
     assert!(report.agrees());
 }
 
+/// A compiler carrying the vixen host-type declarations (`Tree`/`TreeEntry`),
+/// for tests whose fixture spells the domain projection syntax
+/// (`(tree / seg).text()`) — active only when the embedder declares `Tree`.
+fn tree_compiler() -> Compiler {
+    Compiler::with_config(CompilerConfig {
+        host_types: vixen_primitives::HOST_TYPES,
+        ..CompilerConfig::default()
+    })
+}
+
 #[test]
 fn progressive_exec_tree_text_is_a_partial_dependency_not_a_whole_outcome_input() {
     const SOURCE: &str = r#"
@@ -6414,7 +6424,7 @@ fn progressive_tree(sh: ProgressiveSh) -> Stream<Check> {
     yield expect_eq((producer.tree / "out" / "early.txt").text(), "ready");
 }
 "#;
-    let module = Compiler::new()
+    let module = tree_compiler()
         .compile(SOURCE)
         .expect("progressive exec projection source compiles");
     let partitioned = module.partition_test(&module.tests[0]);
@@ -6481,6 +6491,46 @@ fn progressive_tree(sh: ProgressiveSh) -> Stream<Check> {
             "the partial product completes before the aggregate exec outcome",
         );
     }
+}
+
+/// A computed projection path cannot name an exec product ahead of time, so an
+/// exec-origin `.text()` with a non-literal segment falls back to a settled
+/// `PURE` tree-read of the completed exec tree — never the progressive rail.
+/// This pins the fallback side of the constant-path gate in
+/// `lower_tree_text_projection` (its progressive side is pinned above).
+#[test]
+fn computed_path_exec_tree_text_falls_back_to_a_settled_read() {
+    const SOURCE: &str = r#"
+#[test]
+fn computed_projection(sh: ProgressiveSh) -> Stream<Check> {
+    let producer = exec sh`-c "mkdir -p out; printf ready > out/early.txt"`;
+    let entry = p"out/early.txt";
+    yield expect_eq((producer.tree / entry).text(), "ready");
+}
+"#;
+    let module = tree_compiler()
+        .compile(SOURCE)
+        .expect("computed-path exec projection source compiles");
+    let test = &module.tests[0];
+    let function = &module.functions[test.function.0 as usize];
+    let read = function
+        .nodes
+        .iter()
+        .find(|node| {
+            matches!(&node.op, VirOp::InvokePrimitive { primitive }
+                if *primitive == vix::runtime::tree_read_primitive_id())
+        })
+        .expect("the projection lowers to a tree-read primitive invocation");
+    assert_eq!(
+        read.effect.kind,
+        EffectKind::Pure,
+        "a computed path cannot subscribe to a named product, so the read is settled"
+    );
+    let partitioned = module.partition_test(test);
+    assert!(
+        partitioned.progressive_values.is_empty(),
+        "no progressive projection is claimed for a computed path"
+    );
 }
 
 /// A nonzero exit is retained as `ProcessFailure` in the effect demand and

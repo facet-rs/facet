@@ -202,11 +202,7 @@ fn resolve_imports(
                 // compile errors: a local declaration may not rebind an
                 // imported name. Exception: a concrete function and a generic
                 // template may share a name (receiver-dispatched overloading).
-                let is_test = function
-                    .attributes
-                    .iter()
-                    .any(|attribute| attribute.name.value == "test");
-                let is_generic = function.generics.is_some() && !is_test;
+                let is_generic = crate::surface::is_generic_template(function);
                 if !function_shapes.insert((function.name.value.clone(), is_generic)) {
                     return Err(duplicate_name(function.name.span, &function.name.value));
                 }

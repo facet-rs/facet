@@ -163,8 +163,8 @@ pub const TREE_ENTRY: &str = "TreeEntry";
 /// piece of a host type that still lives in `vix-core`, since it anchors
 /// byte-stable identity; the compiler rejects an unregistered name with a
 /// diagnostic rather than panicking. A `name` that collides with a core type
-/// (`Blob`, `Registry`, …) is shadowed by that core type, which always wins its
-/// own spelling, so host-type names must be distinct from the core surface.
+/// spelling (`Blob`, `Registry`, …) is also rejected: the core always wins its
+/// own spelling, so such a declaration could never be reached.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostTypeDecl {
     pub name: &'static str,

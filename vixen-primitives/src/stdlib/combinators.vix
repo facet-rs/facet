@@ -2,7 +2,9 @@
 // core — no longer dedicated compiler ops (issue 2520). Trade-offs, accepted as
 // part of retiring the ops: `any`/`all`/`contains` fold the whole array and no
 // longer short-circuit, and `find_min`/`find_max` materialize-then-sort
-// (O(n log n)) rather than a single running-extremum scan.
+// (O(n log n)) rather than a single running-extremum scan. `find_min`/`find_max`
+// also `collect()` where the retired ops walked the recipe in place — streams
+// are value-semantic recipes, so the source stream remains usable either way.
 //
 // `first`/`last` are deliberately part of the public std surface: they are the
 // natural array head/tail accessors and the building blocks `find_min`/`find_max`

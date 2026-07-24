@@ -3454,7 +3454,25 @@ fn progressive_exec_tree_text_values(function: &Function) -> Vec<PartitionedProg
             if *primitive != crate::runtime::tree_read_primitive_id() {
                 return None;
             }
-            let (exec, path) = progressive_exec_tree_path(function, *node.inputs.first()?)?;
+            // The compiler marks a tree-read `EFFECT` only when its progressive
+            // gate held (`lower_tree_text_projection`: exec-origin tree, every
+            // segment a literal); this extraction re-derives the same facts at
+            // the node level because it needs the producer and path, not just
+            // the boolean. If it fails, the two gates have drifted — fail here,
+            // loudly, rather than emit the node as both a shared publication
+            // and an effect island.
+            let request = *node
+                .inputs
+                .first()
+                .expect("a primitive invocation carries its request input");
+            let (exec, path) =
+                progressive_exec_tree_path(function, request).unwrap_or_else(|| {
+                    unreachable!(
+                        "an EFFECT-marked tree-read failed progressive extraction: \
+                         `lower_tree_text_projection`'s gate and \
+                         `progressive_exec_tree_path` have drifted"
+                    )
+                });
             Some(PartitionedProgressiveValue {
                 id: ValueIslandId {
                     function: function.id,

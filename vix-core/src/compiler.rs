@@ -1314,6 +1314,17 @@ impl<'a> TypeResolver<'a> {
 /// r[impl machine.primitive.capabilities-by-identity]
 pub const CAPABILITY_TYPE_NAMES: &[&str] = &["Echo", "Sh", "ProgressiveSh"];
 
+/// The type names the core language resolves itself — the plain-path resolver
+/// arms plus the generic bases and the pre-seeded `Ordering`. The injected
+/// host-type arm resolves *after* every one of these, so a host type declared
+/// under a core spelling could never be named; `lower_module` rejects such a
+/// declaration up front rather than letting it sit silently shadowed. Kept in
+/// lockstep with `TypeResolver::resolve_type_with` / `lower_declared_type`.
+const CORE_TYPE_SPELLINGS: &[&str] = &[
+    "Bool", "Int", "String", "Path", "Check", "Ordering", "Blob", "Registry", "PinnedUrl",
+    "Schema", "Option", "Map", "Set", "Stream",
+];
+
 /// The single opaque field carrying a capability's executable identity.
 pub const CAPABILITY_PROGRAM_FIELD: &str = "$program";
 
@@ -1415,6 +1426,18 @@ fn lower_module(
                 ),
             )));
         }
+        if CORE_TYPE_SPELLINGS.contains(&decl.name)
+            || CAPABILITY_TYPE_NAMES.contains(&decl.name)
+        {
+            return Err(Diagnostics::one(Diagnostic::unsupported(
+                Span { start: 0, end: 0 },
+                format!(
+                    "injected host type `{}` collides with a core type spelling — the core \
+                     always wins its own name, so the declaration could never be reached",
+                    decl.name
+                ),
+            )));
+        }
         types
             .entry(decl.name.to_owned())
             .or_insert_with(|| Type::Extern(ExternKind::Host(decl.name)));
@@ -1449,11 +1472,7 @@ fn lower_module(
         // Only generic *value* functions become monomorphization templates. A
         // generic `#[test]` has no instantiation surface, so it flows through
         // `declare_function`, which rejects it as a generic function.
-        let is_test = function
-            .attributes
-            .iter()
-            .any(|attribute| attribute.name.value == "test");
-        let is_generic_template = function.generics.is_some() && !is_test;
+        let is_generic_template = crate::surface::is_generic_template(function);
         if declared_type_names.contains(function.name.value.as_str())
             || !function_names.insert((function.name.value.clone(), is_generic_template))
         {
@@ -1521,11 +1540,7 @@ fn lower_module(
         // concrete function may share its name with a generic one, and skipping
         // the concrete item here would desync the signature iterator and lower
         // every later function against the wrong signature.
-        let is_test = function
-            .attributes
-            .iter()
-            .any(|attribute| attribute.name.value == "test");
-        if function.generics.is_some() && !is_test {
+        if crate::surface::is_generic_template(function) {
             continue;
         }
         let signature = ordered_signatures
@@ -4194,6 +4209,9 @@ fn lower_tree_text_projection(
     // (`out/early.txt`), which the partitioner reads back off the request. A
     // computed path cannot name a product ahead of time, so it falls back to a
     // settled read of the completed exec tree (identical to a fixture read).
+    // This gate and the partitioner's node-level twin
+    // (`vir::progressive_exec_tree_path`) must agree: the partitioner asserts
+    // that every EFFECT-marked tree-read extracts, so a drift fails loudly.
     let progressive = progressive_exec_tree_root(nodes, tree.node)
         && segments
             .iter()
@@ -4253,9 +4271,18 @@ fn lower_method_call(
     call: &ast::MethodCall,
     expected: Option<&Type>,
 ) -> Result<LoweredValue, Diagnostics> {
+    // The `(tree / seg).text()` projection read is domain surface syntax, active
+    // only when the embedder declares the `Tree` host type — the bare language
+    // ships the machinery (`lower_tree_text_projection`) but no spelling reaches
+    // it, the same doctrine as the injected domain methods below.
     if call.name.value == "text"
         && method_positional_args(call).is_empty()
         && call.named_args.is_none()
+        && context
+            .config
+            .host_types
+            .iter()
+            .any(|decl| decl.name == crate::binding::TREE)
         && let Some((base, segments)) = tree_projection_syntax(&call.receiver)
     {
         return lower_tree_text_projection(nodes, bindings, context, call, base, &segments);
