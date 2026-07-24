@@ -1,0 +1,25 @@
+{
+  // Repo-level Renovate config — overrides org/app defaults.
+  //
+  // Goal: hear about every update immediately, without 60 rate-limited
+  // ghost PRs on the dependency dashboard. Steady state is ~3 live PRs:
+  //   1. one rolling "all non-major dependencies" PR (ranges + pins),
+  //   2. one Monday lockfile-maintenance PR (in-range lockfile drift),
+  //   3. individual PRs for each major, visible the moment they exist.
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  extends: [
+    "config:recommended",
+    // Group every non-major update into a single rolling PR. Majors stay
+    // ungrouped on purpose: they deserve individual eyes (syn 3, ts 7, …).
+    "group:allNonMajor",
+  ],
+  // The drip-feed limits are what made updates invisible for weeks.
+  prHourlyLimit: 0,
+  prConcurrentLimit: 0,
+  // Weekly wholesale lockfile regeneration (the automated version of the
+  // 2026-07-24 in-range mega-update, #2535).
+  lockFileMaintenance: {
+    enabled: true,
+    schedule: ["before 6am on monday"],
+  },
+}
