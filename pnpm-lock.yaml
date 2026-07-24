@@ -181,7 +181,7 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
       vite:
-        specifier: 8.1.0
+        specifier: 8.1.5
         version: 8.1.5(@types/node@20.19.43)(esbuild@0.28.1)
 
   snark-wasm: {}
