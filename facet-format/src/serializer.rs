@@ -1,7 +1,7 @@
 extern crate alloc;
 
 use alloc::borrow::Cow;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use core::fmt::Debug;
 use core::fmt::Write as _;
 
@@ -947,6 +947,29 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
         }
     }
 
+    fn map_key_string<'mem, 'facet>(
+        &self,
+        key: Peek<'mem, 'facet>,
+    ) -> Result<Cow<'mem, str>, SerializeError<S::Error>> {
+        if let Some(proxy_def) = key
+            .shape()
+            .effective_proxy(self.serializer.format_namespace())
+        {
+            let proxy = key
+                .custom_serialization_with_proxy(proxy_def)
+                .map_err(|err| SerializeError::Unsupported(Cow::Owned(alloc::format!("{err}"))))?;
+            let proxy_peek = proxy.as_peek().innermost_peek();
+            let key = extract_string_from_peek(proxy_peek)
+                .map(ToString::to_string)
+                .unwrap_or_else(|| alloc::format!("{}", proxy_peek));
+            return Ok(Cow::Owned(key));
+        }
+
+        Ok(extract_string_from_peek(key)
+            .map(Cow::Borrowed)
+            .unwrap_or_else(|| Cow::Owned(alloc::format!("{}", key))))
+    }
+
     #[inline(never)]
     fn serialize_map_as_pairs<'mem, 'facet>(
         &mut self,
@@ -958,11 +981,8 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
             .map_err(SerializeError::Backend)?;
         for (key, val) in map.iter() {
             self.serialize_impl(key)?;
-            let key_str = key
-                .as_str()
-                .map(|s| Cow::Owned(s.to_string()))
-                .unwrap_or_else(|| Cow::Owned(alloc::format!("{}", key)));
-            self.push(PathSegment::Field(key_str));
+            let key_str = self.map_key_string(key)?.into_owned();
+            self.push(PathSegment::Field(Cow::Owned(key_str)));
             self.serialize_impl(val)?;
             self.pop();
         }
@@ -978,24 +998,17 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
             .begin_struct()
             .map_err(SerializeError::Backend)?;
         for (key, val) in map.iter() {
+            let key_str = self.map_key_string(key)?;
             if !self
                 .serializer
                 .serialize_map_key(key)
                 .map_err(SerializeError::Backend)?
             {
-                let key_str = if let Some(s) = extract_string_from_peek(key) {
-                    Cow::Borrowed(s)
-                } else {
-                    Cow::Owned(alloc::format!("{}", key))
-                };
                 self.serializer
                     .field_key(&key_str)
                     .map_err(SerializeError::Backend)?;
             }
-            let key_str = extract_string_from_peek(key)
-                .map(|s| Cow::Owned(s.to_string()))
-                .unwrap_or_else(|| Cow::Owned(alloc::format!("{}", key)));
-            self.push(PathSegment::Field(key_str));
+            self.push(PathSegment::Field(Cow::Owned(key_str.into_owned())));
             self.serialize_impl(val)?;
             self.pop();
         }

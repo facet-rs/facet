@@ -68,6 +68,23 @@ struct MissingArgsAnnotation {
 }
 
 #[derive(Facet)]
+struct NestedMissingArgsPayload {
+    dir: String,
+}
+
+#[derive(Facet)]
+#[repr(u8)]
+enum NestedMissingArgsCommand {
+    Add(NestedMissingArgsPayload),
+}
+
+#[derive(Facet)]
+struct NestedMissingArgsRoot {
+    #[facet(args::subcommand)]
+    command: NestedMissingArgsCommand,
+}
+
+#[derive(Facet)]
 #[repr(u8)]
 enum SubA {
     A,
@@ -198,6 +215,10 @@ fn snapshot_schema_missing_args_annotation() {
     assert_schema_snapshot!(Schema::from_shape(MissingArgsAnnotation::SHAPE));
 }
 
+#[test]
+fn snapshot_schema_missing_args_annotation_in_tuple_subcommand_payload() {
+    assert_schema_snapshot!(Schema::from_shape(NestedMissingArgsRoot::SHAPE));
+}
 #[test]
 fn snapshot_schema_multiple_subcommands() {
     assert_schema_snapshot!(Schema::from_shape(MultipleSubcommands::SHAPE));
@@ -534,19 +555,84 @@ struct NestedOptions {
 #[derive(Facet)]
 struct ArgsWithUnflattenedStruct {
     #[facet(args::named)]
-    options: NestedOptions, // ERROR: struct fields must use flatten
+    options: NestedOptions, // ERROR: struct fields must use flatten or proxy
+}
+
+#[derive(Facet)]
+#[facet(proxy = String)]
+struct ProxiedOptions(NestedOptions);
+
+impl TryFrom<String> for ProxiedOptions {
+    type Error = String;
+
+    fn try_from(_: String) -> Result<Self, Self::Error> {
+        Ok(Self(NestedOptions { verbose: false }))
+    }
+}
+
+impl TryFrom<&ProxiedOptions> for String {
+    type Error = String;
+
+    fn try_from(_: &ProxiedOptions) -> Result<Self, Self::Error> {
+        Ok(String::new())
+    }
+}
+
+#[derive(Facet)]
+struct ArgsWithFieldProxiedStruct {
+    #[facet(args::named, proxy = String)]
+    options: NestedOptions,
+}
+
+impl TryFrom<String> for NestedOptions {
+    type Error = String;
+
+    fn try_from(_: String) -> Result<Self, Self::Error> {
+        Ok(Self { verbose: false })
+    }
+}
+
+impl TryFrom<&NestedOptions> for String {
+    type Error = String;
+
+    fn try_from(_: &NestedOptions) -> Result<Self, Self::Error> {
+        Ok(String::new())
+    }
+}
+
+#[derive(Facet)]
+struct ArgsWithTypeProxiedStruct {
+    #[facet(args::named)]
+    options: ProxiedOptions,
 }
 
 #[test]
-fn test_struct_field_without_flatten_is_error() {
+fn test_struct_field_without_flatten_or_proxy_is_error() {
     let result = Schema::from_shape(ArgsWithUnflattenedStruct::SHAPE);
-    assert!(result.is_err(), "struct field without flatten should error");
+    assert!(result.is_err(), "struct field without flatten or proxy should error");
     let err = result.unwrap_err().to_string();
     assert!(
-        err.contains("flatten"),
+        err.contains("add #[facet(flatten)] to the CLI field"),
         "error should mention flatten: {}",
         err
     );
+    assert!(
+        err.contains("add #[facet(proxy = T)] to the CLI field or type definition"),
+        "error should mention proxy: {}",
+        err
+    );
+}
+
+#[test]
+fn test_struct_field_with_field_proxy_builds_schema() {
+    Schema::from_shape(ArgsWithFieldProxiedStruct::SHAPE)
+        .expect("field proxy should allow struct field as a CLI scalar");
+}
+
+#[test]
+fn test_struct_field_with_type_proxy_builds_schema() {
+    Schema::from_shape(ArgsWithTypeProxiedStruct::SHAPE)
+        .expect("type proxy should allow struct field as a CLI scalar");
 }
 
 // ============================================================================
@@ -578,3 +664,202 @@ fn test_env_alias_conflict_detected() {
         err
     );
 }
+
+// ============================================================================
+// Alias support
+// ============================================================================
+
+#[derive(Facet)]
+struct ArgsWithAlias {
+    #[facet(args::named, rename = "drive", args::alias = "drive-letter-pattern")]
+    drive_letter_pattern: String,
+}
+
+#[derive(Facet)]
+struct ConflictingAliasAndCanonical {
+    #[facet(args::named, args::alias = "port")]
+    host: String,
+    #[facet(args::named)]
+    port: String,
+}
+
+#[derive(Facet)]
+struct DuplicateAliasOnField {
+    #[facet(
+        args::named,
+        args::alias = "drive-letter-pattern",
+        args::alias = "drive-letter-pattern"
+    )]
+    drive: String,
+}
+
+#[derive(Facet)]
+struct ConflictingAliases {
+    #[facet(args::named, args::alias = "drive-letter-pattern")]
+    drive: String,
+    #[facet(args::named, args::alias = "drive-letter-pattern")]
+    path: String,
+}
+
+#[derive(Facet)]
+#[repr(u8)]
+enum SubcommandWithDuplicateAlias {
+    #[facet(args::alias = "profiles", args::alias = "profiles")]
+    Profile,
+}
+
+#[derive(Facet)]
+struct ArgsWithDuplicateSubcommandAlias {
+    #[facet(args::subcommand)]
+    command: SubcommandWithDuplicateAlias,
+}
+
+#[derive(Facet)]
+#[repr(u8)]
+enum SubcommandAliasCanonicalConflict {
+    Profile,
+    #[facet(args::alias = "profile")]
+    Profiles,
+}
+
+#[derive(Facet)]
+struct ArgsWithSubcommandAliasCanonicalConflict {
+    #[facet(args::subcommand)]
+    command: SubcommandAliasCanonicalConflict,
+}
+
+#[derive(Facet)]
+#[repr(u8)]
+enum SubcommandAliasAliasConflict {
+    #[facet(args::alias = "profiles")]
+    Profile,
+    #[facet(args::alias = "profiles")]
+    User,
+}
+
+#[derive(Facet)]
+struct ArgsWithSubcommandAliasAliasConflict {
+    #[facet(args::subcommand)]
+    command: SubcommandAliasAliasConflict,
+}
+
+#[derive(Facet)]
+#[repr(u8)]
+enum SubcommandWithCasedAlias {
+    #[facet(args::alias = "Profiles")]
+    UserProfiles,
+}
+
+#[derive(Facet)]
+struct ArgsWithCasedSubcommandAlias {
+    #[facet(args::subcommand)]
+    command: SubcommandWithCasedAlias,
+}
+
+#[derive(Facet)]
+#[repr(u8)]
+enum SubcommandAliasCaseConflict {
+    Profiles,
+    #[facet(args::alias = "Profiles")]
+    User,
+}
+
+#[derive(Facet)]
+struct ArgsWithSubcommandAliasCaseConflict {
+    #[facet(args::subcommand)]
+    command: SubcommandAliasCaseConflict,
+}
+
+#[test]
+fn test_schema_aliases_are_stored() {
+    let schema = Schema::from_shape(ArgsWithAlias::SHAPE).expect("schema should build");
+    let (_, arg) = schema
+        .args()
+        .args()
+        .get("drive")
+        .expect("drive arg should be present");
+    assert_eq!(arg.aliases(), &["drive-letter-pattern".to_string()]);
+}
+
+#[test]
+fn test_schema_alias_conflicts_with_canonical_flag() {
+    let result = Schema::from_shape(ConflictingAliasAndCanonical::SHAPE);
+    assert!(result.is_err(), "should detect alias/canonical conflict");
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("duplicate flag `--port`"), "unexpected error: {err}");
+}
+
+#[test]
+fn test_schema_duplicate_alias_on_same_field_is_rejected() {
+    let result = Schema::from_shape(DuplicateAliasOnField::SHAPE);
+    assert!(result.is_err(), "should detect duplicate alias on one field");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("duplicate alias `--drive-letter-pattern`"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn test_schema_duplicate_alias_across_fields_is_rejected() {
+    let result = Schema::from_shape(ConflictingAliases::SHAPE);
+    assert!(result.is_err(), "should detect duplicate alias across fields");
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("duplicate flag `--drive-letter-pattern`"), "unexpected error: {err}");
+}
+
+#[test]
+fn test_subcommand_duplicate_alias_on_same_variant_detected() {
+    let result = Schema::from_shape(ArgsWithDuplicateSubcommandAlias::SHAPE);
+    assert!(result.is_err(), "should detect duplicate alias on one variant");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("duplicate subcommand alias") && err.contains("profiles"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn test_subcommand_alias_conflict_with_canonical_name_detected() {
+    let result = Schema::from_shape(ArgsWithSubcommandAliasCanonicalConflict::SHAPE);
+    assert!(result.is_err(), "should detect alias/canonical conflict");
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("duplicate subcommand name `profile`"), "unexpected error: {err}");
+}
+
+#[test]
+fn test_subcommand_alias_conflict_with_other_alias_detected() {
+    let result = Schema::from_shape(ArgsWithSubcommandAliasAliasConflict::SHAPE);
+    assert!(result.is_err(), "should detect alias/alias conflict");
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("duplicate subcommand name `profiles`"), "unexpected error: {err}");
+}
+
+#[test]
+fn test_subcommand_aliases_are_normalized_to_kebab_case() {
+    let schema = Schema::from_shape(ArgsWithCasedSubcommandAlias::SHAPE)
+        .expect("schema should build");
+    let subcommand = schema
+        .args()
+        .subcommands()
+        .values()
+        .next()
+        .expect("subcommand should be present");
+
+    assert_eq!(subcommand.aliases(), &["profiles".to_string()]);
+}
+
+#[test]
+fn test_subcommand_alias_conflict_after_case_normalization_detected() {
+    let result = Schema::from_shape(ArgsWithSubcommandAliasCaseConflict::SHAPE);
+    assert!(
+        result.is_err(),
+        "should detect alias/canonical conflict after kebab-case normalization"
+    );
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("duplicate subcommand name `profiles`"),
+        "unexpected error: {err}"
+    );
+}
+

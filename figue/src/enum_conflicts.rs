@@ -248,6 +248,7 @@ fn get_provenance(value: &ConfigValue) -> Option<Provenance> {
         ConfigValue::Array(s) => s.provenance.clone(),
         ConfigValue::Object(s) => s.provenance.clone(),
         ConfigValue::Enum(s) => s.provenance.clone(),
+        ConfigValue::ExplicitSome(s) => s.provenance.clone().or_else(|| get_provenance(&s.value)),
     }
 }
 

@@ -525,3 +525,32 @@ fn test_nested_subcommand_not_provided_with_builtins() {
     let err = figue::from_slice::<Cli>(&["repo"]).unwrap_err();
     assert_diag_snapshot!(err);
 }
+
+#[test]
+fn test_unknown_subcommand_suggestion_considers_aliases() {
+    #[derive(Facet, Debug)]
+    struct Cli {
+        #[facet(args::subcommand)]
+        command: Command,
+
+        #[facet(flatten)]
+        builtins: args::FigueBuiltins,
+    }
+
+    #[derive(Facet, Debug)]
+    #[repr(u8)]
+    #[allow(dead_code)]
+    enum Command {
+        #[facet(args::alias = "profiles")]
+        Profile,
+    }
+
+    let err = figue::from_slice::<Cli>(&["profilse"]).unwrap_err();
+    let rendered = err.to_string();
+    let stripped = strip_ansi_escapes::strip(rendered.as_bytes());
+    let stripped = String::from_utf8_lossy(&stripped);
+    assert!(
+        stripped.contains("Did you mean 'profile'?"),
+        "unexpected diagnostic: {stripped}"
+    );
+}

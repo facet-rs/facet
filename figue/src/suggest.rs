@@ -170,13 +170,23 @@ pub fn suggest_flag<'a>(query: &str, flag_names: impl IntoIterator<Item = &'a st
     }
 }
 
-/// Suggest a similar subcommand name.
+/// Suggest a similar subcommand name, considering aliases but returning the
+/// canonical subcommand spelling.
 pub fn suggest_subcommand<'a>(
     query: &str,
-    subcommand_names: impl IntoIterator<Item = &'a str>,
+    subcommand_spellings: impl IntoIterator<Item = (&'a str, &'a str)>,
 ) -> String {
-    match find_best_match(query, subcommand_names) {
-        Some(suggestion) => format!(". Did you mean '{suggestion}'?"),
+    let spellings: Vec<(&str, &str)> = subcommand_spellings.into_iter().collect();
+
+    match find_best_match(query, spellings.iter().map(|(spelling, _)| *spelling)) {
+        Some(suggestion) => {
+            let canonical = spellings
+                .iter()
+                .find(|(spelling, _)| *spelling == suggestion)
+                .map(|(_, canonical)| *canonical)
+                .unwrap_or(suggestion);
+            format!(". Did you mean '{canonical}'?")
+        }
         None => String::new(),
     }
 }
@@ -229,3 +239,4 @@ mod tests {
         assert_eq!(format_suggestion("completely_different", candidates), "");
     }
 }
+

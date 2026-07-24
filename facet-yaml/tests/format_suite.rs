@@ -565,6 +565,9 @@ impl FormatSuite for YamlSlice {
         CaseSpec::from_str("items:\n  - alpha\n  - beta")
     }
 
+    fn indexset() -> CaseSpec {
+        CaseSpec::from_str("items:\n  - alpha\n  - beta\n  - gamma")
+    }
     // -- Nested collection cases --
 
     fn vec_nested() -> CaseSpec {

@@ -9,7 +9,7 @@ Error: top-level shape must be a struct
    ┆ ┆   
  3 │ │   enum TopLevelEnum {
    │ │        ──────┬─────  
-   │ │              ╰─────── defined at figue/src/schema/tests.rs:180
+   │ │              ╰─────── defined at figue/src/schema/tests.rs:197
    ┆ ┆   
  5 │ ├─▶ }
    │ │   ┬  

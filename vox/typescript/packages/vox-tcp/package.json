@@ -29,8 +29,8 @@
     "@bearcove/vox-core": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^25.0.0",
-    "vitest": "^4.0.0"
+    "@types/node": "^25.9.5",
+    "vitest": "^4.1.10"
   },
   "license": "MIT OR Apache-2.0",
   "description": "TCP transport implementation for the Vox protocol",

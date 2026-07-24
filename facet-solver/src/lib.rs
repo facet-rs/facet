@@ -2788,6 +2788,8 @@ impl SchemaBuilder {
             None => (original_shape, false),
         };
 
+        let (shape, field_path) = unwrap_transparent_with_path(shape, field_path);
+
         match shape.ty {
             Type::User(UserType::Struct(struct_type)) => {
                 // Flatten a struct: get its resolutions and merge into each of ours
@@ -3207,4 +3209,17 @@ fn unwrap_transparent(shape: &'static Shape) -> &'static Shape {
     } else {
         shape
     }
+}
+
+/// Like `unwrap_transparent`, but also extends `path` with a `"0"` segment for each
+/// transparent layer unwrapped, so the reflect navigator can follow the same descent.
+fn unwrap_transparent_with_path(
+    mut shape: &'static Shape,
+    mut path: FieldPath,
+) -> (&'static Shape, FieldPath) {
+    while let Some(inner) = shape.inner {
+        path = path.push_field("0");
+        shape = inner;
+    }
+    (shape, path)
 }

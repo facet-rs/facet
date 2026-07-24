@@ -31,6 +31,7 @@ facet = { workspace = true, features = [
 ] } # facet-format-suite is meant to be comprehensive
 facet-pretty = { workspace = true }
 facet-value = { workspace = true, optional = true }
+indexmap = { workspace = true, features = ["serde"] }
 indoc = { workspace = true }
 jiff = { workspace = true, optional = true }
 ordered-float = { version = "5.0.0", optional = true, default-features = false }
@@ -95,3 +96,5 @@ yoke = ["dep:yoke", "facet/yoke"]
 
 [lints]
 workspace = true
+
+

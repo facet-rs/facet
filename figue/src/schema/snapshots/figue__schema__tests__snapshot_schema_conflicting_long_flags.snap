@@ -7,7 +7,7 @@ Error: duplicate flag `--dup`
    │
  2 │ struct ConflictingLongFlags {
    │        ──────────┬─────────  
-   │                  ╰─────────── defined at figue/src/schema/tests.rs:114
+   │                  ╰─────────── defined at figue/src/schema/tests.rs:131
    │ 
  4 │     a: bool,
    │     ───┬───  

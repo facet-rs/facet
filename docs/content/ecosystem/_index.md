@@ -113,6 +113,14 @@ Reusable runtime pieces for incremental systems and lowered programs.
 | [`fable`](/fable/) | Evaluates a tiny typed language over Facet-reflected Rust values. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/fable) |
 | [`weavy`](/weavy/) | Provides a lowered-program substrate for interpreters and copy-and-patch backends. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/weavy) |
 
+## Observability
+
+Emit and inspect telemetry from reflected Rust types.
+
+| Crate | What it does | Source |
+|-------|--------------|--------|
+| [`tracing-wide`](https://docs.rs/tracing-wide) | Logs and catalogues typed *wide events* for [`tracing`](https://docs.rs/tracing) with opt-in Facet support. *Community-maintained.* | [yawn/tracing-wide](https://github.com/yawn/tracing-wide) |
+
 ## Web, RPC, and UI
 
 Use Facet shapes at application boundaries: HTTP, RPC, and interactive tools.

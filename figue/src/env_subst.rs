@@ -276,6 +276,10 @@ fn get_provenance_cloned(value: &ConfigValue) -> Option<Provenance> {
         ConfigValue::Array(s) => s.provenance.clone(),
         ConfigValue::Object(s) => s.provenance.clone(),
         ConfigValue::Enum(s) => s.provenance.clone(),
+        ConfigValue::ExplicitSome(s) => s
+            .provenance
+            .clone()
+            .or_else(|| get_provenance_cloned(&s.value)),
     }
 }
 
@@ -293,7 +297,28 @@ fn substitute_in_config_value(
         ..
     } = schema
     {
+        if let ConfigValue::ExplicitSome(sourced) = value {
+            return substitute_in_config_value(
+                &mut sourced.value,
+                inner_schema,
+                env_subst,
+                env,
+                path,
+                provenance,
+            );
+        }
         return substitute_in_config_value(value, inner_schema, env_subst, env, path, provenance);
+    }
+
+    if let ConfigValue::ExplicitSome(sourced) = value {
+        return substitute_in_config_value(
+            &mut sourced.value,
+            schema,
+            env_subst,
+            env,
+            path,
+            provenance,
+        );
     }
 
     // String value - perform substitution if enabled

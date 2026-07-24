@@ -312,6 +312,7 @@ impl<'a> ValueBuilder<'a> {
             diagnostics: self.diagnostics,
             source_text: None,
             config_file_paths: IndexMap::default(),
+            help_list_mode: None,
         }
     }
 
@@ -380,6 +381,9 @@ impl<'a> ValueBuilder<'a> {
                     prov,
                 );
             }
+            ConfigValue::ExplicitSome(s) => {
+                self.import_tree_recursive(&s.value, path);
+            }
         }
     }
 
@@ -408,6 +412,7 @@ impl<'a> ValueBuilder<'a> {
             diagnostics: self.diagnostics,
             source_text: None,
             config_file_paths: IndexMap::default(),
+            help_list_mode: None,
         }
     }
 

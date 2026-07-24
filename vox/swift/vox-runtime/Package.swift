@@ -12,7 +12,7 @@ let package = Package(
     .library(name: "VoxRuntimeJIT", targets: ["VoxRuntimeJIT"]),
   ],
   dependencies: [
-    .package(url: "https://github.com/apple/swift-nio.git", from: "2.99.0"),
+    .package(url: "https://github.com/apple/swift-nio.git", from: "2.101.3"),
     .package(
       url: "https://github.com/bearcove/phon.git",
       revision: "429b72badcc5e827613f9245c153cd91c0458f4f"),

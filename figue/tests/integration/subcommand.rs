@@ -663,3 +663,27 @@ fn test_nested_subcommands_in_struct() {
         }
     }
 }
+
+/// Test long-form subcommand aliases resolve to the canonical variant.
+#[test]
+fn test_subcommand_alias() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    enum Command {
+        #[facet(args::alias = "profiles")]
+        Profile {
+            #[facet(args::named)]
+            verbose: bool,
+        },
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Args {
+        #[facet(args::subcommand)]
+        command: Command,
+    }
+
+    let canonical: Args = figue::from_slice(&["profile", "--verbose"]).unwrap();
+    let alias: Args = figue::from_slice(&["profiles", "--verbose"]).unwrap();
+    assert_eq!(alias.command, canonical.command);
+}

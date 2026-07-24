@@ -762,6 +762,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                         expecting_value = false;
                     }
                 }
+                crate::ParseEventKind::OptionSome => {}
             }
         };
 

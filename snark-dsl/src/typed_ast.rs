@@ -1128,16 +1128,38 @@ impl TypeVisitState {
 
 /// Grammar field names are singular (they label one child each); Vec-shaped fields
 /// pluralize (`stmt` -> `stmts`, `entry` -> `entries`, `leaf` -> `leaves`), and a
-/// singular `type` dodges the keyword (plural `types` doesn't need to).
+/// singular `type` dodges the keyword (plural `types` doesn't need to). Any other
+/// name that lands on a Rust keyword — directly (`else`) or via pluralization
+/// (`a` -> `as`) — is raw-escaped, except the few that reject `r#`, which get a
+/// trailing underscore instead.
 fn rust_field_name(name: &str, mult: Mult) -> String {
-    match (mult, name) {
+    let name = match (mult, name) {
         (Mult::Many, "leaf") => "leaves".to_string(),
         (Mult::Many, s) if s.ends_with('y') => format!("{}ies", &s[..s.len() - 1]),
         (Mult::Many, s) if !s.ends_with('s') => format!("{s}s"),
-        (_, "type") => "ty".to_string(),
+        // `ty` predates the escaping below; keep it so existing grammars don't
+        // see their generated field renamed to `r#type`.
+        (_, "type") => return "ty".to_string(),
         (_, s) => s.to_string(),
+    };
+    match name.as_str() {
+        // The only keywords `r#` can't rescue.
+        "crate" | "self" | "super" | "Self" => format!("{name}_"),
+        s if RUST_KEYWORDS.contains(&s) => format!("r#{name}"),
+        _ => name,
     }
 }
+
+/// Rust keywords (strict + reserved, edition 2024) that are valid as raw
+/// identifiers. `type` and the un-rescuable `crate`/`self`/`super`/`Self` are
+/// handled separately in [`rust_field_name`].
+const RUST_KEYWORDS: &[&str] = &[
+    "abstract", "as", "async", "await", "become", "box", "break", "const", "continue", "do", "dyn",
+    "else", "enum", "extern", "false", "final", "fn", "for", "gen", "if", "impl", "in", "let",
+    "loop", "macro", "match", "mod", "move", "mut", "override", "priv", "pub", "ref", "return",
+    "static", "struct", "trait", "true", "try", "typeof", "unsafe", "unsized", "use", "virtual",
+    "where", "while", "yield",
+];
 
 fn camel(kind: &str) -> String {
     kind.split('_')
@@ -1275,6 +1297,39 @@ module.exports = grammar({
         assert!(generated.contains(
             r#"if_stmt: crate::support::field_opt(n, "if_stmt").map(|n| Box::new(lower_if_statement(n))),"#
         ));
+    }
+
+    #[test]
+    fn keyword_field_names_are_escaped() {
+        let generated = generate(
+            r#"
+module.exports = grammar({
+  name: "keywords",
+  rules: {
+    source_file: $ => seq(field("expr", $.ternary), field("list", $.list)),
+    ternary: $ => seq(
+      field("cond", $.ident),
+      "?",
+      field("then", $.ident),
+      ":",
+      field("else", $.ident),
+    ),
+    list: $ => seq("[", repeat(field("a", $.ident)), "]", field("self", $.ident)),
+    ident: $ => /[a-z]+/,
+  },
+});
+"#,
+        );
+
+        // `else` is a keyword: the Rust field is raw-escaped, but the CST lookup
+        // keeps the grammar's spelling.
+        assert!(generated.contains("pub r#else:"));
+        assert!(!generated.contains("pub else:"));
+        assert!(generated.contains(r#"field_one(n, "else""#));
+        // pluralization can land on a keyword too (`a` -> `as`)
+        assert!(generated.contains("pub r#as: Vec<"));
+        // `r#` can't rescue `self`
+        assert!(generated.contains("pub self_:"));
     }
 
     #[test]

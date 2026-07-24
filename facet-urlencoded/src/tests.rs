@@ -315,3 +315,80 @@ fn test_flattened() {
         }
     );
 }
+
+#[test]
+fn test_char() {
+    #[derive(Debug, Facet, PartialEq)]
+    struct Struct {
+        char: char,
+    }
+
+    assert_eq!(from_str::<Struct>("char=a").unwrap(), Struct { char: 'a' });
+    assert_eq!(from_str::<Struct>("char=0").unwrap(), Struct { char: '0' });
+    assert_eq!(from_str::<Struct>("char=à").unwrap(), Struct { char: 'à' });
+
+    assert!(from_str::<Struct>("char=hello").is_err());
+}
+
+#[test]
+fn test_numeric_signed() {
+    #[derive(Debug, Facet, PartialEq)]
+    struct Singed {
+        i8: i8,
+        i16: i16,
+        i32: i32,
+        i64: i64,
+    }
+    let value: Singed = from_str("i8=0&i16=1&i32=2&i64=3").unwrap();
+    assert_eq!(
+        value,
+        Singed {
+            i8: 0,
+            i16: 1,
+            i32: 2,
+            i64: 3,
+        }
+    )
+}
+
+#[test]
+fn test_numeric_unsigned() {
+    #[derive(Debug, Facet, PartialEq)]
+    struct Unsigned {
+        u8: u8,
+        u16: u16,
+        u32: u32,
+        u64: u64,
+    }
+    let value: Unsigned = from_str("u8=0&u16=1&u32=2&u64=3").unwrap();
+    assert_eq!(
+        value,
+        Unsigned {
+            u8: 0,
+            u16: 1,
+            u32: 2,
+            u64: 3,
+        }
+    )
+}
+
+#[test]
+fn test_numeric_float() {
+    #[derive(Debug, Facet, PartialEq)]
+    struct Float {
+        f32: f32,
+        f64: f64,
+        f32_dot: f32,
+        f64_dot: f32,
+    }
+    let value: Float = from_str("f32=0&f64=1&f32_dot=2.5&f64_dot=3.5").unwrap();
+    assert_eq!(
+        value,
+        Float {
+            f32: 0.0,
+            f64: 1.0,
+            f32_dot: 2.5,
+            f64_dot: 3.5,
+        }
+    )
+}

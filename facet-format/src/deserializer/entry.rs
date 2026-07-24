@@ -575,6 +575,12 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             ) {
                 let _ = self.expect_event("null or unit")?;
                 wip = wip.set_default()?;
+            } else if matches!(event.kind, ParseEventKind::OptionSome) {
+                let _ = self.expect_event("option some")?;
+                wip = wip
+                    .begin_some()?
+                    .with(|w| self.deserialize_value_recursive(w, opt_def.t))?
+                    .end()?;
             } else {
                 wip = self.deserialize_value_recursive(wip, opt_def.t)?;
             }
@@ -651,6 +657,12 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             let _ = self.expect_event("null or unit")?;
             // Set to None (default)
             wip = wip.set_default()?;
+        } else if matches!(event.kind, ParseEventKind::OptionSome) {
+            let _ = self.expect_event("option some")?;
+            wip = wip
+                .begin_some()?
+                .with(|w| self.deserialize_into_inner(w, MetaSource::FromEvents))?
+                .end()?;
         } else {
             // Some(value)
             wip = wip
@@ -863,7 +875,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                         });
                     }
                 }
-                ParseEventKind::OrderedField | ParseEventKind::VariantTag(_) => {}
+                ParseEventKind::OrderedField
+                | ParseEventKind::OptionSome
+                | ParseEventKind::VariantTag(_) => {}
             }
         }
 

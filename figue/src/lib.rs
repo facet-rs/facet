@@ -162,6 +162,10 @@ use figue_attrs as args;
 #[macro_use]
 mod macros;
 
+/// Arbitrary-based helper assertions for consumer roundtrip tests.
+#[cfg(feature = "arbitrary")]
+pub mod arbitrary_checks;
+
 pub(crate) mod builder;
 pub(crate) mod color;
 pub mod completions;
@@ -187,6 +191,8 @@ pub(crate) mod schema;
 pub(crate) mod span;
 pub(crate) mod span_registry;
 pub(crate) mod suggest;
+/// Convert typed CLI values back into command-line arguments.
+pub mod to_args;
 pub(crate) mod value_builder;
 
 use facet_core::Facet;
@@ -196,6 +202,11 @@ use facet_core::Facet;
 // ==========================================
 
 pub use crate::completions::{Shell, generate_completions_for_shape};
+#[cfg(feature = "arbitrary")]
+pub use arbitrary_checks::{
+    ArbitraryCheckError, TestToArgsConsistencyConfig, TestToArgsRoundTrip,
+    assert_to_args_consistency, assert_to_args_roundtrip,
+};
 pub use builder::builder;
 pub use config_format::{ConfigFormat, ConfigFormatError, JsonFormat, JsoncFormat};
 pub use config_value::ConfigValue;
@@ -210,6 +221,9 @@ pub use help::{
 pub use json_schema::{JsonSchemaError, JsonSchemaFile, generate_json_schemas, write_json_schemas};
 pub use layers::env::MockEnv;
 pub use layers::file::FormatRegistry;
+pub use to_args::{
+    ToArgs, ToArgsError, to_args_string, to_args_string_with_current_exe, to_os_args,
+};
 
 /// Error from [`from_str`] / [`from_str_with_format`]: the config text failed to
 /// parse, or the parsed value did not deserialize into the target type.
@@ -672,3 +686,5 @@ mod tests {
         );
     }
 }
+
+

@@ -2155,7 +2155,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                             arity += 1;
                         }
                     }
-                    ParseEventKind::FieldKey(_) | ParseEventKind::OrderedField => {}
+                    ParseEventKind::FieldKey(_)
+                    | ParseEventKind::OrderedField
+                    | ParseEventKind::OptionSome => {}
                 }
             }
 

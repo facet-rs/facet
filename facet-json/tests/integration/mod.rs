@@ -1,6 +1,7 @@
 #[path = "backend_historical.rs"]
 pub(crate) mod json_backend;
 
+mod bstr;
 mod flatten_defaults;
 mod flatten_in_externally_tagged_enum;
 mod format_specific_proxy;
@@ -23,6 +24,7 @@ mod issue_2004;
 mod issue_2007;
 mod issue_2010;
 mod issue_2059;
+mod issue_2264;
 mod issue_2341_newtype_as_json_object_key;
 mod issue_2342_json_facet_other_deep;
 mod issue_2363_bool_string_number_field_proxy;

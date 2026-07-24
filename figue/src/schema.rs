@@ -12,11 +12,11 @@ use indexmap::IndexMap;
 
 use crate::path::Path;
 
-/// Wrapper around args IndexMap that provides kebab-case lookup.
+/// Wrapper around args IndexMap that provides CLI-aware lookup.
 ///
 /// Schema stores field names as effective names (snake_case or renamed).
-/// CLI flags come in as kebab-case. This wrapper converts schema keys to
-/// kebab-case during lookup so `--deep-flag` matches `deep_flag` in schema.
+/// CLI flags come in as kebab-case and may also match configured long-form
+/// aliases so `--deep-flag` or `--deep` can resolve to the same schema entry.
 pub struct Args<'a> {
     inner: &'a IndexMap<String, ArgSchema, RandomState>,
 }
@@ -27,7 +27,7 @@ impl<'a> Args<'a> {
     pub fn get(&self, flag_name: &str) -> Option<(&'a String, &'a ArgSchema)> {
         self.inner
             .iter()
-            .find(|(key, _)| key.to_kebab_case() == flag_name)
+            .find(|(_, schema)| schema.matches_long_flag(flag_name))
     }
 
     /// Iterate over all args with their effective names.
@@ -282,6 +282,9 @@ pub struct Subcommand {
     /// Derived from effective_name converted to kebab-case.
     name: String,
 
+    /// Additional accepted CLI aliases for this subcommand.
+    aliases: Vec<String>,
+
     /// Effective name (respects `#[facet(rename = "...")]`).
     /// Used for deserialization with facet-format.
     effective_name: String,
@@ -310,6 +313,9 @@ pub struct Subcommand {
 pub struct ArgSchema {
     /// Argument name / effective name (rename or field name).
     name: String,
+
+    /// Additional accepted long-form CLI flag aliases for this argument.
+    aliases: Vec<String>,
 
     /// Path where this argument writes in ConfigValue.
     ///
@@ -357,6 +363,14 @@ pub enum ArgKind {
     /// `short` comes from `#[facet(args::short = 'x')]` (or defaulted when `args::short` is present).
     /// `counted` comes from `#[facet(args::counted)]`.
     Named { short: Option<char>, counted: bool },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NamedValueMode {
+    BoolFlag,
+    CountedFlag,
+    RequiredValue,
+    OptionalValue,
 }
 
 /// Schema for the 'config' field of the top-level args struct
@@ -618,6 +632,13 @@ impl ArgLevelSchema {
     pub fn has_subcommands(&self) -> bool {
         !self.subcommands.is_empty()
     }
+
+    /// Find a subcommand by any accepted CLI spelling.
+    pub fn find_subcommand(&self, name: &str) -> Option<&Subcommand> {
+        self.subcommands
+            .values()
+            .find(|subcommand| subcommand.matches_cli_name(name))
+    }
 }
 
 impl Docs {
@@ -668,6 +689,32 @@ impl ArgSchema {
         &self.kind
     }
 
+    /// Get the canonical long-form CLI flag name for this argument.
+    ///
+    /// Returns `None` for positional arguments.
+    pub fn long_name(&self) -> Option<String> {
+        match self.kind() {
+            ArgKind::Named { .. } => Some(self.name.to_kebab_case()),
+            ArgKind::Positional => None,
+        }
+    }
+
+    /// Get the additional accepted long-form CLI flag aliases for this argument.
+    pub fn aliases(&self) -> &[String] {
+        &self.aliases
+    }
+
+    /// Iterate over all accepted long-form CLI flag names for this argument.
+    pub fn long_flag_names(&self) -> impl Iterator<Item = String> + '_ {
+        self.long_name().into_iter().chain(self.aliases.iter().cloned())
+    }
+
+    /// Check whether this argument accepts the given long-form CLI flag name.
+    pub fn matches_long_flag(&self, flag_name: &str) -> bool {
+        self.long_name().as_deref() == Some(flag_name)
+            || self.aliases.iter().any(|alias| alias == flag_name)
+    }
+
     /// Get the value schema.
     pub fn value(&self) -> &ValueSchema {
         &self.value
@@ -700,12 +747,39 @@ impl ArgSchema {
     pub fn default(&self) -> Option<&crate::config_value::ConfigValue> {
         self.default.as_ref()
     }
+
+    pub(crate) fn named_value_mode(&self) -> Option<NamedValueMode> {
+        match self.kind() {
+            ArgKind::Positional => None,
+            ArgKind::Named { counted: true, .. } => Some(NamedValueMode::CountedFlag),
+            ArgKind::Named { counted: false, .. } if self.value().is_bool_flag_value() => {
+                Some(NamedValueMode::BoolFlag)
+            }
+            ArgKind::Named { counted: false, .. }
+                if self.value().optional_value_inner().is_some() =>
+            {
+                Some(NamedValueMode::OptionalValue)
+            }
+            ArgKind::Named { counted: false, .. } => Some(NamedValueMode::RequiredValue),
+        }
+    }
+
+    pub(crate) fn cli_value_schema(&self) -> &ValueSchema {
+        self.value()
+            .optional_value_inner()
+            .unwrap_or_else(|| self.value().inner_if_option())
+    }
 }
 
 impl Subcommand {
     /// Get the CLI name (kebab-case, used for command-line matching).
     pub fn cli_name(&self) -> &str {
         &self.name
+    }
+
+    /// Get additional accepted CLI aliases for this subcommand.
+    pub fn aliases(&self) -> &[String] {
+        &self.aliases
     }
 
     /// Get the effective name (respects `#[facet(rename = "...")]`).
@@ -733,6 +807,15 @@ impl Subcommand {
     /// Get the documentation for this subcommand.
     pub fn docs(&self) -> &Docs {
         &self.docs
+    }
+
+    /// Check whether the provided CLI token selects this subcommand.
+    pub fn matches_cli_name(&self, name: &str) -> bool {
+        self.cli_name() == name
+            || self.aliases.iter().any(|alias| alias == name)
+            || self
+                .short
+                .is_some_and(|short| name.chars().eq(core::iter::once(short)))
     }
 }
 
@@ -840,6 +923,7 @@ impl ConfigFieldSchema {
     pub fn default(&self) -> Option<&crate::config_value::ConfigValue> {
         self.default.as_ref()
     }
+
 }
 
 impl ConfigVecSchema {
@@ -987,8 +1071,46 @@ impl ValueSchema {
             _ => None,
         }
     }
+
+    pub(crate) fn is_bool_flag_value(&self) -> bool {
+        match self {
+            ValueSchema::Option { value, .. } => value.is_bool_flag_value(),
+            ValueSchema::Leaf(LeafSchema {
+                kind: LeafKind::Scalar(ScalarType::Bool),
+                ..
+            }) => true,
+            _ => false,
+        }
+    }
+
+    pub(crate) fn optional_value_inner(&self) -> Option<&ValueSchema> {
+        let ValueSchema::Option { value: outer, .. } = self else {
+            return None;
+        };
+        let ValueSchema::Option { value: inner, .. } = outer.as_ref() else {
+            return None;
+        };
+        inner
+            .as_ref()
+            .is_single_non_bool_value()
+            .then_some(inner.as_ref())
+    }
+
+    fn is_single_non_bool_value(&self) -> bool {
+        match self {
+            ValueSchema::Leaf(LeafSchema {
+                kind: LeafKind::Scalar(ScalarType::Bool),
+                ..
+            }) => false,
+            ValueSchema::Leaf(_) => true,
+            ValueSchema::Option { .. } | ValueSchema::Vec { .. } | ValueSchema::Struct { .. } => {
+                false
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 #[allow(dead_code)]
 mod tests;
+

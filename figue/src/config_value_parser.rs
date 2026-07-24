@@ -1424,6 +1424,11 @@ impl<'input> ConfigValueParser<'input> {
                 // Emit the outer struct start (the enum wrapper)
                 self.event(ParseEventKind::StructStart(ContainerKind::Object))
             }
+            ConfigValue::ExplicitSome(sourced) => {
+                self.update_span(sourced);
+                self.stack.push(StackFrame::Value(sourced.value.as_ref()));
+                self.event(ParseEventKind::OptionSome)
+            }
         }
     }
 }
@@ -1449,6 +1454,7 @@ enum BuildFrame {
     Array {
         items: Vec<ConfigValue>,
     },
+    OptionSome,
     PendingField {
         map: IndexMap<String, ConfigValue, std::hash::RandomState>,
         key: String,
@@ -1494,6 +1500,15 @@ impl ConfigValueSerializer {
                 items.push(value);
                 self.stack.push(BuildFrame::Array { items });
                 Ok(())
+            }
+            BuildFrame::OptionSome => {
+                let span = value.span();
+                let provenance = value.provenance().cloned();
+                self.attach_value(ConfigValue::ExplicitSome(Sourced {
+                    value: Box::new(value),
+                    span,
+                    provenance,
+                }))
             }
             BuildFrame::Object { .. } => {
                 Err("Cannot attach value directly to Object without field_key")?
@@ -1561,6 +1576,11 @@ impl facet_format::FormatSerializer for ConfigValueSerializer {
         }
     }
 
+    fn begin_option_some(&mut self) -> Result<(), Self::Error> {
+        self.stack.push(BuildFrame::OptionSome);
+        Ok(())
+    }
+
     fn scalar(&mut self, value: facet_format::ScalarValue) -> Result<(), Self::Error> {
         use facet_format::ScalarValue;
 
@@ -1580,6 +1600,11 @@ impl facet_format::FormatSerializer for ConfigValueSerializer {
                 span: None,
                 provenance: Some(Provenance::Default),
             }),
+            // FIXME: ConfigValue only has an i64-backed integer variant today.
+            // That forces u64/usize to round-trip via bit reinterpretation in
+            // to_args, and it cannot represent typed u128 integers here without
+            // first stringifying them. A deeper refactor should preserve
+            // unsigned widths in ConfigValue instead of narrowing at this layer.
             ScalarValue::U64(u) => ConfigValue::Integer(Sourced {
                 value: u as i64,
                 span: None,
