@@ -34,7 +34,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Select Rust 1.92
         shell: bash
@@ -63,7 +63,7 @@ jobs:
     env:
       CARGO_BUILD_JOBS: "4"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Select Rust 1.92
         shell: bash
@@ -100,7 +100,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Select Rust 1.92
         shell: bash
@@ -120,7 +120,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Select Rust 1.92
         shell: bash
@@ -146,7 +146,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-miri-amd64
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: Swatinem/rust-cache@v2
 
@@ -160,7 +160,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Select Rust 1.92
         shell: bash
@@ -191,7 +191,7 @@ jobs:
       image: swift:6.1
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Trust checkout for Git inside container
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -230,7 +230,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v6
         with:
@@ -286,7 +286,7 @@ jobs:
       image: swift:6.1
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Trust checkout for Git inside container
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -330,7 +330,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Select Rust 1.92
         shell: bash
@@ -363,7 +363,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v6
         with:
@@ -425,7 +425,7 @@ jobs:
       run:
         working-directory: ${{ github.workspace }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v6
         with:

@@ -16,7 +16,7 @@ jobs:
       group: publish-npm-${{ github.ref }}
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
