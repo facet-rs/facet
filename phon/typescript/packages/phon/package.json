@@ -30,9 +30,9 @@
     "@bearcove/phon-schema": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^25.9.1",
+    "@types/node": "^25.9.5",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.7"
+    "vitest": "^4.1.10"
   },
   "license": "MIT OR Apache-2.0",
   "description": "The phon front door for TypeScript: the typed encode/decode API over codegen-emitted accessors.",

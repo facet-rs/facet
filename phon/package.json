@@ -11,11 +11,11 @@
     "lint": "oxlint typescript"
   },
   "devDependencies": {
-    "@types/node": "^25.9.1",
-    "oxlint": "^1.67.0",
-    "tsdown": "^0.22.3",
+    "@types/node": "^25.9.5",
+    "oxlint": "^1.75.0",
+    "tsdown": "^0.22.13",
     "typescript": "^6.0.3",
-    "vite": "^8.0.16",
-    "vitest": "^4.1.7"
+    "vite": "^8.1.5",
+    "vitest": "^4.1.10"
   }
 }

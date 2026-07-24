@@ -13,15 +13,15 @@
   },
   "dependencies": {
     "@bearcove/snark-wasm": "workspace:*",
-    "@codemirror/commands": "^6.7.0",
-    "@codemirror/state": "^6.5.4",
-    "@codemirror/view": "^6.39.11",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "@codemirror/commands": "^6.10.4",
+    "@codemirror/state": "^6.7.1",
+    "@codemirror/view": "^6.43.6",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
   },
   "devDependencies": {
-    "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
     "typescript": "^5.9.3",
     "vite": "8.1.0"
   }

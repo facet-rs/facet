@@ -23,8 +23,13 @@
     "languages": [
       {
         "id": "styx",
-        "aliases": ["Styx", "styx"],
-        "extensions": [".styx"],
+        "aliases": [
+          "Styx",
+          "styx"
+        ],
+        "extensions": [
+          ".styx"
+        ],
         "configuration": "./language-configuration.json",
         "icon": {
           "light": "./icons/styx-light.svg",
@@ -97,7 +102,11 @@
         },
         "styx.trace.server": {
           "type": "string",
-          "enum": ["off", "messages", "verbose"],
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
           "default": "off",
           "description": "Traces the communication between VS Code and the Styx language server"
         }
@@ -111,11 +120,11 @@
     "package": "vsce package"
   },
   "devDependencies": {
-    "@types/node": "^20.0.0",
-    "@types/vscode": "^1.75.0",
-    "typescript": "^5.0.0"
+    "@types/node": "^20.19.43",
+    "@types/vscode": "^1.125.0",
+    "typescript": "^5.9.3"
   },
   "dependencies": {
-    "vscode-languageclient": "^9.0.0"
+    "vscode-languageclient": "^9.0.1"
   }
 }
