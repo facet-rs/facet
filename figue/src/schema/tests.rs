@@ -555,19 +555,84 @@ struct NestedOptions {
 #[derive(Facet)]
 struct ArgsWithUnflattenedStruct {
     #[facet(args::named)]
-    options: NestedOptions, // ERROR: struct fields must use flatten
+    options: NestedOptions, // ERROR: struct fields must use flatten or proxy
+}
+
+#[derive(Facet)]
+#[facet(proxy = String)]
+struct ProxiedOptions(NestedOptions);
+
+impl TryFrom<String> for ProxiedOptions {
+    type Error = String;
+
+    fn try_from(_: String) -> Result<Self, Self::Error> {
+        Ok(Self(NestedOptions { verbose: false }))
+    }
+}
+
+impl TryFrom<&ProxiedOptions> for String {
+    type Error = String;
+
+    fn try_from(_: &ProxiedOptions) -> Result<Self, Self::Error> {
+        Ok(String::new())
+    }
+}
+
+#[derive(Facet)]
+struct ArgsWithFieldProxiedStruct {
+    #[facet(args::named, proxy = String)]
+    options: NestedOptions,
+}
+
+impl TryFrom<String> for NestedOptions {
+    type Error = String;
+
+    fn try_from(_: String) -> Result<Self, Self::Error> {
+        Ok(Self { verbose: false })
+    }
+}
+
+impl TryFrom<&NestedOptions> for String {
+    type Error = String;
+
+    fn try_from(_: &NestedOptions) -> Result<Self, Self::Error> {
+        Ok(String::new())
+    }
+}
+
+#[derive(Facet)]
+struct ArgsWithTypeProxiedStruct {
+    #[facet(args::named)]
+    options: ProxiedOptions,
 }
 
 #[test]
-fn test_struct_field_without_flatten_is_error() {
+fn test_struct_field_without_flatten_or_proxy_is_error() {
     let result = Schema::from_shape(ArgsWithUnflattenedStruct::SHAPE);
-    assert!(result.is_err(), "struct field without flatten should error");
+    assert!(result.is_err(), "struct field without flatten or proxy should error");
     let err = result.unwrap_err().to_string();
     assert!(
-        err.contains("flatten"),
+        err.contains("add #[facet(flatten)] to the CLI field"),
         "error should mention flatten: {}",
         err
     );
+    assert!(
+        err.contains("add #[facet(proxy = T)] to the CLI field or type definition"),
+        "error should mention proxy: {}",
+        err
+    );
+}
+
+#[test]
+fn test_struct_field_with_field_proxy_builds_schema() {
+    Schema::from_shape(ArgsWithFieldProxiedStruct::SHAPE)
+        .expect("field proxy should allow struct field as a CLI scalar");
+}
+
+#[test]
+fn test_struct_field_with_type_proxy_builds_schema() {
+    Schema::from_shape(ArgsWithTypeProxiedStruct::SHAPE)
+        .expect("type proxy should allow struct field as a CLI scalar");
 }
 
 // ============================================================================
