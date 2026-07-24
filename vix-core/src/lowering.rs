@@ -6000,10 +6000,7 @@ fn lower_node(
                  frame",
             ));
         }
-        Op::TreeGlob
-        | Op::FixtureRegistry
-        | Op::Untar
-        | Op::BlobLen => {
+        Op::InvokeCodataPrimitive { .. } | Op::FixtureRegistry | Op::Untar => {
             return Err(lowering_diagnostic(
                 node.span,
                 "a machine-plane primitive is evaluated by the runtime effect plane, never lowered to a Weavy island",

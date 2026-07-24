@@ -605,10 +605,11 @@ fn is_registered_host_extern(name: &str) -> bool {
 /// [`SchemaBatch::add_host_externs`]), so identity is consistent whether the id
 /// is reached through the per-compile batch or here.
 fn host_extern_schema(name: &str) -> Option<SchemaRef> {
-    let registered_name: &'static str = *REGISTERED_HOST_EXTERNS
+    let registered_name: &'static str = REGISTERED_HOST_EXTERNS
         .lock()
         .expect("host-extern registry is not poisoned")
-        .get(name)?;
+        .get(name)
+        .copied()?;
     let mut memo = HOST_EXTERN_SCHEMAS
         .lock()
         .expect("host-extern schema memo is not poisoned");

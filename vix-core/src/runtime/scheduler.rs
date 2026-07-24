@@ -68,14 +68,23 @@ struct EffectValue {
 
 enum EffectTerm {
     Value(EffectValue),
-    Glob { tree: EffectValue, pattern: String },
+    /// A codata stream recipe awaiting collection: the primitive that drains it,
+    /// the stream source, and the method's single string operand (the glob
+    /// pattern). Realized when its consuming `Op::StreamCollect` drains the named
+    /// codata primitive — the generic codata rail, no op per domain method.
+    Codata {
+        primitive: super::PrimitiveId,
+        source: EffectValue,
+        operand: String,
+    },
 }
 
-/// The scheduler-side [`CodataDrainCtx`] a `tree-glob` codata primitive drains
-/// through. It borrows the effect island's source value, the fixture store, and
-/// the island's read log, so the primitive owns only the domain enumeration
-/// while every directory listing it demands is recorded as a witnessed read —
-/// the scheduler keeps the witness discipline the memo/receipt path relies on.
+/// The scheduler-side [`CodataDrainCtx`] a codata primitive (e.g. `tree-glob`)
+/// drains through. It borrows the effect island's source value, the fixture
+/// store, and the island's read log, so the primitive owns only the domain
+/// enumeration while every directory listing it demands is recorded as a
+/// witnessed read — the scheduler keeps the witness discipline the memo/receipt
+/// path relies on.
 struct GlobDrainCtx<'a> {
     fixture_store: &'a FixtureStore,
     source: &'a EffectValue,
@@ -3101,22 +3110,31 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 &node.ty,
                 b"fixture-registry".to_vec(),
             ))),
-            Op::TreeGlob => {
-                let EffectTerm::Value(tree) = input(0, self)? else {
-                    return effect_fault("tree glob receiver was codata");
+            Op::InvokeCodataPrimitive { primitive } => {
+                let EffectTerm::Value(source) = input(0, self)? else {
+                    return effect_fault("codata primitive receiver was codata");
                 };
-                let EffectTerm::Value(pattern) = input(1, self)? else {
-                    return effect_fault("tree glob pattern was codata");
+                let EffectTerm::Value(operand) = input(1, self)? else {
+                    return effect_fault("codata primitive operand was codata");
                 };
-                let pattern = String::from_utf8(pattern.resident)
-                    .map_err(|_| effect_machine_error("tree glob pattern was not UTF-8"))?;
-                Ok(EffectTerm::Glob { tree, pattern })
+                let operand = String::from_utf8(operand.resident)
+                    .map_err(|_| effect_machine_error("codata primitive operand was not UTF-8"))?;
+                Ok(EffectTerm::Codata {
+                    primitive: primitive.clone(),
+                    source,
+                    operand,
+                })
             }
             Op::StreamCollect => {
-                let EffectTerm::Glob { tree, pattern } = input(0, self)? else {
-                    return effect_fault("effect Stream.collect receiver was not a tree glob");
+                let EffectTerm::Codata {
+                    primitive,
+                    source,
+                    operand,
+                } = input(0, self)?
+                else {
+                    return effect_fault("effect Stream.collect receiver was not a codata recipe");
                 };
-                let paths = self.drain_glob_codata(&tree, &pattern, reads)?;
+                let paths = self.drain_codata(&primitive, &source, &operand, reads)?;
                 let mut rows = Vec::with_capacity(paths.len());
                 let mut frozen = Vec::with_capacity(paths.len());
                 for path in paths {
@@ -3157,21 +3175,6 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                     node: Some(FramedNode::leaf(effect_schema(&node.ty), canonical)),
                 }))
             }
-            Op::BlobLen => {
-                let EffectTerm::Value(blob) = input(0, self)? else {
-                    return effect_fault("Blob.len receiver was codata");
-                };
-                let bytes = i64::try_from(blob.resident.len())
-                    .map_err(|_| effect_machine_error("Blob length did not fit Int"))?
-                    .to_le_bytes()
-                    .to_vec();
-                Ok(EffectTerm::Value(EffectValue {
-                    identity: FramedNode::leaf(effect_schema(&node.ty), bytes.clone()).identity(),
-                    resident: bytes.clone(),
-                    frozen: Some(FrozenValue::Inline(bytes)),
-                    node: None,
-                }))
-            }
             Op::If { .. } => effect_fault("effect island contained an If operation"),
             Op::StringContains => {
                 effect_fault("effect island contained a String.contains operation")
@@ -3194,29 +3197,29 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
         }
     }
 
-    /// Realize a `Tree.glob(pattern)` stream by dispatching to the registered
-    /// `tree-glob` codata primitive and returning its ordered path elements. The
-    /// domain logic — pattern matching plus fixture/archive enumeration — lives
-    /// in the primitive (`vixen-primitives`); the scheduler supplies the source
-    /// value and records directory read witnesses through [`GlobDrainCtx`]. This
-    /// is the codata analogue of dispatching a `RawPrimitive`: the recipe's
-    /// identity (`Op::TreeGlob`) is unchanged, only its execution moved out.
-    fn drain_glob_codata(
+    /// Realize a codata stream recipe by dispatching to the named codata
+    /// primitive and returning its ordered elements. Dispatch is solely by
+    /// `PrimitiveId` — the codata analogue of `Op::InvokePrimitive` — so the
+    /// scheduler holds no per-recipe knowledge: it supplies the source value and
+    /// records directory read witnesses through [`GlobDrainCtx`], while the domain
+    /// logic (glob pattern matching plus fixture/archive enumeration) lives in the
+    /// primitive (`vixen-primitives`).
+    fn drain_codata(
         &self,
-        tree: &EffectValue,
-        pattern: &str,
+        primitive: &super::PrimitiveId,
+        source: &EffectValue,
+        operand: &str,
         reads: &mut Vec<super::model::ReadWitness>,
     ) -> Result<Vec<String>, Box<MachineError>> {
-        let primitive = self
-            .codata_registry
-            .get(&super::tree_glob_primitive_id())
-            .ok_or_else(|| effect_machine_error("no tree-glob codata primitive is registered"))?;
+        let primitive = self.codata_registry.get(primitive).ok_or_else(|| {
+            effect_machine_error("no codata primitive is registered under the recipe's id")
+        })?;
         let mut ctx = GlobDrainCtx {
             fixture_store: &self.fixture_store,
-            source: tree,
+            source,
             reads,
         };
-        primitive.drain(pattern, &mut ctx).map_err(|error| {
+        primitive.drain(operand, &mut ctx).map_err(|error| {
             Box::new(MachineError::runtime(
                 MachineOperation::Effect,
                 RuntimeFault::PrimitiveMachine { error },

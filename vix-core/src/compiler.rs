@@ -4186,6 +4186,57 @@ fn lower_primitive_method(
     })
 }
 
+/// Lower a codata-backed receiver method ([`MethodLowering::CodataPrimitive`]):
+/// the codata analogue of [`lower_primitive_method`]. The recipe *is* the request
+/// — the receiver (stream source) followed by the declared operands become the
+/// node inputs of a single [`Op::InvokeCodataPrimitive`] naming the codata
+/// primitive's id; there is no per-method compiler code. The node is `EFFECT` and
+/// its type is the declared stream recipe, realized lazily when a collection
+/// drains it (`Tree.glob(pattern)` → `Stream<Path, Path>`).
+fn lower_codata_primitive_method(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    call: &ast::MethodCall,
+    receiver: LoweredValue,
+    positional: &[ast::Expr],
+    codata: crate::binding::CodataMethodDecl,
+) -> Result<LoweredValue, Diagnostics> {
+    if codata.operands.len() != positional.len() {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            call.span,
+            format!(
+                "codata method `{}` declares {} operands for arity {}",
+                call.name.value,
+                codata.operands.len(),
+                positional.len(),
+            ),
+        )));
+    }
+    let mut inputs = Vec::with_capacity(positional.len() + 1);
+    inputs.push(receiver.node);
+    for (operand_ty, argument) in codata.operands.iter().zip(positional) {
+        let operand_ty = operand_ty();
+        let value = lower_value_expected(nodes, bindings, context, argument, Some(&operand_ty))?;
+        require_type(&value, &operand_ty, expr_span(argument))?;
+        inputs.push(value.node);
+    }
+    let ty = (codata.result)();
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            call.span,
+            ty.clone(),
+            EffectFacts::EFFECT,
+            inputs,
+            Op::InvokeCodataPrimitive {
+                primitive: (codata.id)(),
+            },
+        ),
+        ty,
+    })
+}
+
 fn tree_projection_syntax(expression: &ast::Expr) -> Option<(&ast::Expr, Vec<&ast::Expr>)> {
     fn collect<'a>(expression: &'a ast::Expr, segments: &mut Vec<&'a ast::Expr>) -> &'a ast::Expr {
         if let ast::Expr::Paren(paren) = expression {
@@ -4408,8 +4459,8 @@ fn lower_method_call(
     if positional.len() != entry.arity {
         return Err(invalid_arity(call.span, entry.arity, positional.len()));
     }
-    // A primitive-backed method has no per-method compiler code: build the
-    // declared request record and invoke the primitive. A dedicated op falls
+    // A primitive- or codata-backed method has no per-method compiler code: build
+    // the declared request and invoke the (codata) primitive. A dedicated op falls
     // through to its bespoke lowering arm below.
     let method = match entry.lowering {
         crate::binding::MethodLowering::Primitive(primitive) => {
@@ -4421,6 +4472,17 @@ fn lower_method_call(
             }
             return lower_primitive_method(
                 nodes, bindings, context, call, receiver, positional, primitive,
+            );
+        }
+        crate::binding::MethodLowering::CodataPrimitive(codata) => {
+            if let Some(named) = &call.named_args {
+                return Err(Diagnostics::one(Diagnostic::unsupported(
+                    named.span,
+                    "named method arguments",
+                )));
+            }
+            return lower_codata_primitive_method(
+                nodes, bindings, context, call, receiver, positional, codata,
             );
         }
         crate::binding::MethodLowering::DedicatedOp(method) => method,
@@ -5072,36 +5134,6 @@ fn lower_method_call(
                     effect,
                     vec![receiver.node],
                     Op::StreamCollect,
-                ),
-                ty,
-            })
-        }
-        PreludeMethod::TreeGlob => {
-            let pattern = lower_value(nodes, bindings, context, &positional[0])?;
-            require_type(&pattern, &Type::String, expr_span(&positional[0]))?;
-            let ty = Type::stream(Type::Path, Type::Path);
-            Ok(LoweredValue {
-                node: push_node(
-                    nodes,
-                    call.span,
-                    ty.clone(),
-                    EffectFacts::EFFECT,
-                    vec![receiver.node, pattern.node],
-                    Op::TreeGlob,
-                ),
-                ty,
-            })
-        }
-        PreludeMethod::BlobLen => {
-            let ty = Type::Int;
-            Ok(LoweredValue {
-                node: push_node(
-                    nodes,
-                    call.span,
-                    ty.clone(),
-                    EffectFacts::EFFECT,
-                    vec![receiver.node],
-                    Op::BlobLen,
                 ),
                 ty,
             })
