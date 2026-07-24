@@ -365,6 +365,14 @@ pub enum ArgKind {
     Named { short: Option<char>, counted: bool },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NamedValueMode {
+    BoolFlag,
+    CountedFlag,
+    RequiredValue,
+    OptionalValue,
+}
+
 /// Schema for the 'config' field of the top-level args struct
 #[derive(Facet, Debug, Clone)]
 #[facet(skip_all_unless_truthy)]
@@ -739,6 +747,28 @@ impl ArgSchema {
     pub fn default(&self) -> Option<&crate::config_value::ConfigValue> {
         self.default.as_ref()
     }
+
+    pub(crate) fn named_value_mode(&self) -> Option<NamedValueMode> {
+        match self.kind() {
+            ArgKind::Positional => None,
+            ArgKind::Named { counted: true, .. } => Some(NamedValueMode::CountedFlag),
+            ArgKind::Named { counted: false, .. } if self.value().is_bool_flag_value() => {
+                Some(NamedValueMode::BoolFlag)
+            }
+            ArgKind::Named { counted: false, .. }
+                if self.value().optional_value_inner().is_some() =>
+            {
+                Some(NamedValueMode::OptionalValue)
+            }
+            ArgKind::Named { counted: false, .. } => Some(NamedValueMode::RequiredValue),
+        }
+    }
+
+    pub(crate) fn cli_value_schema(&self) -> &ValueSchema {
+        self.value()
+            .optional_value_inner()
+            .unwrap_or_else(|| self.value().inner_if_option())
+    }
 }
 
 impl Subcommand {
@@ -893,6 +923,7 @@ impl ConfigFieldSchema {
     pub fn default(&self) -> Option<&crate::config_value::ConfigValue> {
         self.default.as_ref()
     }
+
 }
 
 impl ConfigVecSchema {
@@ -1038,6 +1069,43 @@ impl ValueSchema {
                 ..
             }) => Some(variants.as_slice()),
             _ => None,
+        }
+    }
+
+    pub(crate) fn is_bool_flag_value(&self) -> bool {
+        match self {
+            ValueSchema::Option { value, .. } => value.is_bool_flag_value(),
+            ValueSchema::Leaf(LeafSchema {
+                kind: LeafKind::Scalar(ScalarType::Bool),
+                ..
+            }) => true,
+            _ => false,
+        }
+    }
+
+    pub(crate) fn optional_value_inner(&self) -> Option<&ValueSchema> {
+        let ValueSchema::Option { value: outer, .. } = self else {
+            return None;
+        };
+        let ValueSchema::Option { value: inner, .. } = outer.as_ref() else {
+            return None;
+        };
+        inner
+            .as_ref()
+            .is_single_non_bool_value()
+            .then_some(inner.as_ref())
+    }
+
+    fn is_single_non_bool_value(&self) -> bool {
+        match self {
+            ValueSchema::Leaf(LeafSchema {
+                kind: LeafKind::Scalar(ScalarType::Bool),
+                ..
+            }) => false,
+            ValueSchema::Leaf(_) => true,
+            ValueSchema::Option { .. } | ValueSchema::Vec { .. } | ValueSchema::Struct { .. } => {
+                false
+            }
         }
     }
 }

@@ -381,6 +381,7 @@ fn config_value_to_json(value: &ConfigValue) -> Option<Json> {
                     .collect(),
             ),
         )])),
+        ConfigValue::ExplicitSome(value) => config_value_to_json(&value.value),
     }
 }
 

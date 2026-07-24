@@ -7,7 +7,7 @@ use heck::ToKebabCase;
 use std::string::String;
 use std::vec::Vec;
 
-use crate::schema::{ArgLevelSchema, ArgSchema, Schema, Subcommand};
+use crate::schema::{ArgLevelSchema, ArgSchema, NamedValueMode, Schema, Subcommand};
 
 /// Supported shells for completion generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, facet::Facet)]
@@ -151,7 +151,10 @@ fn generate_bash_function(
     }
 
     // Handle flags that take values
-    let value_flags: Vec<_> = flags.iter().filter(|f| f.takes_value).collect();
+    let value_flags: Vec<_> = flags
+        .iter()
+        .filter(|f| matches!(f.value_mode, NamedValueMode::RequiredValue))
+        .collect();
     if !value_flags.is_empty() {
         out.push_str("\n    case \"$prev\" in\n");
         for flag in &value_flags {
@@ -326,11 +329,10 @@ fn generate_zsh_function(
         let desc = flag.doc.as_deref().unwrap_or("");
         let escaped_desc = escape_zsh_description(desc);
 
-        // For flags that take values, add the value placeholder
-        let value_spec = if flag.takes_value {
-            ":value:_default"
-        } else {
-            ""
+        let value_spec = match flag.value_mode {
+            NamedValueMode::RequiredValue => ":value:_default",
+            NamedValueMode::OptionalValue => "::value:_default",
+            NamedValueMode::BoolFlag | NamedValueMode::CountedFlag => "",
         };
 
         let long_names: Vec<&str> = std::iter::once(flag.long.as_str())
@@ -508,7 +510,7 @@ fn generate_fish_level(out: &mut String, args: &ArgLevelSchema, program_name: &s
         }
 
         // If flag takes a value, require an argument
-        if flag.takes_value {
+        if matches!(flag.value_mode, NamedValueMode::RequiredValue | NamedValueMode::OptionalValue) {
             out.push_str(" -r");
         }
 
@@ -581,7 +583,7 @@ struct FlagInfo {
     aliases: Vec<String>,
     short: Option<char>,
     doc: Option<String>,
-    takes_value: bool,
+    value_mode: NamedValueMode,
 }
 
 #[derive(Clone)]
@@ -623,16 +625,16 @@ fn collect_options(args: &ArgLevelSchema) -> (Vec<FlagInfo>, Vec<SubcommandInfo>
 
 /// Convert an ArgSchema to FlagInfo.
 fn arg_to_flag(name: &str, arg: &ArgSchema) -> FlagInfo {
-    // Determine if this flag takes a value (not a boolean flag)
-    let takes_value = !arg.value().inner_if_option().is_bool();
+    let value_mode = arg
+        .named_value_mode()
+        .expect("arg_to_flag called on a non-named argument");
 
     FlagInfo {
-        // Use kebab-case for the CLI flag name
         long: name.to_kebab_case(),
         aliases: arg.aliases().to_vec(),
         short: arg.kind().short(),
         doc: arg.docs().summary().map(|s| s.trim().to_string()),
-        takes_value,
+        value_mode,
     }
 }
 

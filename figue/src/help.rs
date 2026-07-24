@@ -6,7 +6,7 @@
 use crate::missing::normalize_program_name;
 use crate::schema::{
     ArgLevelSchema, ArgSchema, ConfigFieldGroupSchema, ConfigFieldSchema, ConfigStructSchema,
-    ConfigValueSchema, Docs, Schema, Subcommand,
+    ConfigValueSchema, Docs, NamedValueMode, Schema, Subcommand,
 };
 use facet_core::Facet;
 use heck::ToKebabCase;
@@ -949,9 +949,11 @@ fn render_html_arg_row(out: &mut String, arg: &ArgSchema) {
 }
 
 fn render_arg_name_meta(out: &mut String, arg: &ArgSchema) {
-    let hide_false_bool_default = arg.value().inner_if_option().is_bool()
+    let value_mode = arg.named_value_mode();
+    let is_bool_flag = matches!(value_mode, Some(NamedValueMode::BoolFlag));
+    let hide_false_bool_default = is_bool_flag
         && arg.default().map(config_value_summary).as_deref() == Some("false");
-    let has_enum_values = arg.value().inner_if_option().enum_variants().is_some();
+    let has_enum_values = arg.cli_value_schema().enum_variants().is_some();
 
     if hide_false_bool_default && !has_enum_values {
         return;
@@ -965,12 +967,15 @@ fn render_arg_name_meta(out: &mut String, arg: &ArgSchema) {
         out.push_str("</code>");
     } else if arg.required() {
         out.push_str("Required");
-    } else if !arg.kind().is_positional() && !arg.kind().is_counted() && !arg.value().is_bool() {
+    } else if matches!(
+        value_mode,
+        Some(NamedValueMode::RequiredValue | NamedValueMode::OptionalValue)
+    ) {
         out.push_str("Optional value");
     } else {
         out.push_str("Optional");
     }
-    if let Some(variants) = arg.value().inner_if_option().enum_variants() {
+    if let Some(variants) = arg.cli_value_schema().enum_variants() {
         out.push_str("<br>Values ");
         for variant in variants {
             out.push_str("<code class=\"value-token\">");
@@ -991,8 +996,8 @@ fn arg_help_names(arg: &ArgSchema) -> Vec<String> {
         names.push(format!("-{c},"));
     }
 
-    let is_bool = arg.value().inner_if_option().is_bool();
-    let is_counted = arg.kind().is_counted();
+    let value_mode = arg.named_value_mode();
+    let is_bool = matches!(value_mode, Some(NamedValueMode::BoolFlag));
     let mut long = if is_bool {
         if arg.default().map(config_value_summary).as_deref() == Some("false") {
             format!("--{}", arg.name().to_kebab_case())
@@ -1003,16 +1008,23 @@ fn arg_help_names(arg: &ArgSchema) -> Vec<String> {
         format!("--{}", arg.name().to_kebab_case())
     };
 
-    if !is_counted && !arg.value().is_bool() {
+    if matches!(
+        value_mode,
+        Some(NamedValueMode::RequiredValue | NamedValueMode::OptionalValue)
+    ) {
         let placeholder = if let Some(label) = arg.label() {
             Some(label.to_uppercase())
-        } else if arg.value().inner_if_option().enum_variants().is_some() {
+        } else if arg.cli_value_schema().enum_variants().is_some() {
             None
         } else {
-            Some(arg.value().type_identifier().to_uppercase())
+            Some(arg.cli_value_schema().type_identifier().to_uppercase())
         };
         if let Some(placeholder) = placeholder {
-            long.push_str(&format!(" <{placeholder}>"));
+            if matches!(value_mode, Some(NamedValueMode::OptionalValue)) {
+                long.push_str(&format!("[=<{placeholder}>]"));
+            } else {
+                long.push_str(&format!(" <{placeholder}>"));
+            }
         }
     }
     names.push(long);
@@ -1589,6 +1601,7 @@ fn config_value_summary(value: &crate::config_value::ConfigValue) -> String {
             format!("object{{{} fields}}", s.value.len())
         }
         crate::config_value::ConfigValue::Enum(s) => s.value.variant.clone(),
+        crate::config_value::ConfigValue::ExplicitSome(s) => config_value_summary(&s.value),
     }
 }
 
@@ -2421,8 +2434,8 @@ fn write_arg_help(out: &mut String, arg: &ArgSchema, config: &HelpConfig) {
             format!("<{}>", name.to_uppercase()).if_supports_color(Stdout, |text| text.green())
         ));
     } else {
-        let is_bool = arg.value().inner_if_option().is_bool();
-        let flag_str = if is_bool {
+        let value_mode = arg.named_value_mode();
+        let flag_str = if matches!(value_mode, Some(NamedValueMode::BoolFlag)) {
             format!("--[no-]{}", name.to_kebab_case())
         } else {
             format!("--{}", name.to_kebab_case())
@@ -2432,18 +2445,23 @@ fn write_arg_help(out: &mut String, arg: &ArgSchema, config: &HelpConfig) {
             flag_str.if_supports_color(Stdout, |text| text.green())
         ));
 
-        // Show value placeholder for non-bool, non-counted types
-        if !is_counted && !arg.value().is_bool() {
+        if matches!(
+            value_mode,
+            Some(NamedValueMode::RequiredValue | NamedValueMode::OptionalValue)
+        ) {
             let placeholder = if let Some(desc) = arg.label() {
                 desc.to_uppercase()
-            } else if let Some(variants) = arg.value().inner_if_option().enum_variants() {
+            } else if let Some(variants) = arg.cli_value_schema().enum_variants() {
                 variants.join(",")
             } else {
-                arg.value().type_identifier().to_uppercase()
+                arg.cli_value_schema().type_identifier().to_uppercase()
             };
-            out.push_str(&format!(" <{}>", placeholder));
+            if matches!(value_mode, Some(NamedValueMode::OptionalValue)) {
+                out.push_str(&format!("[=<{}>]", placeholder));
+            } else {
+                out.push_str(&format!(" <{}>", placeholder));
+            }
 
-            // Append the default value or required text
             if let Some(default) = arg.default() {
                 out.push_str(&format!(" [Default: `{}`]", config_value_summary(default)));
             } else if arg.required() {
