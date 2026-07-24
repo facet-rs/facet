@@ -434,6 +434,11 @@ pub enum UrlEncodedError {
     InvalidBool(String, String),
     /// The shape is not supported for deserialization.
     UnsupportedShape(String),
+    /// The type is not supported for deserialization.
+    #[deprecated(note = "no longer produced; unparseable scalars now report \
+        InvalidNumber/InvalidChar/InvalidBool and unsupported types report \
+        UnsupportedShape")]
+    UnsupportedType(String),
     /// Reflection error
     ReflectError(ReflectError),
 }
@@ -476,6 +481,10 @@ impl core::fmt::Display for UrlEncodedError {
             }
             UrlEncodedError::UnsupportedShape(shape) => {
                 write!(f, "Unsupported shape: {shape}")
+            }
+            #[allow(deprecated)]
+            UrlEncodedError::UnsupportedType(ty) => {
+                write!(f, "Unsupported type: {ty}")
             }
             UrlEncodedError::ReflectError(err) => {
                 write!(f, "Reflection error: {err}")
