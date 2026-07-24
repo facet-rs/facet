@@ -251,8 +251,11 @@ pub struct HelpConfig {
     /// Whether to include implementation source file information in help output.
     pub include_implementation_source_file: bool,
     /// Optional callback to render an implementation URL from a source file path.
-    pub implementation_url: Option<Arc<dyn Fn(&str) -> String + Send + Sync>>,
+    pub implementation_url: Option<ImplementationUrlFn>,
 }
+
+/// Callback rendering an implementation URL from a source file path.
+pub type ImplementationUrlFn = Arc<dyn Fn(&str) -> String + Send + Sync>;
 
 impl fmt::Debug for HelpConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

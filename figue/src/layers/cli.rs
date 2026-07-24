@@ -811,6 +811,7 @@ impl<'a> ParseContext<'a> {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn parse_flag_value_simple(
         &mut self,
         arg: &str,
