@@ -56,7 +56,7 @@ styx-lsp-test-schema.workspace = true
 [dev-dependencies]
 serde_json.workspace = true
 futures.workspace = true
-tower = "0.4"
+tower = "0.5"
 
 [build-dependencies]
 facet.workspace = true

@@ -8207,7 +8207,7 @@ dependencies = [
  "styx-lsp-test-schema",
  "styx-tree",
  "tokio",
- "tower 0.4.13",
+ "tower 0.5.3",
  "tower-lsp",
  "tracing",
  "tracing-subscriber",
@@ -9065,7 +9065,6 @@ dependencies = [
  "pin-project-lite",
  "tower-layer",
  "tower-service",
- "tracing",
 ]
 
 [[package]]
