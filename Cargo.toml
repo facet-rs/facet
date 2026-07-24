@@ -411,7 +411,7 @@ uuid = "^1.19.0"
 rust_decimal = { version = "^1.38.0", default-features = false, features = ["std"] }
 rustls = "0.23"
 rustls-pemfile = "2"
-rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
+rusqlite = { version = "0.40", features = ["bundled", "hooks"] }
 smallvec = { version = "^1.15", default-features = false }
 structstruck = "0.5.1"
 syn = { version = "2", features = ["full"] }
