@@ -44,10 +44,10 @@
   },
   "homepage": "https://styx.bearcove.eu",
   "devDependencies": {
-    "@lezer/generator": "^1.7.0",
-    "tsup": "^8.0.0",
-    "typescript": "^5.3.0",
-    "vitest": "^3.0.0"
+    "@lezer/generator": "^1.8.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
   },
   "overrides": {
     "esbuild": "^0.28.1"

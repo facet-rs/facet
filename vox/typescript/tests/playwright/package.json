@@ -9,8 +9,8 @@
   "devDependencies": {
     "@bearcove/vox-core": "workspace:*",
     "@bearcove/vox-generated": "workspace:*",
-    "@playwright/test": "^1",
+    "@playwright/test": "^1.61.1",
     "@types/ws": "^8.18.1",
-    "ws": "^8.19.0"
+    "ws": "^8.21.1"
   }
 }

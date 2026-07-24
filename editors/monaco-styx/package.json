@@ -39,8 +39,8 @@
   },
   "homepage": "https://styx.bearcove.eu",
   "devDependencies": {
-    "tsup": "^8.0.0",
-    "typescript": "^5.3.0"
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3"
   },
   "peerDependencies": {
     "monaco-editor": "^0.40.0 || ^0.50.0 || ^0.56.0"
