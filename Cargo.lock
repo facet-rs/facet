@@ -8199,7 +8199,7 @@ dependencies = [
  "glob",
  "hex",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "styx-cst",
  "styx-embed",
  "styx-format",
@@ -9521,7 +9521,7 @@ dependencies = [
  "phon",
  "rustc-demangle",
  "semver",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "snark",
  "snark-dsl",
  "taxon",
@@ -9553,7 +9553,7 @@ dependencies = [
  "facet-json",
  "facet-reflect",
  "hex",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "vix-core",
 ]
 
