@@ -343,7 +343,7 @@ futures-util = { version = "^0.3.31", default-features = false, features = [
   "async-await-macro",
 ] }
 glob = "^0.3"
-goblin = "^0.9"
+goblin = "^0.10.0"
 hashbrown = { version = "0.17", features = ["raw-entry"] }
 heck = "^0.5.0"
 hex = "^0.4"
