@@ -7,7 +7,7 @@ Error: duplicate flag `-v`
    │
  2 │ struct ConflictingShortFlags {
    │        ──────────┬──────────  
-   │                  ╰──────────── defined at figue/src/schema/tests.rs:122
+   │                  ╰──────────── defined at figue/src/schema/tests.rs:139
    │ 
  4 │     a: bool,
    │     ───┬───  

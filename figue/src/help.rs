@@ -3,20 +3,23 @@
 //! This module provides utilities to generate help text from Schema,
 //! including doc comments, field names, and attribute information.
 
+use crate::driver::HelpListMode;
 use crate::missing::normalize_program_name;
 use crate::schema::{
     ArgLevelSchema, ArgSchema, ConfigFieldGroupSchema, ConfigFieldSchema, ConfigStructSchema,
-    ConfigValueSchema, Docs, Schema, Subcommand,
+    ConfigValueSchema, Docs, NamedValueMode, Schema, Subcommand,
 };
 use facet_core::Facet;
 use heck::ToKebabCase;
 use owo_colors::OwoColorize;
 use owo_colors::Stream::Stdout;
+use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::string::String;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::vec::Vec;
 
@@ -55,7 +58,13 @@ pub fn generate_help_for_shape(shape: &'static facet_core::Shape, config: &HelpC
         }
     };
 
-    generate_help_for_subcommand(&schema, &[], config)
+    generate_help_for_subcommand_with_config_formats_and_shape(
+        shape,
+        &schema,
+        &[],
+        config,
+        DEFAULT_CONFIG_FILE_EXTENSIONS,
+    )
 }
 
 /// Generate HTML help for a Facet type.
@@ -229,7 +238,7 @@ pub fn open_html_help_file(path: impl AsRef<Path>) -> io::Result<()> {
 }
 
 /// Configuration for help text generation.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct HelpConfig {
     /// Program name (defaults to executable name)
     pub program_name: Option<String>,
@@ -239,6 +248,32 @@ pub struct HelpConfig {
     pub description: Option<String>,
     /// Width for wrapping text (0 = no wrapping)
     pub width: usize,
+    /// Whether to include implementation source file information in help output.
+    pub include_implementation_source_file: bool,
+    /// Optional callback to render an implementation URL from a source file path.
+    pub implementation_url: Option<ImplementationUrlFn>,
+}
+
+/// Callback rendering an implementation URL from a source file path.
+pub type ImplementationUrlFn = Arc<dyn Fn(&str) -> String + Send + Sync>;
+
+impl fmt::Debug for HelpConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HelpConfig")
+            .field("program_name", &self.program_name)
+            .field("version", &self.version)
+            .field("description", &self.description)
+            .field("width", &self.width)
+            .field(
+                "include_implementation_source_file",
+                &self.include_implementation_source_file,
+            )
+            .field(
+                "implementation_url",
+                &self.implementation_url.as_ref().map(|_| "<fn>"),
+            )
+            .finish()
+    }
 }
 
 impl Default for HelpConfig {
@@ -248,8 +283,86 @@ impl Default for HelpConfig {
             version: None,
             description: None,
             width: 80,
+            include_implementation_source_file: false,
+            implementation_url: None,
         }
     }
+}
+
+/// Resolve implementation source file for a subcommand path from a root shape.
+///
+/// The `subcommand_path` should contain effective subcommand names (as emitted by
+/// `ConfigValue::extract_subcommand_path`). An empty path resolves to the root shape.
+pub(crate) fn implementation_source_for_subcommand_path(
+    root_shape: &'static facet_core::Shape,
+    subcommand_path: &[String],
+) -> Option<&'static str> {
+    let mut current_shape = root_shape;
+
+    if subcommand_path.is_empty() {
+        return current_shape.source_file;
+    }
+
+    for segment in subcommand_path {
+        let next_shape = next_subcommand_shape(current_shape, segment)?;
+        current_shape = next_shape;
+    }
+
+    current_shape.source_file
+}
+
+fn next_subcommand_shape(
+    shape: &'static facet_core::Shape,
+    target_effective_name: &str,
+) -> Option<&'static facet_core::Shape> {
+    let shape = unwrap_option_shape(shape);
+    let enum_shape = match shape.ty {
+        facet_core::Type::User(facet_core::UserType::Struct(s)) => {
+            let subcommand_field = s
+                .fields
+                .iter()
+                .find(|field| field.has_attr(Some("args"), "subcommand"))?;
+            unwrap_option_shape(subcommand_field.shape())
+        }
+        facet_core::Type::User(facet_core::UserType::Enum(_)) => shape,
+        _ => return None,
+    };
+
+    let variants = match enum_shape.ty {
+        facet_core::Type::User(facet_core::UserType::Enum(e)) => e.variants,
+        _ => return None,
+    };
+
+    let variant = variants
+        .iter()
+        .find(|variant| variant.effective_name() == target_effective_name)?;
+
+    if variant.data.fields.is_empty() {
+        return Some(enum_shape);
+    }
+
+    let direct_subcommand_field = variant
+        .data
+        .fields
+        .iter()
+        .find(|field| field.has_attr(Some("args"), "subcommand"));
+
+    if let Some(direct_subcommand_field) = direct_subcommand_field {
+        return Some(unwrap_option_shape(direct_subcommand_field.shape()));
+    }
+
+    if variant.data.fields.len() == 1 {
+        return Some(unwrap_option_shape(variant.data.fields[0].shape()));
+    }
+
+    Some(enum_shape)
+}
+
+fn unwrap_option_shape(mut shape: &'static facet_core::Shape) -> &'static facet_core::Shape {
+    while let facet_core::Def::Option(option_def) = shape.def {
+        shape = option_def.t;
+    }
+    shape
 }
 
 /// Generate help text for a specific subcommand path from a Schema.
@@ -331,6 +444,218 @@ pub(crate) fn generate_help_for_subcommand_with_config_formats(
     }
 
     generate_help_for_subcommand_level(current_args, final_sub, &command_path.join(" "), config)
+}
+
+pub(crate) fn generate_help_for_subcommand_with_config_formats_and_shape(
+    shape: &'static facet_core::Shape,
+    schema: &Schema,
+    subcommand_path: &[String],
+    config: &HelpConfig,
+    config_file_extensions: &[&str],
+) -> String {
+    let mut help = generate_help_for_subcommand_with_config_formats(
+        schema,
+        subcommand_path,
+        config,
+        config_file_extensions,
+    );
+    append_implementation_source_for_subcommand_path(&mut help, shape, subcommand_path, config);
+    help
+}
+
+fn append_implementation_source_for_subcommand_path(
+    help_text: &mut String,
+    root_shape: &'static facet_core::Shape,
+    subcommand_path: &[String],
+    config: &HelpConfig,
+) {
+    let Some(source_file) = implementation_source_for_subcommand_path(root_shape, subcommand_path)
+    else {
+        return;
+    };
+
+    let implementation_url = config
+        .implementation_url
+        .as_ref()
+        .map(|render_url| render_url(source_file));
+
+    if !config.include_implementation_source_file && implementation_url.is_none() {
+        return;
+    }
+
+    if !help_text.ends_with('\n') {
+        help_text.push('\n');
+    }
+    help_text.push('\n');
+    help_text.push_str("Implementation:\n");
+    if config.include_implementation_source_file {
+        help_text.push_str("    ");
+        help_text.push_str(source_file);
+        help_text.push('\n');
+    }
+    if let Some(implementation_url) = implementation_url {
+        help_text.push_str("    ");
+        help_text.push_str(&implementation_url);
+        help_text.push('\n');
+    }
+}
+
+/// Generate help-list output for subcommands at the current command level.
+///
+/// In [`HelpListMode::Short`], this returns one full CLI command path per line,
+/// recursively listing all reachable leaf commands.
+/// In [`HelpListMode::Full`], this returns concatenated help output for each
+/// reachable leaf subcommand under the current command path.
+pub(crate) fn generate_help_list_for_subcommand_with_config_formats(
+    schema: &Schema,
+    subcommand_path: &[String],
+    config: &HelpConfig,
+    mode: HelpListMode,
+    config_file_extensions: &[&str],
+) -> String {
+    let program_name = config
+        .program_name
+        .clone()
+        .or_else(|| {
+            std::env::args()
+                .next()
+                .map(|path| normalize_program_name(&path))
+        })
+        .unwrap_or_else(|| "program".to_string());
+
+    let mut current_args = schema.args();
+    let mut resolved_path = Vec::new();
+
+    for name in subcommand_path {
+        let sub = current_args
+            .subcommands()
+            .values()
+            .find(|s| s.effective_name() == name);
+
+        let Some(sub) = sub else {
+            return generate_help_for_subcommand(schema, &[], config);
+        };
+
+        resolved_path.push(sub.effective_name().to_string());
+        current_args = sub.args();
+    }
+
+    if !current_args.has_subcommands() {
+        let command_display = if resolved_path.is_empty() {
+            program_name
+        } else {
+            let cli_chain = resolve_cli_chain(schema, &resolved_path);
+            if cli_chain.is_empty() {
+                program_name
+            } else {
+                format!("{} {}", program_name, cli_chain.join(" "))
+            }
+        };
+        return format!("No subcommands available for {command_display}.");
+    }
+
+    match mode {
+        HelpListMode::Short => {
+            let mut cli_chain = if resolved_path.is_empty() {
+                Vec::new()
+            } else {
+                resolve_cli_chain(schema, &resolved_path)
+            };
+            let mut commands = Vec::new();
+            collect_short_help_commands(
+                &mut commands,
+                program_name.as_str(),
+                &mut cli_chain,
+                current_args,
+            );
+            commands.join("\n")
+        }
+        HelpListMode::Full => {
+            let mut sections = Vec::new();
+            let mut leaf_paths = Vec::new();
+            if current_args.subcommand_optional() {
+                leaf_paths.push(resolved_path.clone());
+            }
+            let mut working_path = resolved_path.clone();
+            collect_leaf_subcommand_paths(&mut leaf_paths, &mut working_path, current_args);
+
+            for child_path in leaf_paths {
+                sections.push(generate_help_for_subcommand_with_config_formats(
+                    schema,
+                    &child_path,
+                    config,
+                    config_file_extensions,
+                ));
+            }
+            sections.join("\n\n")
+        }
+    }
+}
+
+fn collect_leaf_subcommand_paths(
+    leaf_paths: &mut Vec<Vec<String>>,
+    current_path: &mut Vec<String>,
+    args: &ArgLevelSchema,
+) {
+    if !args.has_subcommands() {
+        if !current_path.is_empty() {
+            leaf_paths.push(current_path.clone());
+        }
+        return;
+    }
+
+    for sub in args.subcommands().values() {
+        current_path.push(sub.effective_name().to_string());
+        collect_leaf_subcommand_paths(leaf_paths, current_path, sub.args());
+        current_path.pop();
+    }
+}
+
+fn collect_short_help_commands(
+    commands: &mut Vec<String>,
+    program_name: &str,
+    cli_chain: &mut Vec<String>,
+    args: &ArgLevelSchema,
+) {
+    if args.subcommand_optional() {
+        if cli_chain.is_empty() {
+            commands.push(program_name.to_string());
+        } else {
+            commands.push(format!("{} {}", program_name, cli_chain.join(" ")));
+        }
+    }
+
+    if !args.has_subcommands() {
+        if !cli_chain.is_empty() {
+            commands.push(format!("{} {}", program_name, cli_chain.join(" ")));
+        }
+        return;
+    }
+
+    for sub in args.subcommands().values() {
+        cli_chain.push(sub.cli_name().to_string());
+        collect_short_help_commands(commands, program_name, cli_chain, sub.args());
+        cli_chain.pop();
+    }
+}
+
+fn resolve_cli_chain(schema: &Schema, subcommand_path: &[String]) -> Vec<String> {
+    let mut current_args = schema.args();
+    let mut cli_path = Vec::new();
+
+    for name in subcommand_path {
+        let sub = current_args
+            .subcommands()
+            .values()
+            .find(|s| s.effective_name() == name);
+        let Some(sub) = sub else {
+            break;
+        };
+        cli_path.push(sub.cli_name().to_string());
+        current_args = sub.args();
+    }
+
+    cli_path
 }
 
 /// Generate help from a built Schema.
@@ -949,9 +1274,11 @@ fn render_html_arg_row(out: &mut String, arg: &ArgSchema) {
 }
 
 fn render_arg_name_meta(out: &mut String, arg: &ArgSchema) {
-    let hide_false_bool_default = arg.value().inner_if_option().is_bool()
+    let value_mode = arg.named_value_mode();
+    let is_bool_flag = matches!(value_mode, Some(NamedValueMode::BoolFlag));
+    let hide_false_bool_default = is_bool_flag
         && arg.default().map(config_value_summary).as_deref() == Some("false");
-    let has_enum_values = arg.value().inner_if_option().enum_variants().is_some();
+    let has_enum_values = arg.cli_value_schema().enum_variants().is_some();
 
     if hide_false_bool_default && !has_enum_values {
         return;
@@ -965,12 +1292,15 @@ fn render_arg_name_meta(out: &mut String, arg: &ArgSchema) {
         out.push_str("</code>");
     } else if arg.required() {
         out.push_str("Required");
-    } else if !arg.kind().is_positional() && !arg.kind().is_counted() && !arg.value().is_bool() {
+    } else if matches!(
+        value_mode,
+        Some(NamedValueMode::RequiredValue | NamedValueMode::OptionalValue)
+    ) {
         out.push_str("Optional value");
     } else {
         out.push_str("Optional");
     }
-    if let Some(variants) = arg.value().inner_if_option().enum_variants() {
+    if let Some(variants) = arg.cli_value_schema().enum_variants() {
         out.push_str("<br>Values ");
         for variant in variants {
             out.push_str("<code class=\"value-token\">");
@@ -991,8 +1321,8 @@ fn arg_help_names(arg: &ArgSchema) -> Vec<String> {
         names.push(format!("-{c},"));
     }
 
-    let is_bool = arg.value().inner_if_option().is_bool();
-    let is_counted = arg.kind().is_counted();
+    let value_mode = arg.named_value_mode();
+    let is_bool = matches!(value_mode, Some(NamedValueMode::BoolFlag));
     let mut long = if is_bool {
         if arg.default().map(config_value_summary).as_deref() == Some("false") {
             format!("--{}", arg.name().to_kebab_case())
@@ -1003,16 +1333,23 @@ fn arg_help_names(arg: &ArgSchema) -> Vec<String> {
         format!("--{}", arg.name().to_kebab_case())
     };
 
-    if !is_counted && !arg.value().is_bool() {
+    if matches!(
+        value_mode,
+        Some(NamedValueMode::RequiredValue | NamedValueMode::OptionalValue)
+    ) {
         let placeholder = if let Some(label) = arg.label() {
             Some(label.to_uppercase())
-        } else if arg.value().inner_if_option().enum_variants().is_some() {
+        } else if arg.cli_value_schema().enum_variants().is_some() {
             None
         } else {
-            Some(arg.value().type_identifier().to_uppercase())
+            Some(arg.cli_value_schema().type_identifier().to_uppercase())
         };
         if let Some(placeholder) = placeholder {
-            long.push_str(&format!(" <{placeholder}>"));
+            if matches!(value_mode, Some(NamedValueMode::OptionalValue)) {
+                long.push_str(&format!("[=<{placeholder}>]"));
+            } else {
+                long.push_str(&format!(" <{placeholder}>"));
+            }
         }
     }
     names.push(long);
@@ -1589,6 +1926,7 @@ fn config_value_summary(value: &crate::config_value::ConfigValue) -> String {
             format!("object{{{} fields}}", s.value.len())
         }
         crate::config_value::ConfigValue::Enum(s) => s.value.variant.clone(),
+        crate::config_value::ConfigValue::ExplicitSome(s) => config_value_summary(&s.value),
     }
 }
 
@@ -2421,8 +2759,8 @@ fn write_arg_help(out: &mut String, arg: &ArgSchema, config: &HelpConfig) {
             format!("<{}>", name.to_uppercase()).if_supports_color(Stdout, |text| text.green())
         ));
     } else {
-        let is_bool = arg.value().inner_if_option().is_bool();
-        let flag_str = if is_bool {
+        let value_mode = arg.named_value_mode();
+        let flag_str = if matches!(value_mode, Some(NamedValueMode::BoolFlag)) {
             format!("--[no-]{}", name.to_kebab_case())
         } else {
             format!("--{}", name.to_kebab_case())
@@ -2432,18 +2770,23 @@ fn write_arg_help(out: &mut String, arg: &ArgSchema, config: &HelpConfig) {
             flag_str.if_supports_color(Stdout, |text| text.green())
         ));
 
-        // Show value placeholder for non-bool, non-counted types
-        if !is_counted && !arg.value().is_bool() {
+        if matches!(
+            value_mode,
+            Some(NamedValueMode::RequiredValue | NamedValueMode::OptionalValue)
+        ) {
             let placeholder = if let Some(desc) = arg.label() {
                 desc.to_uppercase()
-            } else if let Some(variants) = arg.value().inner_if_option().enum_variants() {
+            } else if let Some(variants) = arg.cli_value_schema().enum_variants() {
                 variants.join(",")
             } else {
-                arg.value().type_identifier().to_uppercase()
+                arg.cli_value_schema().type_identifier().to_uppercase()
             };
-            out.push_str(&format!(" <{}>", placeholder));
+            if matches!(value_mode, Some(NamedValueMode::OptionalValue)) {
+                out.push_str(&format!("[=<{}>]", placeholder));
+            } else {
+                out.push_str(&format!(" <{}>", placeholder));
+            }
 
-            // Append the default value or required text
             if let Some(default) = arg.default() {
                 out.push_str(&format!(" [Default: `{}`]", config_value_summary(default)));
             } else if arg.required() {
@@ -2464,6 +2807,12 @@ fn write_arg_help(out: &mut String, arg: &ArgSchema, config: &HelpConfig) {
         out.push_str(&wrap_text("[can be repeated]", DOC_INDENT, config.width));
     }
 
+    if !arg.aliases().is_empty() {
+        out.push('\n');
+        out.push_str(DOC_INDENT);
+        out.push_str(&format!("aliases: {}", arg.aliases().join(", ")));
+    }
+
     out.push('\n');
 }
 
@@ -2481,6 +2830,11 @@ fn write_subcommand_help(out: &mut String, sub: &Subcommand, config: &HelpConfig
     if let Some(summary) = sub.docs().summary() {
         out.push('\n');
         out.push_str(&wrap_text(summary.trim(), "            ", config.width));
+    }
+
+    if !sub.aliases().is_empty() {
+        out.push_str("\n            ");
+        out.push_str(&format!("aliases: {}", sub.aliases().join(", ")));
     }
 
     out.push('\n');
@@ -3001,6 +3355,139 @@ mod tests {
         );
     }
 
+    #[derive(Facet)]
+    struct NestedRootArgs {
+        #[facet(args::subcommand)]
+        command: NestedRootCommand,
+    }
+
+    #[derive(Facet)]
+    #[repr(u8)]
+    #[allow(dead_code)]
+    enum NestedRootCommand {
+        Home(NestedHomeArgs),
+        Cache(NestedCacheArgs),
+    }
+
+    #[derive(Facet)]
+    struct NestedHomeArgs {
+        #[facet(args::subcommand)]
+        command: NestedHomeCommand,
+    }
+
+    #[derive(Facet)]
+    #[repr(u8)]
+    #[allow(dead_code)]
+    enum NestedHomeCommand {
+        Open,
+        Show,
+    }
+
+    #[derive(Facet)]
+    struct NestedCacheArgs {
+        #[facet(args::subcommand)]
+        command: NestedCacheCommand,
+    }
+
+    #[derive(Facet)]
+    #[repr(u8)]
+    #[allow(dead_code)]
+    enum NestedCacheCommand {
+        Open,
+        Show,
+    }
+
+    #[test]
+    fn test_help_list_short_is_recursive_with_full_command_paths() {
+        let schema = Schema::from_shape(NestedRootArgs::SHAPE).unwrap();
+        let output = generate_help_list_for_subcommand_with_config_formats(
+            &schema,
+            &[],
+            &HelpConfig {
+                program_name: Some("myapp".to_string()),
+                ..HelpConfig::default()
+            },
+            HelpListMode::Short,
+            DEFAULT_CONFIG_FILE_EXTENSIONS,
+        );
+
+        let lines: Vec<&str> = output.lines().collect();
+        assert_eq!(
+            lines,
+            vec![
+                "myapp home open",
+                "myapp home show",
+                "myapp cache open",
+                "myapp cache show"
+            ]
+        );
+    }
+
+    #[test]
+    fn test_help_list_full_is_recursive_for_leaf_subcommands() {
+        let schema = Schema::from_shape(NestedRootArgs::SHAPE).unwrap();
+        let output = generate_help_list_for_subcommand_with_config_formats(
+            &schema,
+            &[],
+            &HelpConfig {
+                program_name: Some("myapp".to_string()),
+                ..HelpConfig::default()
+            },
+            HelpListMode::Full,
+            DEFAULT_CONFIG_FILE_EXTENSIONS,
+        );
+
+        assert!(output.contains("myapp home open"));
+        assert!(output.contains("myapp home show"));
+        assert!(output.contains("myapp cache open"));
+        assert!(output.contains("myapp cache show"));
+        assert!(!output.contains("myapp home\n\n"));
+        assert!(!output.contains("myapp cache\n\n"));
+    }
+
+    #[test]
+    fn test_help_list_full_includes_optional_current_command_and_custom_formats() {
+        #[derive(Facet)]
+        struct Args {
+            #[facet(args::config)]
+            config: Config,
+
+            #[facet(args::subcommand)]
+            command: Option<Command>,
+        }
+
+        #[derive(Facet)]
+        struct Config {
+            #[facet(default = "localhost")]
+            host: String,
+        }
+
+        #[derive(Facet)]
+        #[repr(u8)]
+        #[allow(dead_code)]
+        enum Command {
+            Serve,
+            Status,
+        }
+
+        let schema = Schema::from_shape(Args::SHAPE).unwrap();
+        let output = generate_help_list_for_subcommand_with_config_formats(
+            &schema,
+            &[],
+            &HelpConfig {
+                program_name: Some("tool".to_string()),
+                ..HelpConfig::default()
+            },
+            HelpListMode::Full,
+            &["json", "jsonc"],
+        );
+
+        assert!(output.contains("tool\n"));
+        assert!(output.contains("Supported file formats: .json, .jsonc."));
+        assert!(output.contains("tool serve"));
+        assert!(output.contains("tool status"));
+    }
+
     #[test]
     fn test_long_doc_comment_wraps() {
         #[derive(Facet)]
@@ -3042,4 +3529,39 @@ mod tests {
             );
         }
     }
+    #[derive(Facet)]
+    struct ArgsWithAlias {
+        #[facet(args::named, args::alias = "colour")]
+        color: bool,
+    }
+
+    #[derive(Facet)]
+    #[repr(u8)]
+    enum CommandWithAlias {
+        #[facet(args::alias = "profiles")]
+        Profile,
+    }
+
+    #[derive(Facet)]
+    struct ArgsWithAliasedSubcommand {
+        #[facet(args::subcommand)]
+        command: Option<CommandWithAlias>,
+    }
+
+    #[test]
+    fn test_help_shows_aliases_after_canonical_name() {
+        let schema = Schema::from_shape(ArgsWithAlias::SHAPE).unwrap();
+        let help = generate_help_for_subcommand(&schema, &[], &HelpConfig::default());
+        assert!(help.contains("--[no-]color"), "help should show canonical flag: {help}");
+        assert!(help.contains("aliases: colour"), "help should show aliases: {help}");
+    }
+
+    #[test]
+    fn test_help_shows_subcommand_aliases_with_canonical_name() {
+        let schema = Schema::from_shape(ArgsWithAliasedSubcommand::SHAPE).unwrap();
+        let help = generate_help_for_subcommand(&schema, &[], &HelpConfig::default());
+        assert!(help.contains("profile"), "help should show canonical subcommand: {help}");
+        assert!(help.contains("aliases: profiles"), "help should surface compatibility aliases: {help}");
+    }
 }
+

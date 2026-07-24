@@ -56,6 +56,7 @@
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::string::String;
+use std::sync::Arc;
 
 use camino::Utf8PathBuf;
 use facet::Facet;
@@ -513,6 +514,60 @@ impl HelpConfigBuilder {
     pub fn width(mut self, width: usize) -> Self {
         self.config.width = width;
         self
+    }
+
+    /// Enable or disable implementation source file hints in help output.
+    ///
+    /// When enabled, help text includes an `Implementation:` section that points
+    /// to the source file reported by Facet shape metadata (`Shape::source_file`).
+    /// This is useful for CLIs that want to guide contributors to command handlers.
+    pub fn include_implementation_source_file(mut self, include: bool) -> Self {
+        self.config.include_implementation_source_file = include;
+        self
+    }
+
+    /// Add an implementation URL line in help output.
+    ///
+    /// The callback receives the implementation source file path from Facet shape
+    /// metadata (for example, `src\\cli\\mod.rs`) and returns a URL string.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use figue::builder;
+    /// # use facet::Facet;
+    /// # #[derive(Facet)] struct Args { #[facet(figue::named)] verbose: bool }
+    /// let _config = builder::<Args>()
+    ///     .unwrap()
+    ///     .help(|h| h.include_implementation_url(|path| {
+    ///         format!("https://example.com/src/{}", path.replace('\\', "/"))
+    ///     }))
+    ///     .build();
+    /// ```
+    pub fn include_implementation_url<F>(mut self, render_url: F) -> Self
+    where
+        F: Fn(&str) -> String + Send + Sync + 'static,
+    {
+        self.config.implementation_url = Some(Arc::new(render_url));
+        self
+    }
+
+    /// Add a GitHub implementation URL line in help output.
+    ///
+    /// This is a convenience wrapper over [`Self::include_implementation_url`].
+    /// It creates URLs like:
+    /// `https://github.com/<owner/repo>/blob/<revision>/<path>`
+    pub fn include_implementation_github_url(
+        self,
+        owner_repo: impl Into<String>,
+        revision: impl Into<String>,
+    ) -> Self {
+        let owner_repo = owner_repo.into();
+        let revision = revision.into();
+        self.include_implementation_url(move |source_file| {
+            let normalized = source_file.replace('\\', "/");
+            format!("https://github.com/{owner_repo}/blob/{revision}/{normalized}")
+        })
     }
 
     /// Build the help configuration.

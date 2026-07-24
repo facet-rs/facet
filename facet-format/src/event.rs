@@ -517,6 +517,12 @@ pub enum ParseEventKind<'de> {
     SequenceEnd,
     /// Scalar literal.
     Scalar(ScalarValue<'de>),
+    /// Explicit marker that an option layer is present.
+    ///
+    /// The following event represents the value inside `Some(...)`. This lets
+    /// formats distinguish an outer `Some(None)` from a plain `None` when
+    /// deserializing nested options.
+    OptionSome,
     /// Tagged value from a self-describing format with native tagged union syntax.
     ///
     /// This is used by formats like Styx that have explicit tag syntax (e.g., `@tag(value)`).
@@ -546,6 +552,7 @@ impl<'de> fmt::Debug for ParseEventKind<'de> {
             }
             ParseEventKind::SequenceEnd => f.write_str("SequenceEnd"),
             ParseEventKind::Scalar(value) => f.debug_tuple("Scalar").field(value).finish(),
+            ParseEventKind::OptionSome => f.write_str("OptionSome"),
             ParseEventKind::VariantTag(tag) => f.debug_tuple("VariantTag").field(tag).finish(),
         }
     }
@@ -571,6 +578,7 @@ impl ParseEventKind<'_> {
             ParseEventKind::SequenceStart(_) => "sequence start",
             ParseEventKind::SequenceEnd => "sequence end",
             ParseEventKind::Scalar(_) => "scalar",
+            ParseEventKind::OptionSome => "option some",
             ParseEventKind::VariantTag(_) => "variant tag",
         }
     }

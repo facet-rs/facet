@@ -37,6 +37,9 @@ unicode-width.workspace = true
 strip-ansi-escapes.workspace = true
 strsim.workspace = true
 supports-color.workspace = true
+arbitrary = { version = "1.4.2", optional = true, features = ["derive"] }
+rand = { version = "0.9.2", optional = true }
+rand_chacha = { version = "0.9.0", optional = true }
 
 [dev-dependencies]
 facet-format = { path = "../facet-format", features = ["tracing"] }
@@ -53,6 +56,9 @@ default = ["rich-diagnostics"]
 rich-diagnostics = []
 doc = ["facet/doc"]
 tracing = ["facet-reflect/tracing", "facet-json/tracing", "facet-format/tracing"]
+arbitrary = ["dep:arbitrary", "dep:rand", "dep:rand_chacha"]
 
 [lints]
 workspace = true
+
+

@@ -241,6 +241,7 @@ pub fn parse_env(schema: &Schema, env_config: &EnvConfig, source: &dyn EnvSource
         diagnostics,
         source_text: None,
         config_file_paths: IndexMap::default(),
+        help_list_mode: None,
     };
 
     // Assign spans to env-sourced values and build the virtual source document
@@ -403,6 +404,7 @@ fn parse_env_no_config(env_config: &EnvConfig, source: &dyn EnvSource) -> LayerO
         diagnostics: Vec::new(),
         source_text: None,
         config_file_paths: IndexMap::default(),
+        help_list_mode: None,
     }
 }
 

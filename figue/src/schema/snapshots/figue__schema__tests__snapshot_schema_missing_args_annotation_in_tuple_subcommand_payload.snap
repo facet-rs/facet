@@ -1,0 +1,18 @@
+---
+source: figue/src/schema/tests.rs
+assertion_line: 220
+expression: stripped
+---
+Error: field `dir` is missing a #[facet(args::...)] annotation
+   ╭─[ <unknown>:3:5 ]
+   │
+ 2 │ struct NestedMissingArgsPayload {
+   │        ────────────┬───────────  
+   │                    ╰───────────── defined at figue/src/schema/tests.rs:70
+ 3 │     dir: String,
+   │     ─────┬─────  
+   │          ╰─────── field `dir` is missing a #[facet(args::...)] annotation
+ 4 │ }
+   │ ┬  
+   │ ╰── end of definition
+───╯
