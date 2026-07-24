@@ -21,7 +21,7 @@ facet = { workspace = true }
 facet-core = { workspace = true }
 facet-format = { path = "../facet-format", version = "0.50.0-rc.5" }
 facet-reflect = { workspace = true }
-saphyr-parser = "0.0.6"
+saphyr-parser = "0.0.11"
 zmij = { version = "1", optional = true }
 itoa = { version = "1", optional = true }
 
