@@ -249,3 +249,50 @@ fn test_clean_command_hint_includes_full_invocation() {
         "hint should include executable path"
     );
 }
+
+#[derive(Facet, Debug, PartialEq)]
+struct NestedOptionalArgs {
+    /// `--level` (bare) = Some(None), `--level 3` = Some(Some(3)), absent = None.
+    #[facet(default, args::named)]
+    level: Option<Option<u32>>,
+}
+
+#[test]
+fn optional_value_flag_some_none_emits_bare_flag_and_roundtrips() {
+    let original = NestedOptionalArgs { level: Some(None) };
+
+    let rendered = to_strings(
+        original
+            .to_args()
+            .expect("Some(None) optional-value flag should serialize"),
+    );
+    assert_eq!(rendered, vec!["--level"]);
+
+    let arg_refs = rendered.iter().map(String::as_str).collect::<Vec<_>>();
+    let reparsed: NestedOptionalArgs = figue::from_slice(&arg_refs)
+        .into_result()
+        .expect("rendered arguments should parse")
+        .get_silent();
+    assert_eq!(reparsed, original);
+}
+
+#[test]
+fn optional_value_flag_some_some_emits_value_and_roundtrips() {
+    let original = NestedOptionalArgs {
+        level: Some(Some(3)),
+    };
+
+    let rendered = to_strings(
+        original
+            .to_args()
+            .expect("Some(Some) optional-value flag should serialize"),
+    );
+    assert_eq!(rendered, vec!["--level", "3"]);
+
+    let arg_refs = rendered.iter().map(String::as_str).collect::<Vec<_>>();
+    let reparsed: NestedOptionalArgs = figue::from_slice(&arg_refs)
+        .into_result()
+        .expect("rendered arguments should parse")
+        .get_silent();
+    assert_eq!(reparsed, original);
+}

@@ -249,11 +249,11 @@ fn encode_level(
     Ok(())
 }
 
-fn unwrap_explicit_some(value: &ConfigValue) -> &ConfigValue {
-    match value {
-        ConfigValue::ExplicitSome(sourced) => sourced.value.as_ref(),
-        value => value,
+fn unwrap_explicit_some(mut value: &ConfigValue) -> &ConfigValue {
+    while let ConfigValue::ExplicitSome(sourced) = value {
+        value = sourced.value.as_ref();
     }
+    value
 }
 
 fn encode_named_arg(
@@ -263,6 +263,18 @@ fn encode_named_arg(
     args: &mut Vec<OsString>,
 ) -> Result<(), ToArgsError> {
     let flag = format!("--{}", name.to_kebab_case());
+
+    // `Some(None)` on an optional-value flag means "flag present, no value"
+    // (bare `--flag`). Emit it before unwrapping, or the ExplicitSome(Null)
+    // collapses to Null below and the flag is silently dropped.
+    if schema.value().optional_value_inner().is_some()
+        && let ConfigValue::ExplicitSome(sourced) = value
+        && matches!(sourced.value.as_ref(), ConfigValue::Null(_))
+    {
+        args.push(flag.into());
+        return Ok(());
+    }
+
     let value = unwrap_explicit_some(value);
 
     if matches!(value, ConfigValue::Null(_)) {
