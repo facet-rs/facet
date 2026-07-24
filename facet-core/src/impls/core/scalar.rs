@@ -63,6 +63,76 @@ macro_rules! integer_try_from {
     }};
 }
 
+/// Generate a try_from function for a float type that converts from the other
+/// float width or from any integer. Mirrors [`integer_try_from`]: the shape
+/// conversion matrix should not be asymmetric between scalar families.
+///
+/// Precision loss follows `as`-cast semantics (that is what `0.1f64 -> f32`
+/// means everywhere in Rust), but a finite source that lands on ±infinity in
+/// the target is rejected as out of range instead of silently saturating.
+macro_rules! float_try_from {
+    ($target:ty) => {{
+        /// # Safety
+        /// `dst` must be valid for writes, `src` must point to valid data of type described by `src_shape`
+        unsafe fn try_from_any(
+            dst: *mut $target,
+            src_shape: &'static Shape,
+            src: PtrConst,
+        ) -> TryFromOutcome {
+            macro_rules! out_of_range {
+                ($src_val:expr) => {
+                    alloc::format!(
+                        "conversion from {} to {} failed: value {} out of range",
+                        src_shape.type_identifier,
+                        stringify!($target),
+                        $src_val
+                    )
+                };
+            }
+            // Float sources: propagate non-finite values (they mean the same
+            // thing in both widths); reject finite values that overflow.
+            macro_rules! convert_float {
+                ($src_ty:ty) => {{
+                    let src_val = unsafe { *(src.as_byte_ptr() as *const $src_ty) };
+                    let converted = src_val as $target;
+                    if converted.is_finite() || !src_val.is_finite() {
+                        Ok(converted)
+                    } else {
+                        Err(out_of_range!(src_val))
+                    }
+                }};
+            }
+            // Integer sources are always finite, so a non-finite result is
+            // always overflow (e.g. u128::MAX -> f32).
+            macro_rules! convert_int {
+                ($src_ty:ty) => {{
+                    let src_val = unsafe { *(src.as_byte_ptr() as *const $src_ty) };
+                    let converted = src_val as $target;
+                    if converted.is_finite() {
+                        Ok(converted)
+                    } else {
+                        Err(out_of_range!(src_val))
+                    }
+                }};
+            }
+            let result: Result<$target, alloc::string::String> = match src_shape.id {
+                id if id == f32::SHAPE.id => convert_float!(f32),
+                id if id == f64::SHAPE.id => convert_float!(f64),
+                id => match_integer_shape!(id, convert_int; i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize),
+            };
+
+            match result {
+                Ok(value) => {
+                    unsafe { dst.write(value) };
+                    TryFromOutcome::Converted
+                }
+                Err(e) => TryFromOutcome::Failed(e.into()),
+            }
+        }
+        try_from_any
+    }};
+}
+
 // Truthiness helpers + TypeOps lifted out of const blocks - shared statics
 
 #[inline(always)]
@@ -202,6 +272,7 @@ unsafe impl Facet<'_> for f32 {
             Debug,
             PartialEq,
             PartialOrd,
+            [try_from = float_try_from!(f32)],
         );
 
         ShapeBuilder::for_sized::<f32>("f32")
@@ -226,6 +297,7 @@ unsafe impl Facet<'_> for f64 {
             Debug,
             PartialEq,
             PartialOrd,
+            [try_from = float_try_from!(f64)],
         );
 
         ShapeBuilder::for_sized::<f64>("f64")
@@ -260,5 +332,56 @@ mod tests {
         assert!(f64::SHAPE.vtable.has_debug());
         assert!(f64::SHAPE.vtable.has_display());
         assert!(!f64::SHAPE.vtable.has_hash()); // floats don't have Hash
+    }
+
+    /// Drive a scalar conversion through the same vtable path the derive
+    /// macro's default callback uses.
+    fn try_convert<Src: Facet<'static>, Dst: Facet<'static>>(
+        src: Src,
+    ) -> Result<Dst, Option<crate::TryFromOutcome>> {
+        use core::mem::MaybeUninit;
+        let mut dst = MaybeUninit::<Dst>::uninit();
+        let src_ptr = crate::PtrConst::new(&src as *const Src as *const u8);
+        let dst_ptr = crate::PtrUninit::new(dst.as_mut_ptr() as *mut u8);
+        let outcome = unsafe { Dst::SHAPE.call_try_from(Src::SHAPE, src_ptr, dst_ptr) };
+        match outcome {
+            Some(crate::TryFromOutcome::Converted) => {
+                core::mem::forget(src);
+                Ok(unsafe { dst.assume_init() })
+            }
+            other => Err(other),
+        }
+    }
+
+    #[test]
+    fn test_float_try_from_matrix() {
+        // f64 -> f32: in-range converts, out-of-range fails, non-finite propagates
+        assert_eq!(try_convert::<f64, f32>(0.0).unwrap(), 0.0f32);
+        assert_eq!(try_convert::<f64, f32>(1.5).unwrap(), 1.5f32);
+        assert!(matches!(
+            try_convert::<f64, f32>(1e300),
+            Err(Some(crate::TryFromOutcome::Failed(_)))
+        ));
+        assert!(try_convert::<f64, f32>(f64::INFINITY).unwrap().is_infinite());
+        assert!(try_convert::<f64, f32>(f64::NAN).unwrap().is_nan());
+
+        // f32 -> f64 is lossless
+        assert_eq!(try_convert::<f32, f64>(1.5f32).unwrap(), 1.5f64);
+
+        // integers -> float
+        assert_eq!(try_convert::<i32, f32>(42).unwrap(), 42.0f32);
+        assert_eq!(try_convert::<u64, f64>(7).unwrap(), 7.0f64);
+        assert_eq!(try_convert::<i8, f64>(-3).unwrap(), -3.0f64);
+        // u128::MAX rounds above f32::MAX -> overflow, not silent infinity
+        assert!(matches!(
+            try_convert::<u128, f32>(u128::MAX),
+            Err(Some(crate::TryFromOutcome::Failed(_)))
+        ));
+
+        // unsupported sources stay unsupported
+        assert!(matches!(
+            try_convert::<bool, f32>(true),
+            Err(Some(crate::TryFromOutcome::Unsupported))
+        ));
     }
 }
