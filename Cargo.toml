@@ -405,7 +405,7 @@ tracing-subscriber = { version = "^0.3.22", default-features = false, features =
 tree-sitter = { package = "arborium-tree-sitter", version = "2.18.0" }
 unicode-width = "^0.2.2"
 trybuild = "^1.0"
-ulid = "^1.2.1"
+ulid = "^3.0.0"
 unsynn = "^0.3.0"
 uuid = "^1.19.0"
 rust_decimal = { version = "^1.38.0", default-features = false, features = ["std"] }
