@@ -1,3 +1,10 @@
+# Global policy: LF everywhere, for every file git considers text — in the
+# repo AND in working trees (eol=lf), so a Windows autocrlf checkout can't
+# reintroduce CRLF through PRs. Several test suites below depend on exact
+# byte offsets; the targeted rules that predate this line are kept for their
+# documentation value.
+* text=auto eol=lf
+
 phon/conformance/**/*.phon binary
 
 # snark-dsl embeds these fixtures via include_str! and compares them
