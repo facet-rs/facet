@@ -21,7 +21,7 @@ facet = { workspace = true, features = ["bytes"] }
 
 [dev-dependencies]
 bytestring = "1.5"
-compact_str = "0.9"
+compact_str = "0.10"
 quickcheck = "1"
 quickcheck_macros = "1.2.0"
 serde = { version = "1", features = [ "derive" ] }

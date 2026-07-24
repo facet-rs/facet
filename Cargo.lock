@@ -1335,8 +1335,21 @@ dependencies = [
  "itoa",
  "rustversion",
  "ryu",
+ "static_assertions",
+]
+
+[[package]]
+name = "compact_str"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79fcda08c33bb58b97008b2cdada6622500e949e060f5913361763121abd2416"
+dependencies = [
+ "castaway",
+ "cfg-if",
+ "itoa",
  "serde",
  "static_assertions",
+ "zmij",
 ]
 
 [[package]]
@@ -2495,7 +2508,7 @@ dependencies = [
  "bytestring",
  "camino",
  "chrono",
- "compact_str",
+ "compact_str 0.10.0",
  "const-fnv1a-hash",
  "facet",
  "facet-testhelpers",
@@ -2592,7 +2605,7 @@ dependencies = [
  "bytestring",
  "camino",
  "chrono",
- "compact_str",
+ "compact_str 0.10.0",
  "facet",
  "facet-pretty",
  "facet-value",
@@ -2633,7 +2646,7 @@ dependencies = [
  "axum-core",
  "bstr",
  "codspeed-divan-compat",
- "compact_str",
+ "compact_str 0.10.0",
  "copypatch",
  "facet",
  "facet-core",
@@ -2776,7 +2789,7 @@ dependencies = [
  "camino",
  "chrono",
  "codspeed-divan-compat",
- "compact_str",
+ "compact_str 0.10.0",
  "facet",
  "facet-core",
  "facet-format",
@@ -6629,7 +6642,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cbb175c433c8e28a809d1f5773a2ae96e68c0ce40db865cbab1020bf33ae479c"
 dependencies = [
  "bitflags 2.13.1",
- "compact_str",
+ "compact_str 0.9.1",
  "critical-section",
  "hashbrown 0.17.1",
  "itertools",
@@ -7966,7 +7979,7 @@ name = "strid"
 version = "11.0.0-rc.5"
 dependencies = [
  "bytestring",
- "compact_str",
+ "compact_str 0.10.0",
  "facet",
  "quickcheck",
  "quickcheck_macros",
@@ -7982,7 +7995,7 @@ name = "strid-examples"
 version = "11.0.0-rc.5"
 dependencies = [
  "bytestring",
- "compact_str",
+ "compact_str 0.10.0",
  "facet",
  "serde",
  "smartstring",

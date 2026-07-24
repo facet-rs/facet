@@ -23,4 +23,4 @@ facet.workspace = true
 bytestring = { version = "1.5", features = [ "serde" ] }
 serde = { version = "1", features = [ "derive" ] }
 smartstring = { version = "1", features = [ "serde" ] }
-compact_str = { version = "0.9", features = [ "serde" ] }
+compact_str = { version = "0.10", features = [ "serde" ] }
