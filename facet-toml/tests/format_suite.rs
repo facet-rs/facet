@@ -568,6 +568,10 @@ impl FormatSuite for TomlSlice {
         CaseSpec::from_str("items = [\"alpha\", \"beta\"]")
     }
 
+    fn indexset() -> CaseSpec {
+        CaseSpec::from_str("items = [\"alpha\", \"beta\", \"gamma\"]")
+    }
+
     // -- Nested collection cases --
 
     fn vec_nested() -> CaseSpec {

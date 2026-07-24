@@ -646,6 +646,9 @@ impl FormatSuite for LuaSlice {
         CaseSpec::from_str(r#"{items = {"alpha", "beta"}}"#)
     }
 
+    fn indexset() -> CaseSpec {
+        CaseSpec::from_str(r#"{items = {"alpha", "beta", "gamma"}}"#)
+    }
     // ── Nested collection cases ──
 
     fn vec_nested() -> CaseSpec {

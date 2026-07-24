@@ -2631,6 +2631,7 @@ dependencies = [
  "facet-pretty",
  "facet-value",
  "iddqd",
+ "indexmap 2.14.0",
  "indoc",
  "jiff",
  "ordered-float 5.3.0",
