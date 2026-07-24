@@ -192,6 +192,7 @@ unsafe impl Facet<'_> for BString {
 
         ShapeBuilder::for_sized::<BString>("BString")
             .module_path("bstr")
+            .affinity(crate::ReprAffinity::ByteString)
             .ty(Type::User(UserType::Opaque))
             .def(Def::List(ListDef::with_type_ops(
                 &BSTRING_LIST_VTABLE,
@@ -238,6 +239,7 @@ unsafe impl<'a> Facet<'a> for BStr {
 
         ShapeBuilder::for_unsized::<BStr>("BStr")
             .module_path("bstr")
+            .affinity(crate::ReprAffinity::ByteString)
             .ty(Type::Sequence(SequenceType::Slice(SliceType {
                 t: u8::SHAPE,
             })))
