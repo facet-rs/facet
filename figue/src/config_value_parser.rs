@@ -2488,3 +2488,21 @@ mod fill_defaults_tests {
         assert_eq!(args.pulse_limit, None);
     }
 }
+/// Repro for `#[facet(default = 0.0)]` on an `f32` field through figue.
+#[test]
+fn test_from_config_value_f32_literal_default() {
+    use facet::Facet;
+    use facet_default as _;
+
+    #[derive(Debug, Facet, PartialEq)]
+    #[facet(derive(Default))]
+    struct Kweh {
+        #[facet(default = 0.0)]
+        chocobo: f32,
+    }
+
+    let value = ConfigValue::Object(Sourced::new(IndexMap::default()));
+    let kweh: Kweh = from_config_value(&value).expect("should deserialize default");
+
+    assert_eq!(kweh.chocobo, 0.0);
+}
