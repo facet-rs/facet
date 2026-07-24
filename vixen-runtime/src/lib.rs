@@ -83,6 +83,10 @@ pub fn install_builtins<S: EventSink, Ctx>(runtime: &mut Runtime<S, Ctx>) {
 /// empty prelude (the bare language).
 #[must_use]
 pub fn default_config() -> CompilerConfig {
+    // Reserve the domain host-type names with the core schema batch before they
+    // are declared — the schema-registration seam that keeps `Tree`/`TreeEntry`
+    // out of `vix-core`'s hardcoded builtin list (idempotent).
+    vixen_primitives::register_host_types();
     CompilerConfig {
         prelude: vixen_primitives::stdlib::PRELUDE_SOURCES,
         methods: vixen_primitives::DOMAIN_METHODS,

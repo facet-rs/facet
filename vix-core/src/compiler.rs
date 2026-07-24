@@ -514,8 +514,17 @@ impl<'a> TypeDeclaration<'a> {
     }
 }
 
-fn semantic_schema_set(source: &ast::SourceFile) -> Result<SchemaSet, Diagnostics> {
+fn semantic_schema_set(
+    source: &ast::SourceFile,
+    host_types: &[crate::binding::HostTypeDecl],
+) -> Result<SchemaSet, Diagnostics> {
     let mut batch = SchemaBatch::vix_builtins();
+    // Reserve the embedder's declared host types so this program can name them in
+    // its own declarations. Gated by `host_types` (this compilation's declared
+    // set), not the process-global registry: the bare language does not resolve a
+    // domain type name it wasn't handed. `Blob`-style core collisions are skipped
+    // here and rejected later in `lower_module`.
+    batch.add_host_externs(host_types.iter().map(|decl| decl.name));
     let mut declarations = BTreeMap::new();
     for item in &source.items {
         let (name, span) = match item {
@@ -706,7 +715,7 @@ impl<'a> TypeResolver<'a> {
         source: &'a ast::SourceFile,
         host_types: &'a [crate::binding::HostTypeDecl],
     ) -> Result<Self, Diagnostics> {
-        let schemas = semantic_schema_set(source)?;
+        let schemas = semantic_schema_set(source, host_types)?;
         let mut declarations = BTreeMap::new();
         for item in &source.items {
             let (name, span, declaration) = match item {
@@ -1408,17 +1417,18 @@ fn lower_module(
     // type — the language no longer hardcodes them. Their extern-backed value
     // hashes identically to the retired `ExternKind` variants (`name()` is
     // unchanged), so recipe/value identity is byte-stable. A host type's nominal
-    // identity must still be reserved in the core schema batch: validate it up
-    // front so a misconfigured embedder gets a diagnostic here rather than a
-    // panic deep inside schema hashing when `Host(name).schema_ref()` is first
-    // computed.
+    // identity must still be reserved, now through
+    // `schema::register_host_externs` rather than a hand-edit of the builtin
+    // batch: validate it up front so a misconfigured embedder (one that declares
+    // a host type it never registered) gets a diagnostic here rather than a panic
+    // deep inside schema hashing when `Host(name).schema_ref()` is first computed.
     for decl in config.host_types {
         if !crate::schema::is_builtin_schema(decl.name) {
             return Err(Diagnostics::one(Diagnostic::unsupported(
                 Span { start: 0, end: 0 },
                 format!(
-                    "injected host type `{}` is not a registered builtin schema (reserve its \
-                     name in vix-core's schema batch before declaring it)",
+                    "injected host type `{}` is not a registered host extern (call \
+                     `vix::schema::register_host_externs` for its name before declaring it)",
                     decl.name
                 ),
             )));

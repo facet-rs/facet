@@ -158,13 +158,15 @@ pub const TREE_ENTRY: &str = "TreeEntry";
 /// `Tree` is declared by `vixen-primitives` rather than hardcoded as a variant
 /// of the language core's `ExternKind`. `name` is the type's nominal identity.
 ///
-/// `name` must be a builtin schema name the core reserves (see
-/// `schema::SchemaBatch::vix_builtins`) — the schema *registration* is the one
-/// piece of a host type that still lives in `vix-core`, since it anchors
-/// byte-stable identity; the compiler rejects an unregistered name with a
-/// diagnostic rather than panicking. A `name` that collides with a core type
-/// spelling (`Blob`, `Registry`, …) is also rejected: the core always wins its
-/// own spelling, so such a declaration could never be reached.
+/// `name` must be a core builtin schema name (see
+/// `schema::SchemaBatch::vix_builtins`) or a name the embedder has reserved
+/// through `schema::register_host_externs` — the schema *registration* is the
+/// one piece of a host type that still lives in `vix-core`, since it anchors
+/// byte-stable identity, but it is now a process-global call rather than a
+/// hand-edit of the builtin batch. The compiler rejects an unregistered name
+/// with a diagnostic rather than panicking. A `name` that collides with a core
+/// type spelling (`Blob`, `Registry`, …) is also rejected: the core always wins
+/// its own spelling, so such a declaration could never be reached.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostTypeDecl {
     pub name: &'static str,

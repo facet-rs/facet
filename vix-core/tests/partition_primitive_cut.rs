@@ -22,6 +22,7 @@ use vix::vir::{IslandPurpose, Op, PartitionedTest};
 /// `json_decode`/`try_json_decode` stdlib wrappers. `vix-core` ships no prelude;
 /// `PRELUDE_SOURCES` is `&[&str]` data, safe to name across the dev-dependency.
 fn decode_compiler() -> Compiler {
+    vixen_primitives::register_host_types();
     Compiler::with_config(CompilerConfig {
         prelude: vixen_primitives::stdlib::PRELUDE_SOURCES,
         methods: vixen_primitives::DOMAIN_METHODS,
