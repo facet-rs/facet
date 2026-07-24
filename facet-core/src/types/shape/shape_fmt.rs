@@ -50,6 +50,7 @@ impl fmt::Debug for Shape {
             opaque_adapter: _,
             variance: _,
             flags: _,
+            affinity: _, // omit by default (None for almost every shape)
             tag: _,
             content: _,
             rename: _,

@@ -50,6 +50,7 @@ const EMPTY_VESSEL: Shape = Shape {
     // constraints on lifetimes. Types that need specific variance must set it explicitly.
     variance: VarianceDesc::BIVARIANT,
     flags: ShapeFlags::empty(),
+    affinity: crate::ReprAffinity::None,
     tag: None,
     content: None,
     rename: None,
@@ -393,6 +394,16 @@ impl ShapeBuilder {
     #[inline]
     pub const fn untagged(mut self) -> Self {
         self.shape.flags = self.shape.flags.union(ShapeFlags::UNTAGGED);
+        self
+    }
+
+    /// Set the semantic representation affinity for this shape.
+    ///
+    /// See [`ReprAffinity`](crate::ReprAffinity). Costs nothing: the field
+    /// lives in `Shape`'s existing padding after `flags`.
+    #[inline]
+    pub const fn affinity(mut self, affinity: crate::ReprAffinity) -> Self {
+        self.shape.affinity = affinity;
         self
     }
 

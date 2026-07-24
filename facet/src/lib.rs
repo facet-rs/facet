@@ -518,6 +518,7 @@ pub mod builtin {
             opaque_adapter: None,
             variance: crate::VarianceDesc::BIVARIANT,
             flags: crate::ShapeFlags::empty(),
+            affinity: crate::ReprAffinity::None,
             tag: None,
             content: None,
             rename: None,

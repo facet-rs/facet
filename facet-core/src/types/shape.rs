@@ -97,6 +97,23 @@ crate::bitflags! {
     }
 }
 
+/// Semantic representation affinity for a shape.
+///
+/// Mutually exclusive alternatives (hence an enum, not `ShapeFlags` bits):
+/// a shape is at most one of these. `#[non_exhaustive]` so formats must
+/// carry a structural-fallback arm for hints they don't know.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum ReprAffinity {
+    /// No special affinity; the shape's structure speaks for itself.
+    None = 0,
+    /// A byte sequence that is conventionally (not necessarily) valid text,
+    /// e.g. `bstr::BString`. Text formats may render valid-UTF-8 content as
+    /// a string; binary/structural handling remains correct.
+    ByteString = 1,
+}
+
 /// Schema for reflection of a type — the core type in facet.
 /// Contains everything needed to inspect, allocate, and manipulate values at runtime.
 #[derive(Clone, Copy)]
@@ -249,6 +266,11 @@ pub struct Shape {
     /// These are set by the derive macro based on `#[facet(...)]` attributes
     /// with `#[storage(flag)]` in the grammar.
     pub flags: ShapeFlags,
+
+    /// Semantic representation affinity — intent that structure alone cannot
+    /// express (e.g. "these bytes are conventionally text"). Formats consult
+    /// this to choose a rendering; `None` means structure speaks for itself.
+    pub affinity: ReprAffinity,
 
     /// Tag field name for internally/adjacently tagged enums.
     /// Set by `#[facet(tag = "...")]`.
