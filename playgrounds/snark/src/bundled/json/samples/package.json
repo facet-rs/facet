@@ -63,7 +63,7 @@
     "lint-staged": "^16.2.7",
     "picocolors": "^1.1.1",
     "playwright-chromium": "^1.57.0",
-    "prettier": "3.7.3",
+    "prettier": "3.9.6",
     "rolldown": "^1.0.0-beta.52",
     "rollup": "^4.43.0",
     "simple-git-hooks": "^2.13.1",
