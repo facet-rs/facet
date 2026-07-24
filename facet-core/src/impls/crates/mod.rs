@@ -1,3 +1,4 @@
+mod bstr;
 mod bytes;
 mod bytestring;
 mod camino;

@@ -319,6 +319,7 @@ blake3 = { version = "^1", default-features = false }
 bolero = "^0.13.4"
 brotli = "8"
 bytes = { version = "^1.11.0", default-features = false }
+bstr = { version = "^1.12.3", default-features = false, features = ["alloc"] }
 bytestring = { version = "^1.4.0", default-features = false }
 cbindgen = "^0.28"
 cc = "^1.0.87"
@@ -597,3 +598,5 @@ styx-tree = { path = "styx-tree" }
 styx-wasm = { path = "styx-wasm" }
 tree-sitter-styx = { path = "tree-sitter-styx" }
 strid-examples = { path = "strid-examples" }
+
+

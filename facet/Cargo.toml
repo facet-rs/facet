@@ -28,6 +28,7 @@ all-impls = [
   "nonzero",
   "net",
   "bytes",
+  "bstr",
   "bytestring",
   "camino",
   "compact_str",
@@ -57,6 +58,9 @@ net = [
 bytes = [
   "facet-core/bytes",
 ] # Provide Facet trait implementations for bytes::Bytes and bytes::BytesMut
+bstr = [
+  "facet-core/bstr",
+] # Provide Facet trait implementations for bstr::BString and bstr::BStr
 bytestring = [
   "facet-core/bytestring",
 ] # Provide Facet trait implementations for bytestring::ByteString
@@ -147,3 +151,5 @@ tempfile = { workspace = true }
 
 [lints]
 workspace = true
+
+
