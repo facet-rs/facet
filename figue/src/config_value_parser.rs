@@ -1600,6 +1600,11 @@ impl facet_format::FormatSerializer for ConfigValueSerializer {
                 span: None,
                 provenance: Some(Provenance::Default),
             }),
+            // FIXME: ConfigValue only has an i64-backed integer variant today.
+            // That forces u64/usize to round-trip via bit reinterpretation in
+            // to_args, and it cannot represent typed u128 integers here without
+            // first stringifying them. A deeper refactor should preserve
+            // unsigned widths in ConfigValue instead of narrowing at this layer.
             ScalarValue::U64(u) => ConfigValue::Integer(Sourced {
                 value: u as i64,
                 span: None,
