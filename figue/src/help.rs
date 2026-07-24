@@ -12,11 +12,13 @@ use facet_core::Facet;
 use heck::ToKebabCase;
 use owo_colors::OwoColorize;
 use owo_colors::Stream::Stdout;
+use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::string::String;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::vec::Vec;
 
@@ -55,7 +57,13 @@ pub fn generate_help_for_shape(shape: &'static facet_core::Shape, config: &HelpC
         }
     };
 
-    generate_help_for_subcommand(&schema, &[], config)
+    generate_help_for_subcommand_with_config_formats_and_shape(
+        shape,
+        &schema,
+        &[],
+        config,
+        DEFAULT_CONFIG_FILE_EXTENSIONS,
+    )
 }
 
 /// Generate HTML help for a Facet type.
@@ -229,7 +237,7 @@ pub fn open_html_help_file(path: impl AsRef<Path>) -> io::Result<()> {
 }
 
 /// Configuration for help text generation.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct HelpConfig {
     /// Program name (defaults to executable name)
     pub program_name: Option<String>,
@@ -239,6 +247,29 @@ pub struct HelpConfig {
     pub description: Option<String>,
     /// Width for wrapping text (0 = no wrapping)
     pub width: usize,
+    /// Whether to include implementation source file information in help output.
+    pub include_implementation_source_file: bool,
+    /// Optional callback to render an implementation URL from a source file path.
+    pub implementation_url: Option<Arc<dyn Fn(&str) -> String + Send + Sync>>,
+}
+
+impl fmt::Debug for HelpConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HelpConfig")
+            .field("program_name", &self.program_name)
+            .field("version", &self.version)
+            .field("description", &self.description)
+            .field("width", &self.width)
+            .field(
+                "include_implementation_source_file",
+                &self.include_implementation_source_file,
+            )
+            .field(
+                "implementation_url",
+                &self.implementation_url.as_ref().map(|_| "<fn>"),
+            )
+            .finish()
+    }
 }
 
 impl Default for HelpConfig {
@@ -248,8 +279,86 @@ impl Default for HelpConfig {
             version: None,
             description: None,
             width: 80,
+            include_implementation_source_file: false,
+            implementation_url: None,
         }
     }
+}
+
+/// Resolve implementation source file for a subcommand path from a root shape.
+///
+/// The `subcommand_path` should contain effective subcommand names (as emitted by
+/// `ConfigValue::extract_subcommand_path`). An empty path resolves to the root shape.
+pub(crate) fn implementation_source_for_subcommand_path(
+    root_shape: &'static facet_core::Shape,
+    subcommand_path: &[String],
+) -> Option<&'static str> {
+    let mut current_shape = root_shape;
+
+    if subcommand_path.is_empty() {
+        return current_shape.source_file;
+    }
+
+    for segment in subcommand_path {
+        let next_shape = next_subcommand_shape(current_shape, segment)?;
+        current_shape = next_shape;
+    }
+
+    current_shape.source_file
+}
+
+fn next_subcommand_shape(
+    shape: &'static facet_core::Shape,
+    target_effective_name: &str,
+) -> Option<&'static facet_core::Shape> {
+    let shape = unwrap_option_shape(shape);
+    let enum_shape = match shape.ty {
+        facet_core::Type::User(facet_core::UserType::Struct(s)) => {
+            let subcommand_field = s
+                .fields
+                .iter()
+                .find(|field| field.has_attr(Some("args"), "subcommand"))?;
+            unwrap_option_shape(subcommand_field.shape())
+        }
+        facet_core::Type::User(facet_core::UserType::Enum(_)) => shape,
+        _ => return None,
+    };
+
+    let variants = match enum_shape.ty {
+        facet_core::Type::User(facet_core::UserType::Enum(e)) => e.variants,
+        _ => return None,
+    };
+
+    let variant = variants
+        .iter()
+        .find(|variant| variant.effective_name() == target_effective_name)?;
+
+    if variant.data.fields.is_empty() {
+        return Some(enum_shape);
+    }
+
+    let direct_subcommand_field = variant
+        .data
+        .fields
+        .iter()
+        .find(|field| field.has_attr(Some("args"), "subcommand"));
+
+    if let Some(direct_subcommand_field) = direct_subcommand_field {
+        return Some(unwrap_option_shape(direct_subcommand_field.shape()));
+    }
+
+    if variant.data.fields.len() == 1 {
+        return Some(unwrap_option_shape(variant.data.fields[0].shape()));
+    }
+
+    Some(enum_shape)
+}
+
+fn unwrap_option_shape(mut shape: &'static facet_core::Shape) -> &'static facet_core::Shape {
+    while let facet_core::Def::Option(option_def) = shape.def {
+        shape = option_def.t;
+    }
+    shape
 }
 
 /// Generate help text for a specific subcommand path from a Schema.
@@ -331,6 +440,60 @@ pub(crate) fn generate_help_for_subcommand_with_config_formats(
     }
 
     generate_help_for_subcommand_level(current_args, final_sub, &command_path.join(" "), config)
+}
+
+pub(crate) fn generate_help_for_subcommand_with_config_formats_and_shape(
+    shape: &'static facet_core::Shape,
+    schema: &Schema,
+    subcommand_path: &[String],
+    config: &HelpConfig,
+    config_file_extensions: &[&str],
+) -> String {
+    let mut help = generate_help_for_subcommand_with_config_formats(
+        schema,
+        subcommand_path,
+        config,
+        config_file_extensions,
+    );
+    append_implementation_source_for_subcommand_path(&mut help, shape, subcommand_path, config);
+    help
+}
+
+fn append_implementation_source_for_subcommand_path(
+    help_text: &mut String,
+    root_shape: &'static facet_core::Shape,
+    subcommand_path: &[String],
+    config: &HelpConfig,
+) {
+    let Some(source_file) = implementation_source_for_subcommand_path(root_shape, subcommand_path)
+    else {
+        return;
+    };
+
+    let implementation_url = config
+        .implementation_url
+        .as_ref()
+        .map(|render_url| render_url(source_file));
+
+    if !config.include_implementation_source_file && implementation_url.is_none() {
+        return;
+    }
+
+    if !help_text.ends_with('\n') {
+        help_text.push('\n');
+    }
+    help_text.push('\n');
+    help_text.push_str("Implementation:\n");
+    if config.include_implementation_source_file {
+        help_text.push_str("    ");
+        help_text.push_str(source_file);
+        help_text.push('\n');
+    }
+    if let Some(implementation_url) = implementation_url {
+        help_text.push_str("    ");
+        help_text.push_str(&implementation_url);
+        help_text.push('\n');
+    }
 }
 
 /// Generate help from a built Schema.
