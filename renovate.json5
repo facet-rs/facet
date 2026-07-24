@@ -35,6 +35,20 @@
       matchCurrentVersion: "/^[\\^~]?0\\./",
       matchUpdateTypes: ["minor"],
       groupName: null,
+      // Parked 2026-07-24: a year of 0.x drift surfaced at once (rusqlite
+      // 0.32->0.40, tower 0.4->0.5, rand 0.9->0.10, …). Each needs real
+      // porting work. They stay listed on the Dependency Dashboard with a
+      // checkbox; ticking one opens its PR. Nothing hidden, nothing
+      // demanding attention today.
+      dependencyDashboardApproval: true,
+    },
+    {
+      // Same deal for genuine Cargo majors (syn 3, divan 5, ulid 3, …).
+      description: "Cargo majors wait on the dashboard until requested",
+      matchDatasources: ["crate"],
+      matchUpdateTypes: ["major"],
+      groupName: null,
+      dependencyDashboardApproval: true,
     },
     {
       // A toolchain bump can break every crate at once; it should never ride
