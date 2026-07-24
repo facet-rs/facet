@@ -291,3 +291,17 @@ fn test_derive_default_with_where_clause() {
     let r = Registry::<IdMarker>::default();
     assert_eq!(r.something, String::default());
 }
+
+/// Repro for `#[facet(default = 0.0)]` on an `f32` field.
+#[test]
+fn test_f32_literal_default() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(derive(Default))]
+    pub struct Kweh {
+        #[facet(default = 0.0)]
+        chocobo: f32,
+    }
+
+    let kweh = Kweh::default();
+    assert_eq!(kweh.chocobo, 0.0);
+}
