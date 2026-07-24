@@ -33,6 +33,7 @@ use crate::enum_conflicts::detect_enum_conflicts;
 use crate::env_subst::{EnvSubstError, RealEnv, substitute_env_vars};
 use crate::help::{
     generate_help_for_subcommand_with_config_formats_and_shape,
+    generate_help_list_for_subcommand_with_config_formats,
     generate_root_html_help_with_config_formats_and_anchor, html_help_anchor_for_subcommand_path,
     open_html_help_file, write_html_help_to_temp_file,
 };
@@ -68,6 +69,17 @@ pub struct LayerOutput {
     /// example, `--cfg cfg.json` should load `cfg.json` as the `cfg` block, not
     /// as a top-level file containing every config root.
     pub config_file_paths: indexmap::IndexMap<String, camino::Utf8PathBuf>,
+    /// Requested pseudo-help list mode (from `help list` shorthand), if any.
+    pub help_list_mode: Option<HelpListMode>,
+}
+
+/// Mode for pseudo-help listing (`help list`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HelpListMode {
+    /// Show full help text for each reachable leaf subcommand.
+    Full,
+    /// Show only full command paths for reachable leaf subcommands.
+    Short,
 }
 
 /// A key that was unused by the schema, with provenance.
@@ -251,13 +263,23 @@ impl<T: Facet<'static>> Driver<T> {
                 };
 
                 let config_file_extensions = self.config_file_extensions();
-                let text = generate_help_for_subcommand_with_config_formats_and_shape(
-                    T::SHAPE,
-                    &self.config.schema,
-                    &subcommand_path,
-                    &help_config,
-                    &config_file_extensions,
-                );
+                let text = if let Some(mode) = layers.cli.help_list_mode {
+                    generate_help_list_for_subcommand_with_config_formats(
+                        &self.config.schema,
+                        &subcommand_path,
+                        &help_config,
+                        mode,
+                        &config_file_extensions,
+                    )
+                } else {
+                    generate_help_for_subcommand_with_config_formats_and_shape(
+                        T::SHAPE,
+                        &self.config.schema,
+                        &subcommand_path,
+                        &help_config,
+                        &config_file_extensions,
+                    )
+                };
                 return DriverOutcome::err(DriverError::Help {
                     text,
                     suggestion: None,
@@ -1868,6 +1890,22 @@ mod tests {
         port: u16,
     }
 
+    #[derive(Facet, Debug)]
+    struct ArgsWithExplicitHelpSubcommand {
+        #[facet(figue::subcommand)]
+        command: TestCommandWithExplicitHelp,
+
+        #[facet(flatten)]
+        builtins: FigueBuiltins,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    enum TestCommandWithExplicitHelp {
+        Help,
+        Build,
+    }
+
     #[test]
     fn test_driver_help_flag() {
         let config = builder::<ArgsWithBuiltins>()
@@ -1909,6 +1947,62 @@ mod tests {
             matches!(result, Err(DriverError::Help { .. })),
             "expected DriverError::Help"
         );
+    }
+
+    #[test]
+    fn test_driver_help_word_alias_triggers_help_without_help_subcommand() {
+        let config = builder::<ArgsWithSubcommandAndBuiltins>()
+            .expect("failed to build args schema")
+            .cli(|cli| cli.args(["help"]))
+            .help(|h| h.program_name("test-app"))
+            .build();
+
+        let result = Driver::new(config).run().into_result();
+
+        match result {
+            Err(DriverError::Help { text, .. }) => {
+                assert!(text.contains("test-app"));
+                assert!(text.contains("--[no-]help"));
+            }
+            other => panic!("expected DriverError::Help, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_driver_help_word_prefers_explicit_help_subcommand() {
+        let config = builder::<ArgsWithExplicitHelpSubcommand>()
+            .expect("failed to build args schema")
+            .cli(|cli| cli.args(["help"]))
+            .build();
+
+        let result = Driver::new(config).run().into_result();
+
+        match result {
+            Ok(output) => {
+                assert_eq!(output.value.command, TestCommandWithExplicitHelp::Help);
+                assert!(!output.value.builtins.help);
+            }
+            Err(e) => panic!("expected success, got error: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_driver_help_list_short_prints_leaf_commands() {
+        let config = builder::<ArgsWithNestedSubcommands>()
+            .expect("failed to build schema")
+            .cli(|cli| cli.args(["db", "help", "list", "--short"]))
+            .help(|h| h.program_name("test-app"))
+            .build();
+
+        let result = Driver::new(config).run().into_result();
+
+        match result {
+            Err(DriverError::Help { text, .. }) => {
+                let text = strip_ansi_escapes::strip_str(&text);
+                assert_eq!(text, "test-app db create\ntest-app db run\ntest-app db rollback");
+            }
+            other => panic!("expected DriverError::Help, got {:?}", other),
+        }
     }
 
     #[test]
