@@ -2897,7 +2897,7 @@ dependencies = [
  "margin",
  "margin-term",
  "serde_json",
- "similar",
+ "similar 3.1.1",
  "strip-ansi-escapes",
  "styx-format",
  "styx-parse",
@@ -4247,7 +4247,7 @@ checksum = "86f0f8fee8c926415c58d6ae43a08523a26faccb2323f5e6b644fe7dd4ef6b82"
 dependencies = [
  "console",
  "once_cell",
- "similar",
+ "similar 2.7.0",
  "tempfile",
 ]
 
@@ -7714,6 +7714,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
 
 [[package]]
+name = "similar"
+version = "3.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6505efef05804732ed8a3f2d4f279429eb485bd69d5b0cc6b19cc02005cda16"
+dependencies = [
+ "bstr",
+]
+
+[[package]]
 name = "simple-dns"
 version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8239,7 +8248,7 @@ dependencies = [
  "ariadne",
  "facet",
  "facet-testhelpers",
- "similar",
+ "similar 3.1.1",
  "styx-testhelpers",
  "styx-tokenizer",
  "tracing",
