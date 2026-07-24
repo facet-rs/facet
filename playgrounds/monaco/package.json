@@ -49,6 +49,6 @@
   },
   "peerDependencies": {
     "@bearcove/styx-wasm": "workspace:*",
-    "monaco-editor": "^0.40.0 || ^0.50.0"
+    "monaco-editor": "^0.40.0 || ^0.50.0 || ^0.56.0"
   }
 }
