@@ -1,0 +1,23 @@
+---
+source: figue/src/schema/tests.rs
+assertion_line: 224
+expression: stripped
+---
+Error: only one field may be marked with #[facet(args::subcommand)] at this level
+   ╭─[ <unknown>:4:5 ]
+   │
+ 2 │ struct MultipleSubcommands {
+   │        ─────────┬─────────  
+   │                 ╰─────────── defined at figue/src/schema/tests.rs:99
+   │ 
+ 4 │     a: SubA,
+   │     ───┬───  
+   │        ╰───── first marked here
+   │ 
+ 6 │     b: SubB,
+   │     ───┬───  
+   │        ╰───── also marked here
+ 7 │ }
+   │ ┬  
+   │ ╰── end of definition
+───╯

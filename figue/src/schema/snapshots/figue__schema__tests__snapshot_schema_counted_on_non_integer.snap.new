@@ -1,0 +1,19 @@
+---
+source: figue/src/schema/tests.rs
+assertion_line: 234
+expression: stripped
+---
+Error: field `value` marked as counted must be an integer
+   ╭─[ <unknown>:4:5 ]
+   │
+ 2 │ struct CountedOnNonInteger {
+   │        ─────────┬─────────  
+   │                 ╰─────────── defined at figue/src/schema/tests.rs:113
+   │ 
+ 4 │     value: bool,
+   │     ─────┬─────  
+   │          ╰─────── field `value` marked as counted must be an integer
+ 5 │ }
+   │ ┬  
+   │ ╰── end of definition
+───╯
