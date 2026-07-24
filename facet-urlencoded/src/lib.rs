@@ -10,7 +10,7 @@
 //!
 #![doc = include_str!("../readme-footer.md")]
 
-use facet_core::{Def, Facet, Type, UserType};
+use facet_core::{Def, Facet, NumericType, PrimitiveType, TextualType, Type, UserType};
 use facet_reflect::{AllocError, Partial, ReflectError, ShapeMismatchError, TypePlan};
 use log::*;
 
@@ -326,64 +326,79 @@ fn deserialize_scalar_field<'facet, const BORROW: bool>(
     value: &str,
     mut wip: Partial<'facet, BORROW>,
 ) -> Result<Partial<'facet, BORROW>, UrlEncodedError> {
+    let mut shape = wip.shape();
+
     // Transparently descend through `Option<T>`. Mirrors how
     // facet-format's path_navigator handles it.
-    let is_option = matches!(wip.shape().def, Def::Option(_));
+    let is_option = matches!(shape.def, Def::Option(_));
     if is_option {
         wip = wip.begin_some()?;
+        shape = wip.shape();
     }
-    match wip.shape().def {
-        Def::Scalar => {
-            if wip.shape().is_type::<String>() {
-                let s = value.to_string();
-                wip = wip.set(s)?;
-            } else if wip.shape().is_type::<u64>() {
-                match value.parse::<u64>() {
-                    Ok(num) => wip = wip.set(num)?,
-                    Err(_) => {
-                        return Err(UrlEncodedError::InvalidNumber(
-                            key.to_string(),
-                            value.to_string(),
-                        ));
-                    }
-                };
-            } else if wip.shape().is_type::<i64>() {
-                match value.parse::<i64>() {
-                    Ok(num) => wip = wip.set(num)?,
-                    Err(_) => {
-                        return Err(UrlEncodedError::InvalidNumber(
-                            key.to_string(),
-                            value.to_string(),
-                        ));
-                    }
-                };
-            } else if wip.shape().is_type::<bool>() {
+
+    let result = match shape.ty {
+        Type::Primitive(primitive) => match primitive {
+            PrimitiveType::Boolean => {
                 let parsed = match value {
                     "true" | "1" | "on" | "yes" => true,
                     "false" | "0" | "off" | "no" | "" => false,
-                    _ => {
-                        return Err(UrlEncodedError::UnsupportedType(format!(
-                            "{}: unparseable bool literal {value:?}",
-                            wip.shape()
-                        )));
-                    }
+                    _ => Err(UrlEncodedError::InvalidBool(
+                        key.to_string(),
+                        value.to_string(),
+                    ))?,
                 };
-                wip = wip.set(parsed)?;
-            } else {
-                warn!("facet-urlencoded: unsupported scalar type: {}", wip.shape());
-                return Err(UrlEncodedError::UnsupportedType(format!("{}", wip.shape())));
+                wip.set(parsed).map_err(UrlEncodedError::ReflectError)
             }
-        }
-        Def::Undefined if matches!(wip.shape().ty, Type::User(UserType::Enum(_))) => {
-            wip = wip.select_variant_named(value)?;
-        }
-        _ => {
-            error!("Expected scalar or enum field");
-            return Err(UrlEncodedError::UnsupportedShape(format!(
-                "Expected scalar or enum for field '{key}'"
-            )));
-        }
-    }
+            PrimitiveType::Numeric(numeric) => {
+                let size = shape
+                    .layout
+                    .sized_layout()
+                    .map(|layout| layout.size())
+                    .unwrap_or_default();
+                match numeric {
+                    NumericType::Integer { signed: false } => match size {
+                        1 => deserialize_number::<_, u8>(wip, key, value),
+                        2 => deserialize_number::<_, u16>(wip, key, value),
+                        4 => deserialize_number::<_, u32>(wip, key, value),
+                        8 => deserialize_number::<_, u64>(wip, key, value),
+                        _ => Err(UrlEncodedError::UnsupportedShape(wip.shape().to_string())),
+                    },
+                    NumericType::Integer { signed: true } => match size {
+                        1 => deserialize_number::<_, i8>(wip, key, value),
+                        2 => deserialize_number::<_, i16>(wip, key, value),
+                        4 => deserialize_number::<_, i32>(wip, key, value),
+                        8 => deserialize_number::<_, i64>(wip, key, value),
+                        _ => Err(UrlEncodedError::UnsupportedShape(wip.shape().to_string())),
+                    },
+                    NumericType::Float => match size {
+                        4 => deserialize_number::<_, f32>(wip, key, value),
+                        8 => deserialize_number::<_, f64>(wip, key, value),
+                        _ => Err(UrlEncodedError::UnsupportedShape(wip.shape().to_string())),
+                    },
+                    _ => Err(UrlEncodedError::UnsupportedShape(wip.shape().to_string())),
+                }
+            }
+            PrimitiveType::Textual(TextualType::Char) => {
+                let mut chars = value.chars();
+                let (Some(char), None) = (chars.next(), chars.next()) else {
+                    return Err(UrlEncodedError::InvalidChar(
+                        key.to_string(),
+                        value.to_string(),
+                    ));
+                };
+                wip.set(char).map_err(UrlEncodedError::ReflectError)
+            }
+            _ => Err(UrlEncodedError::UnsupportedShape(wip.shape().to_string())),
+        },
+        Type::User(UserType::Enum(_)) => wip
+            .select_variant_named(value)
+            .map_err(UrlEncodedError::ReflectError),
+        Type::User(UserType::Opaque) if shape.is_type::<String>() => wip
+            .set(value.to_string())
+            .map_err(UrlEncodedError::ReflectError),
+        _ => Err(UrlEncodedError::UnsupportedShape(wip.shape().to_string())),
+    };
+    wip = result?;
 
     // Pop the `begin_some` frame opened above so the caller's
     // `.end()` can pop the field cleanly.
@@ -394,15 +409,35 @@ fn deserialize_scalar_field<'facet, const BORROW: bool>(
     Ok(wip)
 }
 
+/// If the shape matches the number type try to parse the value.
+fn deserialize_number<'facet, const BORROW: bool, T: Facet<'facet> + core::str::FromStr>(
+    wip: Partial<'facet, BORROW>,
+    key: &str,
+    value: &str,
+) -> Result<Partial<'facet, BORROW>, UrlEncodedError> {
+    let value = value
+        .parse::<T>()
+        .map_err(|_| UrlEncodedError::InvalidNumber(key.to_string(), value.to_string()))?;
+    let wip = wip.set(value)?;
+    Ok(wip)
+}
+
 /// Errors that can occur during URL encoded form data deserialization.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum UrlEncodedError {
     /// The field value couldn't be parsed as a number.
     InvalidNumber(String, String),
+    /// The field value couldn't be parsed as a char.
+    InvalidChar(String, String),
+    /// The field value couldn't be parsed as a bool.
+    InvalidBool(String, String),
     /// The shape is not supported for deserialization.
     UnsupportedShape(String),
     /// The type is not supported for deserialization.
+    #[deprecated(note = "no longer produced; unparseable scalars now report \
+        InvalidNumber/InvalidChar/InvalidBool and unsupported types report \
+        UnsupportedShape")]
     UnsupportedType(String),
     /// Reflection error
     ReflectError(ReflectError),
@@ -438,9 +473,16 @@ impl core::fmt::Display for UrlEncodedError {
             UrlEncodedError::InvalidNumber(field, value) => {
                 write!(f, "Invalid number for field '{field}': '{value}'")
             }
+            UrlEncodedError::InvalidChar(field, value) => {
+                write!(f, "Invalid char for field '{field}': '{value}'")
+            }
+            UrlEncodedError::InvalidBool(field, value) => {
+                write!(f, "Invalid bool for field '{field}': '{value}'")
+            }
             UrlEncodedError::UnsupportedShape(shape) => {
                 write!(f, "Unsupported shape: {shape}")
             }
+            #[allow(deprecated)]
             UrlEncodedError::UnsupportedType(ty) => {
                 write!(f, "Unsupported type: {ty}")
             }
