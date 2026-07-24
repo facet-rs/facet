@@ -22,4 +22,26 @@
     enabled: true,
     schedule: ["before 6am on monday"],
   },
+  packageRules: [
+    {
+      // Cargo semver: for 0.x crates the MINOR field is the breaking one
+      // (0.21 -> 0.23 is an API break). Renovate labels those "minor", so
+      // group:allNonMajor happily swept ~15 breaking Rust upgrades into one
+      // PR — rusqlite 0.32->0.40, tower 0.4->0.5, rand 0.9->0.10, … — which
+      // renovate itself then failed to lock (#2546). Ungroup them so each
+      // arrives as its own reviewable PR, like the major it actually is.
+      description: "Cargo 0.x minor bumps are breaking — never group them",
+      matchDatasources: ["crate"],
+      matchCurrentVersion: "/^[\\^~]?0\\./",
+      matchUpdateTypes: ["minor"],
+      groupName: null,
+    },
+    {
+      // A toolchain bump can break every crate at once; it should never ride
+      // along with dependency updates.
+      description: "Rust toolchain gets its own PR",
+      matchPackageNames: ["rust"],
+      groupName: null,
+    },
+  ],
 }
