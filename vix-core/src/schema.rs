@@ -31,7 +31,12 @@ impl From<SchemaId> for taxon::SchemaId {
 /// Runtime values cannot carry an unresolved type variable. Variables exist in
 /// schema declarations while Taxon computes their identity; every value-facing
 /// reference has a concrete declaration id and recursively concrete arguments.
+///
+/// A *published* schema reference wires as an opaque `Extern(Schema)` store
+/// value whose resident bytes are its canonical encoding, not the walked
+/// `{id, args}` — declared by the `wire_extern` annotation (see `vix-wire`).
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[facet(vix::wire_extern = "Schema")]
 pub struct SchemaRef {
     pub id: SchemaId,
     pub args: Vec<SchemaRef>,

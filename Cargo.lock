@@ -9625,6 +9625,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "vix-wire",
  "vixen-primitives",
  "vixen-runtime",
  "weavy",
@@ -9640,6 +9641,13 @@ dependencies = [
  "ureq",
  "vix-core",
  "vixen-runtime",
+]
+
+[[package]]
+name = "vix-wire"
+version = "0.1.0"
+dependencies = [
+ "facet",
 ]
 
 [[package]]

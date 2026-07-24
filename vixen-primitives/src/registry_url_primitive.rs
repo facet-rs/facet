@@ -3,10 +3,42 @@ use vix::vir::{ExternKind, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT, Type};
 
 use crate::rt::{
     BlobId, EffectCtx, OriginHint, PinnedBlobRef, PrimitiveCompletion, PrimitiveDescriptor,
-    PrimitiveField, PrimitiveFieldValue, PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveValue,
-    PrimitiveValueBody, RawEffectTicket, RawPrimitive, ReadProjection, ValueId,
-    registry_url_primitive_id, registry_url_request_type,
+    PrimitiveField, PrimitiveFieldValue, PrimitiveId, PrimitiveMachineError, PrimitiveMemoPolicy,
+    PrimitiveValue, PrimitiveValueBody, RawEffectTicket, RawPrimitive, ReadProjection,
+    RegistryHandle, ValueId,
 };
+
+/// The wire request of the `registry-url` primitive: the registry capability
+/// plus the artifact name to resolve. The vix `Type` is read off this facet
+/// shape — `RegistryHandle` carries its own `#[facet(vix::wire_extern =
+/// "Registry")]` annotation — so the contract is declared by reflection here:
+/// the whole contract (request, result, id) lives beside the implementation,
+/// and `vix-core` holds nothing of it (`Registry.url` is a primitive-backed
+/// method, `binding::MethodLowering::Primitive`).
+#[derive(facet::Facet)]
+pub struct RegistryUrlRequest {
+    pub registry: RegistryHandle,
+    pub name: String,
+}
+
+#[must_use]
+pub fn registry_url_request_type() -> Type {
+    Type::from_facet::<RegistryUrlRequest>()
+}
+
+#[must_use]
+pub fn registry_url_result_type() -> Type {
+    Type::from_facet::<PinnedBlobRef>()
+}
+
+#[must_use]
+pub fn registry_url_primitive_id() -> PrimitiveId {
+    PrimitiveId {
+        namespace: "vix.machine".to_owned(),
+        name: "registry-url".to_owned(),
+        version: 1,
+    }
+}
 
 /// `Registry.url(name) -> PinnedBlobRef` — resolve an artifact name against the
 /// offline harness registry manifest into a pinned Blob reference (provenance URL
@@ -24,9 +56,7 @@ impl Default for RegistryUrlPrimitive {
             descriptor: PrimitiveDescriptor {
                 id: registry_url_primitive_id(),
                 request_schema: SchemaPattern::exact(&registry_url_request_type().schema_ref()),
-                response_schema: SchemaPattern::exact(
-                    &Type::from_facet::<PinnedBlobRef>().schema_ref(),
-                ),
+                response_schema: SchemaPattern::exact(&registry_url_result_type().schema_ref()),
                 failure_schema: SchemaPattern::Var {
                     name: "RegistryUrlFailure".to_owned(),
                 },
@@ -212,5 +242,35 @@ fn bytes(value: &PrimitiveValue) -> Result<&[u8], PrimitiveMachineError> {
 fn invalid_value(detail: &str) -> PrimitiveMachineError {
     PrimitiveMachineError::AuthorityViolation {
         detail: detail.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vix::vir::{RecordField, RecordType};
+
+    /// The facet-derived request type must be byte-identical to the record the
+    /// contract used to hand-build in `vix-core` — request identity feeds the
+    /// primitive's dispatch schema and every `Registry.url` recipe hash, so the
+    /// exact shape is pinned rather than left to the reflection walker.
+    #[test]
+    fn request_type_is_the_stable_hand_built_record() {
+        assert_eq!(
+            registry_url_request_type(),
+            Type::Record(RecordType::new(
+                "RegistryUrlRequest",
+                vec![
+                    RecordField {
+                        name: "registry".to_owned(),
+                        ty: Type::Extern(ExternKind::Registry),
+                    },
+                    RecordField {
+                        name: "name".to_owned(),
+                        ty: Type::String,
+                    },
+                ],
+            )),
+        );
     }
 }

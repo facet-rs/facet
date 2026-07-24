@@ -9,20 +9,15 @@
 //! resolving even though the *call* lowered fine. The compiler now threads its
 //! injected surfaces into module resolution alongside the static table.
 
-use vix::binding::{MethodDecl, MethodOp, ReceiverType};
 use vix::compiler::{Compiler, CompilerConfig};
 use vix::modules::ModuleSource;
 use vix::runtime::{PrimitiveSurface, builtin_primitive_surfaces};
 
-/// `Registry.url(name) -> PinnedUrl` — an embedder-injected method (the domain
-/// method declarations left `vix-core` in issue 2520), supplied here so the test
-/// programs can build a pinned url argument for the `grab` surface.
-const TEST_METHODS: &[MethodDecl] = &[MethodDecl {
-    receiver: ReceiverType::Registry,
-    name: "url",
-    arity: 1,
-    op: MethodOp::RegistryUrl,
-}];
+/// The embedder's method declarations (the domain methods left `vix-core` in
+/// issue 2520; `Registry.url` is a primitive-backed method whose contract lives
+/// in `vixen-primitives`), supplied so the test programs can build a pinned url
+/// argument for the `grab` surface — the same injection the vixen runtime does.
+const TEST_METHODS: &[vix::binding::MethodDecl] = vixen_primitives::DOMAIN_METHODS;
 
 /// A surface standing in for one an embedder injects rather than bundling into
 /// `builtin_primitive_surfaces`: its name (`grab`) is deliberately absent from

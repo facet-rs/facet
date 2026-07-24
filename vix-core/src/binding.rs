@@ -233,7 +233,10 @@ pub enum MethodOp {
     ByteStreamTrim,
     TreeGlob,
     BlobLen,
-    RegistryUrl,
+    // `RegistryUrl` is retired from this enum: `Registry.url` is a
+    // primitive-backed method ([`MethodLowering::Primitive`]) whose whole
+    // contract lives in `vixen-primitives` — the fully generic rail needs no
+    // dedicated-op name in core.
 }
 
 /// What a surface name resolves to.
@@ -531,15 +534,53 @@ const METHOD_BINDINGS: &[(ReceiverType, &str, usize, MethodOp)] = &[
 
 /// A receiver-method declaration the embedder injects into the compiler
 /// ([`CompilerConfig::methods`]), so a host type's methods are declared by
-/// `vixen-primitives` rather than hardcoded in `vix-core`. Its `op` names the
-/// dedicated VIR op the bespoke lowering in `compiler::lower_method_call` still
-/// owns — the *declaration* moves out; the machine engine stays in core.
+/// `vixen-primitives` rather than hardcoded in `vix-core`. Its `lowering` names
+/// what the call becomes — a dedicated VIR op whose bespoke lowering
+/// `compiler::lower_method_call` still owns, or a registered primitive the
+/// compiler reaches through the fully generic request-record rail.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MethodDecl {
     pub receiver: ReceiverType,
     pub name: &'static str,
     pub arity: usize,
-    pub op: MethodOp,
+    pub lowering: MethodLowering,
+}
+
+/// What a resolved receiver method lowers to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MethodLowering {
+    /// A dedicated VIR op with bespoke lowering in `compiler::lower_method_call`
+    /// (`TreeGlob`'s codata stream, `BlobLen`). The declaration is injectable;
+    /// the machine engine stays in core.
+    DedicatedOp(MethodOp),
+    /// A registered primitive: the compiler builds the declared request record
+    /// (`Op::Record`) and invokes the primitive (`Op::InvokePrimitive`) — no
+    /// per-method compiler code at all. This is the fully open rail: a method
+    /// declared this way needs nothing from `vix-core` beyond the generic
+    /// lowering, so its contract (request/result types, primitive id) lives in
+    /// the embedder alongside its implementation.
+    Primitive(PrimitiveMethodDecl),
+}
+
+/// The contract of a primitive-backed receiver method: the request record the
+/// call assembles (its first field is the receiver, the rest bind the call's
+/// positional arguments in order), the result type of the invocation, and the
+/// primitive that serves it. Carried as `fn() -> _` thunks so declarations stay
+/// `const` data while the types are built on demand.
+///
+/// The invocation node is `PURE` — an ordinary in-frame primitive demand; any
+/// effect is witnessed *inside* the primitive via its `EffectCtx` reads, as
+/// `registry-url` reads the manifest.
+// Equality on the thunks is pointer identity — good enough for its one use
+// (`CompilerConfig` equality, where "same declaration table" is the question);
+// two configs sharing one `DOMAIN_METHODS` compare equal, which is the case
+// that matters.
+#[allow(unpredictable_function_pointer_comparisons)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PrimitiveMethodDecl {
+    pub request: fn() -> crate::vir::Type,
+    pub result: fn() -> crate::vir::Type,
+    pub id: fn() -> PrimitiveId,
 }
 
 /// Resolve a receiver method against an embedder-injected declaration set, or
@@ -557,7 +598,7 @@ pub fn injected_method(
         .iter()
         .find(|decl| decl.receiver == receiver && decl.name == name)?;
     Some(MethodResolution {
-        method: decl.op,
+        lowering: decl.lowering,
         arity: decl.arity,
     })
 }
@@ -574,15 +615,15 @@ pub fn prelude_method(receiver_ty: &crate::vir::Type, name: &str) -> Option<Meth
         return None;
     };
     Some(MethodResolution {
-        method,
+        lowering: MethodLowering::DedicatedOp(method),
         arity: binding.arity?,
     })
 }
 
-/// A resolved receiver method: which dedicated op to lower to, and its arity.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// A resolved receiver method: what it lowers to, and its arity.
+#[derive(Clone, Copy, Debug)]
 pub struct MethodResolution {
-    pub method: MethodOp,
+    pub lowering: MethodLowering,
     pub arity: usize,
 }
 

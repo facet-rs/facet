@@ -22,18 +22,21 @@ use super::{
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct UpstreamDigest(pub [u8; 32]);
 
-/// A registry capability handle. Wire-side this is `Type::Extern(Registry)`; it
-/// wraps a [`ValueId`] like [`BlobId`], but is a distinct newtype so the derived
-/// schema walker (`Type::from_facet`) can tell the two wire meanings apart —
-/// distinct meanings, distinct types.
+/// A registry capability handle. It wraps a [`ValueId`] like [`BlobId`], but is
+/// a distinct newtype so the derived schema walker (`Type::from_facet`) can tell
+/// the two wire meanings apart — distinct meanings, distinct types. The
+/// `wire_extern` annotation is the walker's whole mapping (see `vix-wire`).
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[facet(vix::wire_extern = "Registry")]
 pub struct RegistryHandle(pub ValueId);
 
 /// A served Blob handle: the typed response of `fetch`/`observe`. Wire-side this
-/// is `Type::Extern(Blob)` (see the `vir` leaf override), and it already *is* an
-/// interned [`ValueId`] — completing with it never re-encodes or re-interns. The
-/// `ResponseValue` impl lives with the primitive machinery in the runtime crate.
+/// is `Type::Extern(Blob)` (the `wire_extern` annotation), and it already *is*
+/// an interned [`ValueId`] — completing with it never re-encodes or re-interns.
+/// The `ResponseValue` impl lives with the primitive machinery in the runtime
+/// crate.
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[facet(vix::wire_extern = "Blob")]
 pub struct BlobHandle(pub ValueId);
 
 /// A pinned Blob target identity. This is not a resident value but a *reference*
@@ -121,40 +124,11 @@ pub fn tree_read_primitive_id() -> PrimitiveId {
     }
 }
 
-// ---- registry-url ---------------------------------------------------------
-//
-// `Registry.url(name)` resolves an artifact name against the offline harness
-// registry manifest into a `PinnedBlobRef` (provenance URL + the REQUIRED pinned
-// ContentHash). The manifest lookup is domain logic, so it is a primitive whose
-// implementation lives in `vixen-primitives`; the contract (request shape + id)
-// lives here, exactly as `tree-read`'s does. The manifest bytes reach the
-// primitive through `EffectCtx::read(registry, ReadProjection::RegistryManifest)`.
-
-#[must_use]
-pub fn registry_url_request_type() -> Type {
-    Type::Record(RecordType::new(
-        "RegistryUrlRequest",
-        vec![
-            RecordField {
-                name: "registry".to_owned(),
-                ty: Type::Extern(ExternKind::Registry),
-            },
-            RecordField {
-                name: "name".to_owned(),
-                ty: Type::String,
-            },
-        ],
-    ))
-}
-
-#[must_use]
-pub fn registry_url_primitive_id() -> PrimitiveId {
-    PrimitiveId {
-        namespace: "vix.machine".to_owned(),
-        name: "registry-url".to_owned(),
-        version: 1,
-    }
-}
+// The `registry-url` contract (request shape + id) lives in `vixen-primitives`
+// beside its implementation: `Registry.url` is a primitive-backed method
+// (`binding::MethodLowering::Primitive`), so the compiler reaches it through the
+// generic request-record rail and core holds nothing of it. `tree-read`'s
+// contract stays here because core's exec/progressive machinery names it.
 
 // ---- tree-glob (codata) ---------------------------------------------------
 //

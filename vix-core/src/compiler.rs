@@ -11,10 +11,7 @@ use taxon::{
 
 use crate::decode::{self, DecodeFormat, DecodedValue};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics, Label};
-use crate::runtime::{
-    PinnedBlobRef, registry_url_primitive_id, registry_url_request_type, tree_read_primitive_id,
-    tree_read_request_type,
-};
+use crate::runtime::{tree_read_primitive_id, tree_read_request_type};
 use crate::schema::{SchemaBatch, SchemaRef, SchemaSet};
 use crate::support::{Span, Spanned};
 use crate::surface::{SurfaceParser, ast};
@@ -4109,6 +4106,76 @@ fn inline_stream_call(
     lowered
 }
 
+/// Lower a primitive-backed receiver method ([`MethodLowering::Primitive`]):
+/// build the declared request record — its first field binds the receiver, the
+/// rest bind the positional arguments in order — and invoke the primitive. Both
+/// nodes are `PURE`: the invocation is an ordinary in-frame primitive demand the
+/// scheduler stages; any effect is witnessed *inside* the primitive via its
+/// `EffectCtx` reads (as `registry-url` reads the manifest). There is no
+/// per-method compiler code on this rail — the whole contract is the injected
+/// declaration, so it lives in the embedder alongside the implementation.
+fn lower_primitive_method(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    call: &ast::MethodCall,
+    receiver: LoweredValue,
+    positional: &[ast::Expr],
+    primitive: crate::binding::PrimitiveMethodDecl,
+) -> Result<LoweredValue, Diagnostics> {
+    let request_ty = (primitive.request)();
+    let Type::Record(record) = &request_ty else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            call.span,
+            format!(
+                "primitive method `{}` declares a non-record request type",
+                call.name.value
+            ),
+        )));
+    };
+    if record.fields.len() != positional.len() + 1 {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            call.span,
+            format!(
+                "primitive method `{}` declares {} request fields for arity {}",
+                call.name.value,
+                record.fields.len(),
+                positional.len(),
+            ),
+        )));
+    }
+    require_type(&receiver, &record.fields[0].ty, expr_span(&call.receiver))?;
+    let mut inputs = Vec::with_capacity(record.fields.len());
+    inputs.push(receiver.node);
+    for (field, argument) in record.fields[1..].iter().zip(positional) {
+        let value = lower_value_expected(nodes, bindings, context, argument, Some(&field.ty))?;
+        require_type(&value, &field.ty, expr_span(argument))?;
+        inputs.push(value.node);
+    }
+    let request = push_node(
+        nodes,
+        call.span,
+        request_ty.clone(),
+        EffectFacts::PURE,
+        inputs,
+        Op::Record,
+    );
+    let ty = (primitive.result)();
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            call.span,
+            ty.clone(),
+            EffectFacts::PURE,
+            vec![request],
+            Op::InvokePrimitive {
+                primitive: (primitive.id)(),
+            },
+        ),
+        ty,
+    })
+}
+
 fn tree_projection_syntax(expression: &ast::Expr) -> Option<(&ast::Expr, Vec<&ast::Expr>)> {
     fn collect<'a>(expression: &'a ast::Expr, segments: &mut Vec<&'a ast::Expr>) -> &'a ast::Expr {
         if let ast::Expr::Paren(paren) = expression {
@@ -4331,17 +4398,34 @@ fn lower_method_call(
     if positional.len() != entry.arity {
         return Err(invalid_arity(call.span, entry.arity, positional.len()));
     }
+    // A primitive-backed method has no per-method compiler code: build the
+    // declared request record and invoke the primitive. A dedicated op falls
+    // through to its bespoke lowering arm below.
+    let method = match entry.lowering {
+        crate::binding::MethodLowering::Primitive(primitive) => {
+            if let Some(named) = &call.named_args {
+                return Err(Diagnostics::one(Diagnostic::unsupported(
+                    named.span,
+                    "named method arguments",
+                )));
+            }
+            return lower_primitive_method(
+                nodes, bindings, context, call, receiver, positional, primitive,
+            );
+        }
+        crate::binding::MethodLowering::DedicatedOp(method) => method,
+    };
     // `sorted` is the sole method that accepts a named argument: an explicit
     // `Order<T>` recipe. Every other method rejects named arguments.
     if let Some(named) = &call.named_args
-        && !matches!(entry.method, PreludeMethod::ArraySorted)
+        && !matches!(method, PreludeMethod::ArraySorted)
     {
         return Err(Diagnostics::one(Diagnostic::unsupported(
             named.span,
             "named method arguments",
         )));
     }
-    match entry.method {
+    match method {
         PreludeMethod::ArrayLen => Ok(LoweredValue {
             node: push_node(
                 nodes,
@@ -4683,7 +4767,7 @@ fn lower_method_call(
                 .ok_or_else(|| type_mismatch(call.span, "Map<K, V>", receiver.ty.name()))?;
             let lowered_key = lower_value(nodes, bindings, context, &positional[0])?;
             require_type(&lowered_key, &key, expr_span(&positional[0]))?;
-            let (ty, effect, inputs, op) = match entry.method {
+            let (ty, effect, inputs, op) = match method {
                 PreludeMethod::MapGet => (
                     value,
                     EffectFacts {
@@ -5008,39 +5092,6 @@ fn lower_method_call(
                     EffectFacts::EFFECT,
                     vec![receiver.node],
                     Op::BlobLen,
-                ),
-                ty,
-            })
-        }
-        PreludeMethod::RegistryUrl => {
-            let name = lower_value(nodes, bindings, context, &positional[0])?;
-            require_type(&name, &Type::String, expr_span(&positional[0]))?;
-            // `Registry.url(name)` resolves the artifact against the offline
-            // registry manifest — domain logic that lives in the `registry-url`
-            // primitive (`vixen-primitives`), reached like a settled tree read:
-            // build the request record, then invoke the primitive. The
-            // invocation node is PURE (an ordinary in-frame primitive demand,
-            // staged by the scheduler); the manifest read is the effect, recorded
-            // as a witness *inside* the primitive via `ctx.read(RegistryManifest)`.
-            let request = push_node(
-                nodes,
-                call.span,
-                registry_url_request_type(),
-                EffectFacts::PURE,
-                vec![receiver.node, name.node],
-                Op::Record,
-            );
-            let ty = Type::from_facet::<PinnedBlobRef>();
-            Ok(LoweredValue {
-                node: push_node(
-                    nodes,
-                    call.span,
-                    ty.clone(),
-                    EffectFacts::PURE,
-                    vec![request],
-                    Op::InvokePrimitive {
-                        primitive: registry_url_primitive_id(),
-                    },
                 ),
                 ty,
             })
