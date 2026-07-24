@@ -36,7 +36,7 @@ impl Default for TreeGlobPrimitive {
                 memo_policy: PrimitiveMemoPolicy::Observed,
                 protocol_version: 1,
                 capability_schemas: vec![SchemaPattern::exact(
-                    &Type::Extern(ExternKind::Tree).schema_ref(),
+                    &Type::Extern(ExternKind::Host(vix::binding::TREE)).schema_ref(),
                 )],
             },
         }

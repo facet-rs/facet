@@ -24,6 +24,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [dependencies]
 snark = { path = "../snark", features = ["json-import"] }
 facet = { path = "../facet" }
+vix-wire = { path = "../vix-wire" }
 facet-format = { path = "../facet-format" }
 facet-json = { path = "../facet-json" }
 facet-toml = { path = "../facet-toml" }

@@ -1219,6 +1219,60 @@ impl ExecTask {
         Ok(())
     }
 
+    /// Materialize a dense array of fixed-width, inline-encoded `elements` into
+    /// the suspended task's molten arena and return the handle word to write into
+    /// the result frame. This is the write counterpart to
+    /// [`TaskValueResolver::resolve_dense`]: a scheduler-owned host result (e.g. a
+    /// primitive returning a `[T]` field) can materialize an aggregate the
+    /// resuming task reads back through the ordinary dense-array path. The element
+    /// schema and width are derived from `array_schema`'s verified
+    /// [`crate::PayloadKind::DenseArray`] contract — the same derivation the
+    /// reader uses — so the two never disagree; `import_dense` re-checks that every
+    /// element is exactly the declared width.
+    pub fn import_dense_host_array(
+        &mut self,
+        array_schema: SchemaRef,
+        elements: &[Vec<u8>],
+    ) -> Result<i64, TaskFault> {
+        self.check_not_poisoned()?;
+        let active = match &self.lane {
+            Lane::Interpreter(task) => task.active_function(),
+            Lane::Native(task) => task.active_function(),
+        };
+        let region = self.executable.function(active)?.result;
+        let invalid = |size: usize| TaskFault::InvalidResultShape {
+            entry: active,
+            region,
+            size,
+        };
+        let (element_schema, width) = {
+            let contract = self.executable.verified.contract();
+            let collection = contract
+                .schemas
+                .get(array_schema.0 as usize)
+                .ok_or_else(|| invalid(0))?;
+            let crate::PayloadKind::DenseArray { element } = collection.payload else {
+                return Err(invalid(0));
+            };
+            let element_contract = contract
+                .schemas
+                .get(element.0 as usize)
+                .ok_or_else(|| invalid(0))?;
+            let width = element_contract
+                .inline
+                .checked_byte_len()
+                .ok_or_else(|| invalid(0))?;
+            (i64::from(element.0), width)
+        };
+        let molten = match &mut self.lane {
+            Lane::Interpreter(task) => task.molten_mut(),
+            Lane::Native(task) => task.molten_mut(),
+        };
+        molten
+            .import_dense(element_schema, width, elements)
+            .map_err(|_| invalid(elements.len()))
+    }
+
     fn write_entry_word(
         &mut self,
         index: usize,

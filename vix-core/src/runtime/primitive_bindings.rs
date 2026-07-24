@@ -22,18 +22,21 @@ use super::{
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct UpstreamDigest(pub [u8; 32]);
 
-/// A registry capability handle. Wire-side this is `Type::Extern(Registry)`; it
-/// wraps a [`ValueId`] like [`BlobId`], but is a distinct newtype so the derived
-/// schema walker (`Type::from_facet`) can tell the two wire meanings apart —
-/// distinct meanings, distinct types.
+/// A registry capability handle. It wraps a [`ValueId`] like [`BlobId`], but is
+/// a distinct newtype so the derived schema walker (`Type::from_facet`) can tell
+/// the two wire meanings apart — distinct meanings, distinct types. The
+/// `wire_extern` annotation is the walker's whole mapping (see `vix-wire`).
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[facet(vix::wire_extern = "Registry")]
 pub struct RegistryHandle(pub ValueId);
 
 /// A served Blob handle: the typed response of `fetch`/`observe`. Wire-side this
-/// is `Type::Extern(Blob)` (see the `vir` leaf override), and it already *is* an
-/// interned [`ValueId`] — completing with it never re-encodes or re-interns. The
-/// `ResponseValue` impl lives with the primitive machinery in the runtime crate.
+/// is `Type::Extern(Blob)` (the `wire_extern` annotation), and it already *is*
+/// an interned [`ValueId`] — completing with it never re-encodes or re-interns.
+/// The `ResponseValue` impl lives with the primitive machinery in the runtime
+/// crate.
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[facet(vix::wire_extern = "Blob")]
 pub struct BlobHandle(pub ValueId);
 
 /// A pinned Blob target identity. This is not a resident value but a *reference*
@@ -102,7 +105,7 @@ pub fn tree_read_request_type() -> Type {
         vec![
             RecordField {
                 name: "tree".to_owned(),
-                ty: Type::Extern(ExternKind::Tree),
+                ty: Type::Extern(ExternKind::Host(crate::binding::TREE)),
             },
             RecordField {
                 name: "path".to_owned(),
@@ -121,6 +124,12 @@ pub fn tree_read_primitive_id() -> PrimitiveId {
     }
 }
 
+// The `registry-url` contract (request shape + id) lives in `vixen-primitives`
+// beside its implementation: `Registry.url` is a primitive-backed method
+// (`binding::MethodLowering::Primitive`), so the compiler reaches it through the
+// generic request-record rail and core holds nothing of it. `tree-read`'s
+// contract stays here because core's exec/progressive machinery names it.
+
 // ---- tree-glob (codata) ---------------------------------------------------
 //
 // `glob` is the build language's "find files" op: `Tree.glob(pattern) ->
@@ -138,7 +147,7 @@ pub fn tree_glob_request_type() -> Type {
         vec![
             RecordField {
                 name: "tree".to_owned(),
-                ty: Type::Extern(ExternKind::Tree),
+                ty: Type::Extern(ExternKind::Host(crate::binding::TREE)),
             },
             RecordField {
                 name: "pattern".to_owned(),

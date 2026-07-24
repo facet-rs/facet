@@ -17,12 +17,12 @@ use crate::lowering::{LoweringArtifact, LoweringAttribution, ValueInputBinding};
 use crate::schema::SchemaRef;
 use crate::support::Span;
 use crate::vir::{
-    CommandPiece, ExternKind, Function, FunctionId, Island, IslandId, NodeId, OPTION_NONE_VARIANT,
-    OPTION_SOME_VARIANT, Op, ProgressiveProjection, Type, VariantPayload,
+    CommandPiece, ExternKind, Function, FunctionId, Island, IslandId, NodeId, Op,
+    ProgressiveProjection, Type, VariantPayload,
 };
 
 use super::fixture::{
-    FixtureEntryKind, FixtureReadError, FixtureStore, TarMember, fixture_tree_name, parse_ustar,
+    FixtureEntryKind, FixtureReadError, FixtureStore, TarMember, parse_ustar,
 };
 use super::identity::{
     DemandKey, DemandPreimage, Digest, Location, LocationId, RecipeId, ValueId, hash_framed,
@@ -40,7 +40,6 @@ use super::store::{
     FrozenValue, Handle, Interned, Store, StoreEntry, StoreJournal, StoreJournalError,
     StoreJournalLoadReport,
 };
-use super::{BlobId, OriginHint};
 use super::{
     CallbackError, EffectCtx, PrimitiveCompletion, PrimitiveDispatcher, PrimitiveField,
     PrimitiveFieldValue, PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveValue,
@@ -3102,42 +3101,6 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 &node.ty,
                 b"fixture-registry".to_vec(),
             ))),
-            Op::TreeProject => {
-                let EffectTerm::Value(tree) = input(0, self)? else {
-                    return effect_fault("tree projection receiver was codata");
-                };
-                let EffectTerm::Value(path) = input(1, self)? else {
-                    return effect_fault("tree projection path was codata");
-                };
-                let (root, prefix) = if tree.resident.starts_with(b"tree-entry\0") {
-                    let (root, prefix) = split_tree_entry(&tree.resident)?;
-                    (root.to_vec(), prefix.to_vec())
-                } else {
-                    (tree.resident, Vec::new())
-                };
-                let mut resident = b"tree-entry\0".to_vec();
-                resident.extend_from_slice(&(root.len() as u64).to_le_bytes());
-                resident.extend(root);
-                if !prefix.is_empty() {
-                    resident.extend(prefix);
-                    resident.push(b'/');
-                }
-                resident.extend(path.resident);
-                Ok(EffectTerm::Value(effect_leaf(&node.ty, resident)))
-            }
-            Op::TreeEntryText => {
-                let EffectTerm::Value(entry) = input(0, self)? else {
-                    return effect_fault("tree text receiver was codata");
-                };
-                let (source, projection, bytes) = self.tree_entry_text(&entry)?;
-                let value = effect_leaf(&node.ty, bytes);
-                reads.push(super::model::ReadWitness {
-                    source,
-                    projection: ReadProjection::TreePath { path: projection },
-                    observation: ReadObservation::Value(value.identity.clone()),
-                });
-                Ok(EffectTerm::Value(value))
-            }
             Op::TreeGlob => {
                 let EffectTerm::Value(tree) = input(0, self)? else {
                     return effect_fault("tree glob receiver was codata");
@@ -3178,95 +3141,6 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                     frozen: Some(FrozenValue::OrderedMap(frozen)),
                     node: Some(map_node),
                 }))
-            }
-            Op::RegistryUrl => {
-                let EffectTerm::Value(registry) = input(0, self)? else {
-                    return effect_fault("registry URL receiver was codata");
-                };
-                let EffectTerm::Value(name) = input(1, self)? else {
-                    return effect_fault("registry URL name was codata");
-                };
-                let name = String::from_utf8(name.resident)
-                    .map_err(|_| effect_machine_error("registry artifact name was not UTF-8"))?;
-                let manifest = self.fixture_store.registry_manifest().map_err(|_| {
-                    effect_machine_error("fixture registry manifest was unavailable")
-                })?;
-                reads.push(super::model::ReadWitness {
-                    source: registry.identity.clone(),
-                    projection: ReadProjection::RegistryManifest,
-                    observation: ReadObservation::Value(
-                        effect_leaf(&Type::String, manifest.clone().into_bytes()).identity,
-                    ),
-                });
-                let row = manifest.lines().find_map(|line| {
-                    let mut fields = line.split_whitespace();
-                    let artifact = fields.next()?;
-                    let url = fields.next()?;
-                    let hash = fields.next()?;
-                    let upstream = fields.next().map(str::to_owned);
-                    (artifact == name).then(|| (url.to_owned(), hash.to_owned(), upstream))
-                });
-                let (url, hash, upstream) = row
-                    .ok_or_else(|| effect_machine_error("fixture registry artifact was absent"))?;
-                let blob_schema = Type::Extern(ExternKind::Blob).schema_ref();
-                let blob_id = PrimitiveValue {
-                    schema: Type::from_facet::<BlobId>().schema_ref(),
-                    body: PrimitiveValueBody::Product(vec![
-                        primitive_child_field(PrimitiveValue::bytes(
-                            Type::Extern(ExternKind::Schema).schema_ref(),
-                            blob_schema.canonical_bytes(),
-                        )),
-                        primitive_child_field(PrimitiveValue::bytes(
-                            Type::String.schema_ref(),
-                            hash.into_bytes(),
-                        )),
-                    ]),
-                };
-                let capability =
-                    primitive_value_from_effect(&Type::Extern(ExternKind::Registry), &registry)?;
-                let origin = PrimitiveValue {
-                    schema: Type::from_facet::<OriginHint>().schema_ref(),
-                    body: PrimitiveValueBody::Product(vec![
-                        primitive_child_field(capability),
-                        primitive_child_field(PrimitiveValue::bytes(
-                            Type::String.schema_ref(),
-                            url.into_bytes(),
-                        )),
-                    ]),
-                };
-                effect_value_from_primitive(
-                    &node.ty,
-                    PrimitiveValue {
-                        schema: node.ty.schema_ref(),
-                        body: PrimitiveValueBody::Product(vec![
-                            primitive_child_field(blob_id),
-                            primitive_child_field(PrimitiveValue {
-                                schema: Type::array(Type::from_facet::<OriginHint>()).schema_ref(),
-                                body: PrimitiveValueBody::Sequence {
-                                    element_schema: Type::from_facet::<OriginHint>().schema_ref(),
-                                    elements: vec![origin],
-                                },
-                            }),
-                            primitive_child_field(PrimitiveValue {
-                                schema: Type::option(Type::String).schema_ref(),
-                                body: upstream.map_or_else(
-                                    || PrimitiveValueBody::Variant {
-                                        tag: OPTION_NONE_VARIANT,
-                                        fields: Vec::new(),
-                                    },
-                                    |upstream| PrimitiveValueBody::Variant {
-                                        tag: OPTION_SOME_VARIANT,
-                                        fields: vec![primitive_child_field(PrimitiveValue::bytes(
-                                            Type::String.schema_ref(),
-                                            upstream.into_bytes(),
-                                        ))],
-                                    },
-                                ),
-                            }),
-                        ]),
-                    },
-                )
-                .map(EffectTerm::Value)
             }
             Op::Untar => {
                 let EffectTerm::Value(blob) = input(0, self)? else {
@@ -3318,40 +3192,6 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 None,
             ))),
         }
-    }
-
-    fn tree_entry_text(
-        &self,
-        entry: &EffectValue,
-    ) -> Result<(ValueId, String, Vec<u8>), Box<MachineError>> {
-        let (tree, path) = split_tree_entry(&entry.resident)?;
-        if let Some(name) = fixture_tree_name(tree) {
-            let name = core::str::from_utf8(name)
-                .map_err(|_| effect_machine_error("fixture tree name was not UTF-8"))?;
-            let path = core::str::from_utf8(path)
-                .map_err(|_| effect_machine_error("tree path was not UTF-8"))?;
-            let projection = format!("{name}/{path}");
-            let bytes = self
-                .fixture_store
-                .tree_file_bytes(&projection)
-                .map_err(|_| effect_machine_error("fixture tree entry was not a file"))?;
-            return Ok((entry.identity.clone(), projection, bytes));
-        }
-        let path = core::str::from_utf8(path)
-            .map_err(|_| effect_machine_error("archive tree path was not UTF-8"))?;
-        let member = parse_ustar(tree)
-            .map_err(|_| effect_machine_error("archive tree resident bytes were malformed"))?
-            .into_iter()
-            .find_map(|member| match member {
-                TarMember::File {
-                    path: candidate,
-                    bytes,
-                    ..
-                } if candidate == path => Some(bytes),
-                _ => None,
-            })
-            .ok_or_else(|| effect_machine_error("archive tree entry was not a file"))?;
-        Ok((entry.identity.clone(), path.to_owned(), member))
     }
 
     /// Realize a `Tree.glob(pattern)` stream by dispatching to the registered
@@ -4063,6 +3903,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             value,
             &mut self.store,
             &mut interned,
+            &plan.abi_schemas,
         ) {
             return Err(self.terminate_primitive(
                 ctx.task_id,
@@ -5792,7 +5633,11 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             }
             _ => {
                 let lines_ty = Type::map(Type::Int, Type::String);
-                (Type::Extern(ExternKind::Tree), outcome_ty.clone(), lines_ty)
+                (
+                    Type::Extern(ExternKind::Host(crate::binding::TREE)),
+                    outcome_ty.clone(),
+                    lines_ty,
+                )
             }
         };
         let int_schema = semantic_schema_ref(&Type::Int);
@@ -7416,6 +7261,7 @@ fn abi_schema_for_type(
         .ok_or_else(|| format!("{} is absent from the primitive ABI catalog", ty.name()))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_primitive_value(
     task: &mut weavy::exec::ExecTask,
     region: super::FrameRegion,
@@ -7424,6 +7270,7 @@ fn write_primitive_value(
     value: &PrimitiveValue,
     store: &mut Store,
     interned: &mut Vec<Interned>,
+    abi_schemas: &[(Type, weavy::SchemaRef)],
 ) -> Result<(), String> {
     if value.schema != ty.schema_ref() {
         return Err(format!(
@@ -7431,6 +7278,21 @@ fn write_primitive_value(
             value.schema,
             ty.schema_ref()
         ));
+    }
+    // A dense-array result field (e.g. a `PinnedBlobRef`'s `origins: [OriginHint]`)
+    // is materialized into the resuming task's molten arena and referenced by a
+    // single handle word — the write counterpart to the array read path. Every
+    // other aggregate (Record/Tuple/Enum) stays inline in the frame words below.
+    if let (Type::Array(element), PrimitiveValueBody::Sequence { elements, .. }) = (ty, &value.body) {
+        let array_schema = abi_schema_for_type(ty, abi_schemas)?;
+        let element_bytes = elements
+            .iter()
+            .map(|value| primitive_inline_bytes(task, element, value, store, interned, abi_schemas))
+            .collect::<Result<Vec<_>, _>>()?;
+        let handle = task
+            .import_dense_host_array(array_schema, &element_bytes)
+            .map_err(|fault| format!("primitive array materialization failed: {fault:?}"))?;
+        return write_primitive_word(task, region, offset, handle);
     }
     match (ty, &value.body) {
         (Type::Bool | Type::Int | Type::Check, PrimitiveValueBody::Bytes(bytes)) => {
@@ -7456,7 +7318,9 @@ fn write_primitive_value(
         {
             let mut cursor = offset;
             for (element, field) in elements.iter().zip(fields) {
-                write_primitive_field(task, region, cursor, element, field, store, interned)?;
+                write_primitive_field(
+                    task, region, cursor, element, field, store, interned, abi_schemas,
+                )?;
                 cursor += primitive_type_words(element)?;
             }
             Ok(())
@@ -7466,7 +7330,16 @@ fn write_primitive_value(
         {
             let mut cursor = offset;
             for (declared, field) in record.fields.iter().zip(fields) {
-                write_primitive_field(task, region, cursor, &declared.ty, field, store, interned)?;
+                write_primitive_field(
+                    task,
+                    region,
+                    cursor,
+                    &declared.ty,
+                    field,
+                    store,
+                    interned,
+                    abi_schemas,
+                )?;
                 cursor += primitive_type_words(&declared.ty)?;
             }
             Ok(())
@@ -7485,7 +7358,9 @@ fn write_primitive_value(
             write_primitive_word(task, region, offset, i64::from(*tag))?;
             let mut cursor = offset + 1;
             for (field_ty, field) in field_types.into_iter().zip(fields) {
-                write_primitive_field(task, region, cursor, field_ty, field, store, interned)?;
+                write_primitive_field(
+                    task, region, cursor, field_ty, field, store, interned, abi_schemas,
+                )?;
                 cursor += primitive_type_words(field_ty)?;
             }
             Ok(())
@@ -7497,6 +7372,7 @@ fn write_primitive_value(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_primitive_field(
     task: &mut weavy::exec::ExecTask,
     region: super::FrameRegion,
@@ -7505,6 +7381,7 @@ fn write_primitive_field(
     field: &PrimitiveField,
     store: &mut Store,
     interned: &mut Vec<Interned>,
+    abi_schemas: &[(Type, weavy::SchemaRef)],
 ) -> Result<(), String> {
     if field.schema != ty.schema_ref() {
         return Err(format!(
@@ -7519,7 +7396,137 @@ fn write_primitive_field(
         }
         PrimitiveFieldValue::Child(value) => (**value).clone(),
     };
-    write_primitive_value(task, region, offset, ty, &value, store, interned)
+    write_primitive_value(task, region, offset, ty, &value, store, interned, abi_schemas)
+}
+
+/// The inline (frame-word) byte encoding of a primitive result `value` of type
+/// `ty`, for use as a dense-array element: scalars are their little-endian words,
+/// reference leaves (`String`/`Path`/`Extern`) are interned into the Store and
+/// encoded as their handle word, nested records/tuples/enums concatenate their
+/// fields, and a nested array is itself materialized into molten and encoded as
+/// its handle word. This mirrors the frame layout `write_primitive_value` writes,
+/// but into a byte buffer rather than the frame region.
+fn primitive_inline_bytes(
+    task: &mut weavy::exec::ExecTask,
+    ty: &Type,
+    value: &PrimitiveValue,
+    store: &mut Store,
+    interned: &mut Vec<Interned>,
+    abi_schemas: &[(Type, weavy::SchemaRef)],
+) -> Result<Vec<u8>, String> {
+    if value.schema != ty.schema_ref() {
+        return Err(format!(
+            "primitive element schema {} disagrees with {}",
+            value.schema,
+            ty.schema_ref()
+        ));
+    }
+    match (ty, &value.body) {
+        (Type::Bool | Type::Int | Type::Check, PrimitiveValueBody::Bytes(bytes)) => {
+            if bytes.len() != size_of::<i64>() {
+                return Err(format!("primitive scalar {} is not one word", ty.name()));
+            }
+            Ok(bytes.clone())
+        }
+        (Type::String | Type::Path | Type::Extern(_), PrimitiveValueBody::Bytes(bytes)) => {
+            let stored = store.intern_realized(ty.schema_ref(), bytes);
+            let handle = store
+                .weavy_handle(stored.handle)
+                .ok_or_else(|| "new primitive element has no Store handle".to_owned())?;
+            interned.push(stored);
+            Ok(handle.as_i64().to_le_bytes().to_vec())
+        }
+        (Type::Tuple(elements), PrimitiveValueBody::Product(fields))
+            if elements.len() == fields.len() =>
+        {
+            let mut out = Vec::new();
+            for (element, field) in elements.iter().zip(fields) {
+                out.extend(primitive_field_inline_bytes(
+                    task, element, field, store, interned, abi_schemas,
+                )?);
+            }
+            Ok(out)
+        }
+        (Type::Record(record), PrimitiveValueBody::Product(fields))
+            if record.fields.len() == fields.len() =>
+        {
+            let mut out = Vec::new();
+            for (declared, field) in record.fields.iter().zip(fields) {
+                out.extend(primitive_field_inline_bytes(
+                    task,
+                    &declared.ty,
+                    field,
+                    store,
+                    interned,
+                    abi_schemas,
+                )?);
+            }
+            Ok(out)
+        }
+        (Type::Enum(enumeration), PrimitiveValueBody::Variant { tag, fields }) => {
+            let variant = enumeration
+                .variants
+                .get(*tag as usize)
+                .ok_or_else(|| format!("primitive element enum tag {tag} is out of range"))?;
+            let field_types = variant_field_types(&variant.payload);
+            if field_types.len() != fields.len() {
+                return Err(
+                    "primitive element variant field count disagrees with its type".to_owned(),
+                );
+            }
+            let mut out = i64::from(*tag).to_le_bytes().to_vec();
+            for (field_ty, field) in field_types.into_iter().zip(fields) {
+                out.extend(primitive_field_inline_bytes(
+                    task, field_ty, field, store, interned, abi_schemas,
+                )?);
+            }
+            // Pad to the enum's full inline width so every variant occupies the
+            // same fixed element footprint the reader expects.
+            out.resize(primitive_type_words(ty)? * size_of::<i64>(), 0);
+            Ok(out)
+        }
+        (Type::Array(element), PrimitiveValueBody::Sequence { elements, .. }) => {
+            let array_schema = abi_schema_for_type(ty, abi_schemas)?;
+            let element_bytes = elements
+                .iter()
+                .map(|value| {
+                    primitive_inline_bytes(task, element, value, store, interned, abi_schemas)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let handle = task
+                .import_dense_host_array(array_schema, &element_bytes)
+                .map_err(|fault| format!("nested array materialization failed: {fault:?}"))?;
+            Ok(handle.to_le_bytes().to_vec())
+        }
+        _ => Err(format!(
+            "primitive element body disagrees with frame type {}",
+            ty.name()
+        )),
+    }
+}
+
+fn primitive_field_inline_bytes(
+    task: &mut weavy::exec::ExecTask,
+    ty: &Type,
+    field: &PrimitiveField,
+    store: &mut Store,
+    interned: &mut Vec<Interned>,
+    abi_schemas: &[(Type, weavy::SchemaRef)],
+) -> Result<Vec<u8>, String> {
+    if field.schema != ty.schema_ref() {
+        return Err(format!(
+            "primitive element field schema {} disagrees with {}",
+            field.schema,
+            ty.schema_ref()
+        ));
+    }
+    let value = match &field.value {
+        PrimitiveFieldValue::Inline(bytes) => {
+            PrimitiveValue::bytes(field.schema.clone(), bytes.clone())
+        }
+        PrimitiveFieldValue::Child(value) => (**value).clone(),
+    };
+    primitive_inline_bytes(task, ty, &value, store, interned, abi_schemas)
 }
 
 fn write_primitive_word(
@@ -7639,13 +7646,6 @@ fn primitive_field_from_effect(
             schema: value.schema.clone(),
             value: PrimitiveFieldValue::Child(Box::new(value)),
         })
-    }
-}
-
-fn primitive_child_field(value: PrimitiveValue) -> PrimitiveField {
-    PrimitiveField {
-        schema: value.schema.clone(),
-        value: PrimitiveFieldValue::Child(Box::new(value)),
     }
 }
 
@@ -7862,7 +7862,7 @@ fn effect_value_from_frozen(
             effect.frozen = Some(frozen);
             Ok(effect)
         }
-        (FrozenValue::Opaque(bytes), Type::Extern(ExternKind::Tree)) => {
+        (FrozenValue::Opaque(bytes), Type::Extern(ExternKind::Host(crate::binding::TREE))) => {
             parse_ustar(bytes)
                 .map_err(|_| effect_machine_error("frozen Tree was not plain ustar"))?;
             let canonical = canonical_archive_tree(bytes);
@@ -8002,29 +8002,6 @@ fn effect_machine_error(detail: &'static str) -> Box<MachineError> {
 
 fn effect_fault<T>(detail: &'static str) -> Result<T, Box<MachineError>> {
     Err(effect_machine_error(detail))
-}
-
-fn split_tree_entry(bytes: &[u8]) -> Result<(&[u8], &[u8]), Box<MachineError>> {
-    let prefix = b"tree-entry\0";
-    let header = prefix
-        .len()
-        .checked_add(8)
-        .ok_or_else(|| effect_machine_error("tree entry header overflow"))?;
-    if !bytes.starts_with(prefix) || bytes.len() < header {
-        return effect_fault("tree entry payload was malformed");
-    }
-    let length = u64::from_le_bytes(
-        bytes[prefix.len()..header]
-            .try_into()
-            .expect("eight-byte tree entry length"),
-    );
-    let length =
-        usize::try_from(length).map_err(|_| effect_machine_error("tree entry length overflow"))?;
-    let tree_end = header
-        .checked_add(length)
-        .filter(|end| *end <= bytes.len())
-        .ok_or_else(|| effect_machine_error("tree entry payload was truncated"))?;
-    Ok((&bytes[header..tree_end], &bytes[tree_end..]))
 }
 
 fn read_exec_stdout(

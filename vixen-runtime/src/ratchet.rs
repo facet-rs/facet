@@ -376,7 +376,7 @@ fn wire_arg_identity(arg: &WireArg) -> ValueId {
             let mut bytes = b"fixture-tree\0".to_vec();
             bytes.extend(name.as_bytes());
             (
-                vix::vir::Type::Extern(vix::vir::ExternKind::Tree),
+                vix::vir::Type::Extern(vix::vir::ExternKind::Host(vix::binding::TREE)),
                 bytes,
             )
         }
