@@ -18,6 +18,23 @@ pub mod ast {
 
 pub const GRAMMAR_JSON: &str = include_str!(concat!(env!("OUT_DIR"), "/vix_surface_grammar.json"));
 
+/// Is this function a generic monomorphization template — generic, and not a
+/// `#[test]` (a generic test has no instantiation surface, so it flows through
+/// concrete declaration and is rejected there)? This is the one classification
+/// behind receiver-based overloading: a concrete function and a generic template
+/// may share a name, dispatched by receiver type. Declaration
+/// (`compiler::lower_module`), import resolution (`modules::resolve_imports`),
+/// and prelude shadowing (`prelude::item_shadow_key`) must all key on the same
+/// predicate, so it lives here rather than being restated at each site.
+#[must_use]
+pub fn is_generic_template(function: &ast::FnItem) -> bool {
+    function.generics.is_some()
+        && !function
+            .attributes
+            .iter()
+            .any(|attribute| attribute.name.value == "test")
+}
+
 /// Prepared Snark parser for the authoritative Vix surface.
 pub struct SurfaceParser {
     parser: ParserGrammar,

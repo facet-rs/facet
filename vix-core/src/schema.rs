@@ -31,7 +31,12 @@ impl From<SchemaId> for taxon::SchemaId {
 /// Runtime values cannot carry an unresolved type variable. Variables exist in
 /// schema declarations while Taxon computes their identity; every value-facing
 /// reference has a concrete declaration id and recursively concrete arguments.
+///
+/// A *published* schema reference wires as an opaque `Extern(Schema)` store
+/// value whose resident bytes are its canonical encoding, not the walked
+/// `{id, args}` — declared by the `wire_extern` annotation (see `vix-wire`).
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[facet(vix::wire_extern = "Schema")]
 pub struct SchemaRef {
     pub id: SchemaId,
     pub args: Vec<SchemaRef>,
@@ -522,14 +527,27 @@ impl SchemaBatch {
     }
 }
 
+fn builtins() -> &'static SchemaSet {
+    static BUILTINS: OnceLock<SchemaSet> = OnceLock::new();
+    BUILTINS.get_or_init(|| SchemaBatch::vix_builtins().finish())
+}
+
 #[must_use]
 pub(crate) fn builtin_schema(name: &str) -> SchemaRef {
-    static BUILTINS: OnceLock<SchemaSet> = OnceLock::new();
-    BUILTINS
-        .get_or_init(|| SchemaBatch::vix_builtins().finish())
+    builtins()
         .named(name)
         .unwrap_or_else(|| panic!("unknown Vix builtin schema `{name}`"))
         .clone()
+}
+
+/// Whether `name` is a registered builtin schema — the non-panicking query the
+/// compiler uses to validate embedder-injected host-type declarations before
+/// their `schema_ref()` (which would otherwise panic in [`builtin_schema`]) is
+/// ever computed. An injected host type's nominal identity must be one the core
+/// schema batch reserves (see `SchemaBatch::vix_builtins`).
+#[must_use]
+pub(crate) fn is_builtin_schema(name: &str) -> bool {
+    builtins().named(name).is_some()
 }
 
 #[must_use]

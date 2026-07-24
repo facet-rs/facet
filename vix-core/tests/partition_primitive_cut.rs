@@ -24,6 +24,8 @@ use vix::vir::{IslandPurpose, Op, PartitionedTest};
 fn decode_compiler() -> Compiler {
     Compiler::with_config(CompilerConfig {
         prelude: vixen_primitives::stdlib::PRELUDE_SOURCES,
+        methods: vixen_primitives::DOMAIN_METHODS,
+        host_types: vixen_primitives::HOST_TYPES,
         ..CompilerConfig::default()
     })
 }

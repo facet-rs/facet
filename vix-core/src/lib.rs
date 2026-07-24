@@ -4,6 +4,10 @@
 //! and runs through [`runtime`]. The surface AST is generated from its Snark
 //! grammar.
 
+// So this crate's own wire types can spell `#[facet(vix::wire_extern = "…")]`
+// exactly as an embedder does (see [`wire`]).
+extern crate self as vix;
+
 pub mod binding;
 pub mod compiler;
 pub mod decode;
@@ -18,6 +22,14 @@ pub mod runtime;
 pub mod schema;
 pub mod surface;
 pub mod vir;
+
+// The `vix::` facet extension-attribute grammar (`#[facet(vix::wire_extern =
+// "…")]` — a wire type declaring which vix extern it maps to). Declared in
+// `vix-wire` and re-exported here so both this crate's own wire types and any
+// embedder's spell the same `vix::` prefix; the derive resolves the grammar's
+// dispatch macros (`__attr` / `__parse_attr`) and its `Attr` enum through this
+// root, exactly as `dibs` re-exports `dibs-db-schema`.
+pub use vix_wire::{__attr, __parse_attr, Attr};
 
 /// Runtime support for the generated lowering.
 pub mod support {

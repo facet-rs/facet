@@ -28,6 +28,7 @@ pub const STD_MODULE_SOURCE: &str = concat!(
     include_str!("stdlib/toml_decode.vix"),
     include_str!("stdlib/try_json_decode.vix"),
     include_str!("stdlib/try_toml_decode.vix"),
+    include_str!("stdlib/combinators.vix"),
     "}\n",
 );
 
@@ -40,6 +41,7 @@ pub const PRELUDE_SOURCES: &[&str] = &[
     include_str!("stdlib/toml_decode.vix"),
     include_str!("stdlib/try_json_decode.vix"),
     include_str!("stdlib/try_toml_decode.vix"),
+    include_str!("stdlib/combinators.vix"),
     STD_MODULE_SOURCE,
 ];
 
@@ -50,6 +52,8 @@ mod tests {
     fn with_stdlib() -> Compiler {
         Compiler::with_config(CompilerConfig {
             prelude: super::PRELUDE_SOURCES,
+            methods: crate::DOMAIN_METHODS,
+            host_types: crate::HOST_TYPES,
             ..CompilerConfig::default()
         })
     }
@@ -176,5 +180,50 @@ fn decode_row() -> Row {
             "fn check(text: String) -> Bool {\n    demo_blank(text)\n}\n",
         );
         assert!(with_prelude(DEMO_PRELUDE).compile(program).is_ok());
+    }
+
+    #[test]
+    fn the_combinators_are_std_vix_reached_by_method_syntax() {
+        // `any`/`all`/`contains`/`find_min`/`find_max` are std vix over `fold` /
+        // the stream core — no longer dedicated ops — reached through the generic
+        // uniform method-call fallback (and, for the stream ones, inlined).
+        let program = concat!(
+            "#[test]\n",
+            "fn t() -> Stream<Check> {\n",
+            "    yield expect(([2, 4, 6]).all(|n| n.rem(2) == 0));\n",
+            "    yield expect(([1, 2, 3]).any(|n| n == 2));\n",
+            "    yield expect(([1, 2, 3]).contains(2));\n",
+            "    yield expect_eq([3, 1, 2].stream().find_min(|n| n > 1), Some(2));\n",
+            "    yield expect_eq([3, 1, 2].stream().find_max(|_| true), Some(3));\n",
+            "}\n",
+        );
+        assert!(
+            with_stdlib().compile(program).is_ok(),
+            "combinators resolve via the std prelude"
+        );
+        // Without the stdlib they are not builtin either — migrated off the ops.
+        assert!(without_stdlib().compile(program).is_err());
+    }
+
+    #[test]
+    fn a_concrete_method_and_the_generic_contains_share_a_name() {
+        // A receiver-typed `contains` (on `Bag`) coexists with the generic array
+        // `contains<T>`: method dispatch resolves each by receiver type.
+        let program = concat!(
+            "struct Bag { xs: [Int] }\n",
+            "fn contains(bag: Bag) where { value: Int } -> Bool {\n",
+            "    (bag.xs).any(|x| x == value)\n",
+            "}\n",
+            "#[test]\n",
+            "fn t() -> Stream<Check> {\n",
+            "    let bag = Bag { xs: [1, 2, 3] };\n",
+            "    yield expect(bag.contains(2));\n",
+            "    yield expect(([4, 5]).contains(5));\n",
+            "}\n",
+        );
+        assert!(
+            with_stdlib().compile(program).is_ok(),
+            "concrete and generic `contains` coexist, dispatched by receiver type"
+        );
     }
 }

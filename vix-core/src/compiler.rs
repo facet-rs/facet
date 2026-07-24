@@ -11,7 +11,7 @@ use taxon::{
 
 use crate::decode::{self, DecodeFormat, DecodedValue};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics, Label};
-use crate::runtime::{PinnedBlobRef, tree_read_primitive_id, tree_read_request_type};
+use crate::runtime::{tree_read_primitive_id, tree_read_request_type};
 use crate::schema::{SchemaBatch, SchemaRef, SchemaSet};
 use crate::support::{Span, Spanned};
 use crate::surface::{SurfaceParser, ast};
@@ -62,6 +62,18 @@ pub struct CompilerConfig {
     /// perturbs module counts and the module-set hash. Empty for tests that
     /// isolate the bare surface.
     pub prelude: &'static [&'static str],
+    /// Receiver-method declarations the embedder injects — a host type's methods
+    /// (`Tree.glob`, `Registry.url`, …) declared by `vixen-primitives` rather
+    /// than hardcoded in `vix-core`. Consulted by `lower_method_call` alongside
+    /// the builtin axiom methods; each names the dedicated op its bespoke
+    /// lowering owns. `vix-core` alone ships **none** — the bare language.
+    pub methods: &'static [crate::binding::MethodDecl],
+    /// Host-type declarations the embedder injects — the domain types (`Tree`,
+    /// `TreeEntry`) declared by `vixen-primitives` rather than hardcoded as
+    /// `ExternKind` variants. The type-annotation parser resolves these names.
+    /// `vix-core` alone ships **none**; the axiom externs
+    /// (`Blob`/`Registry`/`Schema`/`PinnedUrl`) stay hardcoded.
+    pub host_types: &'static [crate::binding::HostTypeDecl],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -329,6 +341,18 @@ impl<'a> ModuleContext<'a> {
             path,
             next_closure: 0,
         });
+    }
+
+    /// Is a function named `name` currently being inlined (on the active scope
+    /// stack)? Used to reject a stream function that re-enters itself through
+    /// inlining. Inline scopes are pushed as `"{name}#inline@{span}"`.
+    fn is_inlining(&self, name: &str) -> bool {
+        let prefix = format!("{name}#inline@");
+        self.generated
+            .scopes
+            .borrow()
+            .iter()
+            .any(|scope| scope.path.starts_with(&prefix))
     }
 
     fn leave_function(&self) {
@@ -674,10 +698,14 @@ struct TypeResolver<'a> {
     resolving: BTreeSet<String>,
     resolved: BTreeMap<String, Type>,
     schemas: SchemaSet,
+    host_types: &'a [crate::binding::HostTypeDecl],
 }
 
 impl<'a> TypeResolver<'a> {
-    fn new(source: &'a ast::SourceFile) -> Result<Self, Diagnostics> {
+    fn new(
+        source: &'a ast::SourceFile,
+        host_types: &'a [crate::binding::HostTypeDecl],
+    ) -> Result<Self, Diagnostics> {
         let schemas = semantic_schema_set(source)?;
         let mut declarations = BTreeMap::new();
         for item in &source.items {
@@ -721,6 +749,7 @@ impl<'a> TypeResolver<'a> {
             resolving: BTreeSet::new(),
             resolved: BTreeMap::from([("Ordering".to_owned(), Type::ordering())]),
             schemas,
+            host_types,
         })
     }
 
@@ -1158,10 +1187,6 @@ impl<'a> TypeResolver<'a> {
             ast::Type::Path(path) if path_is(path, "Int") => Ok(Type::Int),
             ast::Type::Path(path) if path_is(path, "String") => Ok(Type::String),
             ast::Type::Path(path) if path_is(path, "Path") => Ok(Type::Path),
-            ast::Type::Path(path) if path_is(path, "Tree") => Ok(Type::Extern(ExternKind::Tree)),
-            ast::Type::Path(path) if path_is(path, "TreeEntry") => {
-                Ok(Type::Extern(ExternKind::TreeEntry))
-            }
             ast::Type::Path(path) if path_is(path, "Blob") => Ok(Type::Extern(ExternKind::Blob)),
             ast::Type::Path(path) if path_is(path, "Registry") => {
                 Ok(Type::Extern(ExternKind::Registry))
@@ -1174,6 +1199,25 @@ impl<'a> TypeResolver<'a> {
                 if CAPABILITY_TYPE_NAMES.iter().any(|name| path_is(path, name)) =>
             {
                 Ok(capability_type(&path_name(path)))
+            }
+            // Injected host types resolve after every hardcoded core type, so a
+            // core name always wins its own spelling — matching the axiom-first
+            // order `lower_declared_type` uses (host types are its `types`-env
+            // fallback). `lower_module` has already rejected any host type whose
+            // name is not a reserved builtin schema.
+            ast::Type::Path(path)
+                if self
+                    .host_types
+                    .iter()
+                    .any(|decl| path_is(path, decl.name)) =>
+            {
+                let name = self
+                    .host_types
+                    .iter()
+                    .find(|decl| path_is(path, decl.name))
+                    .expect("guarded by the injected host types above")
+                    .name;
+                Ok(Type::Extern(ExternKind::Host(name)))
             }
             ast::Type::Generic(_) if is_stream_check_type(ty) => Ok(Type::StreamCheck),
             ast::Type::Generic(generic) if path_is(&generic.base, "Option") => {
@@ -1267,6 +1311,17 @@ impl<'a> TypeResolver<'a> {
 /// r[impl machine.primitive.capabilities-by-identity]
 pub const CAPABILITY_TYPE_NAMES: &[&str] = &["Echo", "Sh", "ProgressiveSh"];
 
+/// The type names the core language resolves itself — the plain-path resolver
+/// arms plus the generic bases and the pre-seeded `Ordering`. The injected
+/// host-type arm resolves *after* every one of these, so a host type declared
+/// under a core spelling could never be named; `lower_module` rejects such a
+/// declaration up front rather than letting it sit silently shadowed. Kept in
+/// lockstep with `TypeResolver::resolve_type_with` / `lower_declared_type`.
+const CORE_TYPE_SPELLINGS: &[&str] = &[
+    "Bool", "Int", "String", "Path", "Check", "Ordering", "Blob", "Registry", "PinnedUrl",
+    "Schema", "Option", "Map", "Set", "Stream",
+];
+
 /// The single opaque field carrying a capability's executable identity.
 pub const CAPABILITY_PROGRAM_FIELD: &str = "$program";
 
@@ -1324,7 +1379,7 @@ pub fn exec_outcome_type() -> Type {
         vec![
             RecordField {
                 name: "tree".to_owned(),
-                ty: Type::Extern(ExternKind::Tree),
+                ty: Type::Extern(ExternKind::Host(crate::binding::TREE)),
             },
             RecordField {
                 name: "stdout".to_owned(),
@@ -1343,11 +1398,46 @@ fn lower_module(
     config: CompilerConfig,
     primitive_surfaces: &[crate::runtime::PrimitiveSurface],
 ) -> Result<Module, Diagnostics> {
-    let mut types = TypeResolver::new(source)?.resolve_all(source)?;
+    let mut types = TypeResolver::new(source, config.host_types)?.resolve_all(source)?;
     for name in CAPABILITY_TYPE_NAMES {
         types
             .entry((*name).to_owned())
             .or_insert_with(|| capability_type(name));
+    }
+    // Injected host types (`Tree`, `TreeEntry`) are nameable like any declared
+    // type — the language no longer hardcodes them. Their extern-backed value
+    // hashes identically to the retired `ExternKind` variants (`name()` is
+    // unchanged), so recipe/value identity is byte-stable. A host type's nominal
+    // identity must still be reserved in the core schema batch: validate it up
+    // front so a misconfigured embedder gets a diagnostic here rather than a
+    // panic deep inside schema hashing when `Host(name).schema_ref()` is first
+    // computed.
+    for decl in config.host_types {
+        if !crate::schema::is_builtin_schema(decl.name) {
+            return Err(Diagnostics::one(Diagnostic::unsupported(
+                Span { start: 0, end: 0 },
+                format!(
+                    "injected host type `{}` is not a registered builtin schema (reserve its \
+                     name in vix-core's schema batch before declaring it)",
+                    decl.name
+                ),
+            )));
+        }
+        if CORE_TYPE_SPELLINGS.contains(&decl.name)
+            || CAPABILITY_TYPE_NAMES.contains(&decl.name)
+        {
+            return Err(Diagnostics::one(Diagnostic::unsupported(
+                Span { start: 0, end: 0 },
+                format!(
+                    "injected host type `{}` collides with a core type spelling — the core \
+                     always wins its own name, so the declaration could never be reached",
+                    decl.name
+                ),
+            )));
+        }
+        types
+            .entry(decl.name.to_owned())
+            .or_insert_with(|| Type::Extern(ExternKind::Host(decl.name)));
     }
     let declared_type_names = source
         .items
@@ -1365,14 +1455,23 @@ fn lower_module(
     // Generic function templates are neither declared nor lowered up front; each
     // instantiation is monomorphized on demand at its call site.
     let mut generics: BTreeMap<String, &ast::FnItem> = BTreeMap::new();
-    let mut function_names = BTreeSet::new();
+    // A name may be declared at most once as a concrete function and once as a
+    // generic template — never twice in the same category. This lets a
+    // receiver-typed method and a generic combinator share a name and dispatch by
+    // receiver type (a concrete `contains` alongside the array `contains<T>`),
+    // the way inherent methods resolve `.m()` per type.
+    let mut function_names: BTreeSet<(String, bool)> = BTreeSet::new();
 
     for item in &source.items {
         let ast::Item::Fn(function) = item else {
             continue;
         };
+        // Only generic *value* functions become monomorphization templates. A
+        // generic `#[test]` has no instantiation surface, so it flows through
+        // `declare_function`, which rejects it as a generic function.
+        let is_generic_template = crate::surface::is_generic_template(function);
         if declared_type_names.contains(function.name.value.as_str())
-            || !function_names.insert(function.name.value.clone())
+            || !function_names.insert((function.name.value.clone(), is_generic_template))
         {
             return Err(Diagnostics::one(Diagnostic {
                 code: DiagnosticCode::DuplicateDefinition,
@@ -1383,14 +1482,7 @@ fn lower_module(
                 },
             }));
         }
-        // Only generic *value* functions become monomorphization templates. A
-        // generic `#[test]` has no instantiation surface, so it flows through
-        // `declare_function`, which rejects it as a generic function.
-        let is_test = function
-            .attributes
-            .iter()
-            .any(|attribute| attribute.name.value == "test");
-        if function.generics.is_some() && !is_test {
+        if is_generic_template {
             generics.insert(function.name.value.clone(), function);
             continue;
         }
@@ -1440,7 +1532,12 @@ fn lower_module(
         let ast::Item::Fn(function) = item else {
             continue;
         };
-        if generics.contains_key(&function.name.value) {
+        // Skip generic *templates* (lowered per instantiation). This keys on the
+        // function's own generic-ness, not `generics` membership by name: a
+        // concrete function may share its name with a generic one, and skipping
+        // the concrete item here would desync the signature iterator and lower
+        // every later function against the wrong signature.
+        if crate::surface::is_generic_template(function) {
             continue;
         }
         let signature = ordered_signatures
@@ -2000,10 +2097,9 @@ fn lower_declared_type(
         ast::Type::Path(path) if path_is(path, "Int") => Ok(Type::Int),
         ast::Type::Path(path) if path_is(path, "String") => Ok(Type::String),
         ast::Type::Path(path) if path_is(path, "Path") => Ok(Type::Path),
-        ast::Type::Path(path) if path_is(path, "Tree") => Ok(Type::Extern(ExternKind::Tree)),
-        ast::Type::Path(path) if path_is(path, "TreeEntry") => {
-            Ok(Type::Extern(ExternKind::TreeEntry))
-        }
+        // `Tree`/`TreeEntry` are injected host types, resolved through the `types`
+        // environment fallback below (populated in `lower_module`) rather than
+        // hardcoded here — the language core no longer knows them by name.
         ast::Type::Path(path) if path_is(path, "Blob") => Ok(Type::Extern(ExternKind::Blob)),
         ast::Type::Path(path) if path_is(path, "Registry") => {
             Ok(Type::Extern(ExternKind::Registry))
@@ -3125,352 +3221,7 @@ struct LoweredValue {
     ty: Type,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PreludeReceiverType {
-    Array,
-    String,
-    Map,
-    Set,
-    Stream,
-    Int,
-    Path,
-    ByteStream,
-    Tree,
-    TreeEntry,
-    Blob,
-    Registry,
-}
-
-impl PreludeReceiverType {
-    fn from_vir_type(ty: &Type) -> Option<Self> {
-        match ty {
-            Type::Array(_) => Some(Self::Array),
-            Type::String => Some(Self::String),
-            Type::Map { .. } => Some(Self::Map),
-            Type::Set(_) => Some(Self::Set),
-            Type::Stream { .. } => Some(Self::Stream),
-            Type::Int => Some(Self::Int),
-            Type::Path => Some(Self::Path),
-            Type::Record(record) if record.name == "ByteStream" => Some(Self::ByteStream),
-            Type::Extern(ExternKind::Tree) => Some(Self::Tree),
-            Type::Extern(ExternKind::TreeEntry) => Some(Self::TreeEntry),
-            Type::Extern(ExternKind::Blob) => Some(Self::Blob),
-            Type::Extern(ExternKind::Registry) => Some(Self::Registry),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PreludeMethod {
-    ArrayLen,
-    ArrayMap,
-    ArrayFold,
-    ArraySplitLast,
-    ArrayAll,
-    ArrayAny,
-    ArrayContains,
-    StringTrim,
-    StringContains,
-    StringSplitOnce,
-    StringParseInt,
-    StringIsNumeric,
-    StringLines,
-    ArraySorted,
-    ArrayStream,
-    IntRem,
-    MapGet,
-    MapHas,
-    MapLen,
-    MapKeys,
-    MapValues,
-    MapWith,
-    SetHas,
-    SetLen,
-    SetValues,
-    StreamFilter,
-    StreamFilterMap,
-    StreamFlatMap,
-    StreamCollect,
-    StreamFindMin,
-    StreamFindMax,
-    StreamSplitMin,
-    PathToString,
-    IntToString,
-    ByteStreamCollect,
-    ByteStreamTrim,
-    TreeGlob,
-    TreeEntryText,
-    BlobLen,
-    RegistryUrl,
-}
-
-#[derive(Clone, Copy)]
-struct PreludeMethodEntry {
-    receiver: PreludeReceiverType,
-    name: &'static str,
-    arity: usize,
-    method: PreludeMethod,
-}
-
-struct PreludeMethodRegistry {
-    entries: &'static [PreludeMethodEntry],
-}
-
-impl PreludeMethodRegistry {
-    const STANDARD: Self = Self {
-        entries: &[
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::Array,
-                name: "len",
-                arity: 0,
-                method: PreludeMethod::ArrayLen,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::Array,
-                name: "map",
-                arity: 1,
-                method: PreludeMethod::ArrayMap,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::Array,
-                name: "fold",
-                arity: 2,
-                method: PreludeMethod::ArrayFold,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::Array,
-                name: "split_last",
-                arity: 0,
-                method: PreludeMethod::ArraySplitLast,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::Array,
-                name: "all",
-                arity: 1,
-                method: PreludeMethod::ArrayAll,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::Array,
-                name: "any",
-                arity: 1,
-                method: PreludeMethod::ArrayAny,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::Array,
-                name: "contains",
-                arity: 1,
-                method: PreludeMethod::ArrayContains,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::String,
-                name: "trim",
-                arity: 0,
-                method: PreludeMethod::StringTrim,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::String,
-                name: "contains",
-                arity: 1,
-                method: PreludeMethod::StringContains,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::String,
-                name: "split_once",
-                arity: 1,
-                method: PreludeMethod::StringSplitOnce,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::String,
-                name: "parse_int",
-                arity: 0,
-                method: PreludeMethod::StringParseInt,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::String,
-                name: "is_numeric",
-                arity: 0,
-                method: PreludeMethod::StringIsNumeric,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::String,
-                name: "lines",
-                arity: 0,
-                method: PreludeMethod::StringLines,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::Array,
-                name: "sorted",
-                arity: 0,
-                method: PreludeMethod::ArraySorted,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::Array,
-                name: "stream",
-                arity: 0,
-                method: PreludeMethod::ArrayStream,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::Int,
-                name: "rem",
-                arity: 1,
-                method: PreludeMethod::IntRem,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::Map,
-                name: "get",
-                arity: 1,
-                method: PreludeMethod::MapGet,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::Map,
-                name: "has",
-                arity: 1,
-                method: PreludeMethod::MapHas,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::Map,
-                name: "len",
-                arity: 0,
-                method: PreludeMethod::MapLen,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::Map,
-                name: "keys",
-                arity: 0,
-                method: PreludeMethod::MapKeys,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::Map,
-                name: "values",
-                arity: 0,
-                method: PreludeMethod::MapValues,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::Map,
-                name: "with",
-                arity: 2,
-                method: PreludeMethod::MapWith,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::Set,
-                name: "has",
-                arity: 1,
-                method: PreludeMethod::SetHas,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::Set,
-                name: "len",
-                arity: 0,
-                method: PreludeMethod::SetLen,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::Set,
-                name: "values",
-                arity: 0,
-                method: PreludeMethod::SetValues,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::Stream,
-                name: "filter",
-                arity: 1,
-                method: PreludeMethod::StreamFilter,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::Stream,
-                name: "filter_map",
-                arity: 1,
-                method: PreludeMethod::StreamFilterMap,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::Stream,
-                name: "flat_map",
-                arity: 1,
-                method: PreludeMethod::StreamFlatMap,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::Stream,
-                name: "collect",
-                arity: 0,
-                method: PreludeMethod::StreamCollect,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::ByteStream,
-                name: "collect",
-                arity: 0,
-                method: PreludeMethod::ByteStreamCollect,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::ByteStream,
-                name: "trim",
-                arity: 0,
-                method: PreludeMethod::ByteStreamTrim,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::Stream,
-                name: "find_min",
-                arity: 1,
-                method: PreludeMethod::StreamFindMin,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::Stream,
-                name: "find_max",
-                arity: 1,
-                method: PreludeMethod::StreamFindMax,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::Stream,
-                name: "split_min",
-                arity: 0,
-                method: PreludeMethod::StreamSplitMin,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::Path,
-                name: "to_string",
-                arity: 0,
-                method: PreludeMethod::PathToString,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::Int,
-                name: "to_string",
-                arity: 0,
-                method: PreludeMethod::IntToString,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::Tree,
-                name: "glob",
-                arity: 1,
-                method: PreludeMethod::TreeGlob,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::TreeEntry,
-                name: "text",
-                arity: 0,
-                method: PreludeMethod::TreeEntryText,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::Blob,
-                name: "len",
-                arity: 0,
-                method: PreludeMethod::BlobLen,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::Registry,
-                name: "url",
-                arity: 1,
-                method: PreludeMethod::RegistryUrl,
-            },
-        ],
-    };
-
-    fn resolve(&self, receiver: &Type, name: &str) -> Option<PreludeMethodEntry> {
-        let receiver = PreludeReceiverType::from_vir_type(receiver)?;
-        self.entries
-            .iter()
-            .copied()
-            .find(|entry| entry.receiver == receiver && entry.name == name)
-    }
-}
+use crate::binding::MethodOp as PreludeMethod;
 
 fn lower_value(
     nodes: &mut Vec<Node>,
@@ -4088,6 +3839,343 @@ fn lower_uniform_call(
     })
 }
 
+/// The generic twin of [`lower_uniform_call`]: `recv.method(args)` where `method`
+/// is a generic function template (in `ModuleContext::generics`). The receiver
+/// binds the sole positional parameter and the method's positional arguments bind
+/// the `where` parameters; those concrete types (plus the call's expected type)
+/// drive type-argument inference, and the template is monomorphized on demand —
+/// the same instantiation path as a direct generic call. A `where` argument is
+/// lowered with its declared type resolved against the inferred type arguments,
+/// so an unannotated closure argument is typed by the receiver's element type.
+fn lower_uniform_generic_call(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    call: &ast::MethodCall,
+    receiver: LoweredValue,
+    expected: Option<&Type>,
+) -> Result<LoweredValue, Diagnostics> {
+    let template = *context
+        .generics
+        .get(&call.name.value)
+        .expect("generic method template");
+    if template
+        .attributes
+        .iter()
+        .any(|attribute| attribute.name.value == "test")
+    {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            call.span,
+            "calling a test function as a method",
+        )));
+    }
+    if let Some(named) = &call.named_args {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            named.span,
+            "named method arguments",
+        )));
+    }
+    let generics = template
+        .generics
+        .as_ref()
+        .expect("generic template has type parameters");
+
+    let [receiver_parameter] = template.params.params.as_slice() else {
+        return Err(type_mismatch(
+            call.name.span,
+            "a method with one receiver parameter",
+            &call.name.value,
+        ));
+    };
+    let where_parameters: Vec<&ast::NamedParam> = template
+        .where_params
+        .as_ref()
+        .and_then(|where_params| where_params.inline.as_ref())
+        .map(|inline| inline.params.iter().collect())
+        .unwrap_or_default();
+    let arguments = method_positional_args(call);
+    if arguments.len() != where_parameters.len() {
+        return Err(invalid_arity(
+            call.span,
+            where_parameters.len(),
+            arguments.len(),
+        ));
+    }
+
+    let parameter_names = generics
+        .params
+        .iter()
+        .map(|parameter| parameter.value.clone())
+        .collect::<BTreeSet<_>>();
+    // Infer type arguments from the receiver first, then — when the call site
+    // pins it — from the expected return type, so an unannotated closure argument
+    // can be typed by the now-known element/return types before it is lowered.
+    let mut inferred = BTreeMap::new();
+    infer_type_argument(
+        &receiver_parameter.ty,
+        &receiver.ty,
+        &parameter_names,
+        &mut inferred,
+        call.name.span,
+    )?;
+    if let (Some(expected), Some(return_type)) = (expected, template.return_type.as_ref()) {
+        infer_type_argument(
+            return_type,
+            expected,
+            &parameter_names,
+            &mut inferred,
+            call.name.span,
+        )?;
+    }
+
+    // Lower each `where` argument with its declared parameter type — resolved
+    // against the type arguments inferred so far — as the expected type, so an
+    // unannotated closure's parameter is pinned; then recover any remaining type
+    // parameter the argument determines.
+    let mut argument_env = context.types.as_ref().clone();
+    for (name, ty) in &inferred {
+        argument_env.insert(name.clone(), ty.clone());
+    }
+    let mut lowered_arguments = Vec::with_capacity(arguments.len());
+    for (parameter, argument) in where_parameters.iter().zip(arguments) {
+        let expected_argument = lower_declared_type(&parameter.ty, &argument_env).ok();
+        let value =
+            lower_value_expected(nodes, bindings, context, argument, expected_argument.as_ref())?;
+        infer_type_argument(
+            &parameter.ty,
+            &value.ty,
+            &parameter_names,
+            &mut inferred,
+            call.name.span,
+        )?;
+        lowered_arguments.push(value);
+    }
+
+    let mut type_arguments = Vec::with_capacity(generics.params.len());
+    for parameter in &generics.params {
+        let argument = inferred.get(&parameter.value).cloned().ok_or_else(|| {
+            Diagnostics::one(Diagnostic::unsupported(
+                call.name.span,
+                format!("cannot infer type argument `{}`", parameter.value),
+            ))
+        })?;
+        type_arguments.push(argument);
+    }
+
+    // A function that carries a `Stream` across its call boundary is inlined
+    // (see `inline_stream_call`), never lowered to `Op::Call`.
+    if signature_carries_stream(template) {
+        let mut bound = Vec::with_capacity(1 + lowered_arguments.len());
+        bound.push((receiver_parameter.name.value.clone(), receiver));
+        for (parameter, value) in where_parameters.iter().zip(lowered_arguments) {
+            bound.push((parameter.name.value.clone(), value));
+        }
+        return inline_stream_call(
+            nodes,
+            context,
+            template,
+            &type_arguments,
+            bound,
+            expected,
+            call.span,
+        );
+    }
+
+    let (id, signature) =
+        context.instantiate_monomorph(&call.name.value, type_arguments, call.span)?;
+
+    let mut inputs = Vec::with_capacity(signature.parameters.len());
+    let mut positional_signature = signature
+        .parameters
+        .iter()
+        .filter(|parameter| parameter.kind == ParameterKind::Positional);
+    let receiver_signature = positional_signature
+        .next()
+        .expect("a monomorphized method has its receiver parameter");
+    require_type(&receiver, &receiver_signature.ty, expr_span(&call.receiver))?;
+    inputs.push(receiver.node);
+    let named_signature = signature
+        .parameters
+        .iter()
+        .filter(|parameter| parameter.kind == ParameterKind::Named);
+    for ((parameter, value), argument) in named_signature.zip(&lowered_arguments).zip(arguments) {
+        require_type(value, &parameter.ty, expr_span(argument))?;
+        inputs.push(value.node);
+    }
+
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            call.span,
+            signature.return_type.clone(),
+            EffectFacts::PURE,
+            inputs,
+            Op::Call(id),
+        ),
+        ty: signature.return_type,
+    })
+}
+
+/// Does an AST type mention a `Stream<..>` anywhere in its shape?
+fn ast_type_mentions_stream(ty: &ast::Type) -> bool {
+    match ty {
+        ast::Type::Generic(generic) if path_name(&generic.base) == "Stream" => true,
+        ast::Type::Generic(generic) => generic.args.iter().any(ast_type_mentions_stream),
+        ast::Type::Array(array) => ast_type_mentions_stream(&array.elem),
+        ast::Type::Tuple(tuple) => tuple.elems.iter().any(ast_type_mentions_stream),
+        ast::Type::Function(function) => {
+            ast_type_mentions_stream(&function.parameter)
+                || ast_type_mentions_stream(&function.result)
+        }
+        ast::Type::Path(_) => false,
+    }
+}
+
+/// Does this function carry a `Stream` across its call boundary (a parameter or
+/// its return type)? Such a function is always inlined ([`inline_stream_call`]):
+/// a stream recipe resolves only within one function's node slice, so a stream
+/// can neither be passed as an argument nor returned across a frame.
+fn signature_carries_stream(function: &ast::FnItem) -> bool {
+    let positional = function.params.params.iter().map(|parameter| &parameter.ty);
+    let where_typed = function
+        .where_params
+        .as_ref()
+        .and_then(|where_params| where_params.inline.as_ref())
+        .into_iter()
+        .flat_map(|inline| inline.params.iter().map(|parameter| &parameter.ty));
+    let returned = function.return_type.as_ref();
+    positional
+        .chain(where_typed)
+        .chain(returned)
+        .any(ast_type_mentions_stream)
+}
+
+/// Inline a generic function's body at a call site instead of emitting an
+/// `Op::Call`, for a function that carries a `Stream` across its boundary. The
+/// body is re-lowered into the caller's `nodes` with its type parameters bound
+/// concretely and its parameters bound to the already-lowered argument values, so
+/// every stream op stays in one node slice rooted at the caller's
+/// `Op::ArrayStream`. A stream function that recurses through inlining is
+/// rejected rather than looped.
+fn inline_stream_call(
+    nodes: &mut Vec<Node>,
+    context: &ModuleContext<'_>,
+    template: &ast::FnItem,
+    type_arguments: &[Type],
+    bound_parameters: Vec<(String, LoweredValue)>,
+    expected: Option<&Type>,
+    span: Span,
+) -> Result<LoweredValue, Diagnostics> {
+    if context.is_inlining(&template.name.value) {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            span,
+            "a stream function that recurses (a stream cannot cross a call, so it \
+             cannot be recursive)",
+        )));
+    }
+    let types = context.monomorph_types(template, type_arguments)?;
+    let inline_context = context.monomorph_context(types);
+    let mut bindings: BTreeMap<String, LoweredValue> = bound_parameters.into_iter().collect();
+    inline_context.enter_function(format!("{}#inline@{}", template.name.value, span.start));
+    let lowered = (|| {
+        for statement in &template.body.stmts {
+            match statement {
+                ast::Stmt::Let(statement) => {
+                    lower_let_statement(nodes, &mut bindings, &inline_context, statement)?;
+                }
+                ast::Stmt::Expression(statement) => {
+                    return Err(expression_statement_diagnostic(statement.span));
+                }
+                ast::Stmt::Yield(statement) => {
+                    return Err(Diagnostics::one(Diagnostic::unsupported(
+                        statement.span,
+                        "yield outside a Stream<Check> test",
+                    )));
+                }
+            }
+        }
+        let tail = template.body.tail.as_ref().ok_or_else(|| {
+            Diagnostics::one(Diagnostic::unsupported(
+                template.body.span,
+                "an inlined stream function needs a tail value",
+            ))
+        })?;
+        lower_value_expected(nodes, &bindings, &inline_context, tail, expected)
+    })();
+    inline_context.leave_function();
+    lowered
+}
+
+/// Lower a primitive-backed receiver method ([`MethodLowering::Primitive`]):
+/// build the declared request record — its first field binds the receiver, the
+/// rest bind the positional arguments in order — and invoke the primitive. Both
+/// nodes are `PURE`: the invocation is an ordinary in-frame primitive demand the
+/// scheduler stages; any effect is witnessed *inside* the primitive via its
+/// `EffectCtx` reads (as `registry-url` reads the manifest). There is no
+/// per-method compiler code on this rail — the whole contract is the injected
+/// declaration, so it lives in the embedder alongside the implementation.
+fn lower_primitive_method(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    call: &ast::MethodCall,
+    receiver: LoweredValue,
+    positional: &[ast::Expr],
+    primitive: crate::binding::PrimitiveMethodDecl,
+) -> Result<LoweredValue, Diagnostics> {
+    let request_ty = (primitive.request)();
+    let Type::Record(record) = &request_ty else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            call.span,
+            format!(
+                "primitive method `{}` declares a non-record request type",
+                call.name.value
+            ),
+        )));
+    };
+    if record.fields.len() != positional.len() + 1 {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            call.span,
+            format!(
+                "primitive method `{}` declares {} request fields for arity {}",
+                call.name.value,
+                record.fields.len(),
+                positional.len(),
+            ),
+        )));
+    }
+    require_type(&receiver, &record.fields[0].ty, expr_span(&call.receiver))?;
+    let mut inputs = Vec::with_capacity(record.fields.len());
+    inputs.push(receiver.node);
+    for (field, argument) in record.fields[1..].iter().zip(positional) {
+        let value = lower_value_expected(nodes, bindings, context, argument, Some(&field.ty))?;
+        require_type(&value, &field.ty, expr_span(argument))?;
+        inputs.push(value.node);
+    }
+    let request = push_node(
+        nodes,
+        call.span,
+        request_ty.clone(),
+        EffectFacts::PURE,
+        inputs,
+        Op::Record,
+    );
+    let ty = (primitive.result)();
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            call.span,
+            ty.clone(),
+            EffectFacts::PURE,
+            vec![request],
+            Op::InvokePrimitive {
+                primitive: (primitive.id)(),
+            },
+        ),
+        ty,
+    })
+}
+
 fn tree_projection_syntax(expression: &ast::Expr) -> Option<(&ast::Expr, Vec<&ast::Expr>)> {
     fn collect<'a>(expression: &'a ast::Expr, segments: &mut Vec<&'a ast::Expr>) -> &'a ast::Expr {
         if let ast::Expr::Paren(paren) = expression {
@@ -4145,7 +4233,11 @@ fn lower_tree_text_projection(
     segments: &[&ast::Expr],
 ) -> Result<LoweredValue, Diagnostics> {
     let tree = lower_value(nodes, bindings, context, base)?;
-    require_type(&tree, &Type::Extern(ExternKind::Tree), expr_span(base))?;
+    require_type(
+        &tree,
+        &Type::Extern(ExternKind::Host(crate::binding::TREE)),
+        expr_span(base),
+    )?;
 
     let mut paths = Vec::with_capacity(segments.len());
     for segment in segments {
@@ -4170,30 +4262,27 @@ fn lower_tree_text_projection(
         paths.push(path);
     }
 
-    if progressive_exec_tree_root(nodes, tree.node) {
-        let mut entry = tree.node;
-        for path in paths {
-            entry = push_node(
-                nodes,
-                call.span,
-                Type::Extern(ExternKind::TreeEntry),
-                EffectFacts::EFFECT,
-                vec![entry, path.node],
-                Op::TreeProject,
-            );
-        }
-        return Ok(LoweredValue {
-            node: push_node(
-                nodes,
-                call.span,
-                Type::String,
-                EffectFacts::EFFECT,
-                vec![entry],
-                Op::TreeEntryText,
-            ),
-            ty: Type::String,
-        });
-    }
+    // An exec-origin projection off a still-running `ProgressiveSh` tree is read
+    // progressively: the value island is realized by the exec engine's
+    // command-protocol projection (`submit_exec_projection`) so one subfile can
+    // land before the whole process exits. Every other tree (fixture, extracted
+    // archive, completed exec output) is a settled, interned value the store-
+    // backed `TreeReadPrimitive` reads directly. Both spell the same tree-read
+    // request; only the effect facts differ — `EFFECT` marks the exec-origin
+    // read as an effect root the partitioner hoists and hands to the engine,
+    // while `PURE` keeps the settled read an ordinary in-frame primitive call.
+    // The progressive rail is only reachable when the projection path is a
+    // compile-time constant: the exec engine subscribes to a named product
+    // (`out/early.txt`), which the partitioner reads back off the request. A
+    // computed path cannot name a product ahead of time, so it falls back to a
+    // settled read of the completed exec tree (identical to a fixture read).
+    // This gate and the partitioner's node-level twin
+    // (`vir::progressive_exec_tree_path`) must agree: the partitioner asserts
+    // that every EFFECT-marked tree-read extracts, so a drift fails loudly.
+    let progressive = progressive_exec_tree_root(nodes, tree.node)
+        && segments
+            .iter()
+            .all(|segment| matches!(segment, ast::Expr::Str(_) | ast::Expr::Path(_)));
 
     let mut paths = paths.into_iter();
     let mut path = paths
@@ -4222,12 +4311,17 @@ fn lower_tree_text_projection(
         vec![tree.node, path.node],
         Op::Record,
     );
+    let facts = if progressive {
+        EffectFacts::EFFECT
+    } else {
+        EffectFacts::PURE
+    };
     Ok(LoweredValue {
         node: push_node(
             nodes,
             call.span,
             Type::String,
-            EffectFacts::PURE,
+            facts,
             vec![request],
             Op::InvokePrimitive {
                 primitive: tree_read_primitive_id(),
@@ -4244,24 +4338,52 @@ fn lower_method_call(
     call: &ast::MethodCall,
     expected: Option<&Type>,
 ) -> Result<LoweredValue, Diagnostics> {
+    // The `(tree / seg).text()` projection read is domain surface syntax, active
+    // only when the embedder declares the `Tree` host type — the bare language
+    // ships the machinery (`lower_tree_text_projection`) but no spelling reaches
+    // it, the same doctrine as the injected domain methods below.
     if call.name.value == "text"
         && method_positional_args(call).is_empty()
         && call.named_args.is_none()
+        && context
+            .config
+            .host_types
+            .iter()
+            .any(|decl| decl.name == crate::binding::TREE)
         && let Some((base, segments)) = tree_projection_syntax(&call.receiver)
     {
         return lower_tree_text_projection(nodes, bindings, context, call, base, &segments);
     }
     let receiver = lower_value(nodes, bindings, context, &call.receiver)?;
-    let Some(entry) = PreludeMethodRegistry::STANDARD.resolve(&receiver.ty, &call.name.value)
-    else {
+    // Axiom methods resolve against the builtin registry; the embedder's injected
+    // host-type methods (`Tree.glob`, …) resolve against `config.methods`.
+    let Some(entry) = crate::binding::prelude_method(&receiver.ty, &call.name.value).or_else(|| {
+        crate::binding::injected_method(context.config.methods, &receiver.ty, &call.name.value)
+    }) else {
         // Uniform function-call syntax: `recv.method(args)` on a value with no
-        // builtin method of that name resolves to the free function `method`
-        // whose sole positional parameter is the receiver, with the method's
-        // positional arguments bound to the function's `where` parameters in
-        // declaration order. This is the general dispatch the version-set
-        // methods (`contains`, `intersect`, `is_empty`) ride on.
+        // builtin method resolves to a free function `method` whose sole
+        // positional parameter is the receiver, with the method's positional
+        // arguments bound to its `where` parameters. Dispatch by receiver type,
+        // the way a language with inherent methods resolves `recv.m(..)`: a
+        // concrete method wins when its receiver parameter matches; otherwise a
+        // generic template of the same name is tried (the "method → vix fn" path
+        // for generic std combinators like `any`/`all`/`contains`). This lets a
+        // receiver-typed `contains` (`VersionSet`) and the array `contains<T>`
+        // share the `.contains` spelling.
+        let has_generic = context.generics.contains_key(&call.name.value);
         if let Some(signature) = context.signatures.get(&call.name.value) {
-            return lower_uniform_call(nodes, bindings, context, call, receiver, signature);
+            let receiver_matches = signature
+                .parameters
+                .iter()
+                .find(|parameter| parameter.kind == ParameterKind::Positional)
+                .is_some_and(|parameter| parameter.ty == receiver.ty);
+            if receiver_matches || !has_generic {
+                return lower_uniform_call(nodes, bindings, context, call, receiver, signature);
+            }
+            return lower_uniform_generic_call(nodes, bindings, context, call, receiver, expected);
+        }
+        if has_generic {
+            return lower_uniform_generic_call(nodes, bindings, context, call, receiver, expected);
         }
         return Err(Diagnostics::one(Diagnostic {
             code: DiagnosticCode::UnknownMethod,
@@ -4276,17 +4398,34 @@ fn lower_method_call(
     if positional.len() != entry.arity {
         return Err(invalid_arity(call.span, entry.arity, positional.len()));
     }
+    // A primitive-backed method has no per-method compiler code: build the
+    // declared request record and invoke the primitive. A dedicated op falls
+    // through to its bespoke lowering arm below.
+    let method = match entry.lowering {
+        crate::binding::MethodLowering::Primitive(primitive) => {
+            if let Some(named) = &call.named_args {
+                return Err(Diagnostics::one(Diagnostic::unsupported(
+                    named.span,
+                    "named method arguments",
+                )));
+            }
+            return lower_primitive_method(
+                nodes, bindings, context, call, receiver, positional, primitive,
+            );
+        }
+        crate::binding::MethodLowering::DedicatedOp(method) => method,
+    };
     // `sorted` is the sole method that accepts a named argument: an explicit
     // `Order<T>` recipe. Every other method rejects named arguments.
     if let Some(named) = &call.named_args
-        && !matches!(entry.method, PreludeMethod::ArraySorted)
+        && !matches!(method, PreludeMethod::ArraySorted)
     {
         return Err(Diagnostics::one(Diagnostic::unsupported(
             named.span,
             "named method arguments",
         )));
     }
-    match entry.method {
+    match method {
         PreludeMethod::ArrayLen => Ok(LoweredValue {
             node: push_node(
                 nodes,
@@ -4487,66 +4626,6 @@ fn lower_method_call(
                 }
             }
         }
-        PreludeMethod::ArrayAll | PreludeMethod::ArrayAny => {
-            let Type::Array(element) = &receiver.ty else {
-                unreachable!("array predicate registry entry has an array receiver")
-            };
-            let predicate = match &positional[0] {
-                ast::Expr::Closure(closure) => {
-                    lower_closure_with_parameter(nodes, bindings, context, closure, element)?
-                }
-                expression => lower_value_expected(nodes, bindings, context, expression, None)?,
-            };
-            let Type::Function { parameter, result } = &predicate.ty else {
-                return Err(type_mismatch(
-                    expr_span(&positional[0]),
-                    format!("fn({}) -> Bool", element.name()),
-                    predicate.ty.name(),
-                ));
-            };
-            if parameter.as_ref() != element.as_ref() || result.as_ref() != &Type::Bool {
-                return Err(type_mismatch(
-                    expr_span(&positional[0]),
-                    format!("fn({}) -> Bool", element.name()),
-                    predicate.ty.name(),
-                ));
-            }
-            let op = match entry.method {
-                PreludeMethod::ArrayAll => Op::ArrayAll,
-                PreludeMethod::ArrayAny => Op::ArrayAny,
-                _ => unreachable!("array predicate dispatch is closed"),
-            };
-            Ok(LoweredValue {
-                node: push_node(
-                    nodes,
-                    call.span,
-                    Type::Bool,
-                    EffectFacts::PURE,
-                    vec![receiver.node, predicate.node],
-                    op,
-                ),
-                ty: Type::Bool,
-            })
-        }
-        PreludeMethod::ArrayContains => {
-            let Type::Array(element) = &receiver.ty else {
-                unreachable!("array contains registry entry has an array receiver")
-            };
-            let element = element.as_ref().clone();
-            let value = lower_value(nodes, bindings, context, &positional[0])?;
-            require_type(&value, &element, expr_span(&positional[0]))?;
-            Ok(LoweredValue {
-                node: push_node(
-                    nodes,
-                    call.span,
-                    Type::Bool,
-                    EffectFacts::PURE,
-                    vec![receiver.node, value.node],
-                    Op::ArrayContains,
-                ),
-                ty: Type::Bool,
-            })
-        }
         PreludeMethod::StringContains => {
             let needle = lower_value(nodes, bindings, context, &positional[0])?;
             require_type(&needle, &Type::String, expr_span(&positional[0]))?;
@@ -4688,7 +4767,7 @@ fn lower_method_call(
                 .ok_or_else(|| type_mismatch(call.span, "Map<K, V>", receiver.ty.name()))?;
             let lowered_key = lower_value(nodes, bindings, context, &positional[0])?;
             require_type(&lowered_key, &key, expr_span(&positional[0]))?;
-            let (ty, effect, inputs, op) = match entry.method {
+            let (ty, effect, inputs, op) = match method {
                 PreludeMethod::MapGet => (
                     value,
                     EffectFacts {
@@ -5003,20 +5082,6 @@ fn lower_method_call(
                 ty,
             })
         }
-        PreludeMethod::TreeEntryText => {
-            let ty = Type::String;
-            Ok(LoweredValue {
-                node: push_node(
-                    nodes,
-                    call.span,
-                    ty.clone(),
-                    EffectFacts::EFFECT,
-                    vec![receiver.node],
-                    Op::TreeEntryText,
-                ),
-                ty,
-            })
-        }
         PreludeMethod::BlobLen => {
             let ty = Type::Int;
             Ok(LoweredValue {
@@ -5027,73 +5092,6 @@ fn lower_method_call(
                     EffectFacts::EFFECT,
                     vec![receiver.node],
                     Op::BlobLen,
-                ),
-                ty,
-            })
-        }
-        PreludeMethod::RegistryUrl => {
-            let name = lower_value(nodes, bindings, context, &positional[0])?;
-            require_type(&name, &Type::String, expr_span(&positional[0]))?;
-            let ty = Type::from_facet::<PinnedBlobRef>();
-            Ok(LoweredValue {
-                node: push_node(
-                    nodes,
-                    call.span,
-                    ty.clone(),
-                    EffectFacts::EFFECT,
-                    vec![receiver.node, name.node],
-                    Op::RegistryUrl,
-                ),
-                ty,
-            })
-        }
-        PreludeMethod::StreamFindMin | PreludeMethod::StreamFindMax => {
-            let (_, value) = receiver
-                .ty
-                .stream_types()
-                .ok_or_else(|| type_mismatch(call.span, "Stream<K, V>", receiver.ty.name()))?;
-            if !value.structural_order_is_defined() {
-                return Err(type_mismatch(
-                    call.span,
-                    "Stream<K, V: Ord>",
-                    receiver.ty.name(),
-                ));
-            }
-            let value = value.clone();
-            let predicate = match &positional[0] {
-                ast::Expr::Closure(closure) => {
-                    lower_closure_with_parameter(nodes, bindings, context, closure, &value)?
-                }
-                expression => lower_value_expected(nodes, bindings, context, expression, None)?,
-            };
-            let Type::Function { parameter, result } = &predicate.ty else {
-                return Err(type_mismatch(
-                    expr_span(&positional[0]),
-                    format!("fn({}) -> Bool", value.name()),
-                    predicate.ty.name(),
-                ));
-            };
-            if parameter.as_ref() != &value || result.as_ref() != &Type::Bool {
-                return Err(type_mismatch(
-                    expr_span(&positional[0]),
-                    format!("fn({}) -> Bool", value.name()),
-                    predicate.ty.name(),
-                ));
-            }
-            let op = match entry.method {
-                PreludeMethod::StreamFindMin => Op::StreamFindMin,
-                PreludeMethod::StreamFindMax => Op::StreamFindMax,
-                _ => unreachable!("stream selection dispatch is closed"),
-            };
-            let ty = Type::option(value);
-            Ok(LoweredValue {
-                node: push_node(
-                    nodes,
-                    call.span,
-                    ty.clone(),
-                    EffectFacts::PURE,
-                    vec![receiver.node, predicate.node],
-                    op,
                 ),
                 ty,
             })
@@ -5381,7 +5379,7 @@ fn lower_effect_intrinsic(
                 )));
             };
             (
-                Type::Extern(ExternKind::Tree),
+                Type::Extern(ExternKind::Host(crate::binding::TREE)),
                 Op::FixtureTree(name.value.clone()),
                 Vec::new(),
             )
@@ -5402,7 +5400,11 @@ fn lower_effect_intrinsic(
                 &Type::Extern(ExternKind::Blob),
                 expr_span(&call.args.args[0]),
             )?;
-            (Type::Extern(ExternKind::Tree), Op::Untar, vec![blob.node])
+            (
+                Type::Extern(ExternKind::Host(crate::binding::TREE)),
+                Op::Untar,
+                vec![blob.node],
+            )
         }
     };
     Ok(LoweredValue {
@@ -9019,6 +9021,14 @@ fn lower_call(
     if let Some(callee) = bindings.get(&call.callee.value) {
         return lower_value_call(nodes, bindings, context, call, callee.clone());
     }
+    // Receiver-based overloading (a concrete `foo(recv: T)` coexisting with a
+    // generic `foo<U>`) is resolved by *receiver type*, which only free-function
+    // call syntax lacks. So the coexistence is method-syntax-only: `recv.foo(..)`
+    // consults `receiver_matches || !has_generic` (see `lower_method_call`),
+    // whereas a free `foo(..)` call binds the concrete signature whenever one
+    // exists and only falls through to the generic when it does not. A program
+    // that wants the generic overload of a name it has also defined concretely
+    // must therefore spell it in method position.
     if let Some(signature) = context.signatures.get(&call.callee.value) {
         return lower_direct_call(nodes, bindings, context, call, signature);
     }
@@ -9110,6 +9120,48 @@ fn lower_generic_call(
             ))
         })?;
         arguments.push(argument);
+    }
+
+    // A stream-carrying function is inlined rather than lowered to `Op::Call`
+    // (see `inline_stream_call`). Bind positional parameters to their lowered
+    // arguments and `where` parameters from the named arguments, then splice.
+    if signature_carries_stream(template) {
+        let mut bound = Vec::new();
+        for (parameter, value) in template.params.params.iter().zip(&lowered_positional) {
+            bound.push((parameter.name.value.clone(), value.clone()));
+        }
+        let where_parameters: Vec<&ast::NamedParam> = template
+            .where_params
+            .as_ref()
+            .and_then(|where_params| where_params.inline.as_ref())
+            .map(|inline| inline.params.iter().collect())
+            .unwrap_or_default();
+        let mut argument_env = context.types.as_ref().clone();
+        for (parameter, argument) in generics.params.iter().zip(&arguments) {
+            argument_env.insert(parameter.value.clone(), argument.clone());
+        }
+        let mut named_fields = BTreeMap::new();
+        if let Some(named_args) = &call.named_args {
+            for field in &named_args.fields {
+                named_fields.insert(field.name.value.as_str(), field);
+            }
+        }
+        for parameter in &where_parameters {
+            let field = named_fields.get(parameter.name.value.as_str()).ok_or_else(|| {
+                Diagnostics::one(Diagnostic::unsupported(
+                    call.span,
+                    format!("missing `where` argument `{}`", parameter.name.value),
+                ))
+            })?;
+            let expected_argument = lower_declared_type(&parameter.ty, &argument_env).ok();
+            let value = if let Some(expression) = &field.value {
+                lower_value_expected(nodes, bindings, context, expression, expected_argument.as_ref())?
+            } else {
+                lookup_binding(bindings, &field.name.value, field.name.span)?
+            };
+            bound.push((parameter.name.value.clone(), value));
+        }
+        return inline_stream_call(nodes, context, template, &arguments, bound, expected, call.span);
     }
 
     let (id, signature) =
@@ -9250,6 +9302,10 @@ fn infer_type_argument(
                 infer_type_argument(&generic.args[0], element, parameters, inferred, span)?;
             }
             ("Map", Type::Map { key, value }) if generic.args.len() == 2 => {
+                infer_type_argument(&generic.args[0], key, parameters, inferred, span)?;
+                infer_type_argument(&generic.args[1], value, parameters, inferred, span)?;
+            }
+            ("Stream", Type::Stream { key, value }) if generic.args.len() == 2 => {
                 infer_type_argument(&generic.args[0], key, parameters, inferred, span)?;
                 infer_type_argument(&generic.args[1], value, parameters, inferred, span)?;
             }
@@ -9571,54 +9627,6 @@ fn lower_binary(
             require_type(&left, &Type::Int, expr_span(&binary.left))?;
             require_type(&right, &Type::Int, expr_span(&binary.right))?;
             (Type::Int, Op::Mul)
-        }
-        "/" if matches!(
-            left.ty,
-            Type::Extern(ExternKind::Tree) | Type::Extern(ExternKind::TreeEntry)
-        ) =>
-        {
-            // Tree projection: one Name segment (a string literal) or a Path
-            // (projection through several maps). The projection resolves
-            // lazily; undemanded siblings are never read.
-            let projector = match &right.ty {
-                Type::String => {
-                    let literal = nodes
-                        .iter()
-                        .find(|node| node.id == right.node)
-                        .and_then(|node| match &node.op {
-                            Op::String(value) => Some(value.clone()),
-                            _ => None,
-                        })
-                        .ok_or_else(|| {
-                            Diagnostics::one(Diagnostic::unsupported(
-                                expr_span(&binary.right),
-                                "dynamic tree Name segments",
-                            ))
-                        })?;
-                    validate_path_segment(&literal, expr_span(&binary.right))?;
-                    right.node
-                }
-                Type::Path => right.node,
-                _ => {
-                    return Err(type_mismatch(
-                        expr_span(&binary.right),
-                        "a Name segment literal or Path",
-                        right.ty.name(),
-                    ));
-                }
-            };
-            let ty = Type::Extern(ExternKind::TreeEntry);
-            return Ok(LoweredValue {
-                node: push_node(
-                    nodes,
-                    binary.span,
-                    ty.clone(),
-                    EffectFacts::EFFECT,
-                    vec![left.node, projector],
-                    Op::TreeProject,
-                ),
-                ty,
-            });
         }
         "/" if left.ty == Type::Path => {
             let ast::Expr::Str(segment) = &binary.right else {

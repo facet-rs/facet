@@ -12,9 +12,9 @@
 pub mod typed_primitive;
 
 mod decode_primitive;
-mod leaf_overrides;
 mod fetch_primitive;
 mod primitive_value_decode;
+mod registry_url_primitive;
 mod tree_glob_primitive;
 mod tree_read_primitive;
 
@@ -30,10 +30,61 @@ pub(crate) mod rt {
     pub use vix::runtime::*;
 }
 
+/// The host types `vixen` declares — the domain types `Tree` and `TreeEntry`,
+/// injected into the compiler through [`vix::compiler::CompilerConfig::host_types`]
+/// so the bare language no longer hardcodes them as `ExternKind` variants (issue
+/// 2520). They remain extern-backed opaque values with byte-stable `vix.Tree` /
+/// `vix.TreeEntry` identity; only the *declaration* moves here. `TreeEntry` is now
+/// vestigial — the standalone `receiver / segment` projection and `TreeEntry.text()`
+/// method were retired once exec-origin reads moved onto the `tree_read` primitive
+/// — but it stays declared to keep its nominal identity stable.
+pub const HOST_TYPES: &[vix::binding::HostTypeDecl] = &[
+    vix::binding::HostTypeDecl {
+        name: vix::binding::TREE,
+    },
+    vix::binding::HostTypeDecl {
+        name: vix::binding::TREE_ENTRY,
+    },
+];
+
+/// The host-type methods `vixen` declares on the domain types, injected into the
+/// compiler through [`vix::compiler::CompilerConfig::methods`]. `Tree.glob` and
+/// `Blob.len` name dedicated ops whose bespoke lowering and execution stay in
+/// `vix-core` (the machine engine) — only their *declarations* live here.
+/// `Registry.url` rides the fully open rail: a primitive-backed method whose
+/// whole contract (request record, result type, primitive id) is declared in
+/// this crate beside its implementation, with no dedicated op in core at all
+/// (issue 2520). (`.text()` is no longer a dedicated method: exec-origin tree
+/// reads spell the `tree_read` primitive request directly.)
+pub const DOMAIN_METHODS: &[vix::binding::MethodDecl] = &[
+    vix::binding::MethodDecl {
+        receiver: vix::binding::ReceiverType::Host(vix::binding::TREE),
+        name: "glob",
+        arity: 1,
+        lowering: vix::binding::MethodLowering::DedicatedOp(vix::binding::MethodOp::TreeGlob),
+    },
+    vix::binding::MethodDecl {
+        receiver: vix::binding::ReceiverType::Blob,
+        name: "len",
+        arity: 0,
+        lowering: vix::binding::MethodLowering::DedicatedOp(vix::binding::MethodOp::BlobLen),
+    },
+    vix::binding::MethodDecl {
+        receiver: vix::binding::ReceiverType::Registry,
+        name: "url",
+        arity: 1,
+        lowering: vix::binding::MethodLowering::Primitive(vix::binding::PrimitiveMethodDecl {
+            request: registry_url_request_type,
+            result: registry_url_result_type,
+            id: registry_url_primitive_id,
+        }),
+    },
+];
+
 pub use decode_primitive::*;
 pub use fetch_primitive::*;
-pub use leaf_overrides::LEAF_OVERRIDES;
 pub use primitive_value_decode::*;
+pub use registry_url_primitive::*;
 pub use tree_glob_primitive::*;
 pub use tree_read_primitive::*;
 pub use typed_primitive::*;
