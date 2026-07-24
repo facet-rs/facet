@@ -1,5 +1,5 @@
 [toolchain]
-channel = "1.96.0"
+channel = "1.97.1"
 # Specify all components needed for CI and development.
 # `llvm-tools` provides `llvm-ar`, needed to archive wasm C objects in the
 # styx-docs / styx-webmd build (the host's BSD `ar` can't — see arborium's
