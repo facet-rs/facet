@@ -414,7 +414,7 @@ rustls-pemfile = "2"
 rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
 smallvec = { version = "^1.15", default-features = false }
 structstruck = "0.5.1"
-syn = { version = "2", features = ["full"] }
+syn = { version = "3", features = ["full"] }
 iddqd = { version = "^0.4.0", default-features = false }
 confusables = "^0.1"
 indoc = "^2.0.7"

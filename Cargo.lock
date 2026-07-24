@@ -9816,7 +9816,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "spec-proto",
- "syn 2.0.119",
+ "syn 3.0.3",
  "vox-codegen",
  "vox-types",
  "xshell",
