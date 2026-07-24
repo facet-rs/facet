@@ -578,3 +578,202 @@ fn test_env_alias_conflict_detected() {
         err
     );
 }
+
+// ============================================================================
+// Alias support
+// ============================================================================
+
+#[derive(Facet)]
+struct ArgsWithAlias {
+    #[facet(args::named, rename = "drive", args::alias = "drive-letter-pattern")]
+    drive_letter_pattern: String,
+}
+
+#[derive(Facet)]
+struct ConflictingAliasAndCanonical {
+    #[facet(args::named, args::alias = "port")]
+    host: String,
+    #[facet(args::named)]
+    port: String,
+}
+
+#[derive(Facet)]
+struct DuplicateAliasOnField {
+    #[facet(
+        args::named,
+        args::alias = "drive-letter-pattern",
+        args::alias = "drive-letter-pattern"
+    )]
+    drive: String,
+}
+
+#[derive(Facet)]
+struct ConflictingAliases {
+    #[facet(args::named, args::alias = "drive-letter-pattern")]
+    drive: String,
+    #[facet(args::named, args::alias = "drive-letter-pattern")]
+    path: String,
+}
+
+#[derive(Facet)]
+#[repr(u8)]
+enum SubcommandWithDuplicateAlias {
+    #[facet(args::alias = "profiles", args::alias = "profiles")]
+    Profile,
+}
+
+#[derive(Facet)]
+struct ArgsWithDuplicateSubcommandAlias {
+    #[facet(args::subcommand)]
+    command: SubcommandWithDuplicateAlias,
+}
+
+#[derive(Facet)]
+#[repr(u8)]
+enum SubcommandAliasCanonicalConflict {
+    Profile,
+    #[facet(args::alias = "profile")]
+    Profiles,
+}
+
+#[derive(Facet)]
+struct ArgsWithSubcommandAliasCanonicalConflict {
+    #[facet(args::subcommand)]
+    command: SubcommandAliasCanonicalConflict,
+}
+
+#[derive(Facet)]
+#[repr(u8)]
+enum SubcommandAliasAliasConflict {
+    #[facet(args::alias = "profiles")]
+    Profile,
+    #[facet(args::alias = "profiles")]
+    User,
+}
+
+#[derive(Facet)]
+struct ArgsWithSubcommandAliasAliasConflict {
+    #[facet(args::subcommand)]
+    command: SubcommandAliasAliasConflict,
+}
+
+#[derive(Facet)]
+#[repr(u8)]
+enum SubcommandWithCasedAlias {
+    #[facet(args::alias = "Profiles")]
+    UserProfiles,
+}
+
+#[derive(Facet)]
+struct ArgsWithCasedSubcommandAlias {
+    #[facet(args::subcommand)]
+    command: SubcommandWithCasedAlias,
+}
+
+#[derive(Facet)]
+#[repr(u8)]
+enum SubcommandAliasCaseConflict {
+    Profiles,
+    #[facet(args::alias = "Profiles")]
+    User,
+}
+
+#[derive(Facet)]
+struct ArgsWithSubcommandAliasCaseConflict {
+    #[facet(args::subcommand)]
+    command: SubcommandAliasCaseConflict,
+}
+
+#[test]
+fn test_schema_aliases_are_stored() {
+    let schema = Schema::from_shape(ArgsWithAlias::SHAPE).expect("schema should build");
+    let (_, arg) = schema
+        .args()
+        .args()
+        .get("drive")
+        .expect("drive arg should be present");
+    assert_eq!(arg.aliases(), &["drive-letter-pattern".to_string()]);
+}
+
+#[test]
+fn test_schema_alias_conflicts_with_canonical_flag() {
+    let result = Schema::from_shape(ConflictingAliasAndCanonical::SHAPE);
+    assert!(result.is_err(), "should detect alias/canonical conflict");
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("duplicate flag `--port`"), "unexpected error: {err}");
+}
+
+#[test]
+fn test_schema_duplicate_alias_on_same_field_is_rejected() {
+    let result = Schema::from_shape(DuplicateAliasOnField::SHAPE);
+    assert!(result.is_err(), "should detect duplicate alias on one field");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("duplicate alias `--drive-letter-pattern`"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn test_schema_duplicate_alias_across_fields_is_rejected() {
+    let result = Schema::from_shape(ConflictingAliases::SHAPE);
+    assert!(result.is_err(), "should detect duplicate alias across fields");
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("duplicate flag `--drive-letter-pattern`"), "unexpected error: {err}");
+}
+
+#[test]
+fn test_subcommand_duplicate_alias_on_same_variant_detected() {
+    let result = Schema::from_shape(ArgsWithDuplicateSubcommandAlias::SHAPE);
+    assert!(result.is_err(), "should detect duplicate alias on one variant");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("duplicate subcommand alias") && err.contains("profiles"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn test_subcommand_alias_conflict_with_canonical_name_detected() {
+    let result = Schema::from_shape(ArgsWithSubcommandAliasCanonicalConflict::SHAPE);
+    assert!(result.is_err(), "should detect alias/canonical conflict");
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("duplicate subcommand name `profile`"), "unexpected error: {err}");
+}
+
+#[test]
+fn test_subcommand_alias_conflict_with_other_alias_detected() {
+    let result = Schema::from_shape(ArgsWithSubcommandAliasAliasConflict::SHAPE);
+    assert!(result.is_err(), "should detect alias/alias conflict");
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("duplicate subcommand name `profiles`"), "unexpected error: {err}");
+}
+
+#[test]
+fn test_subcommand_aliases_are_normalized_to_kebab_case() {
+    let schema = Schema::from_shape(ArgsWithCasedSubcommandAlias::SHAPE)
+        .expect("schema should build");
+    let subcommand = schema
+        .args()
+        .subcommands()
+        .values()
+        .next()
+        .expect("subcommand should be present");
+
+    assert_eq!(subcommand.aliases(), &["profiles".to_string()]);
+}
+
+#[test]
+fn test_subcommand_alias_conflict_after_case_normalization_detected() {
+    let result = Schema::from_shape(ArgsWithSubcommandAliasCaseConflict::SHAPE);
+    assert!(
+        result.is_err(),
+        "should detect alias/canonical conflict after kebab-case normalization"
+    );
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("duplicate subcommand name `profiles`"),
+        "unexpected error: {err}"
+    );
+}
+

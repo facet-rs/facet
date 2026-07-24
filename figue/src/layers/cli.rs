@@ -449,36 +449,21 @@ impl<'a> ParseContext<'a> {
                 );
                 self.index += 1;
             } else {
-                let all_flags: Vec<&str> = level
-                    .args()
-                    .iter()
-                    .filter_map(|(name, schema)| {
-                        if matches!(schema.kind(), ArgKind::Named { .. }) {
-                            Some(name.as_str())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                let suggestion = crate::suggest::suggest_flag(flag_name, all_flags);
+                let all_flags = self.visible_long_flag_names(level);
+                let suggestion = crate::suggest::suggest_flag(
+                    flag_name,
+                    all_flags.iter().map(|flag| flag.as_str()),
+                );
                 self.emit_error(format!("unknown flag: --{}{}", flag_name, suggestion));
                 self.index += 1;
             }
         } else {
             // Collect all available flag names for suggestion
-            let all_flags: Vec<&str> = level
-                .args()
-                .iter()
-                .filter_map(|(name, schema)| {
-                    // Only suggest named flags
-                    if matches!(schema.kind(), ArgKind::Named { .. }) {
-                        Some(name.as_str())
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            let suggestion = crate::suggest::suggest_flag(flag_name, all_flags);
+            let all_flags = self.visible_long_flag_names(level);
+            let suggestion = crate::suggest::suggest_flag(
+                flag_name,
+                all_flags.iter().map(|flag| flag.as_str()),
+            );
             self.emit_error(format!("unknown flag: --{}{}", flag_name, suggestion));
             self.index += 1;
         }
@@ -1034,15 +1019,7 @@ impl<'a> ParseContext<'a> {
 
         let arg = self.args[self.index];
 
-        // Find subcommand by long name (kebab-case) or short alias token ("d").
-        let subcommand = level.subcommands().iter().find(|(name, sub)| {
-            name.to_kebab_case() == arg
-                || sub
-                    .short()
-                    .is_some_and(|short| arg.chars().eq(core::iter::once(short)))
-        });
-
-        let Some((_, subcommand)) = subcommand else {
+        let Some(subcommand) = level.find_subcommand(arg) else {
             return false;
         };
 
@@ -1178,6 +1155,43 @@ impl<'a> ParseContext<'a> {
         None
     }
 
+    /// Collect all visible long-form flag names at the current parse point.
+    ///
+    /// This includes both canonical names and aliases from the current level
+    /// plus any parent levels that can accept bubbled-up flags.
+    fn visible_long_flag_names(&self, level: &ArgLevelSchema) -> Vec<String> {
+        let mut flags = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+
+        let mut push_unique = |name: String| {
+            if seen.insert(name.clone()) {
+                flags.push(name);
+            }
+        };
+
+        for (_effective_name, schema) in level.args().iter() {
+            if !matches!(schema.kind(), ArgKind::Named { .. }) {
+                continue;
+            }
+            for long_name in schema.long_flag_names() {
+                push_unique(long_name);
+            }
+        }
+
+        for parent in self.parent_stack.iter().rev() {
+            for (_effective_name, schema) in parent.args.args().iter() {
+                if !matches!(schema.kind(), ArgKind::Named { .. }) {
+                    continue;
+                }
+                for long_name in schema.long_flag_names() {
+                    push_unique(long_name);
+                }
+            }
+        }
+
+        flags
+    }
+
     /// If the level expects subcommands, try to suggest a similar subcommand name.
     fn suggest_subcommand_if_expected(&self, arg: &str, level: &ArgLevelSchema) -> String {
         // Only suggest if this level has subcommands defined
@@ -1185,14 +1199,15 @@ impl<'a> ParseContext<'a> {
             return String::new();
         }
 
-        // Get all subcommand names in kebab-case
-        let subcommand_names: Vec<String> = level
-            .subcommands()
-            .iter()
-            .map(|(name, _)| name.to_kebab_case())
-            .collect();
+        let mut spellings_to_canonical: Vec<(&str, &str)> = Vec::new();
+        for subcommand in level.subcommands().values() {
+            spellings_to_canonical.push((subcommand.cli_name(), subcommand.cli_name()));
+            for alias in subcommand.aliases() {
+                spellings_to_canonical.push((alias.as_str(), subcommand.cli_name()));
+            }
+        }
 
-        crate::suggest::suggest_subcommand(arg, subcommand_names.iter().map(|s| s.as_str()))
+        crate::suggest::suggest_subcommand(arg, spellings_to_canonical)
     }
 
     fn try_parse_positional(&mut self, level: &ArgLevelSchema) -> bool {
@@ -3296,4 +3311,45 @@ mod tests {
             ]),
         );
     }
+    #[derive(Facet)]
+    struct AliasedLongFlags {
+        #[facet(args::named, args::alias = "colour")]
+        color: bool,
+        #[facet(args::named, args::alias = "drive-letter-pattern")]
+        drive: String,
+    }
+
+    #[test]
+    fn test_cv_alias_bool_uses_canonical_field() {
+        assert_parses_to::<AliasedLongFlags>(
+            &["--colour"],
+            cv::object([("color", cv::bool(true, "--colour"))]),
+        );
+    }
+
+    #[test]
+    fn test_cv_alias_value_uses_canonical_field() {
+        assert_parses_to::<AliasedLongFlags>(
+            &["--drive-letter-pattern", "C"],
+            cv::object([("drive", cv::string("C", "C"))]),
+        );
+    }
+
+    #[test]
+    fn test_alias_unknown_flag_suggestion_uses_aliases() {
+        assert_diagnostic_contains::<AliasedLongFlags>(
+            &["--colur"],
+            "Did you mean '--colour'?",
+        );
+    }
+
+    #[test]
+    fn test_no_prefix_alias_negates_bool() {
+        assert_parses_to::<AliasedLongFlags>(
+            &["--no-colour"],
+            cv::object([("color", cv::bool(false, "--no-colour"))]),
+        );
+    }
 }
+
+

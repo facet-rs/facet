@@ -459,3 +459,32 @@ fn test_help_short_flag_h_works_in_subcommand() {
         err
     );
 }
+
+#[test]
+fn test_help_shows_subcommand_aliases_with_canonical_name() {
+    #[derive(Facet, Debug)]
+    struct Cli {
+        #[facet(args::subcommand)]
+        command: Command,
+
+        #[facet(flatten)]
+        builtins: args::FigueBuiltins,
+    }
+
+    #[derive(Facet, Debug)]
+    #[repr(u8)]
+    #[allow(dead_code)]
+    enum Command {
+        #[facet(args::alias = "profiles")]
+        Profile,
+    }
+
+    let result = figue::from_slice::<Cli>(&["--help"]);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.is_help(), "expected help error, got: {:?}", err);
+
+    let help = err.help_text().expect("should have help text");
+    assert!(help.contains("profile"), "help should show canonical subcommand: {help}");
+    assert!(help.contains("aliases: profiles"), "help should surface compatibility aliases: {help}");
+}
