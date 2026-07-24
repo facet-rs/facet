@@ -43,9 +43,11 @@
       dependencyDashboardApproval: true,
     },
     {
-      // Same deal for genuine Cargo majors (syn 3, divan 5, ulid 3, …).
-      description: "Cargo majors wait on the dashboard until requested",
-      matchDatasources: ["crate"],
+      // Every major, every ecosystem (syn 3, typescript 7, eslint 10,
+      // actions/*@v7, …). Majors are never urgent and always need a human
+      // decision, so they wait on the dashboard behind a checkbox instead
+      // of sitting in the PR list.
+      description: "Majors wait on the dashboard until requested",
       matchUpdateTypes: ["major"],
       groupName: null,
       dependencyDashboardApproval: true,
@@ -53,9 +55,10 @@
     {
       // A toolchain bump can break every crate at once; it should never ride
       // along with dependency updates.
-      description: "Rust toolchain gets its own PR",
+      description: "Rust toolchain gets its own PR, on request",
       matchPackageNames: ["rust"],
       groupName: null,
+      dependencyDashboardApproval: true,
     },
   ],
 }
