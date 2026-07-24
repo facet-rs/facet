@@ -20,7 +20,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Select Rust 1.92
         shell: bash
         run: |
@@ -36,7 +36,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-miri-amd64
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
       - name: Run Miri
         env:
@@ -48,7 +48,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-miri-amd64
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
       - name: Run nightly feature tests
         env:
@@ -60,7 +60,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: 26
@@ -79,7 +79,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: 26
@@ -121,7 +121,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: 26
