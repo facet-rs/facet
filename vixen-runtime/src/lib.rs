@@ -10,6 +10,16 @@
 //!
 //! [`module_graph`] loads a directory of `.vix` files into owned module
 //! sources for the compiler and runner.
+//!
+//! # Re-exports keep the seam visible
+//!
+//! Depending on this one crate is enough to get a working system, but the two
+//! halves are re-exported as *named* crates ([`vix`], [`vixen_primitives`])
+//! rather than glob-flattened into this root. A consumer therefore always spells
+//! which side of the language/domain line a name comes from —
+//! `vixen_runtime::vix::compiler::Compiler` is language,
+//! `vixen_runtime::vixen_primitives::HOST_TYPES` is domain — and a new name in
+//! `vix-core` can never silently collide with one in `vixen-primitives`.
 
 pub mod budget;
 pub mod module_graph;
@@ -17,8 +27,9 @@ pub mod ratchet;
 
 use std::sync::Arc;
 
-pub use vix::*;
-pub use vixen_primitives::*;
+// The two halves, named — not `pub use vix::*` / `pub use vixen_primitives::*`.
+pub use vix;
+pub use vixen_primitives;
 
 pub use module_graph::{
     DEFAULT_ROOT_MODULE, ModuleFile, ModuleGraph, ModuleGraphError, ModuleRoot, load_module_graph,
@@ -28,8 +39,10 @@ use vix::compiler::CompilerConfig;
 use vix::runtime::{
     CodataRegistry, EventSink, PrimitiveDispatcher, PrimitiveRegistry, RawPrimitive, Runtime,
 };
-// DecodePrimitive / PinnedFetchPrimitive / RegistryUrlPrimitive / TreeGlobPrimitive /
-// TreeReadPrimitive / TypedAdapter come from the `pub use vixen_primitives::*` above.
+use vixen_primitives::{
+    BlobLenPrimitive, DecodePrimitive, PinnedFetchPrimitive, RegistryUrlPrimitive,
+    TreeGlobPrimitive, TreeReadPrimitive, TypedAdapter,
+};
 
 /// The built-in registered primitives, as data: this is the *one* place that
 /// lists them. Adding a primitive is one entry here, not a second
