@@ -454,33 +454,18 @@ pub fn builtin_bindings() -> BindingRegistry {
         ));
     }
 
-    // Modes-as-aliases: vix functions over the single primitive, not new
-    // primitives and not new compiler intrinsics (mirroring `stdlib`).
-    for (name, source) in [
-        (
-            "json_decode",
-            "fn json_decode<T>(text: String) -> T { decode(text, Format::Json) }",
-        ),
-        (
-            "toml_decode",
-            "fn toml_decode<T>(text: String) -> T { decode(text, Format::Toml) }",
-        ),
-        (
-            "try_json_decode",
-            "fn try_json_decode<T>(text: String) -> Result<T, DecodeError> { try_decode(text, Format::Json) }",
-        ),
-        (
-            "try_toml_decode",
-            "fn try_toml_decode<T>(text: String) -> Result<T, DecodeError> { try_decode(text, Format::Toml) }",
-        ),
-    ] {
-        reg.insert(Binding::vix_fn(Placement::Prelude, name, source));
-        reg.insert(Binding::vix_fn(
-            Placement::Module(std.clone()),
-            name,
-            source,
-        ));
-    }
+    // The decode aliases (`json_decode`/`toml_decode`/`try_json_decode`/
+    // `try_toml_decode`) are NOT registered here. They are ordinary vix source
+    // functions the embedder injects through
+    // [`crate::compiler::CompilerConfig::prelude`]
+    // (`vixen_primitives::stdlib::PRELUDE_SOURCES`), so they resolve as declared
+    // module items like any other prelude fn. Core used to carry a second copy of
+    // their sources as `BindingTarget::VixFunction` rows; that copy was never
+    // lowered from — every resolver (`prelude_primitive`, `surface_primitive`,
+    // `prelude_intrinsic`, `surface_intrinsic`) returns `None` for a
+    // `VixFunction` — and it made the *bare* language wrongly accept
+    // `std::json_decode` through [`is_qualified_binding`] when no prelude was
+    // installed. One source of truth: the embedder's stdlib.
 
     // Receiver methods: `(receiver, name)` → dedicated VIR op. These were a
     // second hardcoded registry in `compiler.rs` (`PreludeMethodRegistry`); they
@@ -875,15 +860,23 @@ mod tests {
             assert_eq!(prelude_primitive(name), None);
         }
 
-        // The decode aliases are vix functions, not primitives.
+        // The decode aliases are NOT core bindings. They are embedder prelude
+        // source (`vixen_primitives::stdlib`), injected through
+        // `CompilerConfig::prelude` and resolved as ordinary declared items — so
+        // the bare language knows nothing of them, and `std::json_decode` does
+        // not resolve without a prelude installed.
         for alias in [
             "json_decode",
             "toml_decode",
             "try_json_decode",
             "try_toml_decode",
         ] {
-            let binding = reg.prelude(alias).expect("prelude alias");
-            assert!(matches!(binding.target, BindingTarget::VixFunction { .. }));
+            assert!(reg.prelude(alias).is_none(), "{alias} is not a core binding");
+            assert!(
+                reg.qualified(&std, alias).is_none(),
+                "std::{alias} is not a core binding"
+            );
+            assert!(!is_qualified_binding("std", alias));
             assert_eq!(prelude_primitive(alias), None);
             assert_eq!(prelude_intrinsic(alias), None);
         }
