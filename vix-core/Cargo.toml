@@ -36,7 +36,6 @@ blake3.workspace = true
 object.workspace = true
 phon = { path = "../phon/rust/phon" }
 rustc-demangle = "0.1.26"
-sha2.workspace = true
 taxon.workspace = true
 tracing.workspace = true
 # vix lowers to weavy (portability is weavy's concern — constitution

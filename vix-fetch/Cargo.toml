@@ -15,6 +15,8 @@ vix = { path = "../vix-core", package = "vix-core" }
 flate2 = "1.1"
 tar = "0.4"
 ureq = "3.3"
+sha2.workspace = true
+hex.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

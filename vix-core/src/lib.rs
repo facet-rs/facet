@@ -28,7 +28,6 @@ pub mod compiler;
 pub mod decode;
 pub mod diagnostic;
 pub mod exec;
-pub mod fetch;
 pub mod lowering;
 pub mod modules;
 pub mod prelude;

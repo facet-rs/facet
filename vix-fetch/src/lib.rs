@@ -1,11 +1,22 @@
+//! Real fetch backends for vix archives.
+//!
+//! [`tree`] carries the backend contract and its output model — `FetchBackend`,
+//! `FetchOutput`, `Tree`, `sha256_hex`. Those used to live in `vix-core` as
+//! `vix::fetch`; nothing in the language ever used them, and they are domain
+//! concerns (archives, checksums, extraction), so they live here beside their
+//! only implementations.
+
+pub mod tree;
+
 use std::io::Read;
 use std::path::Component;
 
 use flate2::read::GzDecoder;
-use vix::exec::Tree;
-use vix::fetch::{FetchBackend, FetchOutput};
+
 use vix::runtime::{OriginAdapter, PrimitiveMachineError, ValueId};
 use vix::vir::{ExternKind, Type};
+
+pub use tree::{FetchBackend, FetchOutput, Tree, sha256_hex};
 
 /// Raw Blob transport for the registered pinned-fetch primitive. Archive
 /// interpretation is deliberately absent: extraction is a separate Vix
@@ -107,7 +118,7 @@ fn fetch_archive_bytes_with_output(
     archive_bytes: &[u8],
     output: &ArchiveFetchOutput,
 ) -> Result<FetchOutput, String> {
-    let actual_sha256 = vix::fetch::sha256_hex(archive_bytes);
+    let actual_sha256 = sha256_hex(archive_bytes);
     if let Some(expected) = expected_sha256
         && expected != actual_sha256
     {

@@ -9521,7 +9521,6 @@ dependencies = [
  "phon",
  "rustc-demangle",
  "semver",
- "sha2 0.10.9",
  "snark",
  "snark-dsl",
  "taxon",
@@ -9537,6 +9536,8 @@ name = "vix-fetch"
 version = "0.0.0"
 dependencies = [
  "flate2",
+ "hex",
+ "sha2 0.10.9",
  "tar",
  "tempfile",
  "ureq",

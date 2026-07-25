@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use flate2::Compression;
 use flate2::write::GzEncoder;
-use vix::fetch::FetchBackend;
+use vix_fetch::FetchBackend;
 use vix_fetch::HttpArchiveFetchBackend;
 
 const ITOA_URL: &str = "https://static.crates.io/crates/itoa/itoa-1.0.15.crate";
@@ -51,7 +51,7 @@ fn fetches_local_gzip_tar_archive() {
         ("mini-0.1.0/Cargo.toml", "[package]\nname = \"mini\"\n"),
         ("mini-0.1.0/src/lib.rs", "pub fn answer() -> i32 { 42 }\n"),
     ]);
-    let sha256 = vix::fetch::sha256_hex(&body);
+    let sha256 = vix_fetch::sha256_hex(&body);
     let url = serve_once(body);
 
     let fetched = HttpArchiveFetchBackend::default()
