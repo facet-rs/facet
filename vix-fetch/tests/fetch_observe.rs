@@ -347,8 +347,8 @@ fn pinned_fetch_yielded_frame_survives_off_stack_and_crosses_the_inbox() {
     // resumed only after its completion crossed the one unified inbox.
     let plain = &report.plain;
     assert_eq!(
-        plain.counters.primitive_invocations, 2,
-        "the registry-url resolve and the fetch each began one registered-primitive demand: {plain:#?}"
+        plain.counters.primitive_invocations, 3,
+        "the registry-url resolve, the fetch, and the `Blob.len` read each began one registered-primitive demand: {plain:#?}"
     );
     assert!(
         plain.counters.peak_primitive_parked_frames >= 1,
@@ -395,7 +395,7 @@ fn pinned_fetch_provider_hit_precedes_origin() {
     assert_eq!(server.transfers(), 0, "provider hit must precede origin");
     assert_eq!(server.requests(), 0, "provider hit must not contact origin");
     for run in [&report.plain, &report.chaos] {
-        assert_eq!(run.counters.primitive_invocations, 2, "{run:#?}");
+        assert_eq!(run.counters.primitive_invocations, 3, "{run:#?}");
         assert_eq!(run.counters.fetches_performed, 0, "{run:#?}");
     }
 }
@@ -448,7 +448,7 @@ fn pinned_fetch_local_store_hit_never_contacts_provider_or_origin() {
         "only origin admission is offered to persistence"
     );
     for run in [&report.plain, &report.chaos] {
-        assert_eq!(run.counters.primitive_invocations, 4, "{run:#?}");
+        assert_eq!(run.counters.primitive_invocations, 6, "{run:#?}");
         assert_eq!(run.counters.fetches_performed, 1, "{run:#?}");
     }
 }
@@ -597,7 +597,7 @@ fn pinned_fetch_rejects_corrupt_provider_then_admits_verified_origin() {
         [(identity.clone(), bytes.clone()), (identity, bytes),]
     );
     for run in [&report.plain, &report.chaos] {
-        assert_eq!(run.counters.primitive_invocations, 2, "{run:#?}");
+        assert_eq!(run.counters.primitive_invocations, 3, "{run:#?}");
         assert_eq!(run.counters.fetches_performed, 1, "{run:#?}");
     }
 }
