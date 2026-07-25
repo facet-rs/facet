@@ -8563,15 +8563,14 @@ mod tests {
     use crate::compiler::{Compiler, CompilerConfig};
     use crate::lowering::{LoweringCache, attribution_for};
 
-    /// A compiler carrying the vixen stdlib prelude, for the decode-dispatch
-    /// tests whose fixture calls `json_decode`. `PRELUDE_SOURCES` is `&[&str]`
-    /// data, so naming it across the dev-dependency is free of the crate-copy
-    /// identity hazard that types (e.g. `RawPrimitive`) would hit.
+    /// The bare-language compiler. These decode-dispatch tests used to borrow
+    /// the vixen stdlib prelude across a dev-dependency so their fixture could
+    /// spell `json_decode`; the fixture now declares its own `Format` and calls
+    /// the core `decode` binding directly, which is what the bare language
+    /// actually offers (`json_decode` is embedder prelude source, not a core
+    /// name). See the bare-language rule in `vix-core/Cargo.toml`.
     fn decode_compiler() -> Compiler {
-        Compiler::with_config(CompilerConfig {
-            prelude: vixen_primitives::stdlib::PRELUDE_SOURCES,
-            ..CompilerConfig::default()
-        })
+        Compiler::with_config(CompilerConfig::default())
     }
     use crate::runtime::{
         EventLog, FramedNode, MachineCause, PrimitiveDescriptor, PrimitiveRegistry, RawPrimitive,
@@ -8680,7 +8679,16 @@ fn duplicate_key() -> Stream<Check> {
 }
 "#;
 
+    // The bare-language spelling of a typed decode: the program declares the
+    // `Format` selector itself and calls the core `decode` binding. `json_decode`
+    // is a one-line embedder wrapper over exactly this (see
+    // `vixen-primitives/src/stdlib/json_decode.vix`) and is not available here.
     const SCHEDULER_DECODE_SOURCE: &str = r#"
+enum Format {
+    Json,
+    Toml,
+}
+
 struct Row {
     name: String,
 }
@@ -8688,7 +8696,7 @@ struct Row {
 #[test]
 fn scheduler_decode() -> Stream<Check> {
     let src = "{\"name\":\"mio\"}";
-    let row: Row = json_decode(src);
+    let row: Row = decode(src, Format::Json);
     yield expect_eq(row.name, "mio");
 }
 "#;

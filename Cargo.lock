@@ -9529,8 +9529,6 @@ dependencies = [
  "tokio",
  "tracing",
  "vix-wire",
- "vixen-primitives",
- "vixen-runtime",
  "weavy",
 ]
 

@@ -180,7 +180,7 @@ slow-timeout = { period = "120s", terminate-after = 5 }
 # bounded and always passing; give it the same longer leash as the other heavy
 # vix certificates.
 [[profile.default.overrides]]
-filter = 'package(vix-core) & test(accepted_rungs_verify_and_execute_through_one_executable)'
+filter = 'package(vixen-runtime) & test(accepted_rungs_verify_and_execute_through_one_executable)'
 slow-timeout = { period = "120s", terminate-after = 5 }
 
 # The rung-110 module-boundary identity oracle compiles three module-set
@@ -190,7 +190,7 @@ slow-timeout = { period = "120s", terminate-after = 5 }
 # two concurrent workspace builds). Bounded and always passing; same leash as
 # the other heavy vix certificates.
 [[profile.default.overrides]]
-filter = 'package(vix-core) & test(=rung_110_recipe_identity_is_importer_independent)'
+filter = 'package(vixen-runtime) & test(=rung_110_recipe_identity_is_importer_independent)'
 slow-timeout = { period = "120s", terminate-after = 5 }
 
 # The cross-lane differential (F1) compiles the accepted canonical corpus
@@ -205,5 +205,5 @@ slow-timeout = { period = "120s", terminate-after = 5 }
 # workspace contention or coverage cannot flake it, on the same shape as the
 # other heavy vix certificates.
 [[profile.default.overrides]]
-filter = 'package(vix-core) & test(accepted_corpus_agrees_across_native_and_interpreter_lanes)'
+filter = 'package(vixen-runtime) & test(accepted_corpus_agrees_across_native_and_interpreter_lanes)'
 slow-timeout = { period = "300s", terminate-after = 4 }

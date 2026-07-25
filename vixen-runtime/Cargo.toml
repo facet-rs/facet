@@ -32,7 +32,15 @@ windows-sys = { workspace = true, features = [
   "Win32_System_ProcessStatus",
 ] }
 
+# The system tests live here, not in `vix-core`: every one of them drives a
+# program through `ratchet`, so they need the primitives and stdlib installed.
+# They moved out of `vix-core/tests` (with the `.vix` ratchet corpus in
+# `tests/ratchet/` and the `std/` version library) to break the dev-dependency
+# cycle that made the bare language untestable — see the bare-language rule in
+# `vix-core/Cargo.toml`.
 [dev-dependencies]
 semver = "1.0.28"
 tempfile.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time"] }
+# `cross_lane_differential` selects the native vs interpreter lane explicitly.
+weavy = { path = "../weavy" }

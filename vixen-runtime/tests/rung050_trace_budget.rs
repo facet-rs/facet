@@ -31,7 +31,7 @@ use vix::diagnostic::DiagnosticCode;
 use vixen_runtime::ratchet::run_source;
 use vix::vir::Budget;
 
-const RUNG_050: &str = include_str!("../../vix-core/tests/ratchet/050-deep-tail-recursion.vix");
+const RUNG_050: &str = include_str!("ratchet/050-deep-tail-recursion.vix");
 
 /// The compiled outer budget-enforcing child process.
 const CHILD_EXE: &str = env!("CARGO_BIN_EXE_vix-budget-child");
