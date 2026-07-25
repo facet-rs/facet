@@ -514,8 +514,17 @@ impl<'a> TypeDeclaration<'a> {
     }
 }
 
-fn semantic_schema_set(source: &ast::SourceFile) -> Result<SchemaSet, Diagnostics> {
+fn semantic_schema_set(
+    source: &ast::SourceFile,
+    host_types: &[crate::binding::HostTypeDecl],
+) -> Result<SchemaSet, Diagnostics> {
     let mut batch = SchemaBatch::vix_builtins();
+    // Reserve the embedder's declared host types so this program can name them in
+    // its own declarations. Gated by `host_types` (this compilation's declared
+    // set), not the process-global registry: the bare language does not resolve a
+    // domain type name it wasn't handed. `Blob`-style core collisions are skipped
+    // here and rejected later in `lower_module`.
+    batch.add_host_externs(host_types.iter().map(|decl| decl.name));
     let mut declarations = BTreeMap::new();
     for item in &source.items {
         let (name, span) = match item {
@@ -706,7 +715,7 @@ impl<'a> TypeResolver<'a> {
         source: &'a ast::SourceFile,
         host_types: &'a [crate::binding::HostTypeDecl],
     ) -> Result<Self, Diagnostics> {
-        let schemas = semantic_schema_set(source)?;
+        let schemas = semantic_schema_set(source, host_types)?;
         let mut declarations = BTreeMap::new();
         for item in &source.items {
             let (name, span, declaration) = match item {
@@ -1408,17 +1417,18 @@ fn lower_module(
     // type — the language no longer hardcodes them. Their extern-backed value
     // hashes identically to the retired `ExternKind` variants (`name()` is
     // unchanged), so recipe/value identity is byte-stable. A host type's nominal
-    // identity must still be reserved in the core schema batch: validate it up
-    // front so a misconfigured embedder gets a diagnostic here rather than a
-    // panic deep inside schema hashing when `Host(name).schema_ref()` is first
-    // computed.
+    // identity must still be reserved, now through
+    // `schema::register_host_externs` rather than a hand-edit of the builtin
+    // batch: validate it up front so a misconfigured embedder (one that declares
+    // a host type it never registered) gets a diagnostic here rather than a panic
+    // deep inside schema hashing when `Host(name).schema_ref()` is first computed.
     for decl in config.host_types {
         if !crate::schema::is_builtin_schema(decl.name) {
             return Err(Diagnostics::one(Diagnostic::unsupported(
                 Span { start: 0, end: 0 },
                 format!(
-                    "injected host type `{}` is not a registered builtin schema (reserve its \
-                     name in vix-core's schema batch before declaring it)",
+                    "injected host type `{}` is not a registered host extern (call \
+                     `vix::schema::register_host_externs` for its name before declaring it)",
                     decl.name
                 ),
             )));
@@ -4176,6 +4186,57 @@ fn lower_primitive_method(
     })
 }
 
+/// Lower a codata-backed receiver method ([`MethodLowering::CodataPrimitive`]):
+/// the codata analogue of [`lower_primitive_method`]. The recipe *is* the request
+/// — the receiver (stream source) followed by the declared operands become the
+/// node inputs of a single [`Op::InvokeCodataPrimitive`] naming the codata
+/// primitive's id; there is no per-method compiler code. The node is `EFFECT` and
+/// its type is the declared stream recipe, realized lazily when a collection
+/// drains it (`Tree.glob(pattern)` → `Stream<Path, Path>`).
+fn lower_codata_primitive_method(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    call: &ast::MethodCall,
+    receiver: LoweredValue,
+    positional: &[ast::Expr],
+    codata: crate::binding::CodataMethodDecl,
+) -> Result<LoweredValue, Diagnostics> {
+    if codata.operands.len() != positional.len() {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            call.span,
+            format!(
+                "codata method `{}` declares {} operands for arity {}",
+                call.name.value,
+                codata.operands.len(),
+                positional.len(),
+            ),
+        )));
+    }
+    let mut inputs = Vec::with_capacity(positional.len() + 1);
+    inputs.push(receiver.node);
+    for (operand_ty, argument) in codata.operands.iter().zip(positional) {
+        let operand_ty = operand_ty();
+        let value = lower_value_expected(nodes, bindings, context, argument, Some(&operand_ty))?;
+        require_type(&value, &operand_ty, expr_span(argument))?;
+        inputs.push(value.node);
+    }
+    let ty = (codata.result)();
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            call.span,
+            ty.clone(),
+            EffectFacts::EFFECT,
+            inputs,
+            Op::InvokeCodataPrimitive {
+                primitive: (codata.id)(),
+            },
+        ),
+        ty,
+    })
+}
+
 fn tree_projection_syntax(expression: &ast::Expr) -> Option<(&ast::Expr, Vec<&ast::Expr>)> {
     fn collect<'a>(expression: &'a ast::Expr, segments: &mut Vec<&'a ast::Expr>) -> &'a ast::Expr {
         if let ast::Expr::Paren(paren) = expression {
@@ -4398,8 +4459,8 @@ fn lower_method_call(
     if positional.len() != entry.arity {
         return Err(invalid_arity(call.span, entry.arity, positional.len()));
     }
-    // A primitive-backed method has no per-method compiler code: build the
-    // declared request record and invoke the primitive. A dedicated op falls
+    // A primitive- or codata-backed method has no per-method compiler code: build
+    // the declared request and invoke the (codata) primitive. A dedicated op falls
     // through to its bespoke lowering arm below.
     let method = match entry.lowering {
         crate::binding::MethodLowering::Primitive(primitive) => {
@@ -4411,6 +4472,17 @@ fn lower_method_call(
             }
             return lower_primitive_method(
                 nodes, bindings, context, call, receiver, positional, primitive,
+            );
+        }
+        crate::binding::MethodLowering::CodataPrimitive(codata) => {
+            if let Some(named) = &call.named_args {
+                return Err(Diagnostics::one(Diagnostic::unsupported(
+                    named.span,
+                    "named method arguments",
+                )));
+            }
+            return lower_codata_primitive_method(
+                nodes, bindings, context, call, receiver, positional, codata,
             );
         }
         crate::binding::MethodLowering::DedicatedOp(method) => method,
@@ -5062,36 +5134,6 @@ fn lower_method_call(
                     effect,
                     vec![receiver.node],
                     Op::StreamCollect,
-                ),
-                ty,
-            })
-        }
-        PreludeMethod::TreeGlob => {
-            let pattern = lower_value(nodes, bindings, context, &positional[0])?;
-            require_type(&pattern, &Type::String, expr_span(&positional[0]))?;
-            let ty = Type::stream(Type::Path, Type::Path);
-            Ok(LoweredValue {
-                node: push_node(
-                    nodes,
-                    call.span,
-                    ty.clone(),
-                    EffectFacts::EFFECT,
-                    vec![receiver.node, pattern.node],
-                    Op::TreeGlob,
-                ),
-                ty,
-            })
-        }
-        PreludeMethod::BlobLen => {
-            let ty = Type::Int;
-            Ok(LoweredValue {
-                node: push_node(
-                    nodes,
-                    call.span,
-                    ty.clone(),
-                    EffectFacts::EFFECT,
-                    vec![receiver.node],
-                    Op::BlobLen,
                 ),
                 ty,
             })

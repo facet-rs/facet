@@ -46,6 +46,11 @@ fn wire_extern_maps_a_core_spelling_to_the_axiom_extern() {
 
 #[test]
 fn wire_extern_is_honored_inside_a_walked_record() {
+    // Walking the record resolves each field's schema identity, so the host
+    // extern's name must be reserved (as the embedder does at startup); the
+    // generic name→`Host` mapping itself needs no registration (see the tests
+    // above).
+    vix::schema::register_host_externs(&["Tree"]);
     let Type::Record(record) = Type::from_facet::<EmbedderRequest>() else {
         panic!("a struct walks to a record");
     };

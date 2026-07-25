@@ -1,9 +1,11 @@
-//! An embedder-injected host type's nominal identity must be a builtin schema
-//! name the core reserves (the schema *registration* is the one piece of a host
-//! type that still lives in `vix-core`, since it anchors byte-stable identity).
-//! A name the batch does not reserve is rejected with a compile diagnostic here,
-//! at the injection seam — not a panic deep inside schema hashing when the host
-//! type's `schema_ref()` is first computed.
+//! An embedder-injected host type's nominal identity must be a name the core
+//! recognizes — a core builtin, or one reserved through
+//! `vix::schema::register_host_externs` (the schema *registration* is the one
+//! piece of a host type that still lives in `vix-core`, since it anchors
+//! byte-stable identity, now a process-global call rather than a hand-edit of
+//! the builtin batch). A name that was never registered is rejected with a
+//! compile diagnostic here, at the injection seam — not a panic deep inside
+//! schema hashing when the host type's `schema_ref()` is first computed.
 
 use vix::binding::HostTypeDecl;
 use vix::compiler::{Compiler, CompilerConfig};
@@ -36,6 +38,7 @@ fn an_unregistered_host_type_is_a_diagnostic_not_a_panic() {
 
 #[test]
 fn a_registered_host_type_compiles() {
+    vix::schema::register_host_externs(&[vix::binding::TREE]);
     let compiler = Compiler::with_config(CompilerConfig {
         host_types: TREE,
         ..CompilerConfig::default()
@@ -83,6 +86,7 @@ fn tree_text_projection_requires_the_declared_tree_host_type() {
         Compiler::new().compile(TREE_TEXT_PROGRAM).is_err(),
         "the bare language does not spell the tree projection read"
     );
+    vix::schema::register_host_externs(&[vix::binding::TREE]);
     let compiler = Compiler::with_config(CompilerConfig {
         host_types: TREE,
         ..CompilerConfig::default()

@@ -11,6 +11,7 @@
 
 pub mod typed_primitive;
 
+mod blob_len_primitive;
 mod decode_primitive;
 mod fetch_primitive;
 mod primitive_value_decode;
@@ -47,6 +48,17 @@ pub const HOST_TYPES: &[vix::binding::HostTypeDecl] = &[
     },
 ];
 
+/// Reserve `vixen`'s host-extern type names ([`HOST_TYPES`]) with `vix-core`'s
+/// schema batch — the identity anchor that lets an injected `HostTypeDecl`
+/// resolve rather than be rejected as unregistered. Must run before the first
+/// compilation that declares these host types (the runtime does this at
+/// assembly; tests that inject [`HOST_TYPES`] directly call it themselves).
+/// Additive and idempotent, so calling it more than once is harmless.
+pub fn register_host_types() {
+    let names: Vec<&'static str> = HOST_TYPES.iter().map(|decl| decl.name).collect();
+    vix::schema::register_host_externs(&names);
+}
+
 /// The host-type methods `vixen` declares on the domain types, injected into the
 /// compiler through [`vix::compiler::CompilerConfig::methods`]. `Tree.glob` and
 /// `Blob.len` name dedicated ops whose bespoke lowering and execution stay in
@@ -61,13 +73,21 @@ pub const DOMAIN_METHODS: &[vix::binding::MethodDecl] = &[
         receiver: vix::binding::ReceiverType::Host(vix::binding::TREE),
         name: "glob",
         arity: 1,
-        lowering: vix::binding::MethodLowering::DedicatedOp(vix::binding::MethodOp::TreeGlob),
+        lowering: vix::binding::MethodLowering::CodataPrimitive(vix::binding::CodataMethodDecl {
+            operands: &[tree_glob_pattern_type],
+            result: tree_glob_stream_type,
+            id: crate::rt::tree_glob_primitive_id,
+        }),
     },
     vix::binding::MethodDecl {
         receiver: vix::binding::ReceiverType::Blob,
         name: "len",
         arity: 0,
-        lowering: vix::binding::MethodLowering::DedicatedOp(vix::binding::MethodOp::BlobLen),
+        lowering: vix::binding::MethodLowering::Primitive(vix::binding::PrimitiveMethodDecl {
+            request: blob_len_request_type,
+            result: blob_len_result_type,
+            id: blob_len_primitive_id,
+        }),
     },
     vix::binding::MethodDecl {
         receiver: vix::binding::ReceiverType::Registry,
@@ -81,6 +101,18 @@ pub const DOMAIN_METHODS: &[vix::binding::MethodDecl] = &[
     },
 ];
 
+/// The `String` glob pattern operand of `Tree.glob` — the sole operand of its
+/// [`vix::binding::CodataMethodDecl`]. A `fn` so the declaration stays `const`.
+fn tree_glob_pattern_type() -> vix::vir::Type {
+    vix::vir::Type::String
+}
+
+/// The `Stream<Path, Path>` recipe `Tree.glob` produces.
+fn tree_glob_stream_type() -> vix::vir::Type {
+    vix::vir::Type::stream(vix::vir::Type::Path, vix::vir::Type::Path)
+}
+
+pub use blob_len_primitive::*;
 pub use decode_primitive::*;
 pub use fetch_primitive::*;
 pub use primitive_value_decode::*;

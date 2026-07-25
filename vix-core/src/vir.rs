@@ -1394,6 +1394,16 @@ pub enum Op {
     InvokePrimitive {
         primitive: crate::runtime::PrimitiveId,
     },
+    /// Invoke one registered *codata* primitive — the codata analogue of
+    /// [`Op::InvokePrimitive`]. Its inputs are the receiver (the stream source,
+    /// e.g. a `Tree`) followed by the method's operands (e.g. the glob pattern);
+    /// its declared type is the stream recipe (`Stream<..>`). The recipe is
+    /// realized when its consumer (`Op::StreamCollect`) drains it, dispatched
+    /// solely by `PrimitiveId` through the codata registry — no bespoke op per
+    /// domain method (issue 2528).
+    InvokeCodataPrimitive {
+        primitive: crate::runtime::PrimitiveId,
+    },
     Tuple,
     Record,
     Project {
@@ -1542,9 +1552,6 @@ pub enum Op {
     /// fixture-tree reference; projections resolve — and record reads — only
     /// where demanded.
     FixtureTree(String),
-    /// Glob over a Tree: a keyed codata recipe (`Stream<Path, Path>`) whose
-    /// collection reads only the directory listings the pattern traverses.
-    TreeGlob,
     /// Open the offline harness fixture registry (the lock-time manifest).
     FixtureRegistry,
     /// Extract an archive Blob into a Tree whose identity is the canonical
@@ -1552,8 +1559,6 @@ pub enum Op {
     ///
     /// r[impl machine.identity.tree-model]
     Untar,
-    /// The byte length of a Blob, read from the store entry.
-    BlobLen,
 }
 
 /// One SSA-like operation. Dependencies are explicit node ids; no Rust
@@ -4152,15 +4157,12 @@ fn structural_fingerprint(
 
 /// An effect root is any machine-plane primitive node that publishes a value:
 /// it is an island boundary regardless of consumer count, because it can never
-/// lower into a Weavy program. A codata effect recipe (`Op::TreeGlob`, type
-/// `Stream<..>`) is not itself a root — the collection realizing it is.
+/// lower into a Weavy program. A codata effect recipe (`Op::InvokeCodataPrimitive`,
+/// type `Stream<..>`) is not itself a root — the collection realizing it is.
 fn is_effect_root(node: &Node) -> bool {
     matches!(
         node.op,
-        Op::Exec { .. }
-            | Op::FixtureRegistry
-            | Op::Untar
-            | Op::BlobLen
+        Op::Exec { .. } | Op::FixtureRegistry | Op::Untar
     ) || (node.effect.kind == EffectKind::Effect
         && matches!(node.op, Op::StreamCollect)
         && !matches!(node.ty, Type::Stream { .. }))
@@ -4608,6 +4610,12 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
             frame(&mut op, primitive.name.as_bytes());
             op.extend_from_slice(&primitive.version.to_le_bytes());
         }
+        Op::InvokeCodataPrimitive { primitive } => {
+            op.push(102);
+            frame(&mut op, primitive.namespace.as_bytes());
+            frame(&mut op, primitive.name.as_bytes());
+            op.extend_from_slice(&primitive.version.to_le_bytes());
+        }
         Op::Div => op.push(23),
         Op::IsVariant { variant } => {
             op.push(24);
@@ -4692,10 +4700,8 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
             op.push(90);
             frame(&mut op, name.as_bytes());
         }
-        Op::TreeGlob => op.push(93),
         Op::FixtureRegistry => op.push(94),
         Op::Untar => op.push(97),
-        Op::BlobLen => op.push(98),
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());

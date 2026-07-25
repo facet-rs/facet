@@ -158,13 +158,15 @@ pub const TREE_ENTRY: &str = "TreeEntry";
 /// `Tree` is declared by `vixen-primitives` rather than hardcoded as a variant
 /// of the language core's `ExternKind`. `name` is the type's nominal identity.
 ///
-/// `name` must be a builtin schema name the core reserves (see
-/// `schema::SchemaBatch::vix_builtins`) — the schema *registration* is the one
-/// piece of a host type that still lives in `vix-core`, since it anchors
-/// byte-stable identity; the compiler rejects an unregistered name with a
-/// diagnostic rather than panicking. A `name` that collides with a core type
-/// spelling (`Blob`, `Registry`, …) is also rejected: the core always wins its
-/// own spelling, so such a declaration could never be reached.
+/// `name` must be a core builtin schema name (see
+/// `schema::SchemaBatch::vix_builtins`) or a name the embedder has reserved
+/// through `schema::register_host_externs` — the schema *registration* is the
+/// one piece of a host type that still lives in `vix-core`, since it anchors
+/// byte-stable identity, but it is now a process-global call rather than a
+/// hand-edit of the builtin batch. The compiler rejects an unregistered name
+/// with a diagnostic rather than panicking. A `name` that collides with a core
+/// type spelling (`Blob`, `Registry`, …) is also rejected: the core always wins
+/// its own spelling, so such a declaration could never be reached.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostTypeDecl {
     pub name: &'static str,
@@ -231,12 +233,12 @@ pub enum MethodOp {
     IntToString,
     ByteStreamCollect,
     ByteStreamTrim,
-    TreeGlob,
-    BlobLen,
-    // `RegistryUrl` is retired from this enum: `Registry.url` is a
-    // primitive-backed method ([`MethodLowering::Primitive`]) whose whole
-    // contract lives in `vixen-primitives` — the fully generic rail needs no
-    // dedicated-op name in core.
+    // The domain methods (`Tree.glob`, `Registry.url`, `Blob.len`) are retired
+    // from this enum: `Registry.url`/`Blob.len` ride the primitive rail
+    // ([`MethodLowering::Primitive`]) and `Tree.glob` the codata rail
+    // ([`MethodLowering::CodataPrimitive`]), each declared wholly in
+    // `vixen-primitives` — the fully generic rails need no dedicated-op name in
+    // core. Only the axiom methods above remain.
 }
 
 /// What a surface name resolves to.
@@ -549,9 +551,10 @@ pub struct MethodDecl {
 /// What a resolved receiver method lowers to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MethodLowering {
-    /// A dedicated VIR op with bespoke lowering in `compiler::lower_method_call`
-    /// (`TreeGlob`'s codata stream, `BlobLen`). The declaration is injectable;
-    /// the machine engine stays in core.
+    /// A dedicated VIR op with bespoke lowering in `compiler::lower_method_call`.
+    /// Only the axiom methods (`Array.len`, `String.trim`, …) still ride this
+    /// rail; the injected domain methods have all moved to the generic rails
+    /// below.
     DedicatedOp(MethodOp),
     /// A registered primitive: the compiler builds the declared request record
     /// (`Op::Record`) and invokes the primitive (`Op::InvokePrimitive`) — no
@@ -560,6 +563,13 @@ pub enum MethodLowering {
     /// lowering, so its contract (request/result types, primitive id) lives in
     /// the embedder alongside its implementation.
     Primitive(PrimitiveMethodDecl),
+    /// A registered *codata* primitive — the codata analogue of [`Self::Primitive`]
+    /// for methods whose result is a stream recipe (`Tree.glob`). The compiler
+    /// lowers the receiver plus operands to an [`crate::vir::Op::InvokeCodataPrimitive`]
+    /// naming the declared id; the scheduler realizes the recipe by draining that
+    /// codata primitive when the stream is collected. Like the primitive rail, no
+    /// per-method compiler code — the whole contract is the injected declaration.
+    CodataPrimitive(CodataMethodDecl),
 }
 
 /// The contract of a primitive-backed receiver method: the request record the
@@ -579,6 +589,26 @@ pub enum MethodLowering {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PrimitiveMethodDecl {
     pub request: fn() -> crate::vir::Type,
+    pub result: fn() -> crate::vir::Type,
+    pub id: fn() -> PrimitiveId,
+}
+
+/// The contract of a codata-backed receiver method (`Tree.glob`): the type of
+/// each positional operand (the receiver is the stream source and is not listed),
+/// the stream recipe the invocation produces, and the codata primitive that
+/// drains it. Carried as `fn() -> _` thunks so declarations stay `const` data.
+///
+/// The invocation node carries the receiver followed by the operands as inputs
+/// (there is no request record on the codata rail — the recipe *is* the request);
+/// it is realized lazily, when its consuming collection drains the named codata
+/// primitive.
+// Thunk equality is pointer identity, as for [`PrimitiveMethodDecl`].
+#[allow(unpredictable_function_pointer_comparisons)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CodataMethodDecl {
+    /// The types of the method's positional operands, in order (`Tree.glob` has a
+    /// single `String` pattern). The receiver — the stream source — is implicit.
+    pub operands: &'static [fn() -> crate::vir::Type],
     pub result: fn() -> crate::vir::Type,
     pub id: fn() -> PrimitiveId,
 }

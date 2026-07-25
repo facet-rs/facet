@@ -6409,6 +6409,7 @@ fn completed_exec_tree(sh: Sh) -> Stream<Check> {
 /// for tests whose fixture spells the domain projection syntax
 /// (`(tree / seg).text()`) — active only when the embedder declares `Tree`.
 fn tree_compiler() -> Compiler {
+    vixen_primitives::register_host_types();
     Compiler::with_config(CompilerConfig {
         host_types: vixen_primitives::HOST_TYPES,
         ..CompilerConfig::default()
@@ -7298,6 +7299,7 @@ fn tree_fetch_band_compiles_to_typed_vir() {
     // The tree methods (`.glob`/`.text`/`.len`/`.url`) are declared by the
     // embedder, not the bare language, so the compiler is configured with the
     // injected domain methods — as the runnable system does (issue 2520).
+    vixen_primitives::register_host_types();
     let compiler = Compiler::with_config(CompilerConfig {
         methods: vixen_primitives::DOMAIN_METHODS,
         host_types: vixen_primitives::HOST_TYPES,

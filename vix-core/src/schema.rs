@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use taxon::{Field, Kind, Primitive, Schema, SchemaRef as TaxonSchemaRef, Variant, VariantPayload};
 
@@ -277,8 +277,6 @@ impl SchemaBatch {
             "Blob",
             "Check",
             "Path",
-            "Tree",
-            "TreeEntry",
             "Registry",
             "PinnedUrl",
             "Schema",
@@ -305,8 +303,6 @@ impl SchemaBatch {
         for name in [
             "Check",
             "Path",
-            "Tree",
-            "TreeEntry",
             "Registry",
             "PinnedUrl",
             "Schema",
@@ -449,6 +445,32 @@ impl SchemaBatch {
         batch
     }
 
+    /// Reserve and declare embedder host-extern schema names into this batch, so
+    /// a program compiled with these host types can name them in its own type
+    /// annotations and declarations. Each is a standalone
+    /// `External { kind: "vix.{name}" }` leaf whose canonical identity depends
+    /// only on its name — byte-identical to [`host_extern_schema`]'s standalone
+    /// resolution and to the retired hardcoded reservation, so which names are
+    /// present (and in what order) never perturbs another schema's identity.
+    ///
+    /// A name the core batch already defines (a core spelling like `Blob`) is
+    /// skipped here; the compiler rejects such a colliding host type separately.
+    pub(crate) fn add_host_externs<'a>(&mut self, names: impl IntoIterator<Item = &'a str>) {
+        for name in names {
+            if self.defined.contains(name) {
+                continue;
+            }
+            self.add_named(
+                name,
+                Vec::new(),
+                Kind::External {
+                    kind: format!("vix.{name}"),
+                    metadata: None,
+                },
+            );
+        }
+    }
+
     pub(crate) fn reserve_named(&mut self, name: &str) -> taxon::SchemaId {
         if let Some(id) = self.keys.get(name) {
             return *id;
@@ -532,22 +554,94 @@ fn builtins() -> &'static SchemaSet {
     BUILTINS.get_or_init(|| SchemaBatch::vix_builtins().finish())
 }
 
-#[must_use]
-pub(crate) fn builtin_schema(name: &str) -> SchemaRef {
-    builtins()
-        .named(name)
-        .unwrap_or_else(|| panic!("unknown Vix builtin schema `{name}`"))
-        .clone()
+/// Host-extern type names the embedder has registered with the core schema
+/// batch — the identity anchor an injected [`crate::binding::HostTypeDecl`]
+/// resolves against. Empty in the bare language; `vixen` registers its domain
+/// host types (`Tree`, `TreeEntry`) via [`register_host_externs`]. A `BTreeSet`
+/// so the set is consumed deterministically (sorted) regardless of the order the
+/// embedder registered names in.
+static REGISTERED_HOST_EXTERNS: Mutex<BTreeSet<&'static str>> = Mutex::new(BTreeSet::new());
+
+/// The memoized standalone identity of each registered host extern, so repeated
+/// `builtin_schema` lookups don't re-resolve the same `External` leaf.
+static HOST_EXTERN_SCHEMAS: Mutex<BTreeMap<&'static str, SchemaRef>> =
+    Mutex::new(BTreeMap::new());
+
+/// Register embedder host-extern type names so the core recognizes their nominal
+/// identity — the one remaining schema touchpoint for adding a domain host type.
+/// After a name is registered here (and declared for a compilation via
+/// [`crate::compiler::CompilerConfig::host_types`]), adding the type needs no
+/// further `vix-core` edit: reserving its name is no longer a hand-edit of the
+/// builtin batch.
+///
+/// Registration is additive and idempotent, and — because a host extern's
+/// canonical identity is content-derived from its name alone (a standalone,
+/// unreferenced `External { kind: "vix.{name}" }` leaf) — order-independent and
+/// byte-stable: registering a name never perturbs any other schema's identity,
+/// and a name reserved this way hashes exactly as the retired hardcoded
+/// reservation did. It may be called at any point before the name is first
+/// looked up.
+pub fn register_host_externs(names: &[&'static str]) {
+    REGISTERED_HOST_EXTERNS
+        .lock()
+        .expect("host-extern registry is not poisoned")
+        .extend(names.iter().copied());
 }
 
-/// Whether `name` is a registered builtin schema — the non-panicking query the
-/// compiler uses to validate embedder-injected host-type declarations before
-/// their `schema_ref()` (which would otherwise panic in [`builtin_schema`]) is
-/// ever computed. An injected host type's nominal identity must be one the core
-/// schema batch reserves (see `SchemaBatch::vix_builtins`).
+/// Whether `name` is a registered host extern (a cheap set membership query that
+/// does not resolve the schema).
+fn is_registered_host_extern(name: &str) -> bool {
+    REGISTERED_HOST_EXTERNS
+        .lock()
+        .expect("host-extern registry is not poisoned")
+        .contains(name)
+}
+
+/// The standalone canonical identity of a registered host extern, or `None` if
+/// `name` is not registered. Resolved once per name and memoized. Because a host
+/// extern is an unreferenced `External { kind: "vix.{name}" }` leaf, its content
+/// hash depends only on its name — this is byte-identical to the id the core
+/// batch produces when the same name is reserved in it (see
+/// [`SchemaBatch::add_host_externs`]), so identity is consistent whether the id
+/// is reached through the per-compile batch or here.
+fn host_extern_schema(name: &str) -> Option<SchemaRef> {
+    let registered_name: &'static str = REGISTERED_HOST_EXTERNS
+        .lock()
+        .expect("host-extern registry is not poisoned")
+        .get(name)
+        .copied()?;
+    let mut memo = HOST_EXTERN_SCHEMAS
+        .lock()
+        .expect("host-extern schema memo is not poisoned");
+    if let Some(schema) = memo.get(registered_name) {
+        return Some(schema.clone());
+    }
+    let schema = SchemaRef::for_kind(Kind::External {
+        kind: format!("vix.{registered_name}"),
+        metadata: None,
+    });
+    memo.insert(registered_name, schema.clone());
+    Some(schema)
+}
+
+#[must_use]
+pub(crate) fn builtin_schema(name: &str) -> SchemaRef {
+    if let Some(schema) = builtins().named(name) {
+        return schema.clone();
+    }
+    host_extern_schema(name).unwrap_or_else(|| panic!("unknown Vix builtin schema `{name}`"))
+}
+
+/// Whether `name` is a builtin schema the core reserves or a registered host
+/// extern — the non-panicking query the compiler uses to validate
+/// embedder-injected host-type declarations before their `schema_ref()` (which
+/// would otherwise panic in [`builtin_schema`]) is ever computed. An injected
+/// host type's nominal identity must be a core builtin (see
+/// `SchemaBatch::vix_builtins`) or a name reserved through
+/// [`register_host_externs`].
 #[must_use]
 pub(crate) fn is_builtin_schema(name: &str) -> bool {
-    builtins().named(name).is_some()
+    builtins().named(name).is_some() || is_registered_host_extern(name)
 }
 
 #[must_use]

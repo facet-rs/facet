@@ -50,6 +50,7 @@ mod tests {
     use vix::compiler::{Compiler, CompilerConfig};
 
     fn with_stdlib() -> Compiler {
+        crate::register_host_types();
         Compiler::with_config(CompilerConfig {
             prelude: super::PRELUDE_SOURCES,
             methods: crate::DOMAIN_METHODS,
