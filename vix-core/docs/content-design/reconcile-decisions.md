@@ -113,6 +113,15 @@ viability gates the amendment named?**
 
 ## Decision 2 — where does the daemon/capability spec live, now that the language spec has exactly three namespaces?
 
+> **RULED (Amos, 2026-07-26): a variant of Option A — the `vixen.*` name is
+> real, but its tree is hosted in THIS repo at `/spec/vixen`, not in vixenware.**
+> Normative as `r[vixen.spec.home]`. Rationale recorded there: there is no daemon
+> yet, so a cross-repo seam nothing can traverse costs more than co-location
+> does; hosting is not ownership, and moving the directory later is a directory
+> move. Keeping the `vixen` name (rather than folding into `vixc.*`) is what
+> makes it one move instead of a rename each way. The dangling preamble sentence
+> in `capability.md` now resolves.
+
 ### What the thing is
 
 Spec rules carry namespaced ids (`r[vix.identity...]` etc.), and the

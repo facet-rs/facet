@@ -5,7 +5,8 @@ weight = 12
 
 The machine-side boundary with capabilities — daemon-advertised toolchains
 carrying command grammars. The capability packages themselves (discovery,
-fingerprinting, grammars-as-data, the daemon) are `vixen.*` spec territory;
+fingerprinting, grammars-as-data, the daemon) are `vixen.*` spec territory,
+specified at [/spec/vixen/capability-packages](/spec/vixen/capability-packages);
 this page covers only what the MACHINE must honor about them.
 
 > r[machine.capability.two-classes]

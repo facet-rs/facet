@@ -68,10 +68,16 @@ vix function can still be method-called via the UFCS fallback in
 
 **In the critical path** (build and polish these):
 
-- `fetch` — pinned; crate-archive hashes come from the lock. *Gap:* surface
-  `fetch` is currently `fetch(url)` with no hash argument; 0.1 needs the lock's
-  checksum threaded through (the backend `verify_checksum` already exists). Do it
-  as the self-describing-hash change (below).
+- `fetch` — pinned. ~~crate-archive hashes come from the lock~~ **CORRECTED
+  (2026-07-26): they cannot.** A `Cargo.lock` carries SHA-256, and
+  `machine.primitive.fetch-is-pinned` makes BLAKE3 a *required* argument that
+  SHA-256 may never stand in for. Since 0.1 also deleted the one primitive that
+  could mint a BLAKE3 from an unpinned read, the pins are minted **before the
+  build, outside the language**, by `vx pin`, into a `vixen.lock` sidecar — see
+  [/spec/vixen/pins](/spec/vixen/pins). A build that reaches an unpinned artifact
+  fails rather than fetching. *Gap that remains:* surface `fetch` is still
+  `fetch(url)` with no hash argument; thread the pin through (the backend
+  `verify_checksum` already exists).
 - `exec` — run rustc. The linchpin. Note it is **not** a registered primitive; it
   lives on its own dedicated-op rail (tests: ratchet 067–074).
 - `decode` / `toml_decode` — parse Cargo.lock + Cargo.toml. `Format` enum stays.
@@ -166,6 +172,37 @@ claim head, `RefreshConflict` on a concurrent move). This is why:
 Whether `refresh` even belongs in the *surface language* is open: reading-and-
 pinning (observe) is a value; racing-to-advance-a-mutable-head (refresh) is
 administration and may belong in the runtime/CLI over the claim store.
+
+## The three rulings that unblocked the build-out (Amos, 2026-07-26)
+
+An audit of "is anything left to decide before we start?" found exactly three
+open questions on the critical path. All three are now ruled and normative under
+[`vixen.*`](/spec/vixen); the rest of the docket was already settled and several
+corpus GAPS files were merely stale about it (exit status, `Tree::union`).
+
+1. **Where the capability-package spec lives** (reconciliation Decision 2, open
+   since 2026-07-08) — **here**, at `/spec/vixen`, keeping the `vixen` name
+   (`vixen.spec.home`). This was load-bearing, not bookkeeping:
+   `machine.capability.no-argv-dialect` forbids the machine from knowing rustc's
+   flags, so *rustc cannot run until a rustc package exists*, and the package had
+   no home. 0.1's packages ship in `vixen-primitives`
+   (`vixen.capability.packages-ship-in-vixen-primitives`), and 0.1's `Rustc` is a
+   materializable toolchain tree, so no daemon, discovery, or advertisement is
+   reachable (`vixen.capability.rustc-is-materializable`).
+2. **Where a `fetch`'s BLAKE3 comes from** — a `vixen.lock` sidecar minted by
+   `vx pin` before the build (`vixen.pins.*`). Fetch stays pinned; reproducibility
+   is the whole point, and an "optional hash" would silently flip the trust model.
+3. **How an artifact reaches the filesystem** — `vx build` materializes the
+   demanded root at `./result`, Nix-shaped, explicitly an MVP
+   (`vixen.delivery.result`). Delivery is a CLI act over a demanded value, so it
+   needs no language surface and no new primitive; `place` is placement and stays
+   uninvolved.
+
+Consequences worth stating once: `exec` must be able to run a program out of a
+`Tree`, so the executable bit and symlinks of `machine.identity.tree-model` are a
+prerequisite of the rustc leg rather than a refinement of it; and a build script
+or proc macro is tagged by the same rule as an advertised tool, which retires the
+corpus's open "is a build script a capability?" question.
 
 ## Pre-1.0 constraint: stable IDs
 
