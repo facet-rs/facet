@@ -10,6 +10,51 @@ line, and nothing below moves it.
 A pin is a **digest of the bytes**, self-describing (`sha256:…`), passed as an
 argument to `fetch`. It is not a file vixen maintains.
 
+> r[vixen.pins.self-describing]
+>
+> [DESIGN] A pin is written `"<algorithm>:<digits>"` in one field named for its
+> role (`hash`), never one field per algorithm. The algorithm travels in the
+> value; the field name says what the value is *for*. A recipe may give several,
+> as an array, and **every one of them must verify** — that is how a value carries
+> both its vix name and the digest its registry published without the surface
+> growing a field per registry.
+>
+> This is the general form of the rule the surface memo already reached for:
+> algorithm-in-the-key (`sha256: "…"`) makes the *schema* ecosystem-specific, so
+> adopting npm means editing the language. Algorithm-in-the-value makes it data.
+>
+> It is not stringly typing, and the discriminator that governs `Format`/`Mode`
+> still holds. The algorithm set is CLOSED and runtime-implemented — you cannot
+> verify a digest you cannot compute — so the text is *literal syntax for a closed
+> enum plus a payload*, exactly like `p"…"` for a path. It parses to
+> `(Algorithm, bytes)` at the boundary; an unknown algorithm is a typed error, at
+> compile time when the pin is a literal.
+
+> r[vixen.pins.canonical-digest-form]
+>
+> [DESIGN] Digits are **lowercase hex** canonically. Base64 spellings are accepted
+> on input — SRI and npm write `sha512-<base64>`, Nix writes `sha256-<base64>` —
+> and normalize to the canonical form. Accepting several spellings is what makes
+> "paste the digest your ecosystem published" true.
+>
+> **A pin enters the demand key and the receipt as its parsed `(algorithm, bytes)`
+> pair, never as its source text.** Two spellings of one digest are one pin, one
+> key, one memo entry. Getting this wrong would let a whitespace or case
+> difference in a lockfile fork the cache.
+
+> r[vixen.pins.algorithm-strength]
+>
+> [DESIGN] Admissible as a pin: `blake3`, `sha256`, `sha512`. A pin's whole value
+> is that a stranger can check it, which a collision-attackable digest does not
+> deliver: `sha1` is accepted only as an additional recorded digest beside an
+> admissible pin, never as the sole pin, and `md5` is rejected outright. Adding an
+> algorithm is a project decision, because it widens what the machine must be able
+> to compute.
+>
+> Not every ecosystem's integrity string is a digest of the bytes at all — Go's
+> `h1:` is a hash over a file listing, not over an archive. Those are not pins and
+> must not be spelled as if they were.
+
 > r[vixen.pins.come-from-the-ecosystem-lockfile]
 >
 > [DESIGN] The pins for an ecosystem's artifacts are read out of that

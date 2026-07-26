@@ -254,9 +254,12 @@ primitives reference by identity.
 > - **A pin is REQUIRED**, and it is a digest *of the bytes*. Given a blake3 pin, the fetch
 >   resolves by identity immediately: local store, peer, shared store, and only then the
 >   origin. ~~`blake3` is REQUIRED~~ — AMENDED 2026-07-26, see below.
-> - **A foreign digest (`sha256:…`) is an admissible pin**, and is also transfer
->   provenance: an integrity check on the bytes that actually arrive, and a record of what
->   the CDN, registry or lockfile published. **It still never becomes the value's identity**
+> - **A foreign digest is an admissible pin**, and is also transfer provenance: an
+>   integrity check on the bytes that actually arrive, and a record of what the CDN,
+>   registry or lockfile published. Pins are written self-describing
+>   (`"sha256:…"`, `"blake3:…"`), one role-named field, several permitted and all
+>   verified — the algorithm is data, not schema (`vixen.pins.self-describing`).
+>   **A foreign digest still never becomes the value's identity**
 >   — a value is not named in a hash family chosen by whoever happened to host it. The
 >   machine resolves it through a recorded `foreign digest -> blake3` side index, minting
 >   the entry the first time it sees the bytes. Both digests are recorded in the receipt.

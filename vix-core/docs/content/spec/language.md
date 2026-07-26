@@ -456,10 +456,13 @@ fail with raw termination data in a typed payload. No naked process-status
 integer exists. `answer` resolves at termination; streams and product projections
 may resolve earlier.
 
-`fetch` requires Vix BLAKE3 content identity and returns `Blob`; an optional
-upstream digest verifies transfer provenance. `extract` is a separate
-`Blob -> Tree` demand. An unpinned network read is an observation primitive, not
-an optional mode of `fetch`.
+`fetch` requires a pin and returns `Blob`. A pin is a self-describing digest of
+the bytes, `"<algorithm>:<digits>"`, in one role-named field; several may be
+given and all must verify (`vixen.pins.self-describing`). BLAKE3 remains the vix
+content identity, and a BLAKE3 pin additionally resolves the value before any
+transfer; a foreign digest is admissible and is verified on arrival. `extract` is
+a separate `Blob -> Tree` demand. An unpinned network read is an observation
+primitive, not an optional mode of `fetch`.
 
 ## Placement
 
