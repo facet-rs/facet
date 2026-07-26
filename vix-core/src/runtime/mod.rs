@@ -18,6 +18,7 @@ mod primitive;
 mod primitive_bindings;
 mod scheduler;
 mod store;
+mod tree;
 
 pub use abi::*;
 pub use blob_persistence::*;
@@ -31,3 +32,4 @@ pub use primitive::*;
 pub use primitive_bindings::*;
 pub use scheduler::*;
 pub use store::*;
+pub use tree::*;
