@@ -198,10 +198,15 @@ corpus GAPS files were merely stale about it (exit status, `Tree::union`).
    exact bytes and is verifiable by a stranger, and a second lockfile is
    *configuration* in a no-config north star.
    `machine.primitive.fetch-is-pinned` was amended accordingly — a pin is a digest
-   of the bytes, blake3 remains the one identity space, and a foreign digest
-   resolves through a store side index minted on first sight. The distinction the
-   old rule was really protecting survives: an **observation** is a read whose
-   result nobody can predict, which is a different primitive and still out of 0.1.
+   of the bytes, and blake3 remains the one identity space. **0.1 verifies the pin
+   on arrival and stops there**: the blob interns under its blake3 like any value,
+   and the fetch demand memoizes on (coordinate + pin), so nothing re-fetches. The
+   persisted `digest -> blake3` side index is deferred — worth having eventually,
+   but it only buys cold-store pre-resolution, peer/shared-store resolution by
+   pin, and identity-crosses-by-construction, none of which is reachable with one
+   machine and no placement. The distinction the old rule was really protecting
+   survives: an **observation** is a read whose result nobody can predict, which
+   is a different primitive and still out of 0.1.
 3. **How an artifact reaches the filesystem** — `vx build` materializes the
    demanded root at `./result`, Nix-shaped, explicitly an MVP
    (`vixen.delivery.result`). Delivery is a CLI act over a demanded value, so it

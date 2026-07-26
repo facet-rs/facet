@@ -164,10 +164,14 @@ primitives reference by identity.
 > pinned, always — an unpinned fetch does not exist. What changes is what a pin
 > may BE: a pin is a digest *of the bytes*, and a foreign digest the ecosystem
 > already publishes (a `Cargo.lock` `checksum`, a channel manifest's `.sha256`)
-> is admissible. blake3 remains the one identity space; the machine records
-> `foreign digest -> blake3` the first time it sees the bytes, as an ordinary
-> store side index (the same shape `machine.identity.tree-hash-is-not-node-hash`
-> already uses), and every later resolution is by identity exactly as before.
+> is admissible. blake3 remains the one identity space: a foreign-pinned blob is
+> verified against its pin on arrival and interned under its blake3 like any other
+> value, and the demand memoizes on (coordinate + pin) so a repeat never
+> re-fetches. A persisted `foreign digest -> blake3` side index — an ordinary
+> store index, the same shape `machine.identity.tree-hash-is-not-node-hash`
+> already uses — would additionally make cold resolution identity-first; it is
+> deferred (`vixen.pins.digest-index-is-deferred`) and its absence costs a
+> transfer, not correctness.
 >
 > The distinction the paragraph above was reaching for survives, but it is not
 > *which hash family*. An **observation** is a read whose RESULT is not determined
