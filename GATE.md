@@ -20,7 +20,12 @@ Written 2026-07-07 by Fable after ~16 gated folds; every rule below was earned t
    machinery, weavy task execution, or lowering semantics gets its hunks READ before folding.
    The demand-driven invariant cannot be retrofitted; the tripwires are its only guard.
 5. **Tests — `cargo nextest run`, NEVER `cargo test`.** Scope by surface:
-   - vix touched: `-p vix`.
+   - vix touched: `-p vix-core -p vixen-primitives -p vixen-runtime` (the package was renamed
+     from `vix` to `vix-core`; its lib is still imported as `vix`). The system tests — the
+     ratchet corpus and everything that drives a program through `ratchet` — live in
+     `vixen-runtime/tests`, so `-p vix-core` alone tests only the bare language. That is
+     deliberate: `vix-core` must not depend on the vixen crates in any dependency kind, and CI
+     enforces it (`vix-core-bare` in `.github/workflows/test-toolchains.yml`).
    - weavy touched: `-p weavy --all-features` (jit is feature-gated; without it half the tests
      don't exist).
    - facet-core touched: also `cargo build -p facet-core --no-default-features` (no_std must

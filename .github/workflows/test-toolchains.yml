@@ -92,17 +92,21 @@ jobs:
       - name: Install system dependencies
         run: apt-get update && apt-get install -y zlib1g-dev
       - uses: Swatinem/rust-cache@v2
+      # The interpreter corpus is a system test: every rung drives a program
+      # through the ratchet harness, which needs the vixen primitives and stdlib
+      # installed. It lives in `vixen-runtime/tests`, not `vix-core/tests` — see
+      # the `vix-core-bare` job below for why.
       - name: Build the interpreter corpus
         env:
           PROPTEST_CASES: 0
           WEAVY_JIT: "0"
-        run: cargo nextest list -p vix-core -E 'binary(ratchet_runner) | binary(cross_lane_differential)'
+        run: cargo nextest list -p vixen-runtime -E 'binary(ratchet_runner) | binary(cross_lane_differential)'
       - name: Run the interpreter corpus except the budget probe
         env:
           PROPTEST_CASES: 0
           WEAVY_JIT: "0"
         run: >-
-          cargo nextest run -p vix-core --no-fail-fast
+          cargo nextest run -p vixen-runtime --no-fail-fast
           -E 'binary(ratchet_runner) | binary(cross_lane_differential)'
       - name: Run the execution-budget probe in isolation
         env:
@@ -113,6 +117,60 @@ jobs:
         run: >-
           cargo nextest run -p vixen-runtime --no-fail-fast
           -E 'test(=rung_050_deep_tail_recursion_runs_under_its_declared_budget)'
+
+  # THE BARE-LANGUAGE GATE.
+  #
+  # `vix-core` is the language (V8): it parses, compiles, lowers and executes,
+  # and ships no primitives and no prelude — the `vixen` crates supply those.
+  # That claim used to be asserted only by doc comments: `vix-core` dev-depended
+  # on `vixen-runtime` (a deliberate cycle), so nothing ever built or ran the
+  # language on its own, and 20 of its 34 test files could not compile without
+  # the batteries.
+  #
+  # This job is the ratchet. It builds and tests `vix-core` with its dev-deps
+  # resolved as declared — no `vixen-primitives`, no `vixen-runtime` — so any
+  # future domain leak into the language crate, or any new core test that
+  # reaches for the batteries, fails here rather than being absorbed silently.
+  vix-core-bare:
+    runs-on: bearcove-ubuntu-24.04
+    container:
+      image: ghcr.io/facet-rs/facet-ci:latest-amd64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+      - name: Select Rust 1.92
+        shell: bash
+        run: |
+          rustup toolchain install 1.92 --profile minimal --component rust-src --component clippy --component llvm-tools-preview --component rustfmt
+          rustup target add thumbv8m.main-none-eabihf --toolchain 1.92
+          echo "RUSTUP_TOOLCHAIN=1.92" >> "$GITHUB_ENV"
+      - name: Install system dependencies
+        run: apt-get update && apt-get install -y zlib1g-dev
+      - uses: Swatinem/rust-cache@v2
+      # Belt and braces: assert the edge is absent directly, so a violation
+      # reports its actual cause instead of surfacing later as a confusing
+      # duplicate-crate type error. `--edges all` covers dev- and
+      # build-dependencies too, which is the point — the cycle this replaces was
+      # a dev-dependency.
+      - name: Assert vix-core declares no dependency on the vixen crates
+        run: |
+          if cargo tree -p vix-core --edges all --prefix none | grep -qE '^vixen-'; then
+            echo "::error file=vix-core/Cargo.toml::vix-core must not depend on the vixen crates in any dependency kind (normal, dev or build) — see the bare-language rule in vix-core/Cargo.toml"
+            cargo tree -p vix-core --edges all --prefix none | grep -E '^vixen-' | sort -u
+            exit 1
+          fi
+      - name: Build the bare language
+        env:
+          PROPTEST_CASES: 0
+          WEAVY_JIT: "0"
+        run: cargo build -p vix-core --all-targets
+      - name: Test the bare language
+        env:
+          PROPTEST_CASES: 0
+          WEAVY_JIT: "0"
+        run: cargo nextest run -p vix-core --no-fail-fast
 
   coverage:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'

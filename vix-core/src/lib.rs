@@ -3,6 +3,21 @@
 //! The compiler starts at [`surface`], lowers through [`vir`] and [`lowering`],
 //! and runs through [`runtime`]. The surface AST is generated from its Snark
 //! grammar.
+//!
+//! # The bare language
+//!
+//! This crate is the language and nothing else — the V8 to the `vixen` crates'
+//! Node. It ships no primitives ([`runtime`]'s dispatcher and codata registry
+//! start empty), no prelude ([`compiler::CompilerConfig::prelude`] is empty),
+//! no host types, and no domain methods. A program compiled by bare `vix-core`
+//! sees only what it wrote itself plus the language axioms.
+//!
+//! It therefore must not depend on `vixen-primitives` or `vixen-runtime` in any
+//! dependency kind — not even as a dev-dependency for its own tests. Tests that
+//! need a runnable system are system tests and live in `vixen-runtime/tests`
+//! alongside the ratchet corpus they drive. CI enforces the rule
+//! (`vix-core-bare` in `.github/workflows/test-toolchains.yml`); the reasoning
+//! is recorded in this crate's `Cargo.toml`.
 
 // So this crate's own wire types can spell `#[facet(vix::wire_extern = "…")]`
 // exactly as an embedder does (see [`wire`]).
@@ -13,7 +28,6 @@ pub mod compiler;
 pub mod decode;
 pub mod diagnostic;
 pub mod exec;
-pub mod fetch;
 pub mod lowering;
 pub mod modules;
 pub mod prelude;
