@@ -22,7 +22,7 @@ use crate::vir::{
 };
 
 use super::fixture::{
-    FixtureEntryKind, FixtureReadError, FixtureStore, TarMember, parse_ustar,
+    FixtureEntryKind, FixtureReadError, FixtureStore, ResidentTreeError, tree_from_resident,
 };
 use super::identity::{
     DemandKey, DemandPreimage, Digest, Location, LocationId, RecipeId, ValueId, hash_framed,
@@ -40,6 +40,7 @@ use super::store::{
     FrozenValue, Handle, Interned, Store, StoreEntry, StoreJournal, StoreJournalError,
     StoreJournalLoadReport,
 };
+use super::tree::{Tree, TreeEntry};
 use super::{
     CallbackError, EffectCtx, PrimitiveCompletion, PrimitiveDispatcher, PrimitiveField,
     PrimitiveFieldValue, PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveValue,
@@ -3164,9 +3165,8 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 let EffectTerm::Value(blob) = input(0, self)? else {
                     return effect_fault("untar input was codata");
                 };
-                parse_ustar(&blob.resident)
-                    .map_err(|_| effect_machine_error("archive was not plain ustar"))?;
-                let canonical = canonical_archive_tree(&blob.resident);
+                let canonical = canonical_resident_tree(&blob.resident)
+                    .map_err(|_| effect_machine_error("archive did not describe a tree"))?;
                 Ok(EffectTerm::Value(EffectValue {
                     identity: FramedNode::leaf(effect_schema(&node.ty), canonical.clone())
                         .identity(),
@@ -5567,17 +5567,12 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
         let Some(FrozenValue::Opaque(tree)) = fields.first() else {
             return Err("completed exec outcome had no frozen Tree".to_owned());
         };
-        parse_ustar(tree)
-            .map_err(|_| "completed exec Tree was not plain ustar".to_owned())?
-            .into_iter()
-            .find_map(|member| match member {
-                TarMember::File {
-                    path: candidate,
-                    bytes,
-                    ..
-                } if candidate == path => Some(bytes),
-                _ => None,
-            })
+        // A projection, not a scan: `a/b` is the entry named `b` of the directory
+        // named `a`, and a symlink at any step is returned rather than followed.
+        tree_from_resident(tree)
+            .map_err(|error| format!("completed exec Tree did not describe a tree: {error}"))?
+            .file_bytes(path)
+            .map(<[u8]>::to_vec)
             .ok_or_else(|| format!("completed exec Tree had no file `{path}`"))
     }
 
@@ -5688,8 +5683,11 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 ]),
             )
         };
-        let canonical_tree = canonical_archive_tree(tree);
-        let tree_node = FramedNode::leaf(semantic_schema_ref(&tree_ty), canonical_tree);
+        // The bytes are this machine's own capture, so a tree that does not
+        // decode is a machine invariant violation, not an input error — the same
+        // posture the archive-only encoder took after its caller validated.
+        let canonical = canonical_resident_tree(tree).expect("exec capture describes a tree");
+        let tree_node = FramedNode::leaf(semantic_schema_ref(&tree_ty), canonical);
         let (stdout_node, stdout_frozen) = stream_value(stdout);
         let (stderr_node, stderr_frozen) = stream_value(stderr);
         let outcome = FramedNode::Variant {
@@ -7286,7 +7284,8 @@ fn write_primitive_value(
     // is materialized into the resuming task's molten arena and referenced by a
     // single handle word — the write counterpart to the array read path. Every
     // other aggregate (Record/Tuple/Enum) stays inline in the frame words below.
-    if let (Type::Array(element), PrimitiveValueBody::Sequence { elements, .. }) = (ty, &value.body) {
+    if let (Type::Array(element), PrimitiveValueBody::Sequence { elements, .. }) = (ty, &value.body)
+    {
         let array_schema = abi_schema_for_type(ty, abi_schemas)?;
         let element_bytes = elements
             .iter()
@@ -7322,7 +7321,14 @@ fn write_primitive_value(
             let mut cursor = offset;
             for (element, field) in elements.iter().zip(fields) {
                 write_primitive_field(
-                    task, region, cursor, element, field, store, interned, abi_schemas,
+                    task,
+                    region,
+                    cursor,
+                    element,
+                    field,
+                    store,
+                    interned,
+                    abi_schemas,
                 )?;
                 cursor += primitive_type_words(element)?;
             }
@@ -7362,7 +7368,14 @@ fn write_primitive_value(
             let mut cursor = offset + 1;
             for (field_ty, field) in field_types.into_iter().zip(fields) {
                 write_primitive_field(
-                    task, region, cursor, field_ty, field, store, interned, abi_schemas,
+                    task,
+                    region,
+                    cursor,
+                    field_ty,
+                    field,
+                    store,
+                    interned,
+                    abi_schemas,
                 )?;
                 cursor += primitive_type_words(field_ty)?;
             }
@@ -7399,7 +7412,16 @@ fn write_primitive_field(
         }
         PrimitiveFieldValue::Child(value) => (**value).clone(),
     };
-    write_primitive_value(task, region, offset, ty, &value, store, interned, abi_schemas)
+    write_primitive_value(
+        task,
+        region,
+        offset,
+        ty,
+        &value,
+        store,
+        interned,
+        abi_schemas,
+    )
 }
 
 /// The inline (frame-word) byte encoding of a primitive result `value` of type
@@ -7445,7 +7467,12 @@ fn primitive_inline_bytes(
             let mut out = Vec::new();
             for (element, field) in elements.iter().zip(fields) {
                 out.extend(primitive_field_inline_bytes(
-                    task, element, field, store, interned, abi_schemas,
+                    task,
+                    element,
+                    field,
+                    store,
+                    interned,
+                    abi_schemas,
                 )?);
             }
             Ok(out)
@@ -7480,7 +7507,12 @@ fn primitive_inline_bytes(
             let mut out = i64::from(*tag).to_le_bytes().to_vec();
             for (field_ty, field) in field_types.into_iter().zip(fields) {
                 out.extend(primitive_field_inline_bytes(
-                    task, field_ty, field, store, interned, abi_schemas,
+                    task,
+                    field_ty,
+                    field,
+                    store,
+                    interned,
+                    abi_schemas,
                 )?);
             }
             // Pad to the enum's full inline width so every variant occupies the
@@ -7866,9 +7898,8 @@ fn effect_value_from_frozen(
             Ok(effect)
         }
         (FrozenValue::Opaque(bytes), Type::Extern(ExternKind::Host(crate::binding::TREE))) => {
-            parse_ustar(bytes)
-                .map_err(|_| effect_machine_error("frozen Tree was not plain ustar"))?;
-            let canonical = canonical_archive_tree(bytes);
+            let canonical = canonical_resident_tree(bytes)
+                .map_err(|_| effect_machine_error("frozen Tree did not describe a tree"))?;
             let node = FramedNode::leaf(effect_schema(ty), canonical);
             Ok(EffectValue {
                 identity: node.identity(),
@@ -8159,30 +8190,50 @@ fn archive_directory(root: &Path) -> Result<Vec<u8>, String> {
     Ok(archive)
 }
 
-/// Canonical archive-tree identity material. It records entry kinds, paths,
-/// modes relevant to the Tree model, and file/symlink payloads in path order;
-/// the archive's block layout, padding, and original member order never enter.
-fn canonical_archive_tree(bytes: &[u8]) -> Vec<u8> {
-    let mut members = parse_ustar(bytes).expect("validated before canonical tree encoding");
-    members.sort_by(|left, right| left.path().as_bytes().cmp(right.path().as_bytes()));
+/// Canonical tree identity material, derived from the semantic [`Tree`] rather
+/// than from the bytes it happened to arrive in.
+///
+/// The byte format is unchanged from the ustar-only version this replaces —
+/// entry kinds, slash-joined paths, the executable bit, and file/symlink
+/// payloads, in path-byte order — so an archive that listed every directory it
+/// contains keeps exactly the identity it had. What changes is where the rows
+/// come from: `tree_from_resident` accepts a carrier or a ustar archive and both
+/// yield one `Tree`, so **the same tree has one identity in either
+/// representation**. That is the precondition for flipping a producer to the
+/// carrier without invalidating memo entries, and it is what
+/// `machine.primitive.fetch-returns-a-blob` already asserts: two archives that
+/// unpack to one tree have one tree identity and two blob identities.
+///
+/// The archive's block layout, padding, and member order still never enter.
+///
+/// r[impl machine.identity.tree-model]
+fn canonical_resident_tree(bytes: &[u8]) -> Result<Vec<u8>, ResidentTreeError> {
+    Ok(canonical_tree(&tree_from_resident(bytes)?))
+}
+
+/// The identity material of a semantic [`Tree`]. Rows are sorted by path bytes,
+/// which is the order the archive-derived encoding used and therefore the order
+/// existing identities were computed in.
+fn canonical_tree(tree: &Tree) -> Vec<u8> {
+    let mut rows = tree.walk();
+    rows.sort_by(|left, right| left.0.as_bytes().cmp(right.0.as_bytes()));
     let mut encoded = Vec::new();
-    for member in members {
-        match member {
-            TarMember::File {
-                path,
-                bytes,
+    for (path, entry) in rows {
+        match entry {
+            TreeEntry::File {
+                content,
                 executable,
             } => {
                 encoded.push(0);
                 frame_effect_tree_field(&mut encoded, path.as_bytes());
-                encoded.push(u8::from(executable));
-                frame_effect_tree_field(&mut encoded, &bytes);
+                encoded.push(u8::from(*executable));
+                frame_effect_tree_field(&mut encoded, content.as_bytes());
             }
-            TarMember::Dir { path } => {
+            TreeEntry::Dir(_) => {
                 encoded.push(1);
                 frame_effect_tree_field(&mut encoded, path.as_bytes());
             }
-            TarMember::Symlink { path, target } => {
+            TreeEntry::Symlink { target } => {
                 encoded.push(2);
                 frame_effect_tree_field(&mut encoded, path.as_bytes());
                 frame_effect_tree_field(&mut encoded, target.as_bytes());
