@@ -34,7 +34,6 @@ use std::collections::btree_map::Entry;
 /// and get the same rows.
 ///
 /// r[impl machine.identity.tree-canonicalization]
-/// r[impl lang.tree.name]
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Name(String);
 
@@ -145,11 +144,12 @@ impl From<Vec<u8>> for Blob {
 /// no representation here to lose.
 ///
 /// r[impl machine.identity.tree-canonicalization]
-/// r[impl lang.tree.executable]
-/// r[impl lang.tree.excluded-metadata]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TreeEntry {
-    File { content: Blob, executable: bool },
+    File {
+        content: Blob,
+        executable: bool,
+    },
     /// A subdirectory. An *empty* `Dir` is representable and round-trips —
     /// required to express an output that creates a directory for a later
     /// process without writing a file into it.
@@ -158,8 +158,10 @@ pub enum TreeEntry {
     /// are representable; resolution is the materializer's and the mount
     /// grant's problem, not the value's.
     ///
-    /// r[impl lang.tree.symlink]
-    Symlink { target: String },
+    /// r[impl machine.identity.tree-canonicalization]
+    Symlink {
+        target: String,
+    },
 }
 
 impl TreeEntry {
@@ -298,23 +300,25 @@ impl Tree {
     /// directory or the projection is absent.
     ///
     /// r[impl machine.identity.tree-model]
-    /// r[impl lang.tree.projection]
     #[must_use]
     pub fn project(&self, path: &str) -> Option<&TreeEntry> {
-        let mut segments = split_path(path).peekable();
-        segments.peek()?;
+        let mut segments = split_path(path);
+        let mut name = Name::new(segments.next()?).ok()?;
         let mut directory = self;
-        let mut found = None;
-        for segment in segments {
-            let name = Name::new(segment).ok()?;
+        loop {
             let entry = directory.entries.get(&name)?;
-            match entry {
-                TreeEntry::Dir(child) => directory = child,
-                _ => directory = EMPTY_TREE,
-            }
-            found = Some(entry);
+            let Some(next) = segments.next() else {
+                return Some(entry);
+            };
+            // An interior segment must BE a directory. `a/b` where `a` is a file
+            // is absent, and where `a` is a symlink it is absent too: a
+            // projection returns what is there and never follows a link.
+            let TreeEntry::Dir(child) = entry else {
+                return None;
+            };
+            directory = child;
+            name = Name::new(next).ok()?;
         }
-        found
     }
 
     /// The subdirectory at `path`, if the projection lands on a `Dir`. An empty
@@ -350,7 +354,7 @@ impl Tree {
     /// the link. That is what makes archive extraction symlink-safe by
     /// construction.
     ///
-    /// r[impl lang.tree.symlink]
+    /// r[impl machine.identity.tree-canonicalization]
     pub fn insert_path(&mut self, path: &str, entry: TreeEntry) -> Result<(), TreeError> {
         let segments = split_path(path).collect::<Vec<_>>();
         let Some((last, parents)) = segments.split_last() else {
@@ -387,7 +391,8 @@ impl Tree {
             // A directory the archive already implied, now declared
             // explicitly, is not a collision: it keeps its children.
             Entry::Occupied(slot)
-                if matches!(slot.get(), TreeEntry::Dir(_)) && matches!(entry, TreeEntry::Dir(_)) =>
+                if matches!(slot.get(), TreeEntry::Dir(_))
+                    && matches!(entry, TreeEntry::Dir(_)) =>
             {
                 Ok(())
             }
@@ -415,7 +420,11 @@ impl Tree {
         out
     }
 
-    fn walk_into<'tree>(&'tree self, prefix: &mut String, out: &mut Vec<(String, &'tree TreeEntry)>) {
+    fn walk_into<'tree>(
+        &'tree self,
+        prefix: &mut String,
+        out: &mut Vec<(String, &'tree TreeEntry)>,
+    ) {
         for (name, entry) in &self.entries {
             let restore = prefix.len();
             push_segment(prefix, name.as_str());
@@ -621,12 +630,6 @@ impl<'tree> IntoIterator for &'tree Tree {
     }
 }
 
-/// A shared empty tree, so [`Tree::project`] can keep walking after a
-/// non-directory without allocating and without an early `return`.
-static EMPTY_TREE: &Tree = &Tree {
-    entries: BTreeMap::new(),
-};
-
 /// Split a `/`-joined path into its nonempty segments. `.` and `//` runs are
 /// dropped here so that callers may pass archive paths verbatim; `..` is *not*
 /// dropped — it is not a valid [`Name`], so it fails validation rather than
@@ -708,12 +711,15 @@ mod tests {
         };
         assert!(empty.is_empty());
         assert_eq!(
-            tree.walk().iter().map(|(path, _)| path.as_str()).collect::<Vec<_>>(),
+            tree.walk()
+                .iter()
+                .map(|(path, _)| path.as_str())
+                .collect::<Vec<_>>(),
             ["out", "out/empty"]
         );
     }
 
-    /// r[verify lang.tree.symlink]
+    /// r[verify machine.identity.tree-canonicalization]
     #[test]
     fn insert_path_never_descends_through_a_symlink() {
         let mut tree = Tree::new();
@@ -755,11 +761,19 @@ mod tests {
     #[test]
     fn insertion_order_does_not_move_identity() {
         let mut forward = Tree::new();
-        forward.insert_path("a.txt", TreeEntry::file(*b"a")).unwrap();
-        forward.insert_path("b.txt", TreeEntry::file(*b"b")).unwrap();
+        forward
+            .insert_path("a.txt", TreeEntry::file(*b"a"))
+            .unwrap();
+        forward
+            .insert_path("b.txt", TreeEntry::file(*b"b"))
+            .unwrap();
         let mut backward = Tree::new();
-        backward.insert_path("b.txt", TreeEntry::file(*b"b")).unwrap();
-        backward.insert_path("a.txt", TreeEntry::file(*b"a")).unwrap();
+        backward
+            .insert_path("b.txt", TreeEntry::file(*b"b"))
+            .unwrap();
+        backward
+            .insert_path("a.txt", TreeEntry::file(*b"a"))
+            .unwrap();
         assert_eq!(forward.tree_hash(), backward.tree_hash());
     }
 
@@ -767,7 +781,9 @@ mod tests {
     #[test]
     fn the_executable_bit_moves_identity() {
         let mut plain = Tree::new();
-        plain.insert_path("run", TreeEntry::file(*b"#!/bin/sh\n")).unwrap();
+        plain
+            .insert_path("run", TreeEntry::file(*b"#!/bin/sh\n"))
+            .unwrap();
         let mut executable = Tree::new();
         executable
             .insert_path("run", TreeEntry::executable(*b"#!/bin/sh\n"))
@@ -790,7 +806,7 @@ mod tests {
     /// A file and a symlink whose target text equals the file's contents are
     /// different values; so are two symlinks with different targets.
     ///
-    /// r[verify lang.tree.symlink]
+    /// r[verify machine.identity.tree-canonicalization]
     #[test]
     fn symlink_targets_are_identity_bearing_and_kind_separated() {
         let mut link = Tree::new();
@@ -800,7 +816,9 @@ mod tests {
         assert_ne!(link.tree_hash(), file.tree_hash());
 
         let mut dangling = Tree::new();
-        dangling.insert_path("x", TreeEntry::symlink("../nowhere")).unwrap();
+        dangling
+            .insert_path("x", TreeEntry::symlink("../nowhere"))
+            .unwrap();
         assert_ne!(link.tree_hash(), dangling.tree_hash());
     }
 
@@ -826,13 +844,20 @@ mod tests {
     #[test]
     fn an_untouched_subtree_keeps_its_hash() {
         let mut before = Tree::new();
-        before.insert_path("src/lib.rs", TreeEntry::file(*b"pub fn f() {}")).unwrap();
-        before.insert_path("docs/README.md", TreeEntry::file(*b"# before")).unwrap();
+        before
+            .insert_path("src/lib.rs", TreeEntry::file(*b"pub fn f() {}"))
+            .unwrap();
+        before
+            .insert_path("docs/README.md", TreeEntry::file(*b"# before"))
+            .unwrap();
         let mut after = before.clone();
         let Some(TreeEntry::Dir(docs)) = after.entries.get_mut(&Name::new("docs").unwrap()) else {
             panic!("docs is a directory");
         };
-        docs.insert(Name::new("README.md").unwrap(), TreeEntry::file(*b"# after"));
+        docs.insert(
+            Name::new("README.md").unwrap(),
+            TreeEntry::file(*b"# after"),
+        );
 
         assert_ne!(before.tree_hash(), after.tree_hash());
         assert_eq!(
