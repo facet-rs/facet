@@ -159,6 +159,29 @@ primitives reference by identity.
 > Corollary: `machine.primitive.memo-policy`'s parenthetical "(memoizable by
 > observation pin: fetch)" is stale. `fetch` is `Pinned` because its identity is
 > GIVEN, not because its result is pinned after the fact.
+>
+> **AMENDED (Amos, 2026-07-26): a pin need not be a blake3.** `fetch` is still
+> pinned, always — an unpinned fetch does not exist. What changes is what a pin
+> may BE: a pin is a digest *of the bytes*, and a foreign digest the ecosystem
+> already publishes (a `Cargo.lock` `checksum`, a channel manifest's `.sha256`)
+> is admissible. blake3 remains the one identity space; the machine records
+> `foreign digest -> blake3` the first time it sees the bytes, as an ordinary
+> store side index (the same shape `machine.identity.tree-hash-is-not-node-hash`
+> already uses), and every later resolution is by identity exactly as before.
+>
+> The distinction the paragraph above was reaching for survives, but it is not
+> *which hash family*. An **observation** is a read whose RESULT is not determined
+> until somebody looks, so the looker's authority is the only witness. A
+> foreign-digest pin is nothing of the kind: the bytes are fully determined and
+> **verifiable by a stranger** against a published digest. What a cold
+> foreign-digest pin lacks is not trust — it is the store's lookup key.
+>
+> The price, stated exactly, is paid once per artifact per store, not per build:
+> cold resolution cannot precede the transfer, and a never-yet-fetched
+> foreign-pinned blob does not satisfy `machine.placement.identity-crosses` until
+> it has been resolved locally. Against that: requiring a blake3 means requiring a
+> second lockfile beside the ecosystem's own, which is configuration — and the
+> 0.1 north star is a *no-config* build.
 
 > r[machine.primitive.capabilities-by-identity]
 >
@@ -224,24 +247,29 @@ primitives reference by identity.
 > [DESIGN, round 12] A fetch names its value with **one** hash and may additionally carry an
 > upstream digest as transfer provenance. The two are not alternatives.
 >
-> - **`blake3` — the vix `ContentHash` — is REQUIRED.** It is the value's name in the one
->   identity space (`machine.identity.blake3`). Given it, the fetch resolves by identity:
->   local store, peer, shared store, and only then the origin.
-> - **`sha256` (or any upstream digest) is OPTIONAL transfer provenance**: an integrity
->   check on the bytes that actually arrive, and a record of what the CDN, registry or
->   lockfile published. **It never becomes the value's identity.** A value must not be named
->   in a hash family chosen by whoever happened to host it. Both are recorded in the receipt.
+> - **A pin is REQUIRED**, and it is a digest *of the bytes*. Given a blake3 pin, the fetch
+>   resolves by identity immediately: local store, peer, shared store, and only then the
+>   origin. ~~`blake3` is REQUIRED~~ — AMENDED 2026-07-26, see below.
+> - **A foreign digest (`sha256:…`) is an admissible pin**, and is also transfer
+>   provenance: an integrity check on the bytes that actually arrive, and a record of what
+>   the CDN, registry or lockfile published. **It still never becomes the value's identity**
+>   — a value is not named in a hash family chosen by whoever happened to host it. The
+>   machine resolves it through a recorded `foreign digest -> blake3` side index, minting
+>   the entry the first time it sees the bytes. Both digests are recorded in the receipt.
 >
-> **There is no such thing as a SHA-only fetch.** An operation whose result identity is
-> unknown until the bytes arrive is not a `fetch` at all — it is an **observation**
-> (`machine.primitive.fetch-is-pinned`), and `fetch` may not become hermetic-or-observational
-> depending on whether an optional field is present. That was the exact defect Amos rejected.
+> ~~**There is no such thing as a SHA-only fetch.**~~ **AMENDED (Amos, 2026-07-26).** There
+> is: what may not exist is an **unpinned** fetch. The original text conflated "the result
+> is not determined until somebody looks" (a genuine observation — the looker's authority is
+> the only witness) with "the result's *vix-space name* is not yet known locally" (a store
+> lookup-key gap over bytes a stranger can verify). Only the first is an observation, and
+> only the first may not be `fetch`. See `machine.primitive.fetch-is-pinned` for the full
+> amendment and its stated price.
 >
-> Computing the canonical blake3 for an upstream artifact is therefore a **lock/update-time**
-> act, not a build-time one: it happens when a dependency is added or bumped, its result is
-> written into the recipe or lockfile, and every subsequent build knows the final `Blob`
-> identity before it evaluates anything. Every `fetch` consequently satisfies
-> `machine.placement.identity-crosses` — by construction, not by care.
+> Consequently a pin is read from **the ecosystem's own lockfile** — `Cargo.lock`'s
+> `checksum` is the pin for a crate archive — and vix requires no second lockfile beside it.
+> Minting a blake3 remains a lock/update-time act *when a recipe wants one*; it is no longer
+> a precondition of fetching. `machine.placement.identity-crosses` is satisfied by
+> construction for a blake3 pin, and after first resolution for a foreign one.
 
 > r[machine.primitive.exec-is-placement-agnostic]
 >

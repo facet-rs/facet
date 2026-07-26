@@ -34,7 +34,8 @@ to reach through:
 - [Capability packages](/spec/vixen/capability-packages) — what a `Rustc` value
   *is*, and where a tool's argv grammar comes from, given that the machine may
   not know one (`machine.capability.no-argv-dialect`).
-- [Pins](/spec/vixen/pins) — where a `fetch`'s required BLAKE3 comes from, given
-  that minting one is a lock-time act and 0.1 never observes a live coordinate.
+- [Pins](/spec/vixen/pins) — where a `fetch`'s required pin comes from, given
+  that 0.1 never observes a live coordinate: the ecosystem's own lockfile, with
+  no second lockfile beside it.
 - [Delivery](/spec/vixen/delivery) — how a demanded value reaches a filesystem,
   given that no program may write one.

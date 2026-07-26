@@ -68,16 +68,16 @@ vix function can still be method-called via the UFCS fallback in
 
 **In the critical path** (build and polish these):
 
-- `fetch` — pinned. ~~crate-archive hashes come from the lock~~ **CORRECTED
-  (2026-07-26): they cannot.** A `Cargo.lock` carries SHA-256, and
-  `machine.primitive.fetch-is-pinned` makes BLAKE3 a *required* argument that
-  SHA-256 may never stand in for. Since 0.1 also deleted the one primitive that
-  could mint a BLAKE3 from an unpinned read, the pins are minted **before the
-  build, outside the language**, by `vx pin`, into a `vixen.lock` sidecar — see
-  [/spec/vixen/pins](/spec/vixen/pins). A build that reaches an unpinned artifact
-  fails rather than fetching. *Gap that remains:* surface `fetch` is still
-  `fetch(url)` with no hash argument; thread the pin through (the backend
-  `verify_checksum` already exists).
+- `fetch` — pinned, and crate-archive pins do come from the lock:
+  `Cargo.lock`'s `checksum` is the SHA-256 of the published `.crate`, parsed in
+  vix with `decode(Format::Toml)` and passed to `fetch` as a self-describing
+  `sha256:…` argument. `machine.primitive.fetch-is-pinned` was amended on
+  2026-07-26 to admit a foreign digest as a pin (blake3 stays the one identity
+  space, resolved through a store side index) — requiring blake3 would have meant
+  requiring a second lockfile, which is configuration in a *no-config* north
+  star. See [/spec/vixen/pins](/spec/vixen/pins). *Gap that remains:* surface
+  `fetch` is still `fetch(url)` with no pin argument; thread it through (the
+  backend already takes `expected_sha256` and verifies it).
 - `exec` — run rustc. The linchpin. Note it is **not** a registered primitive; it
   lives on its own dedicated-op rail (tests: ratchet 067–074).
 - `decode` / `toml_decode` — parse Cargo.lock + Cargo.toml. `Format` enum stays.
@@ -189,9 +189,19 @@ corpus GAPS files were merely stale about it (exit status, `Tree::union`).
    (`vixen.capability.packages-ship-in-vixen-primitives`), and 0.1's `Rustc` is a
    materializable toolchain tree, so no daemon, discovery, or advertisement is
    reachable (`vixen.capability.rustc-is-materializable`).
-2. **Where a `fetch`'s BLAKE3 comes from** — a `vixen.lock` sidecar minted by
-   `vx pin` before the build (`vixen.pins.*`). Fetch stays pinned; reproducibility
-   is the whole point, and an "optional hash" would silently flip the trust model.
+2. **Where a `fetch`'s pin comes from** — the ecosystem's own lockfile
+   (`vixen.pins.*`). Fetch stays pinned, always; an *unpinned* fetch is what would
+   flip the trust model, and it remains impossible. What was wrong in the first
+   draft of this section was the belief that a pin had to be a BLAKE3, which would
+   have forced a `vixen.lock` sidecar minted by a `vx pin` step. Amos rejected
+   that on two grounds, both right: a `Cargo.lock` `checksum` already names the
+   exact bytes and is verifiable by a stranger, and a second lockfile is
+   *configuration* in a no-config north star.
+   `machine.primitive.fetch-is-pinned` was amended accordingly — a pin is a digest
+   of the bytes, blake3 remains the one identity space, and a foreign digest
+   resolves through a store side index minted on first sight. The distinction the
+   old rule was really protecting survives: an **observation** is a read whose
+   result nobody can predict, which is a different primitive and still out of 0.1.
 3. **How an artifact reaches the filesystem** — `vx build` materializes the
    demanded root at `./result`, Nix-shaped, explicitly an MVP
    (`vixen.delivery.result`). Delivery is a CLI act over a demanded value, so it
