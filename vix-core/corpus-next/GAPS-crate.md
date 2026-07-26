@@ -59,8 +59,12 @@ expected to parse or run today.
   `fail` (`r[machine.primitive.exit-status-is-not-a-value]`), so "bad directives" (a parse
   failure over `out.stdout`) and "bad processes" (a failed `exec`) are already distinct —
   they are different demands, and each carries its own span and demand chain.
-  **STILL OPEN, and it blocks the `grep`-shaped case only**: how an *accepted* nonzero exit
-  becomes a typed result. `ExecOutcome` has nowhere to put it. This file does not need it.
+  ~~**STILL OPEN, and it blocks the `grep`-shaped case only**: how an *accepted* nonzero exit
+  becomes a typed result. `ExecOutcome` has nowhere to put it.~~ **CLOSED — this note is
+  stale.** `r[lang.command.typed]` and `r[machine.primitive.exit-status-is-not-a-value]`
+  rule it: a capability template produces `Command<A>`, `ExecOutcome<A>` carries
+  `answer: A`, and the package's termination grammar maps exits to an `A` constructor or a
+  typed failure (grep maps zero to `Match`, one to `NoMatch`). This file does not need it.
 - Removing `Target::host()` forces target through three long chains:
   `crate_solution_bin* -> solution_unit_artifact -> solution_unit_built ->
   solution_{build_script,proc_macro} -> solution_compile_rust_unit`,
@@ -91,9 +95,13 @@ expected to parse or run today.
   array-to-tree union meaning. **`Tree` is NOT `Map<Path, Blob>`**
   (`r[machine.identity.tree-model]`): it is a recursive `Map<Name, TreeEntry>` over
   `File { content: Blob, executable: Bool } | Dir(Tree) | Symlink { target }`.
-  PROPOSAL (still open): ratify `Tree::union([Tree]) -> Tree`, and state its semantics for
-  a **name collision across entry kinds** — file-over-dir, dir-over-symlink, and two files
-  with different `executable` bits. A flat-map union has nothing to say about any of those.
+  ~~PROPOSAL (still open): ratify `Tree::union([Tree]) -> Tree`, and state its semantics for
+  a **name collision across entry kinds**~~ — **CLOSED, this note is stale.**
+  `spec/language.md` ratifies `Tree.union` as a partial, commutative, associative,
+  idempotent structural join returning `Result<Tree, TreeConflict>`: recurse on dir/dir,
+  coalesce identical leaves including the executable bit, and return a typed conflict
+  carrying the path and both entries for every kind mismatch or differing bit. No
+  left-wins variant exists; `disjoint_union` is the separate ownership-strength spelling.
 - `vix/corpus-next/crate.vix:1268` and `:1289`: stream `filter_map` is used because
   this file naturally filters build-script units while mapping to artifacts.
   PROPOSAL: bank `Stream::filter_map` or document the `map Option` + `filter` +
@@ -144,6 +152,13 @@ materialize), not a name. So either:
 an identity, but nobody advertised it. **PROPOSAL: a command may be tagged by any
 value with an identity that resolves to an executable — a capability (advertised) or
 an artifact (produced).** That would also cover `objcopy`-on-your-own-output.
+
+**RULED (2026-07-26), as the proposal.** `r[vixen.capability.rustc-is-materializable]`
+takes the general form: a tool closure is named by its identity, and a
+content-addressed toolchain tree, a compiled build script, and a proc-macro dylib are
+the same kind of thing — nothing is special about a tool somebody else advertised.
+A build script therefore needs no `BuildScript::acquire`; it needs the executable bit
+in `machine.identity.tree-model` and a package for its (trivial) command grammar.
 
 
 ## RESOLVED (round 11): the failure surface exists

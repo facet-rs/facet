@@ -87,39 +87,49 @@ years, `"…"` interpolates and `'…'` does not. Vix keeps all three.
 
 ```vix
 let tarball = fetch "https://static.crates.io/…" where {
-    blake3: "b1a4…",     // REQUIRED — vix's ContentHash: the name of these bytes
-    sha256: "9f3c…",     // optional — what upstream published; checked on transfer
+    hash: "sha256:9f3c…",     // REQUIRED — a digest of the bytes, self-describing
+};
+
+let toolchain = fetch "https://static.rust-lang.org/…" where {
+    hash: ["blake3:b1a4…", "sha256:9f3c…"],   // several: all must verify
 };
 ```
+
+The **algorithm is in the value, not the field name**: one field named by its role
+(the pin), whose text says what it is. That is what lets a recipe carry whatever
+its ecosystem publishes — `sha256` from a `Cargo.lock`, `sha512` from an npm
+integrity field, `blake3` when the value was named by vix — without the surface
+learning a new field per registry. Give more than one and every one of them must
+verify.
 
 **`fetch` returns a `Blob`.** Bytes. Not a tree — an archive is a file, and unpacking it
 is a separate demand.
 
-A `fetch` is **pinned**: its value identity is known *before* anything is evaluated,
-because it is written in the source. The URL is not the identity; it is a **provenance
-coordinate**, a hint about where the bytes might live.
+A `fetch` is **pinned**: the bytes it will accept are fixed before anything is
+evaluated, because the pin is written in the source. The URL is not the identity; it is a
+**provenance coordinate**, a hint about where the bytes might live.
 
-### One name, one receipt
+### One pin, one receipt
 
-The **`blake3` is required**. It is vix's content identity: the name of the value, in the
-same identity space as every other value, resolvable from the local store, a peer, a
-shared store, and only then the network.
+**There is no fetch without a pin.** That is the line, and it is the whole of it: a read
+whose *result* nobody can predict until they look is not a fetch — it is an *observation*,
+a different primitive, whose authority is the looker rather than the bytes. `fetch` does
+not become a different kind of thing depending on whether a field is present.
 
-The **`sha256` is optional transfer provenance**: what the CDN, the registry, or the
-`Cargo.lock` published, checked against the bytes that actually arrive over the wire. It
-never becomes the value's identity, because vix's identity space is blake3
-(`r[machine.identity.blake3]`), and because a value should not be named in a hash family
-chosen by whoever happened to host it. Both go in the receipt.
+A pin is a **digest of the bytes**, and any digest a stranger can check is enough to make
+the value verifiable by that stranger. So the pin is whatever the ecosystem published —
+you do not have to re-name the world in vix's own hash family to depend on it.
 
-**There is no fetch without a `blake3`.** An operation whose result identity is unknown
-until the bytes arrive is not a fetch — it is an *observation*, and `fetch` does not become
-a different kind of thing depending on whether an optional field is present.
+**blake3 is still the one identity space** (`r[machine.identity.blake3]`). A value fetched
+under a `sha256` pin is verified on arrival and interned under its blake3 like every other
+value; the sha256 does not become its name, because a value should not be named in a hash
+family chosen by whoever happened to host it. Every digest you wrote goes in the receipt.
 
-Computing the canonical blake3 for an upstream artifact is a **lock-time** act, not a
-build-time one. When a dependency is added or bumped, the bytes are fetched once, their
-blake3 is computed, and it is written into the recipe. Every build thereafter knows the
-final `Blob` identity before evaluating anything — which is why every `fetch` satisfies
-`machine.placement.identity-crosses` by construction rather than by care.
+A **blake3 pin buys one extra thing**: the value's identity is known before the transfer,
+so the fetch can resolve from the local store, a peer, or a shared store without going to
+the network at all, and it satisfies `machine.placement.identity-crosses` by construction.
+With a foreign pin that holds after the first resolution instead. Minting a blake3 for an
+upstream artifact is therefore a *lock-time* act — worth doing, never required.
 
 ### An archive's digest is not its tree's digest
 

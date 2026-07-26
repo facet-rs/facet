@@ -12,6 +12,10 @@ than review impression.
 - **The runtime** defines islands, demand, identity, memoization, receipts,
   scheduling, primitives, persistence, placement transport, and observability.
 
-The Rodin solver specification lives at [/rodin](/rodin). Vixen capability,
-runner, store-placement, and trust policy remain product specifications; they
-may implement this runtime without becoming language semantics.
+- **Vixen** defines the product half — capability packages, pins, delivery.
+  These are product specifications; they may implement this runtime without
+  becoming language semantics, and they are hosted here rather than in a
+  separate tree (`vixen.spec.home`).
+
+The Rodin solver specification lives at [/rodin](/rodin). Runner,
+store-placement, and trust policy are vixen territory and remain unwritten.

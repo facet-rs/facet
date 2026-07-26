@@ -68,10 +68,16 @@ vix function can still be method-called via the UFCS fallback in
 
 **In the critical path** (build and polish these):
 
-- `fetch` — pinned; crate-archive hashes come from the lock. *Gap:* surface
-  `fetch` is currently `fetch(url)` with no hash argument; 0.1 needs the lock's
-  checksum threaded through (the backend `verify_checksum` already exists). Do it
-  as the self-describing-hash change (below).
+- `fetch` — pinned, and crate-archive pins do come from the lock:
+  `Cargo.lock`'s `checksum` is the SHA-256 of the published `.crate`, parsed in
+  vix with `decode(Format::Toml)` and passed to `fetch` as a self-describing
+  `sha256:…` argument. `machine.primitive.fetch-is-pinned` was amended on
+  2026-07-26 to admit a foreign digest as a pin (blake3 stays the one identity
+  space, resolved through a store side index) — requiring blake3 would have meant
+  requiring a second lockfile, which is configuration in a *no-config* north
+  star. See [/spec/vixen/pins](/spec/vixen/pins). *Gap that remains:* surface
+  `fetch` is still `fetch(url)` with no pin argument; thread it through (the
+  backend already takes `expected_sha256` and verifies it).
 - `exec` — run rustc. The linchpin. Note it is **not** a registered primitive; it
   lives on its own dedicated-op rail (tests: ratchet 067–074).
 - `decode` / `toml_decode` — parse Cargo.lock + Cargo.toml. `Format` enum stays.
@@ -166,6 +172,52 @@ claim head, `RefreshConflict` on a concurrent move). This is why:
 Whether `refresh` even belongs in the *surface language* is open: reading-and-
 pinning (observe) is a value; racing-to-advance-a-mutable-head (refresh) is
 administration and may belong in the runtime/CLI over the claim store.
+
+## The three rulings that unblocked the build-out (Amos, 2026-07-26)
+
+An audit of "is anything left to decide before we start?" found exactly three
+open questions on the critical path. All three are now ruled and normative under
+[`vixen.*`](/spec/vixen); the rest of the docket was already settled and several
+corpus GAPS files were merely stale about it (exit status, `Tree::union`).
+
+1. **Where the capability-package spec lives** (reconciliation Decision 2, open
+   since 2026-07-08) — **here**, at `/spec/vixen`, keeping the `vixen` name
+   (`vixen.spec.home`). This was load-bearing, not bookkeeping:
+   `machine.capability.no-argv-dialect` forbids the machine from knowing rustc's
+   flags, so *rustc cannot run until a rustc package exists*, and the package had
+   no home. 0.1's packages ship in `vixen-primitives`
+   (`vixen.capability.packages-ship-in-vixen-primitives`), and 0.1's `Rustc` is a
+   materializable toolchain tree, so no daemon, discovery, or advertisement is
+   reachable (`vixen.capability.rustc-is-materializable`).
+2. **Where a `fetch`'s pin comes from** — the ecosystem's own lockfile
+   (`vixen.pins.*`). Fetch stays pinned, always; an *unpinned* fetch is what would
+   flip the trust model, and it remains impossible. What was wrong in the first
+   draft of this section was the belief that a pin had to be a BLAKE3, which would
+   have forced a `vixen.lock` sidecar minted by a `vx pin` step. Amos rejected
+   that on two grounds, both right: a `Cargo.lock` `checksum` already names the
+   exact bytes and is verifiable by a stranger, and a second lockfile is
+   *configuration* in a no-config north star.
+   `machine.primitive.fetch-is-pinned` was amended accordingly — a pin is a digest
+   of the bytes, and blake3 remains the one identity space. **0.1 verifies the pin
+   on arrival and stops there**: the blob interns under its blake3 like any value,
+   and the fetch demand memoizes on (coordinate + pin), so nothing re-fetches. The
+   persisted `digest -> blake3` side index is deferred — worth having eventually,
+   but it only buys cold-store pre-resolution, peer/shared-store resolution by
+   pin, and identity-crosses-by-construction, none of which is reachable with one
+   machine and no placement. The distinction the old rule was really protecting
+   survives: an **observation** is a read whose result nobody can predict, which
+   is a different primitive and still out of 0.1.
+3. **How an artifact reaches the filesystem** — `vx build` materializes the
+   demanded root at `./result`, Nix-shaped, explicitly an MVP
+   (`vixen.delivery.result`). Delivery is a CLI act over a demanded value, so it
+   needs no language surface and no new primitive; `place` is placement and stays
+   uninvolved.
+
+Consequences worth stating once: `exec` must be able to run a program out of a
+`Tree`, so the executable bit and symlinks of `machine.identity.tree-model` are a
+prerequisite of the rustc leg rather than a refinement of it; and a build script
+or proc macro is tagged by the same rule as an advertised tool, which retires the
+corpus's open "is a build script a capability?" question.
 
 ## Pre-1.0 constraint: stable IDs
 

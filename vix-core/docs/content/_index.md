@@ -226,5 +226,7 @@ Specifications (rules traced to implementations via `r[impl ...]` /
 `r[verify ...]`; see `ddc coverage`): the [spec section](/spec/).
 Namespaces: `vix.*` — the semantics (this chapter is its preface);
 `vixc.*` — the compiler (islands, lowering, JIT; it is a compiler);
-`solver.*` — rodin. Implementation-charter rules migrate out of the
-semantics during the vix/vixc rename sweep.
+`solver.*` — rodin; `vixen.*` — the product (capability packages, pins,
+delivery), hosted here for now per `vixen.spec.home`.
+Implementation-charter rules migrate out of the semantics during the
+vix/vixc rename sweep.
