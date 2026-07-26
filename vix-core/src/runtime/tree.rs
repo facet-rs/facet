@@ -427,6 +427,25 @@ impl Tree {
         }
     }
 
+    /// This tree's `TreeHash`. Computed by [`super::identity`] — the one module
+    /// allowed to encode and hash (`machine.identity.single-module`).
+    #[must_use]
+    pub fn tree_hash(&self) -> super::TreeHash {
+        super::tree_hash(self)
+    }
+
+    /// This tree's semantic value identity under `schema`: the
+    /// `(SchemaRef, ContentHash)` pair whose content half is the `TreeHash`.
+    ///
+    /// r[impl machine.identity.value-identity-pair]
+    #[must_use]
+    pub fn value_id(&self, schema: crate::schema::SchemaRef) -> super::ValueId {
+        super::ValueId {
+            schema,
+            content: self.tree_hash().0,
+        }
+    }
+
     /// Every file path, in canonical depth-first order. Directories and
     /// symlinks are not files and are not yielded.
     #[must_use]
@@ -437,6 +456,160 @@ impl Tree {
             .map(|(path, _)| path)
             .collect()
     }
+}
+
+// ---------------------------------------------------------------------------
+// The resident carrier.
+//
+// A store entry's resident bytes are a *storage* concern, explicitly not
+// identity (`Store::intern_tree` takes them separately for exactly that
+// reason). This is the Tree's carrier: canonical (so equal trees carry equal
+// bytes), self-describing, and losslessly decodable. It replaces the ustar
+// blob that used to stand in for a Tree at runtime — a container format that
+// could not carry an empty directory without a convention and lost the
+// executable bit on the way out (`archive_directory` hardcoded `0644`).
+//
+// It is NOT the identity preimage. The identity preimage is the framed
+// walked encoding in `super::identity`, and the two must not be confused:
+// `tree_hash_does_not_share_a_preimage_with_a_storage_hash` pins that they
+// differ.
+// ---------------------------------------------------------------------------
+
+/// Magic + version of the resident carrier. Bumping the version byte changes
+/// no identity — the carrier is not hashed.
+const CARRIER_MAGIC: &[u8] = b"vix-tree\0\x01";
+
+/// Why a byte string is not a Tree carrier.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TreeDecodeError;
+
+impl std::fmt::Display for TreeDecodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("bytes are not a vix Tree carrier")
+    }
+}
+
+impl Tree {
+    /// Serialize to the resident carrier. Canonical: rows are in `Name` order,
+    /// so two equal trees encode to equal bytes.
+    #[must_use]
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = CARRIER_MAGIC.to_vec();
+        self.encode_into(&mut out);
+        out
+    }
+
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        put_len(out, self.entries.len());
+        for (name, entry) in &self.entries {
+            put_bytes(out, name.as_bytes());
+            out.push(entry.kind_tag() as u8);
+            match entry {
+                TreeEntry::File {
+                    content,
+                    executable,
+                } => {
+                    out.push(u8::from(*executable));
+                    put_bytes(out, content.as_bytes());
+                }
+                TreeEntry::Dir(child) => child.encode_into(out),
+                TreeEntry::Symlink { target } => put_bytes(out, target.as_bytes()),
+            }
+        }
+    }
+
+    /// Parse the resident carrier. Every name is re-validated on the way in, so
+    /// a carrier forged with `..` or a separator in a name cannot become a
+    /// Tree.
+    pub fn decode(bytes: &[u8]) -> Result<Tree, TreeDecodeError> {
+        let mut cursor = bytes.strip_prefix(CARRIER_MAGIC).ok_or(TreeDecodeError)?;
+        let tree = Tree::decode_into(&mut cursor, 0)?;
+        if cursor.is_empty() {
+            Ok(tree)
+        } else {
+            Err(TreeDecodeError)
+        }
+    }
+
+    /// Whether `bytes` look like a Tree carrier. Cheap: a magic check, no parse.
+    #[must_use]
+    pub fn is_carrier(bytes: &[u8]) -> bool {
+        bytes.starts_with(CARRIER_MAGIC)
+    }
+
+    fn decode_into(cursor: &mut &[u8], depth: u32) -> Result<Tree, TreeDecodeError> {
+        // A forged carrier must not be able to blow the stack.
+        const MAX_DEPTH: u32 = 256;
+        if depth > MAX_DEPTH {
+            return Err(TreeDecodeError);
+        }
+        let count = take_len(cursor)?;
+        let mut entries = BTreeMap::new();
+        for _ in 0..count {
+            let name = std::str::from_utf8(take_bytes(cursor)?).map_err(|_| TreeDecodeError)?;
+            let name = Name::new(name).map_err(|_| TreeDecodeError)?;
+            let tag = take_u8(cursor)?;
+            let entry = match tag {
+                0 => {
+                    let executable = match take_u8(cursor)? {
+                        0 => false,
+                        1 => true,
+                        _ => return Err(TreeDecodeError),
+                    };
+                    TreeEntry::File {
+                        content: Blob::new(take_bytes(cursor)?.to_vec()),
+                        executable,
+                    }
+                }
+                1 => TreeEntry::Dir(Tree::decode_into(cursor, depth + 1)?),
+                2 => TreeEntry::Symlink {
+                    target: std::str::from_utf8(take_bytes(cursor)?)
+                        .map_err(|_| TreeDecodeError)?
+                        .to_owned(),
+                },
+                _ => return Err(TreeDecodeError),
+            };
+            if entries.insert(name, entry).is_some() {
+                return Err(TreeDecodeError);
+            }
+        }
+        Ok(Tree { entries })
+    }
+}
+
+fn put_len(out: &mut Vec<u8>, len: usize) {
+    out.extend_from_slice(&(len as u64).to_le_bytes());
+}
+
+fn put_bytes(out: &mut Vec<u8>, bytes: &[u8]) {
+    put_len(out, bytes.len());
+    out.extend_from_slice(bytes);
+}
+
+fn take_u8(cursor: &mut &[u8]) -> Result<u8, TreeDecodeError> {
+    let (first, rest) = cursor.split_first().ok_or(TreeDecodeError)?;
+    *cursor = rest;
+    Ok(*first)
+}
+
+fn take_len(cursor: &mut &[u8]) -> Result<usize, TreeDecodeError> {
+    if cursor.len() < 8 {
+        return Err(TreeDecodeError);
+    }
+    let (head, rest) = cursor.split_at(8);
+    *cursor = rest;
+    let len = u64::from_le_bytes(head.try_into().expect("split_at(8) yields eight bytes"));
+    usize::try_from(len).map_err(|_| TreeDecodeError)
+}
+
+fn take_bytes<'bytes>(cursor: &mut &'bytes [u8]) -> Result<&'bytes [u8], TreeDecodeError> {
+    let len = take_len(cursor)?;
+    if cursor.len() < len {
+        return Err(TreeDecodeError);
+    }
+    let (head, rest) = cursor.split_at(len);
+    *cursor = rest;
+    Ok(head)
 }
 
 impl<'tree> IntoIterator for &'tree Tree {
@@ -574,6 +747,98 @@ mod tests {
             .expect("insert file");
         tree.insert_dir("src").expect("redeclare dir");
         assert_eq!(tree.file_paths(), ["src/lib.rs"]);
+    }
+
+    /// Insertion order is not identity; `Name` order is.
+    ///
+    /// r[verify machine.identity.map-order-independence]
+    #[test]
+    fn insertion_order_does_not_move_identity() {
+        let mut forward = Tree::new();
+        forward.insert_path("a.txt", TreeEntry::file(*b"a")).unwrap();
+        forward.insert_path("b.txt", TreeEntry::file(*b"b")).unwrap();
+        let mut backward = Tree::new();
+        backward.insert_path("b.txt", TreeEntry::file(*b"b")).unwrap();
+        backward.insert_path("a.txt", TreeEntry::file(*b"a")).unwrap();
+        assert_eq!(forward.tree_hash(), backward.tree_hash());
+    }
+
+    /// r[verify machine.identity.tree-canonicalization]
+    #[test]
+    fn the_executable_bit_moves_identity() {
+        let mut plain = Tree::new();
+        plain.insert_path("run", TreeEntry::file(*b"#!/bin/sh\n")).unwrap();
+        let mut executable = Tree::new();
+        executable
+            .insert_path("run", TreeEntry::executable(*b"#!/bin/sh\n"))
+            .unwrap();
+        assert_ne!(plain.tree_hash(), executable.tree_hash());
+    }
+
+    /// An empty directory is a value, so it has an identity, so a tree with one
+    /// is not the tree without it.
+    ///
+    /// r[verify machine.identity.tree-canonicalization]
+    #[test]
+    fn an_empty_directory_participates_in_identity() {
+        let bare = Tree::new();
+        let mut with_dir = Tree::new();
+        with_dir.insert_dir("out").expect("insert dir");
+        assert_ne!(bare.tree_hash(), with_dir.tree_hash());
+    }
+
+    /// A file and a symlink whose target text equals the file's contents are
+    /// different values; so are two symlinks with different targets.
+    ///
+    /// r[verify lang.tree.symlink]
+    #[test]
+    fn symlink_targets_are_identity_bearing_and_kind_separated() {
+        let mut link = Tree::new();
+        link.insert_path("x", TreeEntry::symlink("y")).unwrap();
+        let mut file = Tree::new();
+        file.insert_path("x", TreeEntry::file(*b"y")).unwrap();
+        assert_ne!(link.tree_hash(), file.tree_hash());
+
+        let mut dangling = Tree::new();
+        dangling.insert_path("x", TreeEntry::symlink("../nowhere")).unwrap();
+        assert_ne!(link.tree_hash(), dangling.tree_hash());
+    }
+
+    /// Nesting is structure, not a name with a slash in it: `a/b` and a literal
+    /// entry spelled `a/b` cannot even be built, and a one-deep tree does not
+    /// collide with its flattening.
+    ///
+    /// r[verify machine.identity.tree-model]
+    #[test]
+    fn nesting_is_not_a_slash_in_a_name() {
+        assert_eq!(Name::new("a/b"), Err(NameError::Separator));
+        let mut nested = Tree::new();
+        nested.insert_path("a/b", TreeEntry::file(*b"v")).unwrap();
+        let mut flat = Tree::new();
+        flat.insert_path("b", TreeEntry::file(*b"v")).unwrap();
+        assert_ne!(nested.tree_hash(), flat.tree_hash());
+    }
+
+    /// Change one file, rehash one path: an untouched sibling subtree keeps its
+    /// hash, which is the whole point of a Merkle map.
+    ///
+    /// r[verify machine.identity.merkle-tree]
+    #[test]
+    fn an_untouched_subtree_keeps_its_hash() {
+        let mut before = Tree::new();
+        before.insert_path("src/lib.rs", TreeEntry::file(*b"pub fn f() {}")).unwrap();
+        before.insert_path("docs/README.md", TreeEntry::file(*b"# before")).unwrap();
+        let mut after = before.clone();
+        let Some(TreeEntry::Dir(docs)) = after.entries.get_mut(&Name::new("docs").unwrap()) else {
+            panic!("docs is a directory");
+        };
+        docs.insert(Name::new("README.md").unwrap(), TreeEntry::file(*b"# after"));
+
+        assert_ne!(before.tree_hash(), after.tree_hash());
+        assert_eq!(
+            before.project_dir("src").unwrap().tree_hash(),
+            after.project_dir("src").unwrap().tree_hash()
+        );
     }
 
     #[test]
