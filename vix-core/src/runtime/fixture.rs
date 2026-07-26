@@ -5,6 +5,8 @@
 
 use std::path::{Path, PathBuf};
 
+use super::tree::{Tree, TreeEntry, TreeError};
+
 /// The kind of one directory entry, mirroring the Tree model's `TreeEntry`
 /// kinds (`machine.identity.tree-model`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -328,6 +330,85 @@ pub fn parse_ustar(bytes: &[u8]) -> Result<Vec<TarMember>, UstarParseError> {
     }
 }
 
+/// Why a value's resident bytes are not a Tree.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ResidentTreeError {
+    /// The bytes are neither a Tree carrier nor a parseable ustar archive.
+    Malformed,
+    /// The members parsed, but they do not describe a Tree — an invalid name, a
+    /// path claimed twice, or a write through a non-directory.
+    Model(TreeError),
+}
+
+impl std::fmt::Display for ResidentTreeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Malformed => f.write_str("resident bytes are not a Tree"),
+            Self::Model(error) => error.fmt(f),
+        }
+    }
+}
+
+/// Build the semantic [`Tree`] from parsed archive members.
+///
+/// Archive order is discarded on purpose: a Tree is a map, so member order is
+/// transport, and two archives listing the same entries in different orders are
+/// one value. `insert_path` supplies the safety properties — intermediate
+/// directories are created but a non-directory is never *followed*, so a member
+/// named `link/evil` cannot write through a `link` symlink that a previous
+/// member introduced.
+///
+/// An absolute symlink target is rejected rather than stored: it is a
+/// non-relocatable ambient dependency, and `machine.identity.tree-canonicalization`
+/// admits only relative targets into an ordinary Tree.
+///
+/// r[impl machine.identity.tree-canonicalization]
+pub fn tree_from_members(members: Vec<TarMember>) -> Result<Tree, TreeError> {
+    let mut tree = Tree::new();
+    for member in members {
+        match member {
+            TarMember::File {
+                path,
+                bytes,
+                executable,
+            } => {
+                let entry = if executable {
+                    TreeEntry::executable(bytes)
+                } else {
+                    TreeEntry::file(bytes)
+                };
+                tree.insert_path(&path, entry)?;
+            }
+            TarMember::Dir { path } => tree.insert_dir(&path)?,
+            TarMember::Symlink { path, target } => {
+                if target.starts_with('/') {
+                    return Err(TreeError::AbsoluteSymlink { path, target });
+                }
+                tree.insert_path(&path, TreeEntry::symlink(target))?;
+            }
+        }
+    }
+    Ok(tree)
+}
+
+/// The semantic [`Tree`] of a value's resident bytes, in either representation.
+///
+/// Trees used to live at runtime as ustar bytes, and fixtures still ship that
+/// way; new producers write the carrier. Both decode to the same value here, so
+/// **identity is representation-independent**: an archive and a carrier that
+/// describe the same tree hash equal, which is exactly what
+/// `machine.primitive.fetch-returns-a-blob` means when it says two archives
+/// unpacking to one tree have one tree identity and two blob identities.
+///
+/// r[impl machine.identity.tree-model]
+pub fn tree_from_resident(bytes: &[u8]) -> Result<Tree, ResidentTreeError> {
+    if Tree::is_carrier(bytes) {
+        return Tree::decode(bytes).map_err(|_| ResidentTreeError::Malformed);
+    }
+    let members = parse_ustar(bytes).map_err(|_| ResidentTreeError::Malformed)?;
+    tree_from_members(members).map_err(ResidentTreeError::Model)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,5 +437,84 @@ mod tests {
                 .expect("manifest is utf-8")
                 .contains("name = \"tokio\"")
         );
+    }
+
+    /// The property the whole ustar -> carrier migration rests on: a value's
+    /// identity is a property of the TREE, not of the bytes it arrived in. An
+    /// archive and the carrier of the tree it unpacks to must hash equal, or
+    /// flipping a producer over would silently invalidate every memo entry
+    /// downstream of it.
+    ///
+    /// r[verify machine.identity.tree-model]
+    #[test]
+    fn resident_tree_identity_is_representation_independent() {
+        let store = FixtureStore::default();
+        let archive = store
+            .fetch_url("fixture://registry/tokio-1.52.3.crate")
+            .expect("fixture archive resolves");
+        let from_archive = tree_from_resident(&archive).expect("archive describes a tree");
+        let from_carrier =
+            tree_from_resident(&from_archive.encode()).expect("carrier describes a tree");
+        assert_eq!(from_archive, from_carrier, "same tree, either way in");
+        assert_eq!(
+            from_archive.tree_hash(),
+            from_carrier.tree_hash(),
+            "identity is the tree's, not the transport's"
+        );
+    }
+
+    /// A carrier is recognized by its magic, so a reader can accept both
+    /// representations without guessing.
+    #[test]
+    fn a_ustar_archive_is_not_mistaken_for_a_carrier() {
+        let store = FixtureStore::default();
+        let archive = store
+            .fetch_url("fixture://registry/tokio-1.52.3.crate")
+            .expect("fixture archive resolves");
+        assert!(!Tree::is_carrier(&archive));
+        let tree = tree_from_resident(&archive).expect("archive describes a tree");
+        assert!(Tree::is_carrier(&tree.encode()));
+    }
+
+    /// An archive may not introduce a symlink and then write through it: the
+    /// member `link/evil` finds `link` occupied by a non-directory and fails
+    /// rather than escaping. This is the extraction-time half of
+    /// `machine.identity.tree-canonicalization`'s "resolution may not escape the
+    /// mount grant".
+    ///
+    /// r[verify machine.identity.tree-canonicalization]
+    #[test]
+    fn an_archive_cannot_write_through_a_symlink_it_declared() {
+        let members = vec![
+            TarMember::Symlink {
+                path: "link".to_owned(),
+                target: "../outside".to_owned(),
+            },
+            TarMember::File {
+                path: "link/evil".to_owned(),
+                bytes: b"pwned".to_vec(),
+                executable: false,
+            },
+        ];
+        assert!(matches!(
+            tree_from_members(members),
+            Err(TreeError::NotADirectory { .. })
+        ));
+    }
+
+    /// An absolute target is not a relocatable value, so it does not enter an
+    /// ordinary Tree at all.
+    ///
+    /// r[verify machine.identity.tree-canonicalization]
+    #[test]
+    fn an_absolute_symlink_target_is_refused() {
+        let members = vec![TarMember::Symlink {
+            path: "libc.so".to_owned(),
+            target: "/usr/lib/libc.so.6".to_owned(),
+        }];
+        assert!(matches!(
+            tree_from_members(members),
+            Err(TreeError::AbsoluteSymlink { .. })
+        ));
     }
 }
