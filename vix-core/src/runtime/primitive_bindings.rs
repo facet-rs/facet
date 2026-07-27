@@ -36,6 +36,22 @@ pub struct RegistryHandle(pub ValueId);
 #[facet(vix::wire_extern = "Blob")]
 pub struct BlobHandle(pub ValueId);
 
+/// A `Blob` **argument**: the bytes themselves, as they arrive on the wire.
+///
+/// [`BlobHandle`] is the response side — an already-interned identity. This is
+/// the request side, and the two are genuinely different: a primitive that
+/// *takes* a Blob receives its resident bytes inline in the request record, not a
+/// reference to fetch. Both are `Type::Extern(Blob)` on the wire; only the Rust
+/// shape differs by direction.
+///
+/// Its existence is what lets a Blob-taking primitive use the typed rail at all.
+/// Without it a request field of Blob type decodes structurally, expects a
+/// sequence, meets resident bytes, and fails — which is why every Blob-taking
+/// primitive so far hand-walked the wire as a `RawPrimitive`.
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[facet(vix::wire_extern = "Blob")]
+pub struct BlobBytes(pub Vec<u8>);
+
 /// A pinned Blob target identity. This is not a resident value but a *reference*
 /// to one, so it decomposes structurally into a `ValueId`'s `{schema, content}`:
 /// the schema is an `Extern(Schema)` store value and the content is the digest

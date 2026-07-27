@@ -55,7 +55,7 @@ pub fn builtin_primitives<Ctx>() -> Vec<Arc<dyn RawPrimitive<Ctx>>> {
         Arc::new(TypedAdapter::new::<Ctx>(PinnedFetchPrimitive)),
         Arc::new(TreeReadPrimitive::default()),
         Arc::new(RegistryUrlPrimitive::default()),
-        Arc::new(BlobGunzipPrimitive::default()),
+        Arc::new(TypedAdapter::new::<Ctx>(BlobGunzipPrimitive)),
         Arc::new(BlobLenPrimitive::default()),
     ]
 }

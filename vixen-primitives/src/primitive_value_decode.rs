@@ -28,8 +28,8 @@ use vix::schema::SchemaRef;
 #[cfg(test)]
 use crate::rt::DigestAlgorithm;
 use crate::rt::{
-    Callback, Digest, PrimitiveField, PrimitiveFieldValue, PrimitiveMachineError, PrimitiveValue,
-    PrimitiveValueBody, RegistryHandle, UpstreamDigest, ValueId,
+    BlobBytes, Callback, Digest, PrimitiveField, PrimitiveFieldValue, PrimitiveMachineError,
+    PrimitiveValue, PrimitiveValueBody, RegistryHandle, UpstreamDigest, ValueId,
 };
 
 /// Decode a runtime wire [`PrimitiveValue`] into a typed `T` — the mirror of
@@ -130,6 +130,7 @@ fn field_value(
 /// this must track exactly.
 enum LeafOverride {
     Callback,
+    BlobBytes,
     Digest,
     UpstreamDigest,
     SchemaRef,
@@ -139,6 +140,9 @@ enum LeafOverride {
 fn leaf_override_kind(shape: &'static facet::Shape) -> Option<LeafOverride> {
     if shape.decl_id == <Callback<i64, i64> as facet::Facet>::SHAPE.decl_id {
         return Some(LeafOverride::Callback);
+    }
+    if shape.id == <BlobBytes as facet::Facet>::SHAPE.id {
+        return Some(LeafOverride::BlobBytes);
     }
     if shape.id == <Digest as facet::Facet>::SHAPE.id {
         return Some(LeafOverride::Digest);
@@ -183,6 +187,18 @@ fn decode_shape(
             partial = partial.begin_nth_field(1).map_err(|_| invalid(root))?;
             partial = partial.set_default().map_err(|_| invalid(root))?;
             return partial.end().map_err(|_| invalid(root));
+        }
+        Some(LeafOverride::BlobBytes) => {
+            // A Blob ARGUMENT arrives as its resident bytes, so there is nothing
+            // structural to walk: the whole value is the payload. Without this
+            // case the decoder would try the tuple-struct route, expect a
+            // sequence for the `Vec<u8>` field, meet `Bytes`, and reject the
+            // request — which is what forced every Blob-taking primitive onto the
+            // raw rail.
+            let bytes = expect_bytes(value, root)?;
+            return partial
+                .set(BlobBytes(bytes.to_vec()))
+                .map_err(|_| invalid(root));
         }
         Some(LeafOverride::Digest) => {
             let digest = decode_hex_digest(value, root)?;

@@ -1,21 +1,23 @@
 use std::io::Read as _;
 
-use vix::schema::SchemaPattern;
 use vix::vir::{ExternKind, Type};
 
 use crate::rt::{
-    BlobHandle, EffectCtx, PrimitiveCompletion, PrimitiveDescriptor, PrimitiveFieldValue,
-    PrimitiveId, PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveValue, PrimitiveValueBody,
-    RawEffectTicket, RawPrimitive, ReadProjection, ValueId,
+    ArgRoleDecl, BlobBytes, BlobHandle, EffectCtx, EffectTicket, Primitive, PrimitiveDecl,
+    PrimitiveMachineError, PrimitiveMemoPolicy, ValueId,
 };
 
-/// The wire request of the `blob-gunzip` primitive: the compressed `Blob`. Like
-/// `blob-len`, this rides the fully-open rail — a primitive-backed method whose
-/// whole contract (request, result, id) is declared here beside its
-/// implementation, with no dedicated op in `vix-core` at all (issue 2520).
+/// The typed request of the `blob-gunzip` primitive: the compressed `Blob`.
+///
+/// `BlobBytes` carries its own `#[facet(vix::wire_extern = "Blob")]`, so the vix
+/// `Type` is read off this shape and the whole contract — request, result, id —
+/// lives here beside the implementation. `vix-core` holds nothing of it:
+/// `Blob.gunzip` is a primitive-backed method on the fully-open rail
+/// (`binding::MethodLowering::Primitive`), with no dedicated op in core at all
+/// (issue 2520).
 #[derive(facet::Facet)]
 pub struct BlobGunzipRequest {
-    pub blob: BlobHandle,
+    pub blob: BlobBytes,
 }
 
 #[must_use]
@@ -29,13 +31,25 @@ pub fn blob_gunzip_result_type() -> Type {
 }
 
 #[must_use]
-pub fn blob_gunzip_primitive_id() -> PrimitiveId {
-    PrimitiveId {
-        namespace: "vix.machine".to_owned(),
-        name: "blob-gunzip".to_owned(),
-        version: 1,
-    }
+pub fn blob_gunzip_primitive_id() -> crate::rt::PrimitiveId {
+    BLOB_GUNZIP_DECL.id()
 }
+
+/// The registration declaration. `Hermetic` because the result is a function of
+/// the request alone — the request's identity folds in the blob's content, so the
+/// memo is keyed by exactly what the answer depends on, with no external
+/// observation to witness.
+pub const BLOB_GUNZIP_DECL: PrimitiveDecl = PrimitiveDecl {
+    namespace: "vix.machine",
+    name: "blob-gunzip",
+    id_name: "blob-gunzip",
+    version: 1,
+    memo_policy: PrimitiveMemoPolicy::Hermetic,
+    protocol_version: 1,
+    failure_schema_name: "BlobGunzipFailure",
+    capabilities: &[],
+    args: &[ArgRoleDecl::Value],
+};
 
 /// `Blob.gunzip() -> Blob` — decompress a gzip member.
 ///
@@ -55,9 +69,7 @@ pub fn blob_gunzip_primitive_id() -> PrimitiveId {
 /// **Why a primitive and not pure vix:** by the classification rule this is pure
 /// work and belongs in the VIX layer, but vix cannot manipulate bytes at all yet,
 /// so the implementation must be Rust. It is the same deliberate exception
-/// `decode` already is — a *pragmatic* effect, not an authority crossing. It is
-/// `Hermetic` accordingly: the result is a function of the request alone, whose
-/// identity folds in the blob's content.
+/// `decode` already is — a *pragmatic* effect, not an authority crossing.
 ///
 /// **Generalization, when a second algorithm appears:** the shape this wants
 /// eventually is `blob.decompress(Compression::Gzip)`, with the algorithm as a
@@ -65,64 +77,35 @@ pub fn blob_gunzip_primitive_id() -> PrimitiveId {
 /// operation, new variants without new primitives. That needs a `Compression`
 /// enum in the stdlib; it is not worth the surface until something actually
 /// serves zstd.
-pub struct BlobGunzipPrimitive {
-    descriptor: PrimitiveDescriptor,
-}
+pub struct BlobGunzipPrimitive;
 
-impl Default for BlobGunzipPrimitive {
-    fn default() -> Self {
-        Self {
-            descriptor: PrimitiveDescriptor {
-                id: blob_gunzip_primitive_id(),
-                request_schema: SchemaPattern::exact(&blob_gunzip_request_type().schema_ref()),
-                response_schema: SchemaPattern::exact(&blob_gunzip_result_type().schema_ref()),
-                failure_schema: SchemaPattern::Var {
-                    name: "BlobGunzipFailure".to_owned(),
-                },
-                memo_policy: PrimitiveMemoPolicy::Hermetic,
-                protocol_version: 1,
-                capability_schemas: Vec::new(),
-            },
-        }
-    }
-}
+impl<Ctx> Primitive<Ctx> for BlobGunzipPrimitive {
+    type Request = BlobGunzipRequest;
+    type Response = BlobHandle;
+    type Deps = ();
 
-impl<Ctx> RawPrimitive<Ctx> for BlobGunzipPrimitive {
-    fn descriptor(&self) -> &PrimitiveDescriptor {
-        &self.descriptor
-    }
+    const DECL: PrimitiveDecl = BLOB_GUNZIP_DECL;
 
-    fn begin(&self, request: ValueId, ctx: EffectCtx, _app: &Ctx) -> RawEffectTicket {
-        let (ticket, completer) = ctx.ticket(|| {});
+    fn begin(&self, req: BlobGunzipRequest, ctx: EffectCtx, _deps: ()) -> EffectTicket<BlobHandle> {
+        let (ticket, completer) = EffectTicket::<BlobHandle>::pair(&ctx, || {});
         std::thread::spawn(move || {
-            let completion = execute(&request, &ctx)
-                .map(PrimitiveCompletion::Ok)
-                .unwrap_or_else(PrimitiveCompletion::MachineError);
-            let publication =
-                ctx.finish(completion)
-                    .unwrap_or_else(|error| crate::rt::PrimitivePublication {
-                        completion: PrimitiveCompletion::MachineError(error),
-                        receipt: crate::rt::Receipt {
-                            demand: ctx.demand(),
-                            reads: Vec::new(),
-                        },
-                        journal: Vec::new(),
-                        progressive: Vec::new(),
-                    });
-            let _ = completer.complete(publication);
+            let _ = match serve(&req.blob.0, &ctx) {
+                Ok(value) => completer.complete_ok(&ctx, BlobHandle(value)),
+                Err(error) => completer.complete_err(&ctx, error),
+            };
         });
         ticket
     }
 }
 
-fn execute(request: &ValueId, ctx: &EffectCtx) -> Result<ValueId, PrimitiveMachineError> {
-    let request = ctx.read(request, ReadProjection::Whole)?;
-    let compressed = blob_field(request.value, request.identity)?;
-    let plain = gunzip(&compressed)?;
-    ctx.intern_value(PrimitiveValue::bytes(
-        Type::Extern(ExternKind::Blob).schema_ref(),
-        plain,
-    ))
+/// Decompress the request's blob and intern the result as an ordinary `Blob`.
+///
+/// No `EffectCtx::read` is needed: a Blob argument arrives as its resident bytes,
+/// and those bytes are already folded into the request identity that keys the
+/// memo. There is nothing external to witness.
+fn serve(compressed: &[u8], ctx: &EffectCtx) -> Result<ValueId, PrimitiveMachineError> {
+    let plain = gunzip(compressed)?;
+    ctx.intern(&Type::Extern(ExternKind::Blob).schema_ref(), &plain)
 }
 
 /// Decompress one gzip member.
@@ -139,36 +122,4 @@ fn gunzip(compressed: &[u8]) -> Result<Vec<u8>, PrimitiveMachineError> {
             detail: format!("Blob is not a readable gzip member: {error}"),
         })?;
     Ok(plain)
-}
-
-/// Extract the resident bytes of the request's single `Blob` field, exactly as
-/// `blob-len` does — a `Blob` is a bytes primitive, so once the request is read
-/// whole its blob field is resident bytes.
-fn blob_field(
-    request: PrimitiveValue,
-    request_id: ValueId,
-) -> Result<Vec<u8>, PrimitiveMachineError> {
-    let PrimitiveValueBody::Product(fields) = request.body else {
-        return Err(PrimitiveMachineError::InvalidRequest {
-            request: request_id,
-        });
-    };
-    let [blob] = fields.as_slice() else {
-        return Err(PrimitiveMachineError::InvalidRequest {
-            request: request_id,
-        });
-    };
-    match &blob.value {
-        PrimitiveFieldValue::Inline(bytes) => Ok(bytes.clone()),
-        PrimitiveFieldValue::Child(value) => match &value.body {
-            PrimitiveValueBody::Bytes(bytes) => Ok(bytes.clone()),
-            PrimitiveValueBody::Product(_)
-            | PrimitiveValueBody::Sequence { .. }
-            | PrimitiveValueBody::Variant { .. } => {
-                Err(PrimitiveMachineError::AuthorityViolation {
-                    detail: "blob-gunzip request field was not resident Blob bytes".to_owned(),
-                })
-            }
-        },
-    }
 }
