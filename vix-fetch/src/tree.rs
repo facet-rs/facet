@@ -85,3 +85,16 @@ pub trait FetchBackend: Send + Sync {
 pub fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
+
+/// The same digest written as a **pin**: `sha256:<hex>`.
+///
+/// The tag is not decoration. A bare digest is only meaningful to a reader who
+/// already knows which algorithm produced it, and that assumption is what makes
+/// an ecosystem unable to move off an algorithm once it weakens — the way
+/// everyone eventually had to move off md5. Naming the algorithm in the value
+/// costs seven characters and removes the assumption
+/// (`vixen.pins.self-describing`).
+#[must_use]
+pub fn sha256_pin(bytes: &[u8]) -> String {
+    format!("sha256:{}", sha256_hex(bytes))
+}

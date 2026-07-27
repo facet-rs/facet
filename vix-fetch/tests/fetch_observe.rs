@@ -5,13 +5,13 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use tempfile::TempDir;
-use vixen_runtime::ratchet::{RunError, prepare_source};
 use vix::runtime::{
     CanonicalBlobPersistence, FixtureStore, FramedNode, MachineCause, PrimitiveMachineError,
     PrimitiveServices, RuntimeFault, ValueBodyCandidate, ValueId, ValuePersistence,
 };
 use vix::vir::{ExternKind, Type};
 use vix_fetch::HttpBlobOriginAdapter;
+use vixen_runtime::ratchet::{RunError, prepare_source};
 
 const FETCH_AND_EXTRACT: &str = r#"
 #[test]
@@ -281,7 +281,7 @@ impl ValuePersistence for CorruptThenRecordingPersistence {
 fn pinned_fetch_origin_returns_blob_and_separate_extraction() {
     let bytes = archive_bytes();
     let identity = blob_identity(&bytes);
-    let upstream = vix_fetch::sha256_hex(&bytes);
+    let upstream = vix_fetch::sha256_pin(&bytes);
     let server = BlobServer::start(bytes);
     let fixtures = TempDir::new().expect("create fixture root");
     let services = PrimitiveServices::default()
@@ -321,7 +321,7 @@ fn pinned_fetch_origin_returns_blob_and_separate_extraction() {
 fn pinned_fetch_yielded_frame_survives_off_stack_and_crosses_the_inbox() {
     let bytes = archive_bytes();
     let identity = blob_identity(&bytes);
-    let upstream = vix_fetch::sha256_hex(&bytes);
+    let upstream = vix_fetch::sha256_pin(&bytes);
     let server = BlobServer::start(bytes);
     let fixtures = TempDir::new().expect("create fixture root");
     let services = PrimitiveServices::default()
@@ -368,7 +368,7 @@ fn pinned_fetch_yielded_frame_survives_off_stack_and_crosses_the_inbox() {
 fn pinned_fetch_provider_hit_precedes_origin() {
     let bytes = archive_bytes();
     let identity = blob_identity(&bytes);
-    let upstream = vix_fetch::sha256_hex(&bytes);
+    let upstream = vix_fetch::sha256_pin(&bytes);
     let server = BlobServer::start(bytes.clone());
     let fixtures = TempDir::new().expect("create fixture root");
     let persistence_root = TempDir::new().expect("create Blob persistence root");
@@ -404,7 +404,7 @@ fn pinned_fetch_provider_hit_precedes_origin() {
 fn pinned_fetch_local_store_hit_never_contacts_provider_or_origin() {
     let bytes = archive_bytes();
     let identity = blob_identity(&bytes);
-    let upstream = vix_fetch::sha256_hex(&bytes);
+    let upstream = vix_fetch::sha256_pin(&bytes);
     let server = BlobServer::start(bytes);
     let fixtures = TempDir::new().expect("create fixture root");
     let manifest = format!(
@@ -458,7 +458,7 @@ fn pinned_fetch_rejects_vix_identity_mismatch() {
     let bytes = archive_bytes();
     let observed = blob_identity(&bytes);
     let claimed = blob_identity(b"different Blob body");
-    let upstream = vix_fetch::sha256_hex(&bytes);
+    let upstream = vix_fetch::sha256_pin(&bytes);
     let server = BlobServer::start(bytes);
     let fixtures = TempDir::new().expect("create fixture root");
     let services = PrimitiveServices::default()
@@ -481,7 +481,10 @@ fn pinned_fetch_rejects_vix_identity_mismatch() {
 fn pinned_fetch_rejects_upstream_digest_mismatch_at_every_tier() {
     let bytes = archive_bytes();
     let identity = blob_identity(&bytes);
-    let wrong_upstream = "00".repeat(32);
+    // A well-formed pin that simply does not match the bytes: this test is
+    // about VERIFICATION failing at each tier, not about parsing, so the pin
+    // has to get past the parser to exercise anything.
+    let wrong_upstream = format!("sha256:{}", "00".repeat(32));
 
     let store_server = BlobServer::start(bytes.clone());
     let store_fixtures = TempDir::new().expect("create Store-tier fixture root");
@@ -559,7 +562,7 @@ fn pinned_fetch_rejects_upstream_digest_mismatch_at_every_tier() {
 fn pinned_fetch_rejects_corrupt_provider_then_admits_verified_origin() {
     let bytes = archive_bytes();
     let identity = blob_identity(&bytes);
-    let upstream = vix_fetch::sha256_hex(&bytes);
+    let upstream = vix_fetch::sha256_pin(&bytes);
     let provider = Arc::new(CorruptThenRecordingPersistence {
         candidate: ValueBodyCandidate {
             claimed: identity.clone(),
@@ -599,5 +602,56 @@ fn pinned_fetch_rejects_corrupt_provider_then_admits_verified_origin() {
     for run in [&report.plain, &report.chaos] {
         assert_eq!(run.counters.primitive_invocations, 3, "{run:#?}");
         assert_eq!(run.counters.fetches_performed, 1, "{run:#?}");
+    }
+}
+
+/// A pin the manifest got wrong fails AT THE MANIFEST, naming itself.
+///
+/// The failure mode this guards against is the one that cost real debugging
+/// time while writing this change: an unparseable pin used to ride to the wire
+/// and surface three layers away as an opaque `InvalidRequest` against a
+/// synthesized value id, which tells you nothing about which row of which
+/// manifest is wrong.
+///
+/// The three cases are the three ways a pin goes wrong, and they must stay
+/// distinguishable: untagged (the shape self-describing pins abolish), refused
+/// (an algorithm we can compute and decline to trust), and unknown.
+///
+/// r[verify vixen.pins.self-describing]
+/// r[verify vixen.pins.algorithm-strength]
+#[test]
+fn a_manifest_pin_that_is_not_a_pin_fails_at_the_manifest() {
+    let bytes = archive_bytes();
+    let identity = blob_identity(&bytes);
+    for bad in [
+        &"00".repeat(32),                     // untagged: which algorithm?
+        &format!("md5:{}", "00".repeat(16)),  // refused, not unknown
+        &format!("sha3:{}", "00".repeat(32)), // genuinely unknown
+    ] {
+        let server = BlobServer::start(bytes.clone());
+        let fixtures = TempDir::new().expect("create fixture root");
+        let services = PrimitiveServices::default()
+            .with_fixture_store(fixture_store(&fixtures, &server.url(), &identity, bad))
+            .with_origin_adapter(Arc::new(HttpBlobOriginAdapter));
+        let error = prepare_source(FETCH_ONLY)
+            .expect("prepare source")
+            .execute_with_primitive_services(services)
+            .expect_err("a malformed manifest pin must fail");
+        let error = primitive_machine_error(error);
+        // Same variant the manifest's other malformed-value cases use (a
+        // non-UTF-8 manifest, an absent artifact): the registry served
+        // something it had no authority to call a pin.
+        let PrimitiveMachineError::AuthorityViolation { detail } = &error else {
+            panic!("a malformed pin is a manifest authority violation, got {error:#?}");
+        };
+        assert!(
+            detail.contains("is not a pin"),
+            "the diagnostic must say the manifest pin is at fault: {detail}"
+        );
+        assert_eq!(
+            server.transfers(),
+            0,
+            "nothing is fetched on the strength of a pin we could not read"
+        );
     }
 }

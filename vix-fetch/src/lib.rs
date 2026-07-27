@@ -16,7 +16,7 @@ use flate2::read::GzDecoder;
 use vix::runtime::{OriginAdapter, PrimitiveMachineError, ValueId};
 use vix::vir::{ExternKind, Type};
 
-pub use tree::{FetchBackend, FetchOutput, Tree, sha256_hex};
+pub use tree::{FetchBackend, FetchOutput, Tree, sha256_hex, sha256_pin};
 
 /// Raw Blob transport for the registered pinned-fetch primitive. Archive
 /// interpretation is deliberately absent: extraction is a separate Vix

@@ -838,8 +838,12 @@ fn facet_leaf_override(shape: &'static facet::Shape) -> Option<Type> {
         });
     }
 
-    // Fixed 32-byte digests have no vix `Type` primitive; they wire-encode as a
-    // hex `String` (see `fetch_primitive` parse/verify: `hex::encode`/`decode`).
+    // Digests have no vix `Type` primitive; they wire-encode as a `String`.
+    // `Digest` is the fixed 32-byte vix ContentHash, written as bare hex.
+    // `UpstreamDigest` is a pin, written self-describingly as
+    // `"<algorithm>:<hex>"` so retiring an algorithm never means changing the
+    // schema (`vixen.pins.self-describing`) — both are the same wire type,
+    // which is why tagging the pin cost no schema change at all.
     if shape.id == <Digest as facet::Facet>::SHAPE.id
         || shape.id == <UpstreamDigest as facet::Facet>::SHAPE.id
     {
@@ -970,9 +974,7 @@ impl Type {
         match shape.def {
             facet::Def::List(list) => Self::array(Self::from_facet_shape(list.t())),
             facet::Def::Slice(slice) => Self::array(Self::from_facet_shape(slice.t())),
-            facet::Def::Option(option) => {
-                Self::option(Self::from_facet_shape(option.t()))
-            }
+            facet::Def::Option(option) => Self::option(Self::from_facet_shape(option.t())),
             facet::Def::Scalar | facet::Def::Undefined => Self::from_facet_user(shape),
             _ => panic!(
                 "Type::from_facet: unsupported def for `{}`",
@@ -984,12 +986,9 @@ impl Type {
     fn from_facet_user(shape: &'static facet::Shape) -> Self {
         match shape.ty {
             facet::Type::User(facet::UserType::Struct(struct_type)) => match struct_type.kind {
-                facet::StructKind::Unit | facet::StructKind::Struct => {
-                    Self::Record(RecordType::new(
-                        shape.type_identifier,
-                        facet_fields(struct_type.fields),
-                    ))
-                }
+                facet::StructKind::Unit | facet::StructKind::Struct => Self::Record(
+                    RecordType::new(shape.type_identifier, facet_fields(struct_type.fields)),
+                ),
                 facet::StructKind::Tuple | facet::StructKind::TupleStruct => Self::Tuple(
                     struct_type
                         .fields
@@ -2238,8 +2237,7 @@ impl Module {
         // realizes progressively, so it is already a progressive value and must
         // not also be hoisted as a settled shared publication.
         for node in function.nodes.iter().filter(|node| {
-            matches!(node.op, Op::InvokePrimitive { .. })
-                && !progressive_ids.contains_key(&node.id)
+            matches!(node.op, Op::InvokePrimitive { .. }) && !progressive_ids.contains_key(&node.id)
         }) {
             if !shared.iter().any(|candidate| candidate.id == node.id) {
                 shared.push(node);
@@ -3444,14 +3442,13 @@ fn progressive_exec_tree_text_values(function: &Function) -> Vec<PartitionedProg
                 .inputs
                 .first()
                 .expect("a primitive invocation carries its request input");
-            let (exec, path) =
-                progressive_exec_tree_path(function, request).unwrap_or_else(|| {
-                    unreachable!(
-                        "an EFFECT-marked tree-read failed progressive extraction: \
+            let (exec, path) = progressive_exec_tree_path(function, request).unwrap_or_else(|| {
+                unreachable!(
+                    "an EFFECT-marked tree-read failed progressive extraction: \
                          `lower_tree_text_projection`'s gate and \
                          `progressive_exec_tree_path` have drifted"
-                    )
-                });
+                )
+            });
             Some(PartitionedProgressiveValue {
                 id: ValueIslandId {
                     function: function.id,

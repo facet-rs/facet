@@ -25,6 +25,8 @@ use facet_reflect::Partial;
 
 use vix::schema::SchemaRef;
 
+#[cfg(test)]
+use crate::rt::DigestAlgorithm;
 use crate::rt::{
     Callback, Digest, PrimitiveField, PrimitiveFieldValue, PrimitiveMachineError, PrimitiveValue,
     PrimitiveValueBody, RegistryHandle, UpstreamDigest, ValueId,
@@ -187,10 +189,13 @@ fn decode_shape(
             return partial.set(Digest(digest)).map_err(|_| invalid(root));
         }
         Some(LeafOverride::UpstreamDigest) => {
-            let digest = decode_hex_digest(value, root)?;
-            return partial
-                .set(UpstreamDigest(digest))
-                .map_err(|_| invalid(root));
+            // A pin arrives as its canonical text, `"<algorithm>:<hex>"`, and is
+            // re-parsed rather than trusted: an untagged digest or a refused
+            // algorithm must not become a pin just because it reached the wire.
+            let bytes = expect_bytes(value, root)?;
+            let text = core::str::from_utf8(bytes).map_err(|_| invalid(root))?;
+            let digest = UpstreamDigest::parse(text).map_err(|_| invalid(root))?;
+            return partial.set(digest).map_err(|_| invalid(root));
         }
         Some(LeafOverride::SchemaRef) => {
             let bytes = expect_bytes(value, root)?;
@@ -743,10 +748,13 @@ mod tests {
         )
     }
 
-    fn hex_upstream_digest_wire(digest: [u8; 32]) -> PrimitiveValue {
+    /// A pin travels as its canonical text, `"<algorithm>:<hex>"` — the tag is
+    /// part of the value, so the wire says which algorithm produced the digest
+    /// rather than leaving the reader to assume.
+    fn upstream_digest_wire(digest: &UpstreamDigest) -> PrimitiveValue {
         PrimitiveValue::bytes(
             Type::from_facet::<UpstreamDigest>().schema_ref(),
-            hex::encode(digest).into_bytes(),
+            digest.render().into_bytes(),
         )
     }
 
@@ -796,12 +804,12 @@ mod tests {
         )
     }
 
-    fn upstream_wire(upstream: Option<[u8; 32]>) -> PrimitiveValue {
+    fn upstream_wire(upstream: Option<&UpstreamDigest>) -> PrimitiveValue {
         match upstream {
             Some(digest) => variant(
                 Type::from_facet::<Option<UpstreamDigest>>().schema_ref(),
                 vix::vir::OPTION_SOME_VARIANT,
-                vec![child(hex_upstream_digest_wire(digest))],
+                vec![child(upstream_digest_wire(digest))],
             ),
             None => variant(
                 Type::from_facet::<Option<UpstreamDigest>>().schema_ref(),
@@ -855,8 +863,11 @@ mod tests {
         ];
         let origins_wire_value = origins_wire(&origins);
 
-        let upstream_bytes = [0xCD; 32];
-        let upstream_wire_value = upstream_wire(Some(upstream_bytes));
+        let upstream_digest = UpstreamDigest {
+            algorithm: DigestAlgorithm::Sha256,
+            bytes: vec![0xCD; 32],
+        };
+        let upstream_wire_value = upstream_wire(Some(&upstream_digest));
 
         let pin_wire = pinned_blob_ref_wire(
             blob_wire.clone(),
@@ -868,7 +879,7 @@ mod tests {
         let expected = PinnedBlobRef {
             value: blob_id.clone(),
             origins: vec![origin_a.clone(), origin_b.clone()],
-            upstream: Some(UpstreamDigest(upstream_bytes)),
+            upstream: Some(upstream_digest.clone()),
         };
 
         // (1) `decode_primitive_value` reconstructs the exact typed value.
