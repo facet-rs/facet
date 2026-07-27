@@ -719,13 +719,6 @@ impl DigestAlgorithm {
     }
 }
 
-/// Algorithms that are recognized by name and deliberately refused, so the
-/// diagnostic can say *why* instead of "unknown algorithm". A pin's whole value
-/// is that a stranger can check it; a collision-attackable digest does not
-/// deliver that, and silently accepting one would make a pin look like a
-/// guarantee it is not.
-const REFUSED_ALGORITHMS: &[&str] = &["md5", "sha1"];
-
 /// A digest **of the bytes**, carrying the algorithm that produced it.
 ///
 /// This is the "not screwed in 2064" property: `sha256: "…"` puts the algorithm
@@ -752,10 +745,12 @@ pub enum DigestParseError {
     /// to abolish: it is only meaningful if the reader already knows which
     /// algorithm was meant, which is the assumption that makes migration hard.
     Untagged,
-    /// A recognized algorithm that is not admissible as a pin.
-    Refused { tag: String },
-    /// An algorithm this machine cannot compute.
-    Unknown { tag: String },
+    /// Not an admissible pin algorithm. There is deliberately no separate
+    /// "recognized but refused" case: the admissible set is the ONLY list, so
+    /// retiring an algorithm shrinks it and nothing else needs maintaining. A
+    /// graveyard of known-bad names would be a second list that has to agree
+    /// with the first, forever, to improve one message.
+    Inadmissible { tag: String },
     /// The digits are not hexadecimal.
     NotHex,
     /// Right algorithm, wrong number of bytes.
@@ -769,15 +764,9 @@ impl std::fmt::Display for DigestParseError {
                 "a pin must name its algorithm, as in `sha256:<hex>` — an untagged digest \
                  is only meaningful to a reader who already knows which one was meant",
             ),
-            Self::Refused { tag } => write!(
+            Self::Inadmissible { tag } => write!(
                 f,
-                "`{tag}` is not admissible as a pin: a digest a stranger cannot trust is \
-                 not a pin. Record it beside an admissible one if you need it for provenance"
-            ),
-            Self::Unknown { tag } => write!(
-                f,
-                "unknown digest algorithm `{tag}` — this machine can compute blake3, \
-                 sha256 and sha512"
+                "`{tag}` is not an admissible pin algorithm — use blake3, sha256 or sha512"
             ),
             Self::NotHex => f.write_str("a pin's digits are hexadecimal"),
             Self::Length { expected, found } => write!(
@@ -801,11 +790,8 @@ impl UpstreamDigest {
     pub fn parse(text: &str) -> Result<Self, DigestParseError> {
         let (tag, digits) = text.split_once(':').ok_or(DigestParseError::Untagged)?;
         let lowered = tag.to_ascii_lowercase();
-        if REFUSED_ALGORITHMS.contains(&lowered.as_str()) {
-            return Err(DigestParseError::Refused { tag: lowered });
-        }
         let algorithm = DigestAlgorithm::from_tag(&lowered)
-            .ok_or(DigestParseError::Unknown { tag: lowered })?;
+            .ok_or(DigestParseError::Inadmissible { tag: lowered })?;
         let bytes = hex::decode(digits).map_err(|_| DigestParseError::NotHex)?;
         if bytes.len() != algorithm.digest_len() {
             return Err(DigestParseError::Length {
@@ -866,30 +852,31 @@ mod pin_tests {
         assert_eq!(UpstreamDigest::parse(bare), Err(DigestParseError::Untagged));
     }
 
-    /// Refused is distinct from Unknown on purpose. "unknown algorithm md5"
-    /// reads like a missing feature; the truth is that we can compute it and
-    /// decline to trust it, and the diagnostic should say so.
+    /// Anything outside the admissible set is rejected, by the same path and
+    /// with the same message, whether it is weak (md5, sha1) or simply not
+    /// implemented. One list, one rejection: a separate "recognized but refused"
+    /// case would be a graveyard of known-bad names that has to stay in
+    /// agreement with the admissible set forever, and retiring sha256 later
+    /// would mean *moving* it between the two rather than deleting one line.
     ///
     /// r[verify vixen.pins.algorithm-strength]
     #[test]
-    fn weak_algorithms_are_refused_by_name_not_merely_unknown() {
-        for weak in [
-            "md5:d41d8cd98f00b204e9800998ecf8427e",
-            "sha1:da39a3ee5e6b4b0d",
+    fn anything_outside_the_admissible_set_is_rejected() {
+        for text in [
+            "md5:d41d8cd98f00b204e9800998ecf8427e", // weak
+            "sha1:da39a3ee5e6b4b0d",                // weak
+            "sha3:0000",                            // real, not implemented here
+            "shalala:00",                           // not a digest at all
         ] {
-            let tag = weak.split_once(':').expect("test input is tagged").0;
+            let tag = text.split_once(':').expect("test input is tagged").0;
             assert_eq!(
-                UpstreamDigest::parse(weak),
-                Err(DigestParseError::Refused {
+                UpstreamDigest::parse(text),
+                Err(DigestParseError::Inadmissible {
                     tag: tag.to_owned()
                 }),
-                "{tag} must be refused as a pin, not reported as unknown"
+                "{tag} is not admissible as a pin"
             );
         }
-        assert!(matches!(
-            UpstreamDigest::parse("shalala:00"),
-            Err(DigestParseError::Unknown { .. })
-        ));
     }
 
     /// A digest of the wrong length is a typo, and padding or truncating one

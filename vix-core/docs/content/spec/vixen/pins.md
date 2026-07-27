@@ -44,12 +44,20 @@ argument to `fetch`. It is not a file vixen maintains.
 
 > r[vixen.pins.algorithm-strength]
 >
-> [DESIGN] Admissible as a pin: `blake3`, `sha256`, `sha512`. A pin's whole value
-> is that a stranger can check it, which a collision-attackable digest does not
-> deliver: `sha1` is accepted only as an additional recorded digest beside an
-> admissible pin, never as the sole pin, and `md5` is rejected outright. Adding an
-> algorithm is a project decision, because it widens what the machine must be able
-> to compute.
+> [DESIGN] Admissible as a pin: `blake3`, `sha256`, `sha512`. **That set is the
+> only list.** Anything else is rejected by one path with one message, whether it
+> is weak (`md5`, `sha1`), real but unimplemented (`sha3`), or not a digest at
+> all. Adding an algorithm is a project decision, because it widens what every
+> machine must be able to compute; retiring one is deleting a line.
+>
+> A pin's whole value is that a stranger can check it, which a
+> collision-attackable digest does not deliver — that is *why* `md5` and `sha1`
+> are outside the set, not a second category inside the rules. An earlier draft
+> named them as "recognized and refused" so the diagnostic could explain itself;
+> ruled out (Amos, 2026-07-26) because a graveyard of known-bad names is a second
+> list that must agree with the first forever, and retiring `sha256` would then
+> mean *moving* it between two lists rather than shrinking one. The rejection
+> message names what IS admissible, which is the actionable half and cannot rot.
 >
 > Not every ecosystem's integrity string is a digest of the bytes at all — Go's
 > `h1:` is a hash over a file listing, not over an archive. Those are not pins and
