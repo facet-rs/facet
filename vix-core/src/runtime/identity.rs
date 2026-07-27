@@ -1,3 +1,4 @@
+use super::tree::{Blob, Tree, TreeEntry};
 use crate::schema::SchemaRef;
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -366,6 +367,103 @@ pub(crate) fn hash_framed(domain: &[u8], fields: &[&[u8]]) -> Digest {
         writer.framed(field);
     }
     writer.finish()
+}
+
+/// The domain separator of the semantic tree encoding.
+///
+/// Vix's `TreeHash` and Vixen's storage `NodeHash` are different identities over
+/// different preimages and MUST NOT share one: this is `blake3("vix/tree/v1" ||
+/// semantic tree encoding)`, the store's node hash is
+/// `blake3("vx/cas-node/v1" || versioned phon node)`, and a side index maps
+/// between them. Rechunking a file must not move a single memo entry.
+///
+/// r[impl machine.identity.tree-hash-is-not-node-hash]
+const TREE_HASH_DOMAIN: &[u8] = b"vix/tree/v1";
+
+/// The identity of a [`Tree`] — a Merkle map over the *semantic* encoding, never
+/// over the store's chunking.
+///
+/// r[impl machine.identity.merkle-tree]
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TreeHash(pub Digest);
+
+impl TreeHash {
+    #[must_use]
+    pub fn hex(self) -> String {
+        self.0.hex()
+    }
+}
+
+/// A Blob's value identity: an ordinary opaque leaf under the `Blob` schema, in
+/// the ordinary value epoch. It carries its own bytes and therefore its own
+/// size, which is exactly why the tree encoding names it once and never restates
+/// a length beside it.
+///
+/// r[impl machine.identity.tree-hash-is-not-node-hash]
+#[must_use]
+pub fn blob_identity(blob: &Blob) -> ValueId {
+    FramedNode::leaf(
+        crate::vir::Type::Extern(crate::vir::ExternKind::Blob).schema_ref(),
+        blob.as_bytes().to_vec(),
+    )
+    .identity()
+}
+
+/// The semantic tree encoding, hashed through the closed framed writer.
+///
+/// Per entry it hashes the name, the kind tag, and per kind: `File` → (the
+/// Blob's *value identity*, executable); `Dir` → the child `TreeHash`;
+/// `Symlink` → the target text. It hashes no `blob_node`, no chunking
+/// discriminant, no `total_size`, and no separately-stated `size` — those are
+/// storage representation, and a size restated beside a content hash is a
+/// storage field wearing a semantic coat.
+///
+/// Rows are in `Name` order, which is content-determined, so insertion order
+/// cannot move a Tree's identity. `Dir` contributing a child hash rather than an
+/// inlined subtree is what makes this a Merkle map: change one file, rehash one
+/// path.
+///
+/// The Tree's *schema* is deliberately absent from this preimage — the schema is
+/// the other half of the `(SchemaRef, ContentHash)` pair, not a component of the
+/// content hash, and folding it in here would make a `TreeHash` uncomputable
+/// before the embedder has registered its host types.
+///
+/// r[impl machine.identity.tree-hash-is-not-node-hash]
+/// r[impl machine.identity.merkle-tree]
+/// r[impl machine.identity.tree-canonicalization]
+/// r[impl machine.identity.map-order-independence]
+/// r[impl machine.identity.single-module]
+#[must_use]
+pub fn tree_hash(tree: &Tree) -> TreeHash {
+    let mut writer = FramedHasher::for_domain(TREE_HASH_DOMAIN);
+    hash_tree_into(&mut writer, tree);
+    TreeHash(writer.finish())
+}
+
+fn hash_tree_into(writer: &mut FramedHasher, tree: &Tree) {
+    writer.seq_len(tree.len() as u64);
+    for (index, (name, entry)) in tree.iter().enumerate() {
+        writer.map_pair(index as u64);
+        writer.bytes(name.as_bytes());
+        writer.variant(entry.kind_tag());
+        match entry {
+            TreeEntry::File {
+                content,
+                executable,
+            } => {
+                writer.child(&blob_identity(content));
+                // Portable semantic intent, part of identity on every platform
+                // — not a POSIX mode fragment.
+                writer.bytes(&[u8::from(*executable)]);
+            }
+            TreeEntry::Dir(child) => {
+                writer.bytes(&tree_hash(child).0.0);
+            }
+            TreeEntry::Symlink { target } => {
+                writer.bytes(target.as_bytes());
+            }
+        }
+    }
 }
 
 /// An owned, pre-resolved semantic value tree. Every nested reference is already
