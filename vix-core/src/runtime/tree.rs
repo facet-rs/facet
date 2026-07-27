@@ -467,6 +467,140 @@ impl Tree {
     }
 }
 
+/// Why two trees do not join.
+///
+/// A conflict is a VALUE, not a panic and not a silent winner: joining is
+/// partial, and which of two disagreeing entries "wins" is exactly the question
+/// a build system must never answer by accident.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TreeConflict {
+    /// Both sides have an entry at this path and they differ — two different
+    /// files, the same bytes with different executable bits, different symlink
+    /// targets, or a leaf where the other side has a directory.
+    Disagreement {
+        path: String,
+        left: TreeEntry,
+        right: TreeEntry,
+    },
+    /// Both sides claim this path with an *identical* entry. Only
+    /// [`Tree::disjoint_union`] reports this: for [`Tree::union`] an identical
+    /// entry is not a disagreement, it is the same value arrived at twice.
+    Duplicate { path: String, entry: TreeEntry },
+}
+
+impl std::fmt::Display for TreeConflict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Disagreement { path, left, right } => write!(
+                f,
+                "tree path `{path}` is a {} on one side and a {} on the other",
+                left.kind_name(),
+                right.kind_name()
+            ),
+            Self::Duplicate { path, entry } => {
+                write!(
+                    f,
+                    "tree path `{path}` is produced twice (a {})",
+                    entry.kind_name()
+                )
+            }
+        }
+    }
+}
+
+impl Tree {
+    /// The structural join of two trees: **partial, commutative, associative,
+    /// idempotent**, returning a typed conflict rather than a winner.
+    ///
+    /// - missing on one side — keep the entry that is there;
+    /// - directory + directory — recurse;
+    /// - identical leaves, executable bit included — coalesce, because they are
+    ///   one value;
+    /// - anything else — [`TreeConflict::Disagreement`], carrying the full path
+    ///   and both entries.
+    ///
+    /// **There is deliberately no left-wins or right-wins variant.** Argument
+    /// order and scheduling must not change a Tree value; a join that silently
+    /// preferred one side would make a build's output depend on which producer
+    /// the scheduler happened to finish first, which is the whole class of bug
+    /// content addressing exists to remove.
+    ///
+    /// r[impl machine.identity.tree-model]
+    pub fn union(&self, other: &Tree) -> Result<Tree, TreeConflict> {
+        self.join(other, Duplicates::Coalesce, "")
+    }
+
+    /// [`Tree::union`]'s stronger sibling: an identical duplicate is an error
+    /// too.
+    ///
+    /// This is the *ownership* rule, kept separate on purpose. Semantic union
+    /// says "these describe one tree"; disjoint union says "exactly one producer
+    /// owns each output". Overloading union with ownership policy would make a
+    /// legitimate merge of two views of the same value fail.
+    ///
+    /// Two directories are still joined rather than rejected — a directory is a
+    /// container, not content, and two producers writing into one directory is
+    /// the normal case. Only *entries* must be uniquely owned.
+    ///
+    /// r[impl machine.identity.tree-model]
+    pub fn disjoint_union(&self, other: &Tree) -> Result<Tree, TreeConflict> {
+        self.join(other, Duplicates::Reject, "")
+    }
+
+    fn join(
+        &self,
+        other: &Tree,
+        duplicates: Duplicates,
+        prefix: &str,
+    ) -> Result<Tree, TreeConflict> {
+        let mut entries = self.entries.clone();
+        for (name, right) in &other.entries {
+            match entries.entry(name.clone()) {
+                Entry::Vacant(slot) => {
+                    slot.insert(right.clone());
+                }
+                Entry::Occupied(mut slot) => {
+                    let mut path = prefix.to_owned();
+                    push_segment(&mut path, name.as_str());
+                    match (slot.get(), right) {
+                        (TreeEntry::Dir(left), TreeEntry::Dir(right)) => {
+                            let joined = left.join(right, duplicates, &path)?;
+                            slot.insert(TreeEntry::Dir(joined));
+                        }
+                        (left, right) if left == right => {
+                            if duplicates == Duplicates::Reject {
+                                return Err(TreeConflict::Duplicate {
+                                    path,
+                                    entry: right.clone(),
+                                });
+                            }
+                            // Identical leaves are one value; keeping either is
+                            // keeping the same thing.
+                        }
+                        (left, right) => {
+                            return Err(TreeConflict::Disagreement {
+                                path,
+                                left: left.clone(),
+                                right: right.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        Ok(Tree { entries })
+    }
+}
+
+/// What a join does when both sides carry the same entry at one path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Duplicates {
+    /// `union`: one value, arrived at twice.
+    Coalesce,
+    /// `disjoint_union`: duplicate production is itself the error.
+    Reject,
+}
+
 // ---------------------------------------------------------------------------
 // The resident carrier.
 //
@@ -656,6 +790,155 @@ fn push_segment(path: &mut String, segment: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- union / disjoint_union ------------------------------------------
+
+    /// Build a tree from `(path, entry)` pairs, for the join tests.
+    fn tree_of(entries: &[(&str, TreeEntry)]) -> Tree {
+        let mut tree = Tree::new();
+        for (path, entry) in entries {
+            tree.insert_path(path, entry.clone())
+                .expect("test fixture path is well formed");
+        }
+        tree
+    }
+
+    /// The three algebraic laws, which are what make a join safe to run in a
+    /// scheduler: order-independent, grouping-independent, and stable under
+    /// re-joining. If any of them fails, a build's output can depend on which
+    /// producer finished first.
+    ///
+    /// r[verify machine.identity.tree-model]
+    #[test]
+    fn union_is_commutative_associative_and_idempotent() {
+        let a = tree_of(&[("src/lib.rs", TreeEntry::file("lib"))]);
+        let b = tree_of(&[("src/main.rs", TreeEntry::file("main"))]);
+        let c = tree_of(&[("Cargo.toml", TreeEntry::file("manifest"))]);
+
+        let ab = a.union(&b).expect("disjoint names join");
+        let ba = b.union(&a).expect("disjoint names join either way");
+        assert_eq!(ab, ba, "argument order must not change the value");
+        assert_eq!(ab.tree_hash(), ba.tree_hash(), "nor its identity");
+
+        let left = ab.union(&c).expect("associativity, left");
+        let right = a
+            .union(&b.union(&c).expect("inner join"))
+            .expect("associativity, right");
+        assert_eq!(left, right);
+
+        assert_eq!(a.union(&a).expect("idempotent"), a);
+    }
+
+    /// A directory on both sides is joined, not rejected: that is the case the
+    /// whole operation exists for.
+    #[test]
+    fn union_recurses_into_directories_and_keeps_empty_ones() {
+        let a = tree_of(&[("src/lib.rs", TreeEntry::file("lib"))]);
+        let mut b = Tree::new();
+        b.insert_dir("src").expect("declare src");
+        b.insert_path("src/main.rs", TreeEntry::file("main"))
+            .expect("nested file");
+        b.insert_dir("out").expect("an empty output directory");
+
+        let joined = a.union(&b).expect("directories recurse");
+        assert!(joined.project("src/lib.rs").is_some());
+        assert!(joined.project("src/main.rs").is_some());
+        assert!(
+            matches!(joined.project("out"), Some(TreeEntry::Dir(dir)) if dir.is_empty()),
+            "an empty directory survives a join — it participates in identity"
+        );
+    }
+
+    /// Identical leaves coalesce, INCLUDING the executable bit, because they are
+    /// one value arrived at twice.
+    #[test]
+    fn union_coalesces_identical_leaves() {
+        let a = tree_of(&[
+            ("bin/tool", TreeEntry::executable("elf")),
+            ("link", TreeEntry::symlink("bin/tool")),
+        ]);
+        let joined = a.union(&a.clone()).expect("identical trees coalesce");
+        assert_eq!(joined, a);
+    }
+
+    /// Every way two trees can disagree, each reported as a typed conflict
+    /// carrying the path and both entries — never resolved by picking a side.
+    ///
+    /// r[verify machine.identity.tree-model]
+    #[test]
+    fn every_disagreement_is_a_typed_conflict() {
+        let cases: [(&str, TreeEntry, TreeEntry); 4] = [
+            // two different files
+            ("a.txt", TreeEntry::file("one"), TreeEntry::file("two")),
+            // same bytes, different executable bit — the bit is identity
+            ("t", TreeEntry::file("same"), TreeEntry::executable("same")),
+            // different symlink targets
+            ("l", TreeEntry::symlink("a"), TreeEntry::symlink("b")),
+            // leaf where the other side has a directory
+            ("d", TreeEntry::file("leaf"), TreeEntry::Dir(Tree::new())),
+        ];
+        for (path, left, right) in cases {
+            let a = tree_of(&[(path, left.clone())]);
+            let b = tree_of(&[(path, right.clone())]);
+            let conflict = a.union(&b).expect_err("a disagreement is not a merge");
+            assert_eq!(
+                conflict,
+                TreeConflict::Disagreement {
+                    path: path.to_owned(),
+                    left,
+                    right
+                }
+            );
+            // Commutative in its failure too: the same pair conflicts either way.
+            assert!(b.union(&a).is_err());
+        }
+    }
+
+    /// A conflict names the full path, not just the colliding segment —
+    /// otherwise a deep collision is unfindable.
+    #[test]
+    fn a_nested_conflict_reports_its_whole_path() {
+        let a = tree_of(&[("src/deep/a.rs", TreeEntry::file("one"))]);
+        let b = tree_of(&[("src/deep/a.rs", TreeEntry::file("two"))]);
+        let TreeConflict::Disagreement { path, .. } = a.union(&b).expect_err("nested disagreement")
+        else {
+            panic!("expected a disagreement");
+        };
+        assert_eq!(path, "src/deep/a.rs");
+    }
+
+    /// `disjoint_union` rejects exactly what `union` accepts: the identical
+    /// duplicate. That is an ownership rule, not a structural one, which is why
+    /// it is a separate name.
+    #[test]
+    fn disjoint_union_rejects_a_duplicate_union_accepts() {
+        let a = tree_of(&[("out/artifact", TreeEntry::file("bytes"))]);
+        assert_eq!(a.union(&a.clone()).expect("union coalesces"), a);
+        let conflict = a
+            .disjoint_union(&a.clone())
+            .expect_err("two producers may not both own one entry");
+        assert_eq!(
+            conflict,
+            TreeConflict::Duplicate {
+                path: "out/artifact".to_owned(),
+                entry: TreeEntry::file("bytes"),
+            }
+        );
+    }
+
+    /// Two producers writing into one directory is the normal case, so a shared
+    /// directory is joined even under the ownership rule — only entries must be
+    /// uniquely owned.
+    #[test]
+    fn disjoint_union_shares_a_directory_but_not_an_entry() {
+        let a = tree_of(&[("out/a", TreeEntry::file("a"))]);
+        let b = tree_of(&[("out/b", TreeEntry::file("b"))]);
+        let joined = a
+            .disjoint_union(&b)
+            .expect("distinct entries under one directory are disjoint");
+        assert!(joined.project("out/a").is_some());
+        assert!(joined.project("out/b").is_some());
+    }
 
     /// r[verify machine.identity.tree-canonicalization]
     #[test]
