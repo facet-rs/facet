@@ -10,7 +10,7 @@ use vix::runtime::{
     PrimitiveServices, RuntimeFault, ValueBodyCandidate, ValueId, ValuePersistence,
 };
 use vix::vir::{ExternKind, Type};
-use vix_fetch::HttpBlobOriginAdapter;
+use vixen_primitives::HttpBlobOriginAdapter;
 use vixen_runtime::ratchet::{RunError, prepare_source};
 
 const FETCH_AND_EXTRACT: &str = r#"
@@ -281,7 +281,7 @@ impl ValuePersistence for CorruptThenRecordingPersistence {
 fn pinned_fetch_origin_returns_blob_and_separate_extraction() {
     let bytes = archive_bytes();
     let identity = blob_identity(&bytes);
-    let upstream = vix_fetch::sha256_pin(&bytes);
+    let upstream = vixen_primitives::sha256_pin(&bytes);
     let server = BlobServer::start(bytes);
     let fixtures = TempDir::new().expect("create fixture root");
     let services = PrimitiveServices::default()
@@ -321,7 +321,7 @@ fn pinned_fetch_origin_returns_blob_and_separate_extraction() {
 fn pinned_fetch_yielded_frame_survives_off_stack_and_crosses_the_inbox() {
     let bytes = archive_bytes();
     let identity = blob_identity(&bytes);
-    let upstream = vix_fetch::sha256_pin(&bytes);
+    let upstream = vixen_primitives::sha256_pin(&bytes);
     let server = BlobServer::start(bytes);
     let fixtures = TempDir::new().expect("create fixture root");
     let services = PrimitiveServices::default()
@@ -368,7 +368,7 @@ fn pinned_fetch_yielded_frame_survives_off_stack_and_crosses_the_inbox() {
 fn pinned_fetch_provider_hit_precedes_origin() {
     let bytes = archive_bytes();
     let identity = blob_identity(&bytes);
-    let upstream = vix_fetch::sha256_pin(&bytes);
+    let upstream = vixen_primitives::sha256_pin(&bytes);
     let server = BlobServer::start(bytes.clone());
     let fixtures = TempDir::new().expect("create fixture root");
     let persistence_root = TempDir::new().expect("create Blob persistence root");
@@ -404,7 +404,7 @@ fn pinned_fetch_provider_hit_precedes_origin() {
 fn pinned_fetch_local_store_hit_never_contacts_provider_or_origin() {
     let bytes = archive_bytes();
     let identity = blob_identity(&bytes);
-    let upstream = vix_fetch::sha256_pin(&bytes);
+    let upstream = vixen_primitives::sha256_pin(&bytes);
     let server = BlobServer::start(bytes);
     let fixtures = TempDir::new().expect("create fixture root");
     let manifest = format!(
@@ -458,7 +458,7 @@ fn pinned_fetch_rejects_vix_identity_mismatch() {
     let bytes = archive_bytes();
     let observed = blob_identity(&bytes);
     let claimed = blob_identity(b"different Blob body");
-    let upstream = vix_fetch::sha256_pin(&bytes);
+    let upstream = vixen_primitives::sha256_pin(&bytes);
     let server = BlobServer::start(bytes);
     let fixtures = TempDir::new().expect("create fixture root");
     let services = PrimitiveServices::default()
@@ -562,7 +562,7 @@ fn pinned_fetch_rejects_upstream_digest_mismatch_at_every_tier() {
 fn pinned_fetch_rejects_corrupt_provider_then_admits_verified_origin() {
     let bytes = archive_bytes();
     let identity = blob_identity(&bytes);
-    let upstream = vix_fetch::sha256_pin(&bytes);
+    let upstream = vixen_primitives::sha256_pin(&bytes);
     let provider = Arc::new(CorruptThenRecordingPersistence {
         candidate: ValueBodyCandidate {
             claimed: identity.clone(),

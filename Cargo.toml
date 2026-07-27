@@ -7,7 +7,6 @@ members = [
   "vixen-primitives",
   "vixen-runtime",
   "facet-lsp",
-  "vix-fetch",
   "exec-protocol",
   # core
   "facet-core",

@@ -19,3 +19,4 @@ facet-json = { path = "../facet-json" }
 hex.workspace = true
 sha2.workspace = true
 blake3.workspace = true
+ureq = "3.3"

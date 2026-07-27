@@ -14,6 +14,7 @@ pub mod typed_primitive;
 mod blob_len_primitive;
 mod decode_primitive;
 mod fetch_primitive;
+mod http_origin;
 mod primitive_value_decode;
 mod registry_url_primitive;
 mod tree_glob_primitive;
@@ -115,6 +116,7 @@ fn tree_glob_stream_type() -> vix::vir::Type {
 pub use blob_len_primitive::*;
 pub use decode_primitive::*;
 pub use fetch_primitive::*;
+pub use http_origin::*;
 pub use primitive_value_decode::*;
 pub use registry_url_primitive::*;
 pub use tree_glob_primitive::*;
