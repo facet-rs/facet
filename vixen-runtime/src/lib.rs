@@ -40,7 +40,7 @@ use vix::runtime::{
     CodataRegistry, EventSink, PrimitiveDispatcher, PrimitiveRegistry, RawPrimitive, Runtime,
 };
 use vixen_primitives::{
-    BlobLenPrimitive, DecodePrimitive, PinnedFetchPrimitive, RegistryUrlPrimitive,
+    BlobGunzipPrimitive, BlobLenPrimitive, DecodePrimitive, PinnedFetchPrimitive, RegistryUrlPrimitive,
     TreeGlobPrimitive, TreeReadPrimitive, TypedAdapter,
 };
 
@@ -55,6 +55,7 @@ pub fn builtin_primitives<Ctx>() -> Vec<Arc<dyn RawPrimitive<Ctx>>> {
         Arc::new(TypedAdapter::new::<Ctx>(PinnedFetchPrimitive)),
         Arc::new(TreeReadPrimitive::default()),
         Arc::new(RegistryUrlPrimitive::default()),
+        Arc::new(TypedAdapter::new::<Ctx>(BlobGunzipPrimitive)),
         Arc::new(BlobLenPrimitive::default()),
     ]
 }

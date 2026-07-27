@@ -11,6 +11,7 @@
 
 pub mod typed_primitive;
 
+mod blob_gunzip_primitive;
 mod blob_len_primitive;
 mod decode_primitive;
 mod fetch_primitive;
@@ -82,6 +83,16 @@ pub const DOMAIN_METHODS: &[vix::binding::MethodDecl] = &[
     },
     vix::binding::MethodDecl {
         receiver: vix::binding::ReceiverType::Blob,
+        name: "gunzip",
+        arity: 0,
+        lowering: vix::binding::MethodLowering::Primitive(vix::binding::PrimitiveMethodDecl {
+            request: blob_gunzip_request_type,
+            result: blob_gunzip_result_type,
+            id: blob_gunzip_primitive_id,
+        }),
+    },
+    vix::binding::MethodDecl {
+        receiver: vix::binding::ReceiverType::Blob,
         name: "len",
         arity: 0,
         lowering: vix::binding::MethodLowering::Primitive(vix::binding::PrimitiveMethodDecl {
@@ -113,6 +124,7 @@ fn tree_glob_stream_type() -> vix::vir::Type {
     vix::vir::Type::stream(vix::vir::Type::Path, vix::vir::Type::Path)
 }
 
+pub use blob_gunzip_primitive::*;
 pub use blob_len_primitive::*;
 pub use decode_primitive::*;
 pub use fetch_primitive::*;
