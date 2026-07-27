@@ -2589,6 +2589,32 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                     )
                     .map(|evaluation| DriveOutcome::Completed(Box::new(evaluation)));
             }
+            Ok(DecodedResult::Raised { site, variant }) => {
+                let failure = match self.raised_failure(
+                    &ctx.task,
+                    lowered.artifact,
+                    lowered.recipe,
+                    site,
+                    variant,
+                ) {
+                    Ok(failure) => failure,
+                    Err(fault) => {
+                        let error = self.task_fault(
+                            MachineOperation::Result,
+                            fault,
+                            lowered,
+                            attribution,
+                            self.output_attribution(lowered.artifact, attribution),
+                        );
+                        return Err(Box::new(
+                            self.terminate_machine_fault(task_id, demand_key, error),
+                        ));
+                    }
+                };
+                return self
+                    .complete_language_failure(task_id, location, lowered, attribution, failure)
+                    .map(|evaluation| DriveOutcome::Completed(Box::new(evaluation)));
+            }
             Err(fault) => {
                 let fallback =
                     result_shape_attribution(&fault, self.output_attribution(lowered, attribution));
@@ -4565,6 +4591,32 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                         failure,
                     );
                 }
+                Ok(DecodedResult::Raised { site, variant }) => {
+                    let failure =
+                        match self.raised_failure(&task, lowered, lowered.recipe, site, variant) {
+                            Ok(failure) => failure,
+                            Err(fault) => {
+                                let error = self.task_fault(
+                                    MachineOperation::Result,
+                                    fault,
+                                    lowered,
+                                    attribution,
+                                    self.output_attribution(lowered, attribution),
+                                );
+                                return Err(Box::new(self.terminate_machine_fault(
+                                    task_id,
+                                    lowered.demand_key,
+                                    error,
+                                )));
+                            }
+                        };
+                    return self.complete_generator_language_failure(
+                        task_id,
+                        lowered,
+                        attribution,
+                        failure,
+                    );
+                }
                 Ok(DecodedResult::ArrayMachine { site, status }) => {
                     let error = MachineError::runtime(
                         MachineOperation::Result,
@@ -5721,6 +5773,41 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
         interned
     }
 
+    /// Intern the payload an authored `fail` carries and build the failure the
+    /// demand answers with. The payload interns, dedupes, and is observed
+    /// exactly like a published value — which is the whole claim: a failure is
+    /// a value, and the machine supplies the address the program never wrote.
+    ///
+    /// r[impl machine.error.failure-is-a-value]
+    fn raised_failure(
+        &mut self,
+        task: &weavy::exec::ExecTask,
+        artifact: &LoweringArtifact,
+        recipe: RecipeId,
+        site: u32,
+        variant: u32,
+    ) -> Result<FailureValue, TaskFault> {
+        let payload_type = artifact
+            .array_outcome
+            .as_ref()
+            .and_then(|abi| abi.raised_payload(variant))
+            .ok_or_else(|| invalid_realized_result(artifact, 0))?
+            .clone();
+        let realized = realize_raised_payload(task, artifact, &self.store, variant, &payload_type)?;
+        self.counters.framed_bytes += realized.framed_bytes as u64;
+        let interned = self.store.intern_tree(&realized.node, &realized.resident);
+        if let Some(frozen) = realized.frozen {
+            self.store.attach_frozen(interned.handle, frozen);
+        }
+        self.observe_interned(&interned);
+        Ok(FailureValue::Raised {
+            recipe,
+            site,
+            payload: interned.identity,
+            subject: None,
+        })
+    }
+
     /// Construct the `Result` value a postfix `?` catches an operand edge
     /// into: `Ok(value)` for a successful publication, `Err(failure)` for a
     /// typed language failure — the failure participates as an ordinary value,
@@ -6059,7 +6146,8 @@ fn render_frozen(
         | Type::StreamCheck
         | Type::Stream { .. }
         | Type::Order(_)
-        | Type::Function { .. } => {
+        | Type::Function { .. }
+        | Type::Never => {
             return Err(render_mismatch(ty));
         }
     }
@@ -6160,6 +6248,31 @@ struct RealizedValue {
     molten_nodes: usize,
     molten_bytes: usize,
     frozen: Option<FrozenValue>,
+}
+
+/// Realize the payload an authored `fail` carries out of its island's outcome
+/// and intern it, so the raised failure names an ordinary value by identity.
+fn realize_raised_payload(
+    task: &weavy::exec::ExecTask,
+    lowered: &LoweringArtifact,
+    store: &Store,
+    variant: u32,
+    ty: &Type,
+) -> Result<RealizedValue, TaskFault> {
+    task.with_result_value_resolver(|result, resolver| {
+        let payload = result.enum_field(variant, 1)?;
+        let (node, frozen, framed_bytes) =
+            realize_structural_node(&resolver, payload, ty, store, lowered)?;
+        let (molten_nodes, molten_bytes) = resolver.molten_stats();
+        Ok(RealizedValue {
+            node,
+            resident: Vec::new(),
+            framed_bytes,
+            molten_nodes,
+            molten_bytes,
+            frozen: Some(frozen),
+        })
+    })
 }
 
 fn realize_value(
@@ -6432,9 +6545,11 @@ fn realize_structural_node<'task>(
                 ResolvedTaskValue::LentMolten { .. } => Err(invalid_realized_result(lowered, 0)),
             }
         }
-        Type::Function { .. } | Type::StreamCheck | Type::Stream { .. } | Type::Order(_) => {
-            Err(invalid_realized_result(lowered, 0))
-        }
+        Type::Function { .. }
+        | Type::StreamCheck
+        | Type::Stream { .. }
+        | Type::Order(_)
+        | Type::Never => Err(invalid_realized_result(lowered, 0)),
     }
 }
 
@@ -6669,7 +6784,8 @@ fn type_contains_handle(ty: &Type) -> bool {
         | Type::Check
         | Type::StreamCheck
         | Type::Stream { .. }
-        | Type::Order(_) => false,
+        | Type::Order(_)
+        | Type::Never => false,
     }
 }
 
@@ -6821,7 +6937,11 @@ fn frozen_inline(
             result.bytes[..8].copy_from_slice(&i64::from(*tag).to_le_bytes());
             Ok(result)
         }
-        Type::Function { .. } | Type::StreamCheck | Type::Stream { .. } | Type::Order(_) => Err(()),
+        Type::Function { .. }
+        | Type::StreamCheck
+        | Type::Stream { .. }
+        | Type::Order(_)
+        | Type::Never => Err(()),
     }
 }
 
@@ -7093,7 +7213,8 @@ fn primitive_value_from_frame_at(
         | Type::Set(_)
         | Type::Stream { .. }
         | Type::Order(_)
-        | Type::StreamCheck => Err(format!(
+        | Type::StreamCheck
+        | Type::Never => Err(format!(
             "primitive frame codec does not admit {}",
             ty.name()
         )),
@@ -7248,7 +7369,8 @@ fn primitive_value_from_task(
         | Type::Set(_)
         | Type::Stream { .. }
         | Type::Order(_)
-        | Type::StreamCheck => Err(format!("primitive task codec does not admit {}", ty.name())),
+        | Type::StreamCheck
+        | Type::Never => Err(format!("primitive task codec does not admit {}", ty.name())),
     }
 }
 
@@ -7655,7 +7777,8 @@ fn insert_schema_type(ty: &Type, catalog: &mut BTreeMap<SchemaRef, Type>) {
         | Type::StreamCheck
         | Type::String
         | Type::Path
-        | Type::Extern(_) => {}
+        | Type::Extern(_)
+        | Type::Never => {}
     }
 }
 
@@ -8270,6 +8393,7 @@ fn failure_context(
         | FailureValue::InvalidInteger { recipe, site }
         | FailureValue::IntegerOverflow { recipe, site }
         | FailureValue::DivisionByZero { recipe, site }
+        | FailureValue::Raised { recipe, site, .. }
             if *recipe == lowered.recipe =>
         {
             let source = attribution.source_for_trace(*site)?;
@@ -8333,6 +8457,12 @@ enum DecodedResult {
     },
     IntDivisionByZero {
         site: u32,
+    },
+    /// An authored `fail`. `variant` names the outcome variant the raise
+    /// travelled in, which is what says how to realize the payload beside it.
+    Raised {
+        site: u32,
+        variant: u32,
     },
     ArrayMachine {
         site: u32,
@@ -8479,6 +8609,19 @@ fn decode_result(
             })
         })?;
         return Ok(DecodedResult::IntDivisionByZero { site });
+    }
+    if abi.raised_payload(selector).is_some() {
+        let site = u32::try_from(result.enum_scalar_field(selector, 0)?).map_err(|_| {
+            Box::new(TaskFault::InvalidResultShape {
+                entry: FnId(0),
+                region: lowered.executable().program().contract().functions[0].result,
+                size: 0,
+            })
+        })?;
+        return Ok(DecodedResult::Raised {
+            site,
+            variant: selector,
+        });
     }
     Err(Box::new(TaskFault::InvalidResultShape {
         entry: FnId(0),

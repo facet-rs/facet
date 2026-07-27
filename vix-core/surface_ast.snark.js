@@ -34,6 +34,7 @@ ast({
   where_call: { as: "WhereCall" },
   exec_expr: { as: "Exec" },
   command_expr: { as: "Command" },
+  fail_expr: { as: "Fail" },
   try_expr: { as: "Try" },
   index_expr: { as: "Index" },
   array_expr: { as: "Array" },

@@ -921,6 +921,7 @@ impl<'a> TypeResolver<'a> {
             }
             ast::Expr::Paren(expression) => self.resolve_expr_types(&expression.inner)?,
             ast::Expr::Try(expression) => self.resolve_expr_types(&expression.value)?,
+            ast::Expr::Fail(expression) => self.resolve_expr_types(&expression.value)?,
             // A command's tag is a value reference and its template a scalar
             // token; neither mentions a type.
             ast::Expr::Exec(_)
@@ -3363,6 +3364,7 @@ fn lower_value_expected(
         ast::Expr::Command(command) => lower_command(nodes, bindings, context, command),
         ast::Expr::Exec(exec) => lower_exec(nodes, bindings, context, exec),
         ast::Expr::Try(try_expr) => lower_try(nodes, bindings, context, try_expr),
+        ast::Expr::Fail(fail) => lower_fail(nodes, bindings, context, fail, expected),
         ast::Expr::Binary(binary) => lower_binary(nodes, bindings, context, binary),
         ast::Expr::Variant(variant) => lower_variant(nodes, bindings, context, variant, expected),
         ast::Expr::Match(match_expr) => lower_match(nodes, bindings, context, match_expr, expected),
@@ -6200,6 +6202,7 @@ fn collect_free_idents_expr(
             }
         }
         ast::Expr::Try(try_expr) => collect_free_idents_expr(&try_expr.value, bound, out),
+        ast::Expr::Fail(fail) => collect_free_idents_expr(&fail.value, bound, out),
         ast::Expr::Variant(variant) => {
             if let Some(payload) = &variant.tuple_payload {
                 for argument in &payload.args {
@@ -6992,6 +6995,7 @@ fn expr_references_name(expression: &ast::Expr, name: &str) -> bool {
         ast::Expr::Command(command) => command.tag.value == name,
         ast::Expr::Exec(exec) => exec.command.tag.value == name,
         ast::Expr::Try(try_expr) => expr_references_name(&try_expr.value, name),
+        ast::Expr::Fail(fail) => expr_references_name(&fail.value, name),
         ast::Expr::Binary(binary) => {
             expr_references_name(&binary.left, name) || expr_references_name(&binary.right, name)
         }
@@ -7404,6 +7408,37 @@ fn bind_closure_patterns(
     Ok(())
 }
 
+/// The type a branching expression takes from one already-lowered branch: a
+/// diverging branch (`fail`) supplies no expectation to its siblings, because
+/// `Never` is not a type any of them could be required to have.
+fn branch_expectation<'a>(expected: Option<&'a Type>, branch: &'a Type) -> Option<&'a Type> {
+    expected.or((*branch != Type::Never).then_some(branch))
+}
+
+/// Require a branch to agree with a sibling that has already been lowered. A
+/// diverging sibling agrees with anything: `Never` is the identity of the join,
+/// not a type the other branch could be asked to have.
+fn require_branch_type(
+    value: &LoweredValue,
+    sibling: &Type,
+    span: Span,
+) -> Result<(), Diagnostics> {
+    if *sibling == Type::Never {
+        return Ok(());
+    }
+    require_type(value, sibling, span)
+}
+
+/// Join the branch types of an `if`/`match`: `Never` is the identity, so a
+/// branching expression is `Never` only when every branch diverges.
+fn join_branch_type(left: Type, right: &Type) -> Type {
+    if left == Type::Never {
+        right.clone()
+    } else {
+        left
+    }
+}
+
 fn lower_if(
     nodes: &mut Vec<Node>,
     bindings: &BTreeMap<String, LoweredValue>,
@@ -7420,7 +7455,7 @@ fn lower_if(
     let consequent = control_region(nodes, consequent_start, consequent_value.node);
 
     let alternative_start = nodes.len();
-    let alternative_expected = expected.or(Some(&consequent_value.ty));
+    let alternative_expected = branch_expectation(expected, &consequent_value.ty);
     let alternative_value = match &expression.alternative {
         ast::IfBranch::Block(block) => {
             lower_value_block(nodes, bindings, context, block, alternative_expected)?
@@ -7429,14 +7464,14 @@ fn lower_if(
             lower_if(nodes, bindings, context, expression, alternative_expected)?
         }
     };
-    require_type(
+    require_branch_type(
         &alternative_value,
         &consequent_value.ty,
         if_branch_span(&expression.alternative),
     )?;
     let alternative = control_region(nodes, alternative_start, alternative_value.node);
 
-    let ty = consequent_value.ty;
+    let ty = join_branch_type(consequent_value.ty, &alternative_value.ty);
     Ok(LoweredValue {
         node: push_node(
             nodes,
@@ -7952,12 +7987,18 @@ fn lower_enum_match(
             variant,
             pattern,
         )?;
-        let arm_expected = expected.or(result_type.as_ref());
+        let arm_expected = result_type
+            .as_ref()
+            .map_or(expected, |known| branch_expectation(expected, known));
         let output = lower_match_arm_body(nodes, &arm_bindings, context, &arm.body, arm_expected)?;
-        if let Some(expected) = &result_type {
-            require_type(&output, expected, match_arm_body_span(&arm.body))?;
-        } else {
-            result_type = Some(output.ty.clone());
+        // An arm that diverges (`fail`) is compatible with every other arm and
+        // supplies no type of its own, so the match takes its type from the
+        // first arm that produces a value.
+        match &result_type {
+            Some(known) if *known != Type::Never => {
+                require_type(&output, known, match_arm_body_span(&arm.body))?;
+            }
+            _ => result_type = Some(output.ty.clone()),
         }
         let arm_nodes = (first_arm_node..nodes.len())
             .map(|index| {
@@ -8066,12 +8107,18 @@ fn lower_ordered_match(
         .map(|condition| control_region(nodes, condition_start, condition.node));
 
         let body_start = nodes.len();
-        let arm_expected = expected.or(result_type.as_ref());
+        let arm_expected = result_type
+            .as_ref()
+            .map_or(expected, |known| branch_expectation(expected, known));
         let output = lower_match_arm_body(nodes, &arm_bindings, context, &arm.body, arm_expected)?;
-        if let Some(expected) = &result_type {
-            require_type(&output, expected, match_arm_body_span(&arm.body))?;
-        } else {
-            result_type = Some(output.ty.clone());
+        // An arm that diverges (`fail`) is compatible with every other arm and
+        // supplies no type of its own, so the match takes its type from the
+        // first arm that produces a value.
+        match &result_type {
+            Some(known) if *known != Type::Never => {
+                require_type(&output, known, match_arm_body_span(&arm.body))?;
+            }
+            _ => result_type = Some(output.ty.clone()),
         }
         if let Some(condition) = condition {
             arms.push(OrderedMatchArm {
@@ -9050,6 +9097,45 @@ fn lower_try(
             Op::Try,
         ),
         ty,
+    })
+}
+
+/// `fail payload` raises the payload as a language failure. The payload is an
+/// ordinary value — realized and interned exactly as a published one — so the
+/// failure has a schema and a content hash like anything else, and the machine
+/// supplies the address: the raising node's stable source site and its island's
+/// `RecipeId`. The expression itself has the type of nothing at all, so it
+/// typechecks in every position and never contributes a result slot.
+///
+/// r[impl machine.error.failure-is-a-value]
+fn lower_fail(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    fail: &ast::FailExpr,
+    expected: Option<&Type>,
+) -> Result<LoweredValue, Diagnostics> {
+    // The payload is lowered against no expectation of its own: the expected
+    // type belongs to the position `fail` stands in, not to what it carries.
+    let _ = expected;
+    let payload = lower_value(nodes, bindings, context, &fail.value)?;
+    if !payload.ty.is_publishable_value() {
+        return Err(type_mismatch(
+            expr_span(&fail.value),
+            "a payload value with a schema and a content hash",
+            payload.ty.name(),
+        ));
+    }
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            fail.span,
+            Type::Never,
+            EffectFacts::PURE,
+            vec![payload.node],
+            Op::Fail,
+        ),
+        ty: Type::Never,
     })
 }
 
@@ -10208,6 +10294,11 @@ fn invalid_arity(span: Span, expected: usize, found: usize) -> Diagnostics {
 }
 
 fn require_type(value: &LoweredValue, expected: &Type, span: Span) -> Result<(), Diagnostics> {
+    // A diverging expression has no value, so it satisfies every expectation:
+    // `fail e` typechecks wherever it is written (`machine.error.failure-is-a-value`).
+    if value.ty == Type::Never {
+        return Ok(());
+    }
     if &value.ty != expected {
         let mut diagnostic = type_mismatch(span, expected.name(), value.ty.name());
         if matches!((expected, &value.ty), (Type::Path, Type::String)) {
@@ -10283,6 +10374,7 @@ fn expr_span(expression: &ast::Expr) -> Span {
         ast::Expr::Exec(value) => value.span,
         ast::Expr::Command(value) => value.span,
         ast::Expr::Try(value) => value.span,
+        ast::Expr::Fail(value) => value.span,
         ast::Expr::Identifier(value) => value.span,
         ast::Expr::Path(value) => value.span,
         ast::Expr::Str(value) => value.span,

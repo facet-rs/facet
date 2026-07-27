@@ -463,7 +463,9 @@ fn failure_node(failure: &FailureValue) -> FramedNode {
                 FailureValue::MissingRegistryArtifact { .. } => 11,
                 FailureValue::FetchIntegrity { .. } => 12,
                 FailureValue::MalformedArchive { .. } => 13,
-                FailureValue::IndexOutOfBounds { .. } | FailureValue::ProcessFailure { .. } => {
+                FailureValue::IndexOutOfBounds { .. }
+                | FailureValue::ProcessFailure { .. }
+                | FailureValue::Raised { .. } => {
                     unreachable!("matched above")
                 }
             };
@@ -514,6 +516,39 @@ fn failure_node(failure: &FailureValue) -> FramedNode {
                 ],
             }
         }
+        // An authored raise contributes its payload by referent identity, the
+        // same way a subject does: the payload is an ordinary interned value,
+        // so the failure's identity is `(payload, subject, source site)` and
+        // nothing about the payload's own bytes is restated here.
+        //
+        // r[impl machine.error.failure-source-site-identity]
+        FailureValue::Raised {
+            recipe,
+            site,
+            payload,
+            subject,
+        } => FramedNode::Variant {
+            schema,
+            tag: 14,
+            fields: vec![
+                FramedField {
+                    schema: recipe_schema,
+                    value: FramedValue::Bytes(recipe.0.0.to_vec()),
+                },
+                FramedField {
+                    schema: site_schema,
+                    value: FramedValue::Bytes(site.to_le_bytes().to_vec()),
+                },
+                FramedField {
+                    schema: external_schema("vix.Failure.payload"),
+                    value: FramedValue::Optional(Some(payload.clone())),
+                },
+                FramedField {
+                    schema: external_schema("vix.Failure.subject"),
+                    value: FramedValue::Optional(subject.clone()),
+                },
+            ],
+        },
     }
 }
 
