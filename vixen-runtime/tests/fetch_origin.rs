@@ -655,3 +655,51 @@ fn a_manifest_pin_that_is_not_a_pin_fails_at_the_manifest() {
         );
     }
 }
+
+/// A **real** registry artifact is a gzipped tar, and `untar` parses plain
+/// ustar. Until `Blob.gunzip()` existed, the only archive this system had ever
+/// unpacked was an uncompressed fixture that merely had a `.crate` name — so the
+/// whole fetch→extract leg worked exclusively against a shape no registry
+/// serves. This is that leg over bytes shaped like the real thing.
+///
+/// r[verify machine.primitive.fetch-returns-a-blob]
+#[test]
+fn a_gzipped_crate_unpacks_through_gunzip_then_untar() {
+    const SOURCE: &str = r#"
+#[test]
+fn gzipped_crate() -> Stream<Check> {
+    let archive = fetch(fixture_registry().url("tokio-1.52.3-gzipped.crate"));
+    let tree = untar(archive.gunzip());
+    let manifest = (tree / "Cargo.toml").text();
+    yield expect(manifest.contains("name = \"tokio\""));
+}
+"#;
+    let report = prepare_source(SOURCE)
+        .expect("prepare gzipped-crate source")
+        .execute()
+        .expect("execute gzipped-crate source");
+    assert!(report.passed(), "gzipped crate report: {report:#?}");
+}
+
+/// The compressed and uncompressed forms of one archive are two **Blobs** and one
+/// **Tree**: `machine.primitive.fetch-returns-a-blob` says so outright, and it is
+/// the property that makes recompressing a mirror's artifacts harmless.
+///
+/// r[verify machine.primitive.fetch-returns-a-blob]
+#[test]
+fn gzipping_changes_the_blob_but_not_the_tree() {
+    const SOURCE: &str = r#"
+#[test]
+fn same_tree_either_way() -> Stream<Check> {
+    let plain = fetch(fixture_registry().url("tokio-1.52.3.crate"));
+    let gzipped = fetch(fixture_registry().url("tokio-1.52.3-gzipped.crate"));
+    yield expect(plain.len() != gzipped.len());
+    yield expect_eq((untar(plain) / "Cargo.toml").text(), (untar(gzipped.gunzip()) / "Cargo.toml").text());
+}
+"#;
+    let report = prepare_source(SOURCE)
+        .expect("prepare recompression source")
+        .execute()
+        .expect("execute recompression source");
+    assert!(report.passed(), "recompression report: {report:#?}");
+}

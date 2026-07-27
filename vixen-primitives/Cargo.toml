@@ -20,3 +20,4 @@ hex.workspace = true
 sha2.workspace = true
 blake3.workspace = true
 ureq = "3.3"
+flate2 = "1.1"
