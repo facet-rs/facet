@@ -9556,6 +9556,7 @@ dependencies = [
 name = "vixen-primitives"
 version = "0.0.0"
 dependencies = [
+ "blake3",
  "facet",
  "facet-json",
  "facet-reflect",

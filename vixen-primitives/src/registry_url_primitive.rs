@@ -5,7 +5,7 @@ use crate::rt::{
     BlobId, EffectCtx, OriginHint, PinnedBlobRef, PrimitiveCompletion, PrimitiveDescriptor,
     PrimitiveField, PrimitiveFieldValue, PrimitiveId, PrimitiveMachineError, PrimitiveMemoPolicy,
     PrimitiveValue, PrimitiveValueBody, RawEffectTicket, RawPrimitive, ReadProjection,
-    RegistryHandle, ValueId,
+    RegistryHandle, UpstreamDigest, ValueId,
 };
 
 /// The wire request of the `registry-url` primitive: the registry capability
@@ -109,17 +109,36 @@ fn execute(request: &ValueId, ctx: &EffectCtx) -> Result<ValueId, PrimitiveMachi
     let witnessed = ctx.read(&registry_id, ReadProjection::RegistryManifest)?;
     let manifest = core::str::from_utf8(&witnessed.bytes)
         .map_err(|_| invalid_value("registry manifest was not UTF-8"))?;
-    let (url, hash, upstream) = resolve(manifest, &name).ok_or_else(|| {
-        PrimitiveMachineError::Unavailable {
+    let (url, hash, upstream) =
+        resolve(manifest, &name).ok_or_else(|| PrimitiveMachineError::Unavailable {
             detail: format!("fixture registry artifact {name} is absent"),
-        }
-    })?;
+        })?;
+
+    // Parse the pin HERE rather than letting raw text ride to the wire and fail
+    // in the decoder: a manifest typo should name itself, not surface three
+    // layers away as an opaque InvalidRequest against a synthesized value id.
+    // Re-rendering canonically is what keeps two spellings of one digest from
+    // becoming two pins (`vixen.pins.canonical-digest-form`).
+    let upstream = upstream
+        .map(|text| {
+            UpstreamDigest::parse(&text)
+                .map(|pin| pin.render())
+                .map_err(|error| {
+                    invalid_value(&format!(
+                        "registry manifest pin for {name} is not a pin: {error}"
+                    ))
+                })
+        })
+        .transpose()?;
 
     ctx.intern_value(build_pin(&registry, url, hash, upstream))
 }
 
-/// Find the manifest row for `name`, yielding `(url, hash, optional upstream)`.
-/// The manifest is whitespace-columnar: `artifact url hash [upstream]`.
+/// Find the manifest row for `name`, yielding `(url, hash, optional pin)`.
+/// The manifest is whitespace-columnar: `artifact url hash [pin]`, where a pin
+/// is self-describing — `sha256:<hex>` — so the column states which algorithm
+/// produced it rather than leaving a reader to assume
+/// (`vixen.pins.self-describing`).
 fn resolve(manifest: &str, name: &str) -> Option<(String, String, Option<String>)> {
     manifest.lines().find_map(|line| {
         let mut fields = line.split_whitespace();

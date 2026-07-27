@@ -14,13 +14,10 @@ use crate::vir::{ExternKind, RecordField, RecordType, Type};
 
 use super::{
     ArgRole, Digest, PrimitiveDescriptor, PrimitiveId, PrimitiveMachineError, PrimitiveMemoPolicy,
-    RequestShape, ValueId,
+    RequestShape, UpstreamDigest, ValueId,
 };
 
 // ---- fetch / blob ---------------------------------------------------------
-
-#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
-pub struct UpstreamDigest(pub [u8; 32]);
 
 /// A registry capability handle. It wraps a [`ValueId`] like [`BlobId`], but is
 /// a distinct newtype so the derived schema walker (`Type::from_facet`) can tell

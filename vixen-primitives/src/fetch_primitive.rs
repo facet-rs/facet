@@ -1,10 +1,11 @@
-use sha2::{Digest as _, Sha256};
+use sha2::{Digest as _, Sha256, Sha512};
 
 use vix::vir::{ExternKind, Type};
 
 use crate::rt::{
-    BlobHandle, EffectCtx, EffectTicket, PinnedBlobRef, PinnedFetchRequest, Primitive,
-    PrimitiveDecl, PrimitiveMachineError, ReadProjection, ResponseValue, UpstreamDigest, ValueId,
+    BlobHandle, DigestAlgorithm, EffectCtx, EffectTicket, PinnedBlobRef, PinnedFetchRequest,
+    Primitive, PrimitiveDecl, PrimitiveMachineError, ReadProjection, ResponseValue, UpstreamDigest,
+    ValueId,
 };
 // Only the test-only hand parsers (the `decode_primitive_value` oracle) walk the
 // wire `PrimitiveValue` structurally now; production `begin` decodes instead.
@@ -104,9 +105,26 @@ fn admit(
 }
 
 fn blob_identity(bytes: &[u8]) -> ValueId {
-    crate::rt::FramedNode::leaf(Type::Extern(ExternKind::Blob).schema_ref(), bytes.to_vec()).identity()
+    crate::rt::FramedNode::leaf(Type::Extern(ExternKind::Blob).schema_ref(), bytes.to_vec())
+        .identity()
 }
 
+/// Compute `algorithm` over `bytes`.
+///
+/// The match is exhaustive on purpose: adding a [`DigestAlgorithm`] must not
+/// compile until this machine can actually compute it, because a pin whose
+/// algorithm the verifier silently skips is worse than no pin at all.
+fn compute_digest(algorithm: DigestAlgorithm, bytes: &[u8]) -> Vec<u8> {
+    match algorithm {
+        DigestAlgorithm::Blake3 => blake3::hash(bytes).as_bytes().to_vec(),
+        DigestAlgorithm::Sha256 => Sha256::digest(bytes).to_vec(),
+        DigestAlgorithm::Sha512 => Sha512::digest(bytes).to_vec(),
+    }
+}
+
+/// Check the served bytes against the pin the recipe wrote.
+///
+/// r[impl vixen.pins.0-1-verifies-on-arrival]
 fn verify_upstream(
     bytes: &[u8],
     expected: Option<&UpstreamDigest>,
@@ -114,10 +132,18 @@ fn verify_upstream(
     let Some(expected) = expected else {
         return Ok(());
     };
-    let observed: [u8; 32] = Sha256::digest(bytes).into();
-    if observed != expected.0 {
+    let observed = compute_digest(expected.algorithm, bytes);
+    if observed != expected.bytes {
+        // The pin is named in the diagnostic: "contradicts its digest" sends you
+        // looking at the wrong thing when what actually happened is that a
+        // mirror served different bytes than the lockfile promised.
         return Err(PrimitiveMachineError::PolicyRejected {
-            detail: "Blob body contradicts its upstream digest".to_owned(),
+            detail: format!(
+                "Blob body contradicts its pin: expected {}, served {}:{}",
+                expected.render(),
+                expected.algorithm.tag(),
+                hex::encode(&observed)
+            ),
         });
     }
     Ok(())
@@ -235,10 +261,9 @@ pub(crate) fn parse_upstream(
         (0, [digest]) => {
             let digest = core::str::from_utf8(bytes(child(digest)?)?)
                 .ok()
-                .and_then(|text| hex::decode(text).ok())
-                .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
+                .and_then(|text| UpstreamDigest::parse(text).ok())
                 .ok_or_else(invalid_value)?;
-            Ok(Some(UpstreamDigest(digest)))
+            Ok(Some(digest))
         }
         (1, []) => Ok(None),
         _ => Err(invalid_value()),

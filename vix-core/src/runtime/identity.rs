@@ -653,3 +653,280 @@ impl FramedNode {
         }
     }
 }
+
+// ---- pins: digests that name their own algorithm ------------------------
+//
+// A pin's algorithm table lives here rather than beside the wire type because
+// this is the module that owns hashing vocabulary (`machine.identity.single-
+// module`), and the guard in tests/framed_identity.rs enforces exactly that: no
+// other runtime module may so much as name a digest family.
+
+/// A digest algorithm the machine can compute.
+///
+/// The set is CLOSED and runtime-implemented — you cannot verify a digest you
+/// cannot compute — which is why a pin's algorithm parses to this enum rather
+/// than staying a string. What the *surface* spells self-describingly is the
+/// value; the algorithm is data travelling with it, not schema
+/// (`vixen.pins.self-describing`).
+///
+/// Adding a member is a project decision: it widens what every machine must be
+/// able to compute. Removing one is an epoch.
+///
+/// r[impl vixen.pins.algorithm-strength]
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(u8)]
+pub enum DigestAlgorithm {
+    /// Vix's own identity space (`machine.identity.blake3`). A blake3 pin also
+    /// names the value, so it resolves before any transfer.
+    Blake3 = 0,
+    /// What `Cargo.lock`, rustup's `.sha256` files, and most registries publish.
+    Sha256 = 1,
+    /// What npm's integrity fields publish.
+    Sha512 = 2,
+}
+
+impl DigestAlgorithm {
+    /// The canonical lowercase tag, as written in a pin.
+    #[must_use]
+    pub fn tag(self) -> &'static str {
+        match self {
+            Self::Blake3 => "blake3",
+            Self::Sha256 => "sha256",
+            Self::Sha512 => "sha512",
+        }
+    }
+
+    /// How many bytes a digest of this algorithm has. A pin of the wrong length
+    /// is a typo, not a digest, and is refused rather than padded or truncated.
+    #[must_use]
+    pub fn digest_len(self) -> usize {
+        match self {
+            Self::Blake3 | Self::Sha256 => 32,
+            Self::Sha512 => 64,
+        }
+    }
+
+    /// Tag lookup, case-insensitive because ecosystems disagree about case and
+    /// nobody should have to care.
+    #[must_use]
+    pub fn from_tag(tag: &str) -> Option<Self> {
+        match tag.to_ascii_lowercase().as_str() {
+            "blake3" => Some(Self::Blake3),
+            "sha256" => Some(Self::Sha256),
+            "sha512" => Some(Self::Sha512),
+            _ => None,
+        }
+    }
+}
+
+/// Algorithms that are recognized by name and deliberately refused, so the
+/// diagnostic can say *why* instead of "unknown algorithm". A pin's whole value
+/// is that a stranger can check it; a collision-attackable digest does not
+/// deliver that, and silently accepting one would make a pin look like a
+/// guarantee it is not.
+const REFUSED_ALGORITHMS: &[&str] = &["md5", "sha1"];
+
+/// A digest **of the bytes**, carrying the algorithm that produced it.
+///
+/// This is the "not screwed in 2064" property: `sha256: "…"` puts the algorithm
+/// in the SCHEMA, so retiring sha256 means changing the language. `hash:
+/// "sha256:…"` puts it in the VALUE, so retiring sha256 means writing a
+/// different string — exactly how the ecosystem moved past md5 without every
+/// tool that consumed a checksum needing a new field.
+///
+/// Wire-encoded as its canonical text (`vix::vir::facet_leaf_override` maps it
+/// to `Type::String`), so widening from a bare hex digest to a tagged one costs
+/// no schema change.
+///
+/// r[impl vixen.pins.self-describing]
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct UpstreamDigest {
+    pub algorithm: DigestAlgorithm,
+    pub bytes: Vec<u8>,
+}
+
+/// Why a string is not a pin.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DigestParseError {
+    /// No `algorithm:` prefix. An untagged digest is the shape this type exists
+    /// to abolish: it is only meaningful if the reader already knows which
+    /// algorithm was meant, which is the assumption that makes migration hard.
+    Untagged,
+    /// A recognized algorithm that is not admissible as a pin.
+    Refused { tag: String },
+    /// An algorithm this machine cannot compute.
+    Unknown { tag: String },
+    /// The digits are not hexadecimal.
+    NotHex,
+    /// Right algorithm, wrong number of bytes.
+    Length { expected: usize, found: usize },
+}
+
+impl std::fmt::Display for DigestParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Untagged => f.write_str(
+                "a pin must name its algorithm, as in `sha256:<hex>` — an untagged digest \
+                 is only meaningful to a reader who already knows which one was meant",
+            ),
+            Self::Refused { tag } => write!(
+                f,
+                "`{tag}` is not admissible as a pin: a digest a stranger cannot trust is \
+                 not a pin. Record it beside an admissible one if you need it for provenance"
+            ),
+            Self::Unknown { tag } => write!(
+                f,
+                "unknown digest algorithm `{tag}` — this machine can compute blake3, \
+                 sha256 and sha512"
+            ),
+            Self::NotHex => f.write_str("a pin's digits are hexadecimal"),
+            Self::Length { expected, found } => write!(
+                f,
+                "a digest of this algorithm is {expected} bytes, not {found}"
+            ),
+        }
+    }
+}
+
+impl UpstreamDigest {
+    /// Parse `"<algorithm>:<hex>"`.
+    ///
+    /// Case-insensitive in both halves. Base64 spellings (SRI's `sha512-<b64>`,
+    /// Nix's `sha256-<b64>`) are NOT yet accepted — see the follow-up noted on
+    /// `vixen.pins.canonical-digest-form`; they need a base64 decoder this
+    /// workspace does not currently carry, and accepting them later cannot
+    /// invalidate anything written today because canonical output is unchanged.
+    ///
+    /// r[impl vixen.pins.canonical-digest-form]
+    pub fn parse(text: &str) -> Result<Self, DigestParseError> {
+        let (tag, digits) = text.split_once(':').ok_or(DigestParseError::Untagged)?;
+        let lowered = tag.to_ascii_lowercase();
+        if REFUSED_ALGORITHMS.contains(&lowered.as_str()) {
+            return Err(DigestParseError::Refused { tag: lowered });
+        }
+        let algorithm = DigestAlgorithm::from_tag(&lowered)
+            .ok_or(DigestParseError::Unknown { tag: lowered })?;
+        let bytes = hex::decode(digits).map_err(|_| DigestParseError::NotHex)?;
+        if bytes.len() != algorithm.digest_len() {
+            return Err(DigestParseError::Length {
+                expected: algorithm.digest_len(),
+                found: bytes.len(),
+            });
+        }
+        Ok(Self { algorithm, bytes })
+    }
+
+    /// The canonical spelling: lowercase tag, colon, lowercase hex. Everything
+    /// that enters a demand key or a receipt goes through here, so two spellings
+    /// of one digest are one pin and cannot fork the cache.
+    ///
+    /// r[impl vixen.pins.canonical-digest-form]
+    #[must_use]
+    pub fn render(&self) -> String {
+        format!("{}:{}", self.algorithm.tag(), hex::encode(&self.bytes))
+    }
+}
+
+#[cfg(test)]
+mod pin_tests {
+    use super::{DigestAlgorithm, DigestParseError, UpstreamDigest};
+
+    const SHA256: &str = "sha256:9f3c1d8e0a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d";
+
+    /// r[verify vixen.pins.self-describing]
+    #[test]
+    fn a_pin_states_its_algorithm() {
+        let pin = UpstreamDigest::parse(SHA256).expect("a tagged sha256 pin parses");
+        assert_eq!(pin.algorithm, DigestAlgorithm::Sha256);
+        assert_eq!(pin.bytes.len(), 32);
+        assert_eq!(pin.render(), SHA256);
+    }
+
+    /// The property that keeps two spellings of one digest from forking the
+    /// cache: everything reaching a demand key or a receipt is the canonical
+    /// render, so case is not a second identity.
+    ///
+    /// r[verify vixen.pins.canonical-digest-form]
+    #[test]
+    fn case_is_not_a_second_identity() {
+        let shouted = SHA256.to_ascii_uppercase();
+        let quiet = UpstreamDigest::parse(SHA256).expect("lowercase parses");
+        let loud = UpstreamDigest::parse(&shouted).expect("uppercase parses");
+        assert_eq!(quiet, loud);
+        assert_eq!(quiet.render(), loud.render());
+    }
+
+    /// An untagged digest is the shape this type abolishes: it only means
+    /// something to a reader who already knows which algorithm was intended.
+    ///
+    /// r[verify vixen.pins.self-describing]
+    #[test]
+    fn an_untagged_digest_is_not_a_pin() {
+        let bare = SHA256.trim_start_matches("sha256:");
+        assert_eq!(UpstreamDigest::parse(bare), Err(DigestParseError::Untagged));
+    }
+
+    /// Refused is distinct from Unknown on purpose. "unknown algorithm md5"
+    /// reads like a missing feature; the truth is that we can compute it and
+    /// decline to trust it, and the diagnostic should say so.
+    ///
+    /// r[verify vixen.pins.algorithm-strength]
+    #[test]
+    fn weak_algorithms_are_refused_by_name_not_merely_unknown() {
+        for weak in [
+            "md5:d41d8cd98f00b204e9800998ecf8427e",
+            "sha1:da39a3ee5e6b4b0d",
+        ] {
+            let tag = weak.split_once(':').expect("test input is tagged").0;
+            assert_eq!(
+                UpstreamDigest::parse(weak),
+                Err(DigestParseError::Refused {
+                    tag: tag.to_owned()
+                }),
+                "{tag} must be refused as a pin, not reported as unknown"
+            );
+        }
+        assert!(matches!(
+            UpstreamDigest::parse("shalala:00"),
+            Err(DigestParseError::Unknown { .. })
+        ));
+    }
+
+    /// A digest of the wrong length is a typo, and padding or truncating one
+    /// would turn a typo into a pin that verifies something else.
+    #[test]
+    fn a_short_digest_is_refused_rather_than_padded() {
+        assert_eq!(
+            UpstreamDigest::parse("sha256:9f3c"),
+            Err(DigestParseError::Length {
+                expected: 32,
+                found: 2
+            })
+        );
+        assert_eq!(
+            UpstreamDigest::parse("sha256:zz"),
+            Err(DigestParseError::NotHex)
+        );
+    }
+
+    /// The three admissible algorithms round-trip at their own widths — the
+    /// point of the exercise being that adding the next one in 2064 is a new
+    /// string, not a schema change.
+    ///
+    /// r[verify vixen.pins.algorithm-strength]
+    #[test]
+    fn every_admissible_algorithm_round_trips() {
+        for algorithm in [
+            DigestAlgorithm::Blake3,
+            DigestAlgorithm::Sha256,
+            DigestAlgorithm::Sha512,
+        ] {
+            let digits = "ab".repeat(algorithm.digest_len());
+            let text = format!("{}:{digits}", algorithm.tag());
+            let pin = UpstreamDigest::parse(&text).expect("admissible pin parses");
+            assert_eq!(pin.algorithm, algorithm);
+            assert_eq!(pin.bytes.len(), algorithm.digest_len());
+            assert_eq!(pin.render(), text);
+        }
+    }
+}
