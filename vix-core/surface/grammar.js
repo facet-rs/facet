@@ -116,37 +116,91 @@ module.exports = grammar({
         field("grammar", $.command_grammar),
         "}",
       ),
+    // The pattern is optional: a zero-argument program declares `grammar { }`.
     command_grammar: ($) =>
-      seq("{", field("pattern", $.command_alternatives), "}"),
+      seq("{", optional(field("pattern", $.command_alternatives)), "}"),
     command_alternatives: ($) =>
       seq(
         field("alternative", $.command_sequence),
         repeat(seq("|", field("alternative", $.command_sequence))),
       ),
     command_sequence: ($) => repeat1(field("term", $.command_term)),
+    // One term is one argv element. Whitespace separates elements; ADJACENCY
+    // FUSES: an atom flush against the previous one continues the same argv
+    // element (`-D{define: String}` is one element, `-D {define: String}` is
+    // two). Fused atoms lex through immediate terminals, so the lexer's
+    // adjacency rule — not the grammar — decides fused vs. separate.
     command_term: ($) =>
       seq(
         field("atom", $._command_atom),
+        repeat(field("fused_atom", $._command_fused_atom)),
         optional(field("quantifier", $.command_quantifier)),
       ),
     _command_atom: ($) =>
-      choice($.command_literal, $.command_slot, $.command_optional, $.command_group),
+      choice(
+        $.command_literal,
+        $.string,
+        $.command_slot,
+        $.command_optional,
+        $.command_group,
+      ),
+    _command_fused_atom: ($) =>
+      choice(
+        $.command_fused_literal,
+        $.command_fused_string,
+        $.command_fused_slot,
+        $.command_fused_optional,
+        $.command_fused_group,
+      ),
     command_slot: ($) =>
       seq("{", field("name", $.identifier), ":", field("type", $._type), "}"),
+    command_fused_slot: ($) =>
+      seq(
+        token.immediate(prec(3, "{")),
+        field("name", $.identifier),
+        ":",
+        field("type", $._type),
+        "}",
+      ),
     command_optional: ($) =>
       seq("[", field("pattern", $.command_alternatives), "]"),
+    command_fused_optional: ($) =>
+      seq(
+        token.immediate(prec(3, "[")),
+        field("pattern", $.command_alternatives),
+        "]",
+      ),
     command_group: ($) =>
       seq("(", field("pattern", $.command_alternatives), ")"),
-    command_quantifier: () => token.immediate(choice("*", "+")),
+    command_fused_group: ($) =>
+      seq(
+        token.immediate(prec(3, "(")),
+        field("pattern", $.command_alternatives),
+        ")",
+      ),
+    // Lexical precedence ladder for the position right after an atom, where
+    // everything immediate competes: quantifier (4) > fused atoms (3) >
+    // ordinary tokens. Precedence outranks length, so `{x: T}*` is always a
+    // quantified slot — to fuse a literal that STARTS with `*` or `+`, quote
+    // it (`{x: T}"+suffix"`).
+    command_quantifier: () => token.immediate(prec(4, choice("*", "+"))),
     // Real argv uses punctuation as data (`c++`, ffmpeg's `0:a?`, MSVC
     // `/OUT:`, response files, and Bazel/Buck `//target` labels). A `//` token
     // with non-whitespace payload outranks line comments only in states where
-    // a command literal is legal.
+    // a command literal is legal — a comment inside a grammar block therefore
+    // needs a space after `//`, and must not sit flush against an atom.
+    // A quantifier after a bare literal is unreachable by design: longest
+    // match keeps `c++` and `gcc+` single literals. Repeat a literal with a
+    // group: `(gcc)+`. A literal cannot contain `" { } [ ] ( ) |` or
+    // whitespace — spell those argv elements as quoted strings, which decode
+    // with the usual escapes (`"\{\}"`, `"a b"`).
     command_literal: () =>
       choice(
-        token(prec(2, /\/\/[^{}\[\]()|\s]+/)),
-        token(/[^{}\[\]()|\s]+/),
+        token(prec(2, /\/\/[^"{}\[\]()|\s]+/)),
+        token(/[^"{}\[\]()|\s]+/),
       ),
+    command_fused_literal: () => token.immediate(prec(3, /[^"{}\[\]()|\s]+/)),
+    command_fused_string: () => token.immediate(prec(3, /"([^"\\]|\\.)*"/)),
     enum_variant_list: ($) => seq("{", sepBy(",", field("variant", $.enum_variant)), "}"),
     enum_variant: ($) =>
       seq(
