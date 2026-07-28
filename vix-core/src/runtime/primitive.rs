@@ -57,6 +57,18 @@ pub enum PrimitiveMachineError {
 pub enum PrimitiveCompletion {
     Ok(ValueId),
     Failed(ValueId),
+    /// A process termination the effect's termination grammar mapped to a typed
+    /// language failure rather than an answer. The grammar itself is capability
+    /// data enacted by the primitive; only the already-mapped raw termination
+    /// crosses this boundary, and the scheduler interns it as the core
+    /// `FailureValue::ProcessFailure` vocabulary — no naked status integer ever
+    /// becomes a value (`machine.primitive.exit-status-is-not-a-value`).
+    /// `diagnostic` is the failing process's captured stderr, retained as the
+    /// failure's diagnostic payload exactly as the machine-op path retained it.
+    ProcessFailed {
+        termination: super::ProcessTermination,
+        diagnostic: Vec<u8>,
+    },
     MachineError(PrimitiveMachineError),
 }
 
@@ -268,6 +280,11 @@ pub enum PrimitiveValueBody {
         tag: u32,
         fields: Vec<PrimitiveField>,
     },
+    /// Canonical key-ordered map rows, mirroring [`FramedNode::OrderedMap`]:
+    /// both halves of every row contribute their semantic identities, so a
+    /// primitive can stage a map-bearing response (an exec outcome's line map)
+    /// without the store learning any new identity rule.
+    OrderedMap(Vec<(PrimitiveValue, PrimitiveValue)>),
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -303,7 +320,8 @@ impl PrimitiveValue {
             PrimitiveValueBody::Bytes(bytes) => bytes,
             PrimitiveValueBody::Product(_)
             | PrimitiveValueBody::Sequence { .. }
-            | PrimitiveValueBody::Variant { .. } => &[],
+            | PrimitiveValueBody::Variant { .. }
+            | PrimitiveValueBody::OrderedMap(_) => &[],
         }
     }
 
@@ -330,6 +348,13 @@ impl PrimitiveValue {
                 schema: self.schema.clone(),
                 tag: u64::from(*tag),
                 fields: fields.iter().map(PrimitiveField::framed).collect(),
+            },
+            PrimitiveValueBody::OrderedMap(rows) => FramedNode::OrderedMap {
+                schema: self.schema.clone(),
+                rows: rows
+                    .iter()
+                    .map(|(key, value)| (key.identity(), value.identity()))
+                    .collect(),
             },
         }
     }
@@ -361,7 +386,8 @@ pub trait EffectAuthority: Send + Sync {
             PrimitiveValueBody::Bytes(bytes) => self.intern(&value.schema, bytes),
             PrimitiveValueBody::Product(_)
             | PrimitiveValueBody::Sequence { .. }
-            | PrimitiveValueBody::Variant { .. } => {
+            | PrimitiveValueBody::Variant { .. }
+            | PrimitiveValueBody::OrderedMap(_) => {
                 Err(PrimitiveMachineError::AuthorityViolation {
                     detail: "effect authority does not admit structural values".to_owned(),
                 })
@@ -399,6 +425,14 @@ pub trait EffectAuthority: Send + Sync {
             detail: "no origin adapter is installed for this effect snapshot".to_owned(),
         })
     }
+
+    /// The process-boundary service installed for this effect snapshot
+    /// (`machine.primitive.effect-backend-service`). The backend is an
+    /// authority, never a semantic input: nothing keys on it, and an authority
+    /// without one installed simply cannot cross the process boundary.
+    fn exec_backend(&self) -> Option<Arc<dyn super::ExecBackend>> {
+        None
+    }
 }
 
 #[derive(Default)]
@@ -410,6 +444,7 @@ pub struct StagedEffectAuthority {
     persistence: Option<Arc<dyn ValuePersistence>>,
     origin: Option<Arc<dyn OriginAdapter>>,
     fixture_store: Option<super::FixtureStore>,
+    exec_backend: Option<Arc<dyn super::ExecBackend>>,
 }
 
 impl StagedEffectAuthority {
@@ -446,6 +481,14 @@ impl StagedEffectAuthority {
     #[must_use]
     pub fn with_fixture_store(mut self, fixture_store: super::FixtureStore) -> Self {
         self.fixture_store = Some(fixture_store);
+        self
+    }
+
+    /// Install the process-boundary service for this snapshot
+    /// (`machine.primitive.effect-backend-service`).
+    #[must_use]
+    pub fn with_exec_backend(mut self, backend: Arc<dyn super::ExecBackend>) -> Self {
+        self.exec_backend = Some(backend);
         self
     }
 
@@ -490,6 +533,12 @@ fn index_primitive_value(
         PrimitiveValueBody::Sequence { elements, .. } => {
             for element in elements {
                 index_primitive_value(indexed, element.identity(), element.clone());
+            }
+        }
+        PrimitiveValueBody::OrderedMap(rows) => {
+            for (key, entry) in rows {
+                index_primitive_value(indexed, key.identity(), key.clone());
+                index_primitive_value(indexed, entry.identity(), entry.clone());
             }
         }
     }
@@ -663,6 +712,10 @@ impl EffectAuthority for StagedEffectAuthority {
             })?
             .read(capability, coordinate)
     }
+
+    fn exec_backend(&self) -> Option<Arc<dyn super::ExecBackend>> {
+        self.exec_backend.clone()
+    }
 }
 
 /// The scheduler-installed live delivery authority for in-flight progressive
@@ -792,6 +845,19 @@ impl EffectCtx {
                 observation: ReadObservation::Value(observed),
             });
         Ok(bytes)
+    }
+
+    /// The process-boundary service this effect may cross through
+    /// (`machine.primitive.effect-backend-service`): the installed backend, or
+    /// a typed machine error when the snapshot carries none — a primitive that
+    /// needs a process boundary its embedder never granted fails loudly, it
+    /// never reaches for `std::process` itself.
+    pub fn exec_backend(&self) -> Result<Arc<dyn super::ExecBackend>, PrimitiveMachineError> {
+        self.authority
+            .exec_backend()
+            .ok_or_else(|| PrimitiveMachineError::Unavailable {
+                detail: "no exec backend is installed for this effect snapshot".to_owned(),
+            })
     }
 
     pub fn observe(&self, observation: JournalObservation) {

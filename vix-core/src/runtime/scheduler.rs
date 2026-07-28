@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::ops::Deref;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -21,7 +21,7 @@ use crate::vir::{
 };
 
 use super::exec_backend::{
-    ExecEvent, ExecInvocation, ExecOutputProtocol, ExecProduct, ExecWorkspace,
+    ExecEvent, ExecInvocation, ExecOutputProtocol, ExecProduct, ExecWorkspace, archive_directory,
     validate_exec_product_path,
 };
 use super::fixture::{
@@ -454,6 +454,47 @@ struct PrimitivePending {
     memo_preimage: DemandPreimage,
     memo_policy: PrimitiveMemoPolicy,
     callbacks: Vec<CallbackPlan>,
+    /// Present when this registered effect was submitted as an island ROOT
+    /// (`Runtime::submit_registered_effect`) rather than reached from inside a
+    /// Weavy frame: the completion resolves a parked root demand — interning
+    /// the response, memoizing at the island's location, publishing the root
+    /// result — instead of resuming frame waiters.
+    root: Option<EffectRootPending>,
+}
+
+/// The parked state of one registered-effect island root: everything the
+/// completion needs to intern the response (or the typed process failure) and
+/// resolve the root demand. The generalization of the retired exec-only
+/// `ExecPending` to any declared effect.
+///
+/// r[impl machine.primitive.capability-role]
+struct EffectRootPending {
+    task_id: TaskId,
+    location: Location,
+    demand_preimage: DemandPreimage,
+    /// The capability witness receipt, recorded exactly as the machine-op exec
+    /// path recorded it: each capability-role argument read as
+    /// `CapabilityProgram`, `Unverifiable` under a host-trusting backend
+    /// (`machine.primitive.memo-policy`).
+    receipt: Receipt,
+    /// The effect invocation's declared response type — what the completed
+    /// value is interned and frozen against.
+    result_ty: Type,
+    function: FunctionId,
+    node: NodeId,
+    span: Span,
+    realized_as: Option<RealizedWireDemand>,
+}
+
+/// One registered-effect island root submission: the derived effect demand key
+/// (the projection frontier parks against it), the first capability-role
+/// argument's identity (the witness source for served projections), and the
+/// root submission itself.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RegisteredEffectSubmission {
+    pub demand: DemandKey,
+    pub capability: Option<ValueId>,
+    pub root: RootSubmission,
 }
 
 #[derive(Clone)]
@@ -3116,6 +3157,13 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                     .into_bytes();
                 Ok(EffectTerm::Value(effect_leaf(&node.ty, bytes)))
             }
+            Op::PathToString => {
+                let EffectTerm::Value(value) = input(0, self)? else {
+                    return effect_fault("Path.to_string receiver was codata");
+                };
+                // A Path's resident bytes ARE its canonical `/`-joined spelling.
+                Ok(EffectTerm::Value(effect_leaf(&node.ty, value.resident)))
+            }
             Op::StringLines => {
                 let EffectTerm::Value(value) = input(0, self)? else {
                     return effect_fault("String.lines receiver was codata");
@@ -3244,7 +3292,30 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             }
             Op::Eq => effect_fault("effect island contained an Eq operation"),
             Op::Ne => effect_fault("effect island contained a Ne operation"),
-            Op::Array => effect_fault("effect island contained an Array operation"),
+            Op::Array => {
+                // A materialized element array (a registered effect's argv): the
+                // canonical sequence value over the evaluated elements.
+                let Type::Array(element_ty) = &node.ty else {
+                    return effect_fault("effect Array node had a non-array type");
+                };
+                let mut elements = Vec::with_capacity(node.inputs.len());
+                for index in 0..node.inputs.len() {
+                    let EffectTerm::Value(value) = input(index, self)? else {
+                        return effect_fault("effect Array element was codata");
+                    };
+                    elements.push(primitive_value_from_effect(element_ty, &value)?);
+                }
+                Ok(EffectTerm::Value(effect_value_from_primitive(
+                    &node.ty,
+                    PrimitiveValue {
+                        schema: node.ty.schema_ref(),
+                        body: PrimitiveValueBody::Sequence {
+                            element_schema: element_ty.schema_ref(),
+                            elements,
+                        },
+                    },
+                )?))
+            }
             Op::ArrayConcat => effect_fault("effect island contained an ArrayConcat operation"),
             Op::Map => effect_fault("effect island contained a Map operation"),
             Op::MapWith => effect_fault("effect island contained a Map.with operation"),
@@ -3635,6 +3706,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                     memo_preimage: primitive_preimage,
                     memo_policy,
                     callbacks,
+                    root: None,
                 },
             );
             self.observe_effect_frontier();
@@ -3934,6 +4006,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             memo_preimage,
             memo_policy,
             callbacks,
+            root,
         } = pending;
         for callback in &callbacks {
             unregister_callback_transport(callback.token);
@@ -3946,6 +4019,13 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             .iter()
             .filter(|read| matches!(read.projection, ReadProjection::Origin { .. }))
             .count() as u64;
+        if let Some(root) = root {
+            debug_assert!(
+                waiters.is_empty(),
+                "a root-submitted registered effect has no frame waiters"
+            );
+            return self.apply_effect_root_completion(demand, publication, &authority, root);
+        }
         let identity = match publication.completion {
             PrimitiveCompletion::Ok(identity) => identity,
             PrimitiveCompletion::Failed(identity) => {
@@ -3954,6 +4034,17 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                     PrimitiveHostFailure::Abi(format!(
                         "registered primitive returned semantic failure {identity:?}"
                     )),
+                ));
+            }
+            PrimitiveCompletion::ProcessFailed { .. } => {
+                // A process-termination grammar is declared only by effects that
+                // enter as island roots today; a frame-invoked primitive
+                // completing with one is a contract violation, not a value.
+                return Err(self.terminate_primitive_waiters(
+                    waiters,
+                    PrimitiveHostFailure::Abi(
+                        "frame-invoked primitive completed with a process termination".to_owned(),
+                    ),
                 ));
             }
             PrimitiveCompletion::MachineError(error) => {
@@ -3973,10 +4064,32 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
         for waiter in waiters {
             self.resume_primitive_waiter(waiter, demand, &value, &publication.receipt)?;
         }
-        // Completion is the fallback authority for projections still parked
-        // against this effect (machine.primitive.progressive-response): the
-        // publications the completion witnessed serve them; a projection the
-        // effect never published is a loud fault, not a hang.
+        self.serve_parked_effect_projections(demand, &publication.progressive, &authority)?;
+        if memo_policy != PrimitiveMemoPolicy::Volatile
+            && let Some(result) = self.store.handle_for_identity(&identity)
+        {
+            self.insert_memo(MemoEntry {
+                location: memo_location,
+                key: demand,
+                preimage: memo_preimage,
+                result,
+                receipt: Some(publication.receipt),
+                current_receipt: true,
+            });
+        }
+        Ok(())
+    }
+
+    /// Completion is the fallback authority for projections still parked
+    /// against this effect (`machine.primitive.progressive-response`): the
+    /// publications the completion witnessed serve them; a projection the
+    /// effect never published is a loud fault, not a hang.
+    fn serve_parked_effect_projections(
+        &mut self,
+        demand: DemandKey,
+        progressive: &[super::ProgressivePublication],
+        authority: &StagedEffectAuthority,
+    ) -> Result<(), Box<MachineError>> {
         let parked_projections = self
             .effect_projection_pending
             .iter()
@@ -3984,8 +4097,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             .map(|(key, pending)| (*key, pending.projection.clone()))
             .collect::<Vec<_>>();
         for (key, projection) in parked_projections {
-            let published = publication
-                .progressive
+            let published = progressive
                 .iter()
                 .find(|candidate| candidate.projection == projection)
                 .and_then(|candidate| authority.admitted_value(&candidate.value))
@@ -4004,19 +4116,193 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 })?;
             self.publish_effect_projection(key, &published, EffectProjectionAuthority::Completion)?;
         }
-        if memo_policy != PrimitiveMemoPolicy::Volatile
-            && let Some(result) = self.store.handle_for_identity(&identity)
-        {
-            self.insert_memo(MemoEntry {
-                location: memo_location,
-                key: demand,
-                preimage: memo_preimage,
-                result,
-                receipt: Some(publication.receipt),
-                current_receipt: true,
-            });
-        }
         Ok(())
+    }
+
+    /// Apply a registered-effect completion for an island ROOT drained from the
+    /// unified inbox: intern the response (or the typed process failure),
+    /// memoize it at the island's location, resolve the root demand, and
+    /// publish its result. The declaration-driven replacement for the retired
+    /// exec-only `apply_exec_completion` — the termination grammar ran
+    /// primitive-side; only its already-mapped outcome arrives here.
+    ///
+    /// r[impl machine.primitive.exit-status-is-not-a-value]
+    fn apply_effect_root_completion(
+        &mut self,
+        demand: DemandKey,
+        publication: super::PrimitivePublication,
+        authority: &StagedEffectAuthority,
+        root: EffectRootPending,
+    ) -> Result<(), Box<MachineError>> {
+        let EffectRootPending {
+            task_id,
+            location,
+            demand_preimage,
+            receipt,
+            result_ty,
+            function,
+            node,
+            span,
+            realized_as,
+        } = root;
+        // The parked root resumes on the scheduler thread: transition it back
+        // to running before recording its outcome.
+        self.transition_task(task_id, TaskState::Running)?;
+        match publication.completion {
+            PrimitiveCompletion::Ok(identity) => {
+                let Some(value) = authority.admitted_value(&identity) else {
+                    return Err(Box::new(MachineError::runtime(
+                        MachineOperation::Result,
+                        RuntimeFault::EffectHostFailure {
+                            detail: format!(
+                                "registered effect result {identity:?} was not admitted by its \
+                                 own authority"
+                            ),
+                        },
+                        None,
+                        Some(demand),
+                    )));
+                };
+                // Projections the effect published but no consumer demanded in
+                // flight are served from the completion FIRST, so their
+                // Completed events precede the root's — a progressive product
+                // never appears to postdate its producer's settlement.
+                self.serve_parked_effect_projections(demand, &publication.progressive, authority)?;
+                let effect_value =
+                    effect_value_from_primitive(&result_ty, value).map_err(|error| {
+                        Box::new(MachineError::runtime(
+                            MachineOperation::Result,
+                            RuntimeFault::EffectHostFailure {
+                                detail: format!(
+                                    "registered effect result did not frame against its declared \
+                                     response type: {error:?}"
+                                ),
+                            },
+                            None,
+                            Some(demand),
+                        ))
+                    })?;
+                let framed = effect_value
+                    .node
+                    .expect("effect_value_from_primitive frames every value");
+                let interned = self.store.intern_tree(&framed, &effect_value.resident);
+                if let Some(frozen) = effect_value.frozen {
+                    self.store.attach_frozen(interned.handle, frozen);
+                }
+                self.observe_interned(&interned);
+                self.memo.insert(
+                    location.id,
+                    MemoEntry {
+                        location: location.clone(),
+                        key: demand,
+                        preimage: demand_preimage,
+                        result: interned.handle,
+                        receipt: Some(receipt),
+                        current_receipt: true,
+                    },
+                );
+                if let Some(record) = self.demands.get_mut(&demand) {
+                    record.result = Some(interned.handle);
+                }
+                self.transition_task(task_id, TaskState::Completed)?;
+                self.transition_demand(demand, DemandState::Ready)?;
+                self.emit(EventKind::Completed {
+                    key: demand,
+                    identity: interned.identity.clone(),
+                });
+                if let Some(realized) = realized_as {
+                    self.wire_demands.push(realized);
+                }
+                self.root_results.insert(
+                    demand,
+                    Evaluation {
+                        handle: interned.handle,
+                        identity: interned.identity,
+                        passed: true,
+                        memo: MemoVerdict::Miss,
+                        failure: None,
+                        failure_context: None,
+                    },
+                );
+                Ok(())
+            }
+            PrimitiveCompletion::ProcessFailed {
+                termination,
+                diagnostic,
+            } => {
+                // A demanded projection the failed effect never published is a
+                // loud fault through the same fallback; publications it DID
+                // witness before failing still serve.
+                self.serve_parked_effect_projections(demand, &publication.progressive, authority)?;
+                let failure = FailureValue::ProcessFailure {
+                    recipe: demand_preimage.closure,
+                    site: node.0,
+                    termination,
+                };
+                let report_context = Some(FailureContext {
+                    function,
+                    node,
+                    span,
+                    demand_chain: vec![demand],
+                });
+                let interned = self.store.intern_failure(failure.clone(), &diagnostic);
+                self.observe_interned(&interned);
+                self.memo.insert(
+                    location.id,
+                    MemoEntry {
+                        location: location.clone(),
+                        key: demand,
+                        preimage: demand_preimage,
+                        result: interned.handle,
+                        receipt: Some(receipt),
+                        current_receipt: true,
+                    },
+                );
+                if let Some(record) = self.demands.get_mut(&demand) {
+                    record.result = Some(interned.handle);
+                }
+                self.transition_task(task_id, TaskState::Completed)?;
+                self.transition_demand(demand, DemandState::Failed)?;
+                self.emit(EventKind::LanguageFailed {
+                    task: task_id,
+                    key: demand,
+                    failure: failure.clone(),
+                });
+                if let Some(realized) = realized_as {
+                    self.wire_demands.push(realized);
+                }
+                self.root_results.insert(
+                    demand,
+                    Evaluation {
+                        handle: interned.handle,
+                        identity: interned.identity,
+                        passed: false,
+                        memo: MemoVerdict::Miss,
+                        failure: Some(failure),
+                        failure_context: report_context,
+                    },
+                );
+                Ok(())
+            }
+            PrimitiveCompletion::Failed(identity) => Err(Box::new(MachineError::runtime(
+                MachineOperation::Result,
+                RuntimeFault::EffectHostFailure {
+                    detail: format!(
+                        "registered effect root returned semantic failure {identity:?}"
+                    ),
+                },
+                None,
+                Some(demand),
+            ))),
+            PrimitiveCompletion::MachineError(error) => Err(Box::new(MachineError::runtime(
+                MachineOperation::Drive,
+                RuntimeFault::EffectHostFailure {
+                    detail: format!("registered effect host failure: {error:?}"),
+                },
+                None,
+                Some(demand),
+            ))),
+        }
     }
 
     fn resume_primitive_waiter(
@@ -5711,6 +5997,322 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
         Ok(())
     }
 
+    /// Submit one registered-effect island ROOT without synchronously draining
+    /// its completion: the declaration-driven replacement for the retired
+    /// exec-only `submit_exec`. The island's request subtree is interpreted on
+    /// the effect plane, the demand preimage is derived generically from the
+    /// primitive's declared request shape (`declared_effect_preimage` — the
+    /// capability arguments' identities are the preimage arguments, everything
+    /// else enters the normalized request recipe), and the effect begins
+    /// through the registered dispatcher with the live progressive route
+    /// installed. An identical in-flight plan joins the same demand; a fresh
+    /// effect parks at the service boundary and returns its demand key to the
+    /// shared multi-root frontier.
+    ///
+    /// r[impl machine.primitive.capability-role]
+    /// r[impl machine.primitive.effect-backend-service]
+    pub fn submit_registered_effect(
+        &mut self,
+        island: &Island,
+        location: &Location,
+        arguments: &[Evaluation],
+        chaos: ChaosPolicy,
+        realized_as: Option<RealizedWireDemand>,
+    ) -> Result<RegisteredEffectSubmission, Box<MachineError>> {
+        let malformed = || {
+            Box::new(MachineError::runtime(
+                MachineOperation::Drive,
+                RuntimeFault::MalformedEffectIsland,
+                None,
+                None,
+            ))
+        };
+        let node = island.effect_output().ok_or_else(malformed)?.clone();
+        let Op::InvokePrimitive { primitive } = &node.op else {
+            return Err(malformed());
+        };
+        let primitive = primitive.clone();
+        let request_node = *node.inputs.first().ok_or_else(malformed)?;
+        let request_ty = island
+            .nodes
+            .iter()
+            .find(|candidate| candidate.id == request_node)
+            .map(|candidate| candidate.ty.clone())
+            .ok_or_else(malformed)?;
+        let memo_policy = match self.primitive_dispatcher.descriptor(&primitive) {
+            Some(descriptor) => descriptor.memo_policy,
+            None => {
+                return Err(Box::new(MachineError::runtime(
+                    MachineOperation::Drive,
+                    RuntimeFault::EffectHostFailure {
+                        detail: format!("effect island invokes unregistered primitive {primitive:?}"),
+                    },
+                    None,
+                    None,
+                )));
+            }
+        };
+        // Interpret the request subtree on the effect plane. Interpreter reads
+        // are evaluation mechanics here, not the effect's witness: the receipt
+        // records exactly what the retired machine-op path recorded — the
+        // capability reads below.
+        let published_arguments = self.effect_arguments(arguments)?;
+        let mut reads = Vec::new();
+        let request_term = self.evaluate_effect_node(
+            island,
+            island.function,
+            request_node,
+            &published_arguments,
+            &mut reads,
+        )?;
+        let EffectTerm::Value(request_effect) = request_term else {
+            return Err(malformed());
+        };
+        let request_value = primitive_value_from_effect(&request_ty, &request_effect)?;
+        let request_id = request_value.identity();
+        let demand_preimage = declared_effect_preimage(
+            &primitive,
+            self.primitive_dispatcher.request_shape(&primitive).as_ref(),
+            &request_id,
+            &request_value,
+        );
+        let demand_key = DemandKey::from_preimage(&demand_preimage);
+        let plan_recipe = demand_preimage.closure;
+        let capability = demand_preimage.arguments.first().cloned();
+        // Each capability's identity is what the demand means; its value is
+        // redeemed only host-side. Under a host-trusting backend the read is
+        // recorded `Unverifiable` (`machine.primitive.memo-policy`).
+        let receipt = Receipt {
+            demand: demand_key,
+            reads: demand_preimage
+                .arguments
+                .iter()
+                .map(|identity| ReadWitness {
+                    source: identity.clone(),
+                    projection: ReadProjection::CapabilityProgram,
+                    observation: ReadObservation::Unverifiable,
+                })
+                .collect(),
+        };
+        self.emit(EventKind::Demanded { key: demand_key });
+        let effect_context = |failure: &FailureValue| -> Option<FailureContext> {
+            matches!(failure, FailureValue::ProcessFailure { recipe, .. } if *recipe == plan_recipe)
+                .then(|| FailureContext {
+                    function: island.function,
+                    node: node.id,
+                    span: node.span,
+                    demand_chain: vec![demand_key],
+                })
+        };
+
+        // Location memo, exactly as a pure demand consults it.
+        if let Some(entry) = self.memo.get(&location.id)
+            && entry.location == *location
+            && entry.key == demand_key
+            && entry.preimage == demand_preimage
+            && self.exact_memo_replayable(entry)
+        {
+            let handle = entry.result;
+            return Ok(RegisteredEffectSubmission {
+                demand: demand_key,
+                capability,
+                root: RootSubmission::Ready(self.effect_memo_hit(
+                    location.id,
+                    handle,
+                    &effect_context,
+                )?),
+            });
+        }
+        // Same-run demand-key reuse: the same plan under the same capability at
+        // a DIFFERENT source location is the same demand. The memo path serves
+        // it without a second effect (rung 069's whole content, on the rail).
+        //
+        // r[impl machine.memo.no-recompute-at-lookup]
+        if let Some(record) = self.demands.get(&demand_key) {
+            match record.state {
+                DemandState::Ready | DemandState::Failed => {
+                    if let Some(handle) = record.result {
+                        let evaluation =
+                            self.effect_memo_hit(location.id, handle, &effect_context)?;
+                        self.memo.insert(
+                            location.id,
+                            MemoEntry {
+                                location: location.clone(),
+                                key: demand_key,
+                                preimage: demand_preimage.clone(),
+                                result: handle,
+                                receipt: None,
+                                current_receipt: false,
+                            },
+                        );
+                        return Ok(RegisteredEffectSubmission {
+                            demand: demand_key,
+                            capability,
+                            root: RootSubmission::Ready(evaluation),
+                        });
+                    }
+                }
+                DemandState::Running | DemandState::Queued => {
+                    self.counters.demand_joins += 1;
+                    self.counters.memo_hits_exact += 1;
+                    self.emit(EventKind::Memo {
+                        location: location.id,
+                        verdict: MemoVerdict::Exact,
+                        verified: 0,
+                    });
+                    return Ok(RegisteredEffectSubmission {
+                        demand: demand_key,
+                        capability,
+                        root: RootSubmission::Pending(demand_key),
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        self.counters.memo_misses += 1;
+        self.emit(EventKind::Memo {
+            location: location.id,
+            verdict: MemoVerdict::Miss,
+            verified: 0,
+        });
+        self.demands.insert(
+            demand_key,
+            DemandRecord {
+                key: demand_key,
+                state: DemandState::Queued,
+                result: None,
+            },
+        );
+        self.emit(EventKind::DemandTransition {
+            key: demand_key,
+            from: DemandState::Absent,
+            to: DemandState::Queued,
+        });
+
+        let mut kill_armed = chaos.kill_first_running_task;
+        loop {
+            self.counters.scheduler_requests += 1;
+            let task_id = self.spawn_task(demand_key);
+            self.transition_demand(demand_key, DemandState::Running)?;
+            self.transition_task(task_id, TaskState::Running)?;
+            self.emit(EventKind::IslandEntered {
+                task: task_id,
+                island: island.id,
+            });
+            self.emit(EventKind::SafePoint {
+                task: task_id,
+                class: SafePointClass::Edge,
+            });
+            if kill_armed {
+                // The chaos kill lands at the edge safepoint: the task is
+                // discarded, the demand requeued, and the replay — which is the
+                // semantics — performs the effect exactly once.
+                kill_armed = false;
+                self.counters.task_discards += 1;
+                self.transition_task(task_id, TaskState::Discarded)?;
+                self.transition_demand(demand_key, DemandState::Queued)?;
+                continue;
+            }
+
+            // Begin through the SERVICE, then PARK: the scheduler holds no
+            // domain code while the effect runs. The registered primitive owns
+            // its boundary (machine.primitive.effect-backend-service) and
+            // delivers completion and progressive publications through the
+            // scheduler's one completion event source; the parked root resumes
+            // only when the scheduler drains that completion
+            // (machine.scheduler.no-shadow-scheduler, block-on-event).
+            self.counters.effect_spawns += 1;
+            self.emit(EventKind::EffectSpawned {
+                task: task_id,
+                key: demand_key,
+            });
+            let mut catalog = BTreeMap::new();
+            for node in &island.nodes {
+                insert_schema_type(&node.ty, &mut catalog);
+            }
+            for callee in &island.callees {
+                for node in &callee.nodes {
+                    insert_schema_type(&node.ty, &mut catalog);
+                }
+            }
+            let mut authority = StagedEffectAuthority::new(vec![(
+                request_id.clone(),
+                request_value.clone(),
+            )])
+            .with_schema_types(catalog)
+            .with_fixture_store(self.fixture_store.clone())
+            .with_exec_backend(self.primitive_services.exec_backend());
+            if let Some(persistence) = self.primitive_services.value_persistence() {
+                authority = authority.with_value_persistence(persistence);
+            }
+            authority = authority.with_origin_adapter(
+                self.primitive_services
+                    .origin()
+                    .unwrap_or_else(|| Arc::new(self.fixture_store.clone())),
+            );
+            let authority = Arc::new(authority);
+            let ticket = self
+                .primitive_dispatcher
+                .begin_or_join(
+                    &primitive,
+                    request_id.clone(),
+                    // The live progressive route rides the one unified inbox:
+                    // an in-flight publication can serve a projection demand
+                    // before the effect completes
+                    // (machine.primitive.progressive-response).
+                    EffectCtx::new(demand_key, authority.clone()).with_progress(
+                        self.completion_inbox.primitive_progress_sender(demand_key),
+                    ),
+                    &self.ctx,
+                )
+                .map_err(|error| {
+                    Box::new(MachineError::runtime(
+                        MachineOperation::Drive,
+                        RuntimeFault::EffectHostFailure {
+                            detail: format!("registered effect dispatch failed: {error:?}"),
+                        },
+                        None,
+                        Some(demand_key),
+                    ))
+                })?;
+            self.counters.primitive_invocations += 1;
+            let subscription = ticket.join(self.completion_inbox.primitive_waiter(demand_key));
+            self.transition_task(task_id, TaskState::Parked)?;
+            self.primitive_pending.insert(
+                demand_key,
+                PrimitivePending {
+                    ticket,
+                    authority,
+                    subscription,
+                    waiters: Vec::new(),
+                    memo_location: location.clone(),
+                    memo_preimage: demand_preimage.clone(),
+                    memo_policy,
+                    callbacks: Vec::new(),
+                    root: Some(EffectRootPending {
+                        task_id,
+                        location: location.clone(),
+                        demand_preimage: demand_preimage.clone(),
+                        receipt: receipt.clone(),
+                        result_ty: node.ty.clone(),
+                        function: island.function,
+                        node: node.id,
+                        span: node.span,
+                        realized_as,
+                    }),
+                },
+            );
+            self.observe_effect_frontier();
+            break;
+        }
+        Ok(RegisteredEffectSubmission {
+            demand: demand_key,
+            capability,
+            root: RootSubmission::Pending(demand_key),
+        })
+    }
+
     /// Submit one projection demand against an in-flight REGISTERED effect —
     /// the rail's generalization of [`Self::submit_exec_projection`]. The
     /// projection has its own demand identity and memo location; its readiness
@@ -5814,7 +6416,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
 
         if let Some(value) = self
             .effect_progress_ready
-            .remove(&(execution, projection))
+            .remove(&(execution, projection.clone()))
         {
             self.publish_effect_projection(demand, &value, EffectProjectionAuthority::Protocol)?;
             return Ok(RootSubmission::Ready(
@@ -5822,6 +6424,31 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                     .remove(&demand)
                     .expect("published progressive root has a result"),
             ));
+        }
+        // A projection may park only against an authority that can still serve
+        // it: an in-flight effect (live publication, or its completion as the
+        // fallback). Serving from a MEMOIZED completion's witnessed
+        // publications is the deferred remainder of the rule — until it lands,
+        // demanding a projection of an already-settled effect is a loud typed
+        // fault, never a hang.
+        if !self.primitive_pending.contains_key(&execution) {
+            let pending = self
+                .effect_projection_pending
+                .remove(&demand)
+                .expect("the just-parked projection remains present");
+            self.transition_task(pending.task_id, TaskState::Running)?;
+            return Err(Box::new(MachineError::runtime(
+                MachineOperation::Effect,
+                RuntimeFault::EffectHostFailure {
+                    detail: format!(
+                        "projection {projection:?} was demanded of effect {execution:?}, which \
+                         is not in flight; serving from a memoized completion is not yet \
+                         implemented"
+                    ),
+                },
+                None,
+                Some(demand),
+            )));
         }
         Ok(RootSubmission::Pending(demand))
     }
@@ -8413,6 +9040,16 @@ fn primitive_value_to_frozen(
             .map(|value| primitive_value_to_frozen(element, value))
             .collect::<Result<Vec<_>, _>>()
             .map(FrozenValue::DenseArray),
+        (Type::Map { key, value: entry }, PrimitiveValueBody::OrderedMap(rows)) => rows
+            .iter()
+            .map(|(row_key, row_value)| {
+                Ok((
+                    primitive_value_to_frozen(key, row_key)?,
+                    primitive_value_to_frozen(entry, row_value)?,
+                ))
+            })
+            .collect::<Result<Vec<_>, Box<MachineError>>>()
+            .map(FrozenValue::OrderedMap),
         _ => effect_fault("primitive value cannot be frozen as its invocation type"),
     }
 }
@@ -8571,93 +9208,6 @@ fn effect_machine_error(detail: &'static str) -> Box<MachineError> {
 
 fn effect_fault<T>(detail: &'static str) -> Result<T, Box<MachineError>> {
     Err(effect_machine_error(detail))
-}
-
-fn archive_directory(root: &Path) -> Result<Vec<u8>, String> {
-    fn collect(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
-        let mut entries = std::fs::read_dir(directory)
-            .map_err(|error| {
-                format!(
-                    "read exec output directory `{}`: {error}",
-                    directory.display()
-                )
-            })?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| format!("read exec output entry: {error}"))?;
-        entries.sort_by_key(std::fs::DirEntry::file_name);
-        for entry in entries {
-            let path = entry.path();
-            let metadata = std::fs::symlink_metadata(&path)
-                .map_err(|error| format!("inspect exec output `{}`: {error}", path.display()))?;
-            if metadata.file_type().is_symlink() {
-                return Err(format!(
-                    "exec output symlink `{}` is not yet supported",
-                    path.display()
-                ));
-            }
-            if metadata.is_dir() {
-                collect(&path, files)?;
-            } else if metadata.is_file() {
-                files.push(path);
-            }
-        }
-        Ok(())
-    }
-
-    fn write_octal(dst: &mut [u8], value: u64) -> Result<(), String> {
-        let width = dst
-            .len()
-            .checked_sub(1)
-            .ok_or_else(|| "ustar octal field was empty".to_owned())?;
-        let text = format!("{value:0width$o}\0");
-        if text.len() != dst.len() {
-            return Err(format!(
-                "ustar value {value} overflowed {} bytes",
-                dst.len()
-            ));
-        }
-        dst.copy_from_slice(text.as_bytes());
-        Ok(())
-    }
-
-    let mut files = Vec::new();
-    collect(root, &mut files)?;
-    files.sort();
-    let mut archive = Vec::new();
-    for file in files {
-        let relative = file
-            .strip_prefix(root)
-            .map_err(|_| format!("exec output `{}` escaped its workspace", file.display()))?;
-        let relative = relative
-            .components()
-            .map(|component| component.as_os_str().to_string_lossy())
-            .collect::<Vec<_>>()
-            .join("/");
-        if relative.len() > 100 {
-            return Err(format!("exec output path `{relative}` exceeds ustar v1"));
-        }
-        let bytes = std::fs::read(&file)
-            .map_err(|error| format!("read exec output `{}`: {error}", file.display()))?;
-        let mut header = [0u8; 512];
-        header[..relative.len()].copy_from_slice(relative.as_bytes());
-        header[100..108].copy_from_slice(b"0000644\0");
-        header[108..116].copy_from_slice(b"0000000\0");
-        header[116..124].copy_from_slice(b"0000000\0");
-        write_octal(&mut header[124..136], bytes.len() as u64)?;
-        header[136..148].copy_from_slice(b"00000000000\0");
-        header[148..156].fill(b' ');
-        header[156] = b'0';
-        header[257..263].copy_from_slice(b"ustar\0");
-        header[263..265].copy_from_slice(b"00");
-        let checksum: u32 = header.iter().map(|byte| u32::from(*byte)).sum();
-        let checksum = format!("{checksum:06o}\0 ");
-        header[148..156].copy_from_slice(checksum.as_bytes());
-        archive.extend_from_slice(&header);
-        archive.extend_from_slice(&bytes);
-        archive.resize(archive.len().div_ceil(512) * 512, 0);
-    }
-    archive.resize(archive.len() + 1024, 0);
-    Ok(archive)
 }
 
 fn invalid_realized_result(lowered: &LoweringArtifact, size: usize) -> TaskFault {
@@ -9460,6 +10010,7 @@ fn backend_seam(echo: Echo) -> Stream<Check> {
                 memo_preimage: preimage,
                 memo_policy: PrimitiveMemoPolicy::Volatile,
                 callbacks: Vec::new(),
+                root: None,
             },
         );
         (demand, authority)

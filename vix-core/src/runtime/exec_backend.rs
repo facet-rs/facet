@@ -226,6 +226,97 @@ fn read_exec_stdout(
     Ok(output)
 }
 
+/// Capture a completed workspace as ustar archive bytes — the raw form the exec
+/// outcome's canonical `Tree` is derived from. This is domain code the backend
+/// side of the process boundary owns (the scheduler never touches the
+/// filesystem); it lives here beside the workspace it captures.
+pub fn archive_directory(root: &Path) -> Result<Vec<u8>, String> {
+    fn collect(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+        let mut entries = std::fs::read_dir(directory)
+            .map_err(|error| {
+                format!(
+                    "read exec output directory `{}`: {error}",
+                    directory.display()
+                )
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("read exec output entry: {error}"))?;
+        entries.sort_by_key(std::fs::DirEntry::file_name);
+        for entry in entries {
+            let path = entry.path();
+            let metadata = std::fs::symlink_metadata(&path)
+                .map_err(|error| format!("inspect exec output `{}`: {error}", path.display()))?;
+            if metadata.file_type().is_symlink() {
+                return Err(format!(
+                    "exec output symlink `{}` is not yet supported",
+                    path.display()
+                ));
+            }
+            if metadata.is_dir() {
+                collect(&path, files)?;
+            } else if metadata.is_file() {
+                files.push(path);
+            }
+        }
+        Ok(())
+    }
+
+    fn write_octal(dst: &mut [u8], value: u64) -> Result<(), String> {
+        let width = dst
+            .len()
+            .checked_sub(1)
+            .ok_or_else(|| "ustar octal field was empty".to_owned())?;
+        let text = format!("{value:0width$o}\0");
+        if text.len() != dst.len() {
+            return Err(format!(
+                "ustar value {value} overflowed {} bytes",
+                dst.len()
+            ));
+        }
+        dst.copy_from_slice(text.as_bytes());
+        Ok(())
+    }
+
+    let mut files = Vec::new();
+    collect(root, &mut files)?;
+    files.sort();
+    let mut archive = Vec::new();
+    for file in files {
+        let relative = file
+            .strip_prefix(root)
+            .map_err(|_| format!("exec output `{}` escaped its workspace", file.display()))?;
+        let relative = relative
+            .components()
+            .map(|component| component.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+        if relative.len() > 100 {
+            return Err(format!("exec output path `{relative}` exceeds ustar v1"));
+        }
+        let bytes = std::fs::read(&file)
+            .map_err(|error| format!("read exec output `{}`: {error}", file.display()))?;
+        let mut header = [0u8; 512];
+        header[..relative.len()].copy_from_slice(relative.as_bytes());
+        header[100..108].copy_from_slice(b"0000644\0");
+        header[108..116].copy_from_slice(b"0000000\0");
+        header[116..124].copy_from_slice(b"0000000\0");
+        write_octal(&mut header[124..136], bytes.len() as u64)?;
+        header[136..148].copy_from_slice(b"00000000000\0");
+        header[148..156].fill(b' ');
+        header[156] = b'0';
+        header[257..263].copy_from_slice(b"ustar\0");
+        header[263..265].copy_from_slice(b"00");
+        let checksum: u32 = header.iter().map(|byte| u32::from(*byte)).sum();
+        let checksum = format!("{checksum:06o}\0 ");
+        header[148..156].copy_from_slice(checksum.as_bytes());
+        archive.extend_from_slice(&header);
+        archive.extend_from_slice(&bytes);
+        archive.resize(archive.len().div_ceil(512) * 512, 0);
+    }
+    archive.resize(archive.len() + 1024, 0);
+    Ok(archive)
+}
+
 pub(crate) fn validate_exec_product_path(path: &str) -> Result<(), String> {
     if path.is_empty() {
         return Err("progressive exec product path was empty".to_owned());
