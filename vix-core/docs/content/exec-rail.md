@@ -66,8 +66,24 @@ A registered declaration marks which request arguments are capabilities, and
 the rail derives the effect demand preimage generically:
 `closure = the normalized request recipe`,
 `arguments = the capability arguments' identities, in declaration order`.
-That is byte-for-byte the preimage `submit_exec` builds by hand today, so
-**moving exec onto the rail re-keys nothing**.
+That is the same preimage *shape* `submit_exec` builds by hand today, so
+**moving exec onto the rail changes no discriminating property of the key**.
+
+**AMENDED under implementation (stage 2).** "Byte-for-byte" was wrong, and the
+error was internal to this document: this section claimed byte-equality while
+the paragraph below it specifies a *different* framing — the generic
+`vix.primitive.effect-plan.v1` domain separator over the primitive identity and
+the non-capability argument identities, where exec hand-rolled
+`vix.exec.plan.v1` over the raw argv strings. Both cannot hold. The generic
+derivation is the right one (a hook that reproduced exec's private framing
+would be exactly the per-primitive scheduler code the rail exists to delete),
+so the closure hash *does* change and old exec memo entries do not carry
+forward. What is preserved is everything identity is for, and it is pinned by
+test: the same plan under the same capability is one demand at any number of
+source sites and across runs; a different plan re-keys through the closure
+alone; a different capability re-keys through the arguments alone; no source
+location enters the derivation. A cold first run after the move is the whole
+cost.
 
 The role split is what makes the two halves of a capability separable: the
 *identity* enters the preimage (it is what the demand means), while the *value*
@@ -160,6 +176,30 @@ Stated so the implementation cannot silently claim more than it ships:
 - Fixtures do not ride this rail. `FixtureStore` is an `OriginAdapter` —
   origin-shaped, not exec-shaped — and exits with the fetch/origin work.
 
+Three more the move itself surfaced:
+
+- **The `ExecOutcome<A>` upgrade did not land with the move.** The bullet above
+  reads "upgrading the surface shape to the settled one is part of the move";
+  it is separable and was separated. The move is a *relocation* — the outcome
+  is framed byte-identically to what `Op::Exec` framed, so no `ExecOutcome`
+  identity changes — while the settled shape is a change to what a program
+  sees, with its own surface, replay, and identity consequences. Landing both
+  at once would have made every parity failure ambiguous.
+- **Serving a projection from a memoized completion** is still not implemented
+  (deferred from stage 1 and not needed by the acceptance tests: a demanded
+  projection is either announced in flight or served from its producer's live
+  completion). It no longer hangs, though — demanding a projection of an
+  effect that is not in flight is now a loud typed fault.
+- **Exec's lowering stays in the core compiler**, because `exec` is *syntax*
+  (a keyword, a capability tag, a backtick template), and syntax is the
+  language's. This is the `tree-read` precedent, not a violation of "core
+  spells no name": what core holds is the request record's shape and the
+  primitive id, exactly as it holds `tree-read`'s. The command grammar runs
+  there too — the template materializes into ordinary VIR (literals,
+  `Int`/`Path` rendering, adjacency concatenation) — which is what makes
+  "the rail hashes what it is given, already canonical" true rather than
+  aspirational.
+
 ## Acceptance
 
 The implementation is done when, beyond behavior parity:
@@ -175,9 +215,20 @@ The implementation is done when, beyond behavior parity:
    synchronization point.
 3. **Nothing re-keys.** The same program under the same capability produces
    the same demand key before and after the move (the untar precedent:
-   identity survives the rail).
+   identity survives the rail). **AMENDED (stage 2):** the closure hash does
+   change, because the generic derivation is not exec's private framing — see
+   move 1. What is pinned by test is every discriminating property of the key:
+   one demand per plan-under-capability at any number of sites, each half of
+   the preimage re-keying independently, and no source location in either.
 4. **Core is clean.** No `Op::Exec`, no exec-named scheduler state, no
-   capability record-name matches anywhere in `vix-core`.
+   capability record-name matches anywhere in `vix-core`. **(Stage 2 went
+   further than the letter of this:** the capability *type names* — `Echo`,
+   `Sh`, `ProgressiveSh` — were also core data, in the compiler's resolver and
+   the axiom schema batch. They are declarations now
+   (`binding::CapabilityTypeDecl`, injected through `CompilerConfig` like host
+   types), so a capability package's nominal vocabulary lives entirely with the
+   package. Nothing re-keys: a capability record's schema was always
+   structural.**)
 
 ## Staging
 
@@ -190,3 +241,21 @@ Two implementation steps, each gateable alone:
 2. **The move** — exec becomes a registered primitive in `vixen-primitives` on
    the extended rail; the core machinery listed above deletes; the acceptance
    tests land.
+
+Both have landed. Two partition rules the move forced, recorded because they
+are consequences of the rail rather than of exec:
+
+- An `EFFECT`-marked primitive invocation is not *also* hoisted as a settled
+  shared publication. It is already published — as an effect island, or as a
+  progressive value against a still-running producer — and hoisting it twice
+  publishes one node as two islands. Before the move `Op::Exec` was structurally
+  incapable of being a shared candidate, so the rule had nothing to state.
+- A registered effect root builds its own **request**. The pure construction
+  spine between an effect's published value inputs and its invocation (the
+  record, the materialized argv) belongs to the effect island, because the
+  effect plane cannot reopen a published aggregate — a published array is
+  deliberately not frozen, freezing being structural work with no consumer off
+  the snapshot path. Recomputing pure construction is free; the operands it
+  consumes are still ordinary published values. Before the move, exec's argv
+  was inline `CommandArgument` data rather than nodes, so this too had nothing
+  to state.
