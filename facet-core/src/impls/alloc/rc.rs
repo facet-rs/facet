@@ -382,6 +382,12 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Rc<[U]> {
                 name: "T",
                 shape: <[U]>::SHAPE,
             }])
+            // `Rc<[U]>` propagates `U`'s variance, exactly like `Rc<T>` above.
+            // This arm is a separate impl and was missing the declaration.
+            .variance(VarianceDesc {
+                base: Variance::Bivariant,
+                deps: &const { [VarianceDep::covariant(U::SHAPE)] },
+            })
             .vtable_indirect(
                 &const {
                     VTableIndirect {
@@ -698,6 +704,11 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Weak<[U]> {
                 name: "T",
                 shape: <[U]>::SHAPE,
             }])
+            // `rc::Weak<[U]>` propagates `U`'s variance, like `Weak<T>` above.
+            .variance(VarianceDesc {
+                base: Variance::Bivariant,
+                deps: &const { [VarianceDep::covariant(U::SHAPE)] },
+            })
             .vtable_indirect(
                 &const {
                     VTableIndirect {

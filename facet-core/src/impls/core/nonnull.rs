@@ -3,6 +3,7 @@ use core::ptr::NonNull;
 use crate::{
     Def, Facet, HashProxy, KnownPointer, OxPtrConst, PointerDef, PointerFlags, PointerVTable,
     PtrConst, PtrMut, PtrUninit, Shape, ShapeBuilder, Type, TypeParam, UserType, VTableIndirect,
+    Variance, VarianceDep, VarianceDesc,
 };
 
 // Debug for NonNull<T> - just prints the pointer value
@@ -109,6 +110,16 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for core::ptr::NonNull<T> {
                 shape: T::SHAPE,
             }])
             .vtable_indirect(&NONNULL_VTABLE)
+            // `NonNull<T>` is covariant with respect to T. This is not merely
+            // book-keeping: the `Def::Pointer` above installs a `borrow_fn`, and
+            // `PeekPointer::borrow_inner` is a *safe* method that calls it. So safe
+            // reflection code can dereference a `NonNull` — widening
+            // `NonNull<&'a str>` to `'static` and then borrowing through it yields a
+            // dangling `&'static str` without a single `unsafe` block in user code.
+            .variance(VarianceDesc {
+                base: Variance::Bivariant,
+                deps: &const { [VarianceDep::covariant(T::SHAPE)] },
+            })
             .eq()
             .copy()
             .build()

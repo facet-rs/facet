@@ -20,7 +20,26 @@ use iddqd::{IdOrdItem, IdOrdMap};
 use crate::{
     Def, Facet, IterVTable, OxPtrMut, OxPtrUninit, PtrConst, PtrMut, PtrUninit, SetDef, SetVTable,
     Shape, ShapeBuilder, Type, TypeNameFn, TypeNameOpts, TypeOpsIndirect, TypeParam, UserType,
+    Variance, VarianceDep, VarianceDesc,
 };
+
+/// Variance shared by all four iddqd maps: they own their items with no interior
+/// mutability, so they propagate the item type's variance.
+///
+/// Note that today every one of these impls additionally bounds `T: 'static`, so
+/// `T` can never actually borrow and the computed answer is `Bivariant` in
+/// practice — these four are *not* exploitable. The declaration is still written
+/// out so the shapes state their variance rather than silently inheriting the
+/// `ShapeBuilder` default, which would become wrong the moment the `'static`
+/// bound is relaxed.
+macro_rules! iddqd_item_variance {
+    ($T:ty) => {
+        VarianceDesc {
+            base: Variance::Bivariant,
+            deps: &const { [VarianceDep::covariant(<$T>::SHAPE)] },
+        }
+    };
+}
 
 // =============================================================================
 // IdHashMap<T, S>
@@ -166,6 +185,7 @@ where
                 shape: T::SHAPE,
             }])
             .inner(T::SHAPE)
+            .variance(iddqd_item_variance!(T))
             .type_ops_indirect(
                 &const {
                     TypeOpsIndirect {
@@ -310,6 +330,7 @@ where
                 shape: T::SHAPE,
             }])
             .inner(T::SHAPE)
+            .variance(iddqd_item_variance!(T))
             .type_ops_indirect(
                 &const {
                     TypeOpsIndirect {
@@ -469,6 +490,7 @@ where
                 shape: T::SHAPE,
             }])
             .inner(T::SHAPE)
+            .variance(iddqd_item_variance!(T))
             .type_ops_indirect(
                 &const {
                     TypeOpsIndirect {
@@ -629,6 +651,7 @@ where
                 shape: T::SHAPE,
             }])
             .inner(T::SHAPE)
+            .variance(iddqd_item_variance!(T))
             .type_ops_indirect(
                 &const {
                     TypeOpsIndirect {

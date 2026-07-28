@@ -14,3 +14,4 @@ mod serialize;
 mod set;
 mod struct_;
 mod value;
+mod variance_uaf_regression;

@@ -74,6 +74,17 @@ The role split is what makes the two halves of a capability separable: the
 is redeemed on the host side by the backend (it is what the demand runs).
 `machine.primitive.capability-role` pins this.
 
+"Normalized request recipe" deserves precision, because the generic rail has
+no command grammar to normalize with. The default derivation is: primitive
+identity (namespace, name, version) plus every non-capability argument's
+identity, in declaration order, domain-separated
+(`vix.primitive.effect-plan.v1`). Grammar normalization
+(`machine.primitive.exec-plan-normalized`) is a *per-capability refinement of
+the arguments before the request is built* — the capability's command grammar
+normalizes the plan, and the normalized plan is what the request carries — it
+is never a hook inside the derivation. The rail hashes what it is given; what
+it is given is already canonical.
+
 ### 2. The process boundary is a service, and hermeticity is an identity claim
 
 Registered primitives already receive external authority as explicit
@@ -112,6 +123,14 @@ generalization of `submit_exec_projection`, with the `ExecTreeText` special
 case replaced by the projection vocabulary the value's schema already has. The
 settled tail of the response — `answer` and the completed `tree` — is published
 once, at completion, through the ordinary ticket.
+
+Two vocabulary points the implementation surfaced. A served projection is a
+*read*, and a read has a source: on the rail the source is caller-supplied,
+and for exec it is pinned as the capability — the projection was witnessed on
+the authority of that capability's output protocol, and the receipt should say
+whose protocol vouched. And `ReadProjection` becomes `Ord`: a projection is
+half of a progressive-readiness key (effect demand × projection), so the
+scheduler indexes published-but-not-yet-demanded products by it.
 
 This is what makes the two pipeline laws testable facts rather than intentions:
 demanding `out.answer` parks until termination (the answer is a fact about a
