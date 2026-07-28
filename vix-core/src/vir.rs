@@ -697,6 +697,15 @@ pub enum CommandPiece {
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Type {
+    /// The type of an expression that does not return: `fail e`. It is
+    /// inhabited by nothing, so it is compatible with every expected type and
+    /// no value of it is ever laid out, published, or interned. A node keeps
+    /// this type only until a surrounding expression supplies a concrete one;
+    /// a node still typed `Never` when its island is lowered is one whose
+    /// evaluation leaves the frame through the outcome return.
+    ///
+    /// r[impl machine.error.failure-is-a-value]
+    Never,
     Bool,
     Int,
     Check,
@@ -914,6 +923,10 @@ impl Type {
     #[must_use]
     pub fn schema_ref(&self) -> SchemaRef {
         match self {
+            // Never is uninhabited: it names no value, so it has no semantic
+            // schema a value identity could be framed under. The schema exists
+            // only so diagnostics and VIR dumps can spell the type.
+            Self::Never => builtin_schema("Never"),
             Self::Bool => builtin_schema("Bool"),
             Self::Int => builtin_schema("Int"),
             Self::Check => builtin_schema("Check"),
@@ -1120,6 +1133,7 @@ impl Type {
     #[must_use]
     pub fn name(&self) -> String {
         match self {
+            Self::Never => "!".to_owned(),
             Self::Bool => "Bool".to_owned(),
             Self::Int => "Int".to_owned(),
             Self::Check => "Check".to_owned(),
@@ -1169,6 +1183,9 @@ impl Type {
             // An `Order<T>` recipe is never materialized in a Weavy frame; a
             // consuming operation reads its closure recipe directly.
             Self::Order(_) => Some(0),
+            // A diverging expression leaves the frame through the outcome
+            // return, so it occupies no result words.
+            Self::Never => Some(0),
             Self::Function { .. } => Some(2),
             Self::StreamCheck => None,
             Self::Tuple(elements) => elements.iter().try_fold(0usize, |width, element| {
@@ -1185,6 +1202,22 @@ impl Type {
                 })?
                 .checked_add(1),
         }
+    }
+
+    /// Can a value of this type leave a Weavy frame as a published value — one
+    /// with a semantic schema and a content hash? Closures, keyed codata
+    /// recipes, orders, and check streams are island-interior shapes with no
+    /// published form, and `Never` has no values at all.
+    #[must_use]
+    pub fn is_publishable_value(&self) -> bool {
+        !matches!(
+            self,
+            Self::Never
+                | Self::Function { .. }
+                | Self::StreamCheck
+                | Self::Stream { .. }
+                | Self::Order(_)
+        )
     }
 
     #[must_use]
@@ -1205,7 +1238,11 @@ impl Type {
                 .variants
                 .iter()
                 .all(|variant| variant.payload.equality_is_structural()),
-            Self::Check | Self::StreamCheck | Self::Stream { .. } | Self::Order(_) => false,
+            Self::Check
+            | Self::StreamCheck
+            | Self::Stream { .. }
+            | Self::Order(_)
+            | Self::Never => false,
         }
     }
 
@@ -1237,7 +1274,11 @@ impl Type {
                             .all(|field| field.ty.structural_order_is_defined()),
                     })
             }
-            Self::Check | Self::StreamCheck | Self::Stream { .. } | Self::Order(_) => false,
+            Self::Check
+            | Self::StreamCheck
+            | Self::Stream { .. }
+            | Self::Order(_)
+            | Self::Never => false,
         }
     }
 }
@@ -1546,6 +1587,16 @@ pub enum Op {
     /// demand publishes and `Result::Err(failure)` when it language-fails —
     /// the failure participates as an ordinary value, address intact.
     Try,
+    /// `fail payload`: raise a language failure carrying the authored payload.
+    /// The single input is the payload value; the node produces no value, so
+    /// nothing downstream of it in its arm ever runs. The stable source site is
+    /// the node's trace id and the producing island's `RecipeId`; the payload is
+    /// realized and interned exactly like a published value, so the raised
+    /// failure has a schema and a content hash like anything else.
+    ///
+    /// r[impl machine.error.failure-is-a-value]
+    /// r[impl machine.error.failure-source-site-identity]
+    Fail,
     /// Open one compiler-validated harness fixture tree as a lazy `Tree`
     /// constant. Reads nothing: the value's identity is the pending
     /// fixture-tree reference; projections resolve — and record reads — only
@@ -4693,6 +4744,7 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
             }
         }
         Op::Try => op.push(86),
+        Op::Fail => op.push(87),
         Op::FixtureTree(name) => {
             op.push(90);
             frame(&mut op, name.as_bytes());
@@ -4796,6 +4848,7 @@ fn localize_control_regions(op: &mut Op, map: &impl Fn(NodeId) -> NodeId) {
 
 pub(crate) fn canonical_type(ty: &Type) -> Vec<u8> {
     match ty {
+        Type::Never => b"never".to_vec(),
         Type::Bool => b"bool".to_vec(),
         Type::Int => b"int".to_vec(),
         Type::Check => b"check".to_vec(),

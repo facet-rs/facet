@@ -3,6 +3,9 @@
 // grows this grammar and its generated typed AST before it grows the checker.
 
 const PREC = {
+  // `fail` reduces below every operator, so its payload is everything to its
+  // right up to the enclosing delimiter.
+  raise: 0,
   or: 1,
   and: 2,
   compare: 3,
@@ -270,6 +273,7 @@ module.exports = grammar({
         $.unary,
         $.exec_expr,
         $.command_expr,
+        $.fail_expr,
         $.try_expr,
         $.call,
         $.where_call,
@@ -346,6 +350,11 @@ module.exports = grammar({
     // trailing `?` catches the exec demand edge, not the command value.
     exec_expr: ($) =>
       prec(PREC.exec, seq("exec", field("command", $.command_expr))),
+    // `fail payload` raises a language failure carrying an authored payload.
+    // It reduces last, so the payload is the whole expression that follows
+    // (`fail Missing { field: name }`, `fail a ++ b`), and the expression has
+    // the type of nothing at all — it typechecks wherever it is written.
+    fail_expr: ($) => prec.right(PREC.raise, seq("fail", field("value", $._expr))),
     // Postfix `?` catches any expression edge: the operand's typed language
     // failure becomes `Result::Err`, success becomes `Result::Ok`.
     try_expr: ($) =>

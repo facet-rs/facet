@@ -21,6 +21,13 @@ you, because they are part of what the failure *is*. The current source span and
 the **demand chain** — the breadcrumb of demands that led here — are reconstructed
 when someone looks (see below).
 
+*Any* value means any **value**: the payload is realized and interned exactly as
+a published one is, so it has a schema and a content hash, and the failure's
+identity is that payload plus the address. A closure, a keyed codata recipe, and
+an `Order<T>` are island-interior shapes rather than values, so raising one is a
+typed source diagnostic — a failure carrying nothing you could look at is the
+bug this chapter exists to prevent.
+
 You cannot forget any of it, because you never attach any of it.
 
 > A failure that cannot name a published subject is a bug in the machine, not in

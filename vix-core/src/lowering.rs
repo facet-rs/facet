@@ -127,14 +127,63 @@ pub struct ArrayOutcomeAbi {
     pub string_invalid_integer_variant: u32,
     pub string_integer_overflow_variant: u32,
     pub int_division_by_zero_variant: u32,
+    /// One variant per distinct authored `fail` payload type in the island, in
+    /// canonical type order after the machine variants.
+    pub raised_variants: Vec<RaisedOutcomeVariant>,
 }
 
+/// One authored `fail` payload type and the outcome variant a raise of it
+/// travels in. The list is island-wide, so a callee's raise variant index is
+/// its caller's: propagating a raise across a call boundary forwards the
+/// variant it found rather than translating it.
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct RaisedOutcomeVariant {
+    pub variant: u32,
+    pub payload: Type,
+}
+
+/// The number of machine-raised outcome variants, which is where the authored
+/// `fail` variants start. Machine variant indices are fixed constants, so a
+/// program with raises decodes exactly as one without.
+const MACHINE_OUTCOME_VARIANTS: u32 = 10;
+
 impl ArrayOutcomeAbi {
+    /// The outcome ABI of an island that raises nothing.
     #[must_use]
     pub fn for_value(value: Type) -> Self {
+        Self::new(value, &[])
+    }
+
+    /// The outcome ABI of an island whose authored `fail` sites carry payloads
+    /// of exactly `raised`, canonically ordered and deduplicated.
+    #[must_use]
+    pub fn new(value: Type, raised: &[Type]) -> Self {
+        let name = if raised.is_empty() {
+            format!("$array_outcome<{}>", value.name())
+        } else {
+            format!(
+                "$array_outcome<{}; {}>",
+                value.name(),
+                raised.iter().map(Type::name).collect::<Vec<_>>().join(", ")
+            )
+        };
+        let mut raised_variants = Vec::with_capacity(raised.len());
+        let mut raised_enum_variants = Vec::with_capacity(raised.len());
+        for (index, payload) in raised.iter().enumerate() {
+            let variant = MACHINE_OUTCOME_VARIANTS
+                + u32::try_from(index).expect("raised payload index fits u32");
+            raised_enum_variants.push(EnumVariant {
+                name: format!("Raised{index}"),
+                payload: VariantPayload::Tuple(vec![Type::Int, payload.clone()]),
+            });
+            raised_variants.push(RaisedOutcomeVariant {
+                variant,
+                payload: payload.clone(),
+            });
+        }
         Self {
             ty: Type::Enum(EnumType::new(
-                format!("$array_outcome<{}>", value.name()),
+                name,
                 vec![
                     EnumVariant {
                         name: "Ok".to_owned(),
@@ -176,7 +225,10 @@ impl ArrayOutcomeAbi {
                         name: "IntDivisionByZero".to_owned(),
                         payload: VariantPayload::Tuple(vec![Type::Int]),
                     },
-                ],
+                ]
+                .into_iter()
+                .chain(raised_enum_variants)
+                .collect(),
             )),
             ok_variant: 0,
             index_out_of_bounds_variant: 1,
@@ -188,8 +240,58 @@ impl ArrayOutcomeAbi {
             string_invalid_integer_variant: 7,
             string_integer_overflow_variant: 8,
             int_division_by_zero_variant: 9,
+            raised_variants,
         }
     }
+
+    /// The outcome variant a raise of `payload` travels in.
+    #[must_use]
+    pub fn raised_variant(&self, payload: &Type) -> Option<u32> {
+        self.raised_variants
+            .iter()
+            .find(|raised| &raised.payload == payload)
+            .map(|raised| raised.variant)
+    }
+
+    /// The payload type carried by outcome variant `variant`, when it is a
+    /// raise rather than a machine failure.
+    #[must_use]
+    pub fn raised_payload(&self, variant: u32) -> Option<&Type> {
+        self.raised_variants
+            .iter()
+            .find(|raised| raised.variant == variant)
+            .map(|raised| &raised.payload)
+    }
+}
+
+/// Every distinct payload type an authored `fail` raises anywhere in `island`,
+/// in canonical type order. The whole island shares one list, so a callee's
+/// raise variant index is its caller's and a closure's outcome contract is the
+/// same enum as the frame that calls it.
+fn island_raised_payload_types(island: &Island) -> Vec<Type> {
+    let mut types = Vec::new();
+    let mut collect = |nodes: &[Node]| {
+        for node in nodes {
+            if !matches!(node.op, Op::Fail) {
+                continue;
+            }
+            let Some(payload) = node
+                .inputs
+                .first()
+                .and_then(|input| nodes.iter().find(|candidate| candidate.id == *input))
+            else {
+                continue;
+            };
+            types.push(payload.ty.clone());
+        }
+    };
+    collect(&island.nodes);
+    for function in &island.callees {
+        collect(&function.nodes);
+    }
+    types.sort_by_cached_key(crate::vir::canonical_type);
+    types.dedup();
+    types
 }
 
 struct PendingValueConstant {
@@ -545,10 +647,16 @@ fn lower_island(
     // strings are decoded as realized values and freeze renderably.
     let publishes_aggregate = island.purpose == IslandPurpose::Value
         && matches!(&output.ty, Type::Record(_) | Type::Tuple(_) | Type::Enum(_));
-    let array_outcome =
-        (island_contains_checked_collection_ops(island) || publishes_aggregate || is_snapshot)
-            .then(|| ArrayOutcomeAbi::for_value(output.ty.clone()));
-    let schemas = SchemaAssignments::build(island, array_outcome.is_some())?;
+    // An island that raises needs the outcome envelope for the same reason a
+    // checked collection op does: a failure leaves the frame as an outcome
+    // variant, never as a result word.
+    let raised = island_raised_payload_types(island);
+    let array_outcome = (island_contains_checked_collection_ops(island)
+        || publishes_aggregate
+        || is_snapshot
+        || !raised.is_empty())
+    .then(|| ArrayOutcomeAbi::new(output.ty.clone(), &raised));
+    let schemas = SchemaAssignments::build(island, array_outcome.is_some(), &raised)?;
 
     let function_ids = island.local_function_ids();
     let functions = island
@@ -582,7 +690,10 @@ fn lower_island(
             constant_closures.get(&island.function).ok_or_else(|| {
                 lowering_diagnostic(output.span, "island function has no constant closure")
             })?,
-            array_outcome.as_ref().map(|_| output.ty.clone()),
+            array_outcome.as_ref().map(|_| OutcomeRequest {
+                value: output.ty.clone(),
+                raised: &raised,
+            }),
             output.span,
         )?,
     );
@@ -597,7 +708,10 @@ fn lower_island(
                 constant_closures.get(&function.id).ok_or_else(|| {
                     lowering_diagnostic(function.span, "called function has no constant closure")
                 })?,
-                array_outcome.as_ref().map(|_| function.return_type.clone()),
+                array_outcome.as_ref().map(|_| OutcomeRequest {
+                    value: function.return_type.clone(),
+                    raised: &raised,
+                }),
                 function.span,
             )?,
         );
@@ -726,7 +840,11 @@ fn publication_capability_registered(ty: &Type) -> bool {
                         .all(|field| publication_capability_registered(&field.ty)),
                 })
         }
-        Type::Function { .. } | Type::StreamCheck | Type::Stream { .. } | Type::Order(_) => false,
+        Type::Function { .. }
+        | Type::StreamCheck
+        | Type::Stream { .. }
+        | Type::Order(_)
+        | Type::Never => false,
     }
 }
 
@@ -839,7 +957,8 @@ fn publication_schemas(
             | Type::Function { .. }
             | Type::StreamCheck
             | Type::Stream { .. }
-            | Type::Order(_) => {}
+            | Type::Order(_)
+            | Type::Never => {}
         }
     }
 
@@ -938,7 +1057,8 @@ fn type_contains_array(ty: &Type) -> bool {
         | Type::StreamCheck
         | Type::String
         | Type::Path
-        | Type::Extern(_) => false,
+        | Type::Extern(_)
+        | Type::Never => false,
     }
 }
 
@@ -1133,6 +1253,9 @@ struct ProgramContractBuilder<'a> {
     call_contract_targets: BTreeSet<FunctionId>,
     closure_targets: BTreeSet<FunctionId>,
     callable_outcomes: bool,
+    /// The island's canonical raise payload types, so a callable's outcome
+    /// contract is the same enum its caller builds.
+    raised: Vec<Type>,
     calls: Vec<WeavyCallContract>,
     schemas: Vec<WeavySchemaContract>,
     schema_ready: Vec<bool>,
@@ -1171,7 +1294,7 @@ struct SchemaAssignments {
 }
 
 impl SchemaAssignments {
-    fn build(island: &Island, array_outcomes: bool) -> Result<Self, Diagnostics> {
+    fn build(island: &Island, array_outcomes: bool, raised: &[Type]) -> Result<Self, Diagnostics> {
         // Cross-frame captured constants are represented by a contract entry
         // even when the owning String node is not in this function body.
         let mut types = vec![Type::Bool, Type::Int, Type::Check, Type::String];
@@ -1196,9 +1319,9 @@ impl SchemaAssignments {
                 .ok_or_else(|| {
                     lowering_diagnostic(Span { start: 0, end: 0 }, "missing island output")
                 })?;
-            add(&ArrayOutcomeAbi::for_value(output.ty.clone()).ty);
+            add(&ArrayOutcomeAbi::new(output.ty.clone(), raised).ty);
             for function in &island.callees {
-                add(&ArrayOutcomeAbi::for_value(function.return_type.clone()).ty);
+                add(&ArrayOutcomeAbi::new(function.return_type.clone(), raised).ty);
             }
         }
         types.sort_by_cached_key(crate::vir::canonical_type);
@@ -1308,7 +1431,8 @@ fn collect_schema_types(ty: &Type, out: &mut Vec<Type>) {
         | Type::StreamCheck
         | Type::String
         | Type::Path
-        | Type::Extern(_) => {}
+        | Type::Extern(_)
+        | Type::Never => {}
     }
 }
 
@@ -1695,7 +1819,8 @@ impl SemanticEqualityEmitter<'_, '_, '_> {
             | Type::Function { .. }
             | Type::StreamCheck
             | Type::Stream { .. }
-            | Type::Order(_) => {
+            | Type::Order(_)
+            | Type::Never => {
                 return Err(lowering_diagnostic(
                     node.span,
                     "equality lowering is not implemented for this VIR type",
@@ -1756,7 +1881,8 @@ impl SemanticOrderingEmitter<'_, '_, '_> {
             | Type::StreamCheck
             | Type::Stream { .. }
             | Type::Order(_)
-            | Type::Extern(_) => Err(lowering_diagnostic(
+            | Type::Extern(_)
+            | Type::Never => Err(lowering_diagnostic(
                 self.node.span,
                 "structural order is not defined for this VIR type",
             )),
@@ -2142,6 +2268,7 @@ impl<'a> ProgramContractBuilder<'a> {
             callable_outcomes: layouts
                 .values()
                 .any(|layout| layout.array_outcome.is_some()),
+            raised: island_raised_payload_types(island),
             calls: Vec::new(),
             schemas: vec![empty_schema(); schemas_preassigned.schema_count()],
             schema_ready: vec![false; schemas_preassigned.types.len()],
@@ -2458,6 +2585,19 @@ impl<'a> ProgramContractBuilder<'a> {
             }
             regions.push(self.frame_region(outcome.region.start(), &outcome.ty)?);
         }
+        for (staging, region_id) in layout
+            .raised_scratch
+            .iter()
+            .zip(self.regions.raised_scratch(function.id))
+        {
+            if region_id.0 as usize != regions.len() {
+                return Err(lowering_diagnostic(
+                    function.span,
+                    "raise payload staging contract order is not canonical",
+                ));
+            }
+            regions.push(self.frame_region(staging.region.start(), &staging.ty)?);
+        }
         let mut entries = Vec::with_capacity(
             function
                 .parameters
@@ -2611,6 +2751,9 @@ impl<'a> ProgramContractBuilder<'a> {
                 span,
                 "Order<T> has no contract frame shape",
             )),
+            // A diverging expression leaves the frame through the outcome
+            // return; it has no result words to shape.
+            Type::Never => Ok(WeavyRegionShape::default()),
         }
     }
 
@@ -2725,7 +2868,8 @@ impl<'a> ProgramContractBuilder<'a> {
             | Type::Extern(_)
             | Type::Array(_)
             | Type::Map { .. }
-            | Type::Set(_) => Ok(None),
+            | Type::Set(_)
+            | Type::Never => Ok(None),
             Type::StreamCheck => Err(lowering_diagnostic(
                 span,
                 "Stream<Check> has no contract value shape",
@@ -2895,7 +3039,7 @@ impl<'a> ProgramContractBuilder<'a> {
             entry = entry.with_value_shape(value_shape);
         }
         let result = if self.callable_outcomes {
-            ArrayOutcomeAbi::for_value(result.clone()).ty
+            ArrayOutcomeAbi::new(result.clone(), &self.raised).ty
         } else {
             result.clone()
         };
@@ -3036,6 +3180,7 @@ struct RegionAssignments {
     outcomes: BTreeMap<FunctionId, WeavyRegionId>,
     outcome_scratch: BTreeMap<FunctionId, AssignedOutcomeScratch>,
     call_outcomes: BTreeMap<FunctionId, BTreeMap<NodeId, WeavyRegionId>>,
+    raised_scratch: BTreeMap<FunctionId, Vec<WeavyRegionId>>,
 }
 
 #[derive(Clone, Copy)]
@@ -3066,6 +3211,7 @@ impl RegionAssignments {
         let mut outcomes = BTreeMap::new();
         let mut outcome_scratch = BTreeMap::new();
         let mut call_outcomes = BTreeMap::new();
+        let mut raised_scratch = BTreeMap::new();
         let mut insert = |function: FunctionId, body: &[Node], span: Span| {
             let layout = layouts.get(&function).ok_or_else(|| {
                 lowering_diagnostic(span, "missing function layout for region assignment")
@@ -3229,6 +3375,14 @@ impl RegionAssignments {
                     next += 1;
                 }
                 call_outcomes.insert(function, assigned_calls);
+                let mut assigned_raised = Vec::with_capacity(layout.raised_scratch.len());
+                for _ in &layout.raised_scratch {
+                    assigned_raised.push(WeavyRegionId(u32::try_from(next).map_err(|_| {
+                        lowering_diagnostic(span, "raise payload staging assignment exceeds u32")
+                    })?));
+                    next += 1;
+                }
+                raised_scratch.insert(function, assigned_raised);
             }
             nodes.insert(function, assigned);
             temps.insert(function, assigned_temps);
@@ -3253,6 +3407,7 @@ impl RegionAssignments {
             outcomes,
             outcome_scratch,
             call_outcomes,
+            raised_scratch,
         })
     }
 
@@ -3370,6 +3525,14 @@ impl RegionAssignments {
         })
     }
 
+    /// The staging regions this function forwards raise payloads through, in
+    /// the island's canonical raise payload order.
+    fn raised_scratch(&self, function: FunctionId) -> &[WeavyRegionId] {
+        self.raised_scratch
+            .get(&function)
+            .map_or(&[][..], Vec::as_slice)
+    }
+
     fn call_outcome(
         &self,
         function: FunctionId,
@@ -3470,6 +3633,13 @@ fn type_is_tail_copyable(ty: &Type) -> bool {
     )
 }
 
+/// The outcome ABI one function's frame must carry: the value its `Ok` variant
+/// holds, and the island's canonical raise payload types.
+struct OutcomeRequest<'a> {
+    value: Type,
+    raised: &'a [Type],
+}
+
 struct FunctionLayout {
     regions: BTreeMap<NodeId, FrameRegion>,
     typed_temps: BTreeMap<NodeId, Vec<TemporaryRegion>>,
@@ -3482,6 +3652,9 @@ struct FunctionLayout {
     array_outcome: Option<TemporaryRegion>,
     outcome_scratch: Option<OutcomeScratch>,
     call_outcomes: BTreeMap<NodeId, TemporaryRegion>,
+    /// Staging regions for forwarded raise payloads, parallel to the island's
+    /// canonical raise payload type list.
+    raised_scratch: Vec<TemporaryRegion>,
     /// VIR `Op::Call` node ids that are terminal self-calls: the call is the
     /// tail value of the function (directly, or through nested pure
     /// `If`/`Match`/`OrderedMatch` outputs) and its result flows only to the
@@ -3526,9 +3699,13 @@ impl FunctionLayout {
         parameters: &[crate::vir::Parameter],
         output: Option<NodeId>,
         constants: &BTreeSet<NodeRef>,
-        outcome_value: Option<Type>,
+        outcome: Option<OutcomeRequest<'_>>,
         span: Span,
     ) -> Result<Self, Diagnostics> {
+        let (outcome_value, raised) = match &outcome {
+            Some(outcome) => (Some(outcome.value.clone()), outcome.raised),
+            None => (None, &[][..]),
+        };
         // Terminal self-calls become in-place loops; a function that carries an
         // array outcome ABI takes the checked-call path and is out of scope here.
         let tail_self_calls = if outcome_value.is_some() {
@@ -3817,7 +3994,7 @@ impl FunctionLayout {
             constant_slots.insert(constant, slot);
         }
         let array_outcome = if let Some(value) = outcome_value {
-            let ty = ArrayOutcomeAbi::for_value(value).ty;
+            let ty = ArrayOutcomeAbi::new(value, raised).ty;
             let words = type_words(&ty, span)?;
             let region = FrameRegion::for_words(next_word, words)
                 .ok_or_else(|| lowering_diagnostic(span, "array outcome frame region overflow"))?;
@@ -3874,13 +4051,32 @@ impl FunctionLayout {
                     Op::StreamSplitMin => Type::Bool,
                     _ => node.ty.clone(),
                 };
-                let ty = ArrayOutcomeAbi::for_value(value_ty).ty;
+                let ty = ArrayOutcomeAbi::new(value_ty, raised).ty;
                 let words = type_words(&ty, node.span)?;
                 let region = FrameRegion::for_words(next_word, words).ok_or_else(|| {
                     lowering_diagnostic(node.span, "array call outcome frame region overflow")
                 })?;
                 next_word += words.as_usize();
                 call_outcomes.insert(node.id, TemporaryRegion { region, ty });
+            }
+        }
+        // One staging region per island-wide raise payload type. Forwarding a
+        // callee's raise projects the payload out of its outcome and back into
+        // this frame's, which needs somewhere typed to land.
+        let mut raised_scratch = Vec::with_capacity(raised.len());
+        if array_outcome.is_some() {
+            for payload in raised {
+                let words = type_words(payload, span)?;
+                let region = FrameRegion::for_words(next_word, words).ok_or_else(|| {
+                    lowering_diagnostic(span, "raise payload staging region overflow")
+                })?;
+                next_word = next_word
+                    .checked_add(words.as_usize())
+                    .ok_or_else(|| lowering_diagnostic(span, "function frame size overflow"))?;
+                raised_scratch.push(TemporaryRegion {
+                    region,
+                    ty: payload.clone(),
+                });
             }
         }
         // Reserve one exact typed next-argument staging region per parameter for
@@ -3924,6 +4120,7 @@ impl FunctionLayout {
             array_outcome,
             outcome_scratch,
             call_outcomes,
+            raised_scratch,
             tail_self_calls,
             frame_size,
         })
@@ -4352,7 +4549,8 @@ fn ordering_temporary_types(ty: &Type, out: &mut Vec<Type>) {
         | Type::Function { .. }
         | Type::StreamCheck
         | Type::Stream { .. }
-        | Type::Order(_) => {}
+        | Type::Order(_)
+        | Type::Never => {}
         Type::Tuple(fields) => {
             out.extend([Type::Int, Type::Int]);
             for field in fields {
@@ -4451,7 +4649,8 @@ fn comparison_temporary_types(ty: &Type, out: &mut Vec<Type>) {
         | Type::Function { .. }
         | Type::StreamCheck
         | Type::Stream { .. }
-        | Type::Order(_) => {}
+        | Type::Order(_)
+        | Type::Never => {}
     }
 }
 
@@ -4648,15 +4847,19 @@ fn lower_vir_function(
         node: output,
     }));
     if let Some(outcome) = &layout.array_outcome {
-        let outcome_region = context.regions.array_outcome(function, output_node.span)?;
-        code.push(WeavyOp::EnumConstruct {
-            dst: outcome_region,
-            variant: 0,
-            fields: vec![StructuralFieldSource {
-                field: 0,
-                source: output_value.region_id,
-            }],
-        });
+        // A function whose output diverges has already written its outcome and
+        // jumped: there is no `Ok` to construct, only the return to bind.
+        if output_node.ty != Type::Never {
+            let outcome_region = context.regions.array_outcome(function, output_node.span)?;
+            code.push(WeavyOp::EnumConstruct {
+                dst: outcome_region,
+                variant: 0,
+                fields: vec![StructuralFieldSource {
+                    field: 0,
+                    source: output_value.region_id,
+                }],
+            });
+        }
         code.bind(
             array_return.expect("array outcome has return label"),
             output_node.span,
@@ -4815,6 +5018,7 @@ fn lower_node_sequence(
             Op::Div if sequence.function.layout.array_outcome.is_some() => {
                 lower_checked_division_node(node, dst, values, sequence, outputs)?
             }
+            Op::Fail => lower_fail_node(node, values, sequence, outputs)?,
             Op::Map
             | Op::MapAdd
             | Op::MapConcat
@@ -4985,6 +5189,103 @@ fn lower_string_is_numeric_node(
         text: text.region.start().byte_offset(),
     });
     Ok(ValueRepresentation::Word)
+}
+
+/// `fail payload`: write the island's outcome as a raise of this payload and
+/// return. The site word is the node's stable trace id — the closure-local half
+/// of the failure's source-site identity — and the payload travels as an
+/// ordinary structural field, so the scheduler realizes and interns it exactly
+/// as it would a published value.
+///
+/// r[impl machine.error.failure-is-a-value]
+/// r[impl machine.error.failure-source-site-identity]
+fn lower_fail_node(
+    node: &Node,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    require_input_count(node, 1)?;
+    let payload = input_value(node, values, 0)?;
+    let outcome = sequence
+        .lowering
+        .regions
+        .array_outcome(sequence.function.id, node.span)?;
+    let assigned = sequence
+        .lowering
+        .regions
+        .outcome_scratch(sequence.function.id, node.span)?;
+    let scratch = sequence
+        .function
+        .layout
+        .outcome_scratch
+        .ok_or_else(|| lowering_diagnostic(node.span, "a raise has no outcome scratch"))?;
+    let return_label = sequence
+        .array_return
+        .ok_or_else(|| lowering_diagnostic(node.span, "a raise has no outcome return"))?;
+    let site = *sequence
+        .lowering
+        .trace_ids
+        .get(&NodeRef {
+            function: sequence.function.id,
+            node: node.id,
+        })
+        .ok_or_else(|| lowering_diagnostic(node.span, "a raise has no trace attribution"))?;
+    let outcome_ty = &sequence
+        .function
+        .layout
+        .array_outcome
+        .as_ref()
+        .ok_or_else(|| lowering_diagnostic(node.span, "a raise has no outcome region"))?
+        .ty;
+    let variant = raised_variant_for(outcome_ty, &payload.ty, node.span)?;
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[0].byte_offset(),
+        value: i64::from(site),
+    });
+    outputs.code.push(WeavyOp::EnumConstruct {
+        dst: outcome,
+        variant,
+        fields: vec![
+            StructuralFieldSource {
+                field: 0,
+                source: assigned.fields[0],
+            },
+            StructuralFieldSource {
+                field: 1,
+                source: payload.region_id,
+            },
+        ],
+    });
+    outputs.code.jump(return_label);
+    Ok(ValueRepresentation::InlineComposite)
+}
+
+/// The outcome variant carrying a raise of `payload`, read back off the
+/// already-built outcome enum so the lowering and the ABI cannot disagree.
+fn raised_variant_for(outcome: &Type, payload: &Type, span: Span) -> Result<u32, Diagnostics> {
+    let Type::Enum(enumeration) = outcome else {
+        return Err(lowering_diagnostic(span, "outcome region is not an enum"));
+    };
+    enumeration
+        .variants
+        .iter()
+        .enumerate()
+        .skip(MACHINE_OUTCOME_VARIANTS as usize)
+        .find(|(_, variant)| {
+            matches!(&variant.payload, VariantPayload::Tuple(fields)
+                if fields.as_slice() == [Type::Int, payload.clone()])
+        })
+        .map(|(index, _)| u32::try_from(index).expect("outcome variant index fits u32"))
+        .ok_or_else(|| {
+            lowering_diagnostic(
+                span,
+                &format!(
+                    "the island outcome carries no raise variant for {}",
+                    payload.name()
+                ),
+            )
+        })
 }
 
 fn lower_checked_string_node(
@@ -5268,6 +5569,7 @@ fn lower_ordered_match_node(
             .layout
             .tail_self_calls
             .contains(&arm.body.output)
+            && !output_diverges(sequence, arm.body.output)
         {
             let body = body_values.get(&arm.body.output).ok_or_else(|| {
                 lowering_diagnostic(node.span, "ordered-match body has no lowered value")
@@ -5294,6 +5596,7 @@ fn lower_ordered_match_node(
         .layout
         .tail_self_calls
         .contains(&fallback.output)
+        && !output_diverges(sequence, fallback.output)
     {
         let fallback = fallback_values.get(&fallback.output).ok_or_else(|| {
             lowering_diagnostic(node.span, "ordered-match fallback has no lowered value")
@@ -5306,6 +5609,17 @@ fn lower_ordered_match_node(
     outputs.code.bind(end, node.span)?;
 
     Ok(result_representation)
+}
+
+/// Has this branch output already left the frame? A `fail` writes the island's
+/// outcome and jumps to the return, so a diverging branch has no value to merge
+/// into the result region and no jump to the merge point — exactly like a
+/// terminal self-call's backedge.
+fn output_diverges(sequence: &SequenceContext<'_, '_, '_>, output: NodeId) -> bool {
+    sequence
+        .nodes
+        .get(&output)
+        .is_some_and(|node| node.ty == Type::Never)
 }
 
 fn lower_if_node(
@@ -5353,6 +5667,7 @@ fn lower_if_node(
         .layout
         .tail_self_calls
         .contains(&consequent.output)
+        && !output_diverges(sequence, consequent.output)
     {
         let consequent_output = consequent_values.get(&consequent.output).ok_or_else(|| {
             lowering_diagnostic(node.span, "if consequent output has no lowered value")
@@ -5381,6 +5696,7 @@ fn lower_if_node(
         .layout
         .tail_self_calls
         .contains(&alternative.output)
+        && !output_diverges(sequence, alternative.output)
     {
         let alternative_output = alternative_values.get(&alternative.output).ok_or_else(|| {
             lowering_diagnostic(node.span, "if alternative output has no lowered value")
@@ -5480,6 +5796,7 @@ fn lower_match_node(
             .layout
             .tail_self_calls
             .contains(&arm.output)
+            && !output_diverges(sequence, arm.output)
         {
             let output = arm_values.get(&arm.output).ok_or_else(|| {
                 lowering_diagnostic(node.span, "match arm output has no lowered value")
@@ -5752,7 +6069,7 @@ fn collect_typed_compare_leaves(
                 "function comparison requires stable closure identity",
             ));
         }
-        Type::Check | Type::StreamCheck | Type::Stream { .. } | Type::Order(_) => {
+        Type::Check | Type::StreamCheck | Type::Stream { .. } | Type::Order(_) | Type::Never => {
             return Err(lowering_diagnostic(
                 node.span,
                 "comparison reached a non-orderable VIR type",
@@ -5998,6 +6315,13 @@ fn lower_node(
                 node.span,
                 "Try is a scheduler-owned catch publication; a catch is never lowered to a Weavy \
                  frame",
+            ));
+        }
+        Op::Fail => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "a raise leaves the frame through the island's outcome return, so it is lowered \
+                 by the checked node path and never as a value",
             ));
         }
         Op::InvokeCodataPrimitive { .. } | Op::FixtureRegistry | Op::Untar => {
@@ -7118,8 +7442,14 @@ fn lower_array_call_node(
         node,
         call_outcome_id,
         own_outcome,
-        scratch,
-        assigned,
+        FailureForwarding {
+            scratch,
+            assigned,
+            raised_staging: sequence
+                .lowering
+                .regions
+                .raised_scratch(sequence.function.id),
+        },
         return_label,
         outputs.code,
     )?;
@@ -7343,23 +7673,42 @@ fn emit_checked_call_indirect(
         node,
         call_outcome_id,
         own_outcome,
-        scratch,
-        assigned,
+        FailureForwarding {
+            scratch,
+            assigned,
+            raised_staging: sequence
+                .lowering
+                .regions
+                .raised_scratch(sequence.function.id),
+        },
         return_label,
         outputs.code,
     )?;
     outputs.code.bind(done, node.span)
 }
 
+/// The frame slots a forwarded failure passes through: the outcome scratch in
+/// both address spaces, and one typed staging region per island raise payload.
+#[derive(Clone, Copy)]
+struct FailureForwarding<'a> {
+    scratch: OutcomeScratch,
+    assigned: AssignedOutcomeScratch,
+    raised_staging: &'a [WeavyRegionId],
+}
+
 fn propagate_checked_call_failure(
     node: &Node,
     call_outcome: WeavyRegionId,
     own_outcome: WeavyRegionId,
-    scratch: OutcomeScratch,
-    assigned: AssignedOutcomeScratch,
+    forwarding: FailureForwarding<'_>,
     return_label: CodeLabel,
     code: &mut CodeBuilder,
 ) -> Result<(), Diagnostics> {
+    let FailureForwarding {
+        scratch,
+        assigned,
+        raised_staging,
+    } = forwarding;
     // Every closed outcome fault variant a callee can return is re-raised into
     // this frame's outcome. `Ok` (variant 0) is handled by the caller; the rest
     // — index/key/machine faults, string faults, and Int division-by-zero —
@@ -7400,6 +7749,50 @@ fn propagate_checked_call_failure(
                     source: assigned.fields[field],
                 })
                 .collect(),
+        });
+        code.jump(return_label);
+        code.bind(next, node.span)?;
+    }
+    // An authored raise forwards the same way, one variant per island payload
+    // type: the site word and the payload land in this frame's staging region
+    // and are reconstructed under the same variant index, so a `fail` keeps its
+    // payload, its source site, and its identity across every call it crosses.
+    for (index, staging) in raised_staging.iter().enumerate() {
+        let variant = MACHINE_OUTCOME_VARIANTS
+            + u32::try_from(index)
+                .map_err(|_| lowering_diagnostic(node.span, "raise variant index exceeds u32"))?;
+        let next = code.label();
+        code.push(WeavyOp::EnumIsVariant {
+            dst: assigned.condition,
+            value: call_outcome,
+            variant,
+        });
+        code.jump_if_zero(scratch.condition, next);
+        code.push(WeavyOp::EnumProjectChecked {
+            dst: assigned.fields[0],
+            value: call_outcome,
+            variant,
+            field: 0,
+        });
+        code.push(WeavyOp::EnumProjectChecked {
+            dst: *staging,
+            value: call_outcome,
+            variant,
+            field: 1,
+        });
+        code.push(WeavyOp::EnumConstruct {
+            dst: own_outcome,
+            variant,
+            fields: vec![
+                StructuralFieldSource {
+                    field: 0,
+                    source: assigned.fields[0],
+                },
+                StructuralFieldSource {
+                    field: 1,
+                    source: *staging,
+                },
+            ],
         });
         code.jump(return_label);
         code.bind(next, node.span)?;
@@ -11801,6 +12194,9 @@ fn representation_for_type(ty: &Type, span: Span) -> Result<ValueRepresentation,
             span,
             "Order<T> has no island-interior word representation",
         )),
+        // A diverging node's region is empty: `fail` writes the island's
+        // outcome and returns, so nothing ever reads the node's own slot.
+        Type::Never => Ok(ValueRepresentation::InlineComposite),
     }
 }
 
@@ -11914,7 +12310,8 @@ fn schema_order() -> Stream<Check> {
             .expect("array source compiles");
         let partitioned = module.partition_test(&module.tests[0]);
         let island = &partitioned.islands[0];
-        let assignments = SchemaAssignments::build(island, true).expect("closed schema assignment");
+        let assignments =
+            SchemaAssignments::build(island, true, &[]).expect("closed schema assignment");
         let layouts = BTreeMap::new();
         let constants = BTreeMap::new();
         let regions = RegionAssignments {
@@ -11928,6 +12325,7 @@ fn schema_order() -> Stream<Check> {
             outcomes: BTreeMap::new(),
             outcome_scratch: BTreeMap::new(),
             call_outcomes: BTreeMap::new(),
+            raised_scratch: BTreeMap::new(),
         };
         let mut builder = ProgramContractBuilder {
             layouts: &layouts,
@@ -11938,6 +12336,7 @@ fn schema_order() -> Stream<Check> {
             call_contract_targets: BTreeSet::new(),
             closure_targets: BTreeSet::new(),
             callable_outcomes: false,
+            raised: Vec::new(),
             calls: Vec::new(),
             schemas: vec![empty_schema(); assignments.types.len()],
             schema_ready: vec![false; assignments.types.len()],

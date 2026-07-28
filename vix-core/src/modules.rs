@@ -818,6 +818,7 @@ impl Rewriter<'_> {
                 Ok(())
             }
             ast::Expr::Try(try_expr) => self.expr(&mut try_expr.value),
+            ast::Expr::Fail(fail) => self.expr(&mut fail.value),
             ast::Expr::Call(call) => {
                 self.reference(&mut call.callee);
                 for argument in &mut call.args.args {

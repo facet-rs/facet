@@ -123,6 +123,18 @@ pub enum FailureValue {
         recipe: RecipeId,
         site: u32,
     },
+    /// An authored `fail`: the payload is an ordinary interned value, so it has
+    /// a schema and a content hash like anything else, and the machine supplies
+    /// the address the program never writes — the raising island's `RecipeId`
+    /// and the raise's stable closure-local site.
+    ///
+    /// r[impl machine.error.failure-is-a-value]
+    Raised {
+        recipe: RecipeId,
+        site: u32,
+        payload: ValueId,
+        subject: Option<ValueId>,
+    },
 }
 
 /// Raw process-termination information carried by a [`FailureValue::ProcessFailure`].
