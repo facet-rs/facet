@@ -5359,7 +5359,12 @@ fn lower_request_shape(
     for (index, role) in shape.args.iter().enumerate() {
         let arg = &call.args.args[index];
         let node = match role {
-            ArgRole::Value { expected } => {
+            // A capability argument lowers exactly like a value: the request
+            // record carries the capability as a semantic input. The role split
+            // is a demand-keying concern the scheduler consumes — the
+            // capability's identity enters the effect demand preimage, its
+            // value is redeemed host-side (machine.primitive.capability-role).
+            ArgRole::Value { expected } | ArgRole::Capability { expected } => {
                 let value = lower_value(nodes, bindings, context, arg)?;
                 require_type(&value, expected, expr_span(arg))?;
                 value.node

@@ -830,6 +830,15 @@ pub enum ArgRole {
     /// Lowered as an ordinary value and required to have the given type
     /// (`fetch`'s `PinnedBlobRef`).
     Value { expected: Type },
+    /// Lowered exactly like `Value` — the request record still carries the
+    /// capability as a semantic input — but declared so the scheduler derives
+    /// the effect demand preimage from it: the capability's identity enters the
+    /// preimage arguments while every other request field enters the normalized
+    /// request recipe. Its value is redeemed only host-side by the effect's
+    /// backend service, never by demand keying.
+    ///
+    /// r[impl machine.primitive.capability-role]
+    Capability { expected: Type },
 }
 
 /// How a registered primitive builds its request from its surface arguments — the
@@ -1093,6 +1102,15 @@ impl<Ctx> PrimitiveDispatcher<Ctx> {
         self.registry.descriptor(id)
     }
 
+    /// The registered primitive's declared [`RequestShape`], if it lowers its
+    /// surface call as data. The scheduler consults this to derive the effect
+    /// demand preimage from capability-role declarations
+    /// (`machine.primitive.capability-role`).
+    #[must_use]
+    pub fn request_shape(&self, id: &PrimitiveId) -> Option<RequestShape> {
+        self.registry.request_shape(id)
+    }
+
     pub fn retire(&self, demand: DemandKey) -> Option<RawEffectTicket> {
         self.in_flight
             .lock()
@@ -1131,6 +1149,13 @@ impl<Ctx> PrimitiveRegistry<Ctx> {
         self.primitives
             .get(id)
             .map(|primitive| primitive.descriptor())
+    }
+
+    #[must_use]
+    pub fn request_shape(&self, id: &PrimitiveId) -> Option<RequestShape> {
+        self.primitives
+            .get(id)
+            .and_then(|primitive| primitive.request_shape())
     }
 
     pub fn begin(

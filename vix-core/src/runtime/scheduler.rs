@@ -3437,7 +3437,14 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             }
         };
         let request_id = request_value.identity();
-        let primitive_preimage = primitive_demand_preimage(&plan.primitive, &request_id);
+        let primitive_preimage = declared_effect_preimage(
+            &plan.primitive,
+            self.primitive_dispatcher
+                .request_shape(&plan.primitive)
+                .as_ref(),
+            &request_id,
+            &request_value,
+        );
         let primitive_demand = DemandKey::from_preimage(&primitive_preimage);
         let memo_policy = match self.primitive_dispatcher.descriptor(&plan.primitive) {
             Some(descriptor) => descriptor.memo_policy,
@@ -7011,6 +7018,91 @@ fn primitive_demand_preimage(primitive: &super::PrimitiveId, request: &ValueId) 
     }
 }
 
+/// One request-record field's value identity, as demand keying sees it: an
+/// inline leaf hashes under its field schema, a child carries its own identity.
+/// This is the same identity the field's value would have as a standalone
+/// effect argument, so declaration-derived preimages and hand-built ones
+/// (`submit_exec`'s `capability.identity`) agree byte for byte.
+fn primitive_field_identity(field: &PrimitiveField) -> ValueId {
+    match &field.value {
+        PrimitiveFieldValue::Inline(bytes) => {
+            FramedNode::leaf(field.schema.clone(), bytes.clone()).identity()
+        }
+        PrimitiveFieldValue::Child(child) => child.identity(),
+    }
+}
+
+/// Derive a registered effect's demand preimage from its declaration. A shape
+/// with capability-role arguments keys as `closure = the normalized request
+/// recipe` (the primitive identity plus every non-capability argument identity,
+/// in declaration order) and `arguments = the capability argument identities in
+/// declaration order` — the "plan × capability" preimage `submit_exec` builds
+/// by hand for `Op::Exec` today, generalized to any declaration. The
+/// capability's identity is what the demand *means*; its value is redeemed only
+/// host-side by the effect's backend service and never enters the key. Source
+/// location is no input here, so the same plan under the same capability at a
+/// different site is the same demand (rung 069's exec behavior, for the rail).
+///
+/// A shapeless primitive, a declaration without capability roles, or a request
+/// whose structure does not match its declaration (unreachable through the
+/// compiled rail, which builds the record *from* the declaration) keys as
+/// before: the whole request identity as the single preimage argument. The
+/// fallback never half-derives — a key either separates the declared
+/// capabilities or is the ordinary request-identity key.
+///
+/// r[impl machine.primitive.capability-role]
+fn declared_effect_preimage(
+    primitive: &super::PrimitiveId,
+    shape: Option<&super::RequestShape>,
+    request_id: &ValueId,
+    request: &PrimitiveValue,
+) -> DemandPreimage {
+    let Some(shape) = shape else {
+        return primitive_demand_preimage(primitive, request_id);
+    };
+    if !shape
+        .args
+        .iter()
+        .any(|arg| matches!(arg, super::ArgRole::Capability { .. }))
+    {
+        return primitive_demand_preimage(primitive, request_id);
+    }
+    let PrimitiveValueBody::Product(fields) = &request.body else {
+        return primitive_demand_preimage(primitive, request_id);
+    };
+    if fields.len() != shape.args.len() {
+        return primitive_demand_preimage(primitive, request_id);
+    }
+    let version = primitive.version.to_le_bytes();
+    let mut plan_parts: Vec<Vec<u8>> = vec![
+        primitive.namespace.as_bytes().to_vec(),
+        primitive.name.as_bytes().to_vec(),
+        version.to_vec(),
+    ];
+    let mut arguments = Vec::new();
+    for (arg, field) in shape.args.iter().zip(fields) {
+        let identity = primitive_field_identity(field);
+        match arg {
+            super::ArgRole::Capability { .. } => arguments.push(identity),
+            super::ArgRole::Value { .. } => {
+                // Schema and content both enter the plan: two spellings of the
+                // same bytes under different schemas are different requests.
+                let mut schema = Vec::new();
+                identity
+                    .schema
+                    .write_canonical(&mut |bytes| schema.extend_from_slice(bytes));
+                plan_parts.push(schema);
+                plan_parts.push(identity.content.0.to_vec());
+            }
+        }
+    }
+    let plan_parts = plan_parts.iter().map(Vec::as_slice).collect::<Vec<_>>();
+    DemandPreimage {
+        closure: RecipeId(hash_framed(b"vix.primitive.effect-plan.v1", &plan_parts)),
+        arguments,
+    }
+}
+
 fn primitive_value_from_frame(
     frame: &[u8],
     region: super::FrameRegion,
@@ -8891,6 +8983,137 @@ fn scheduler_decode() -> Stream<Check> {
             .register(primitive)
             .expect("the scheduler test registers decode once");
         PrimitiveDispatcher::new(Arc::new(registry))
+    }
+
+    // ---- declaration-derived effect preimages ------------------------------
+
+    /// A toy registered effect declaration: one capability-role argument, one
+    /// value argument — the smallest shape the capability-role rail keys.
+    fn cap_effect_shape() -> crate::binding::RequestShape {
+        use crate::vir::{RecordField, RecordType};
+        crate::binding::RequestShape {
+            args: vec![
+                crate::binding::ArgRole::Capability {
+                    expected: Type::String,
+                },
+                crate::binding::ArgRole::Value {
+                    expected: Type::String,
+                },
+            ],
+            request_ty: Type::Record(RecordType::new(
+                "CapEffectRequest",
+                vec![
+                    RecordField {
+                        name: "capability".to_owned(),
+                        ty: Type::String,
+                    },
+                    RecordField {
+                        name: "plan".to_owned(),
+                        ty: Type::String,
+                    },
+                ],
+            )),
+            result: Type::String,
+            primitive: super::super::PrimitiveId {
+                namespace: "vix.test".to_owned(),
+                name: "cap-effect".to_owned(),
+                version: 1,
+            },
+        }
+    }
+
+    fn cap_effect_request(capability: &[u8], plan: &[u8]) -> PrimitiveValue {
+        let field = |bytes: &[u8]| PrimitiveField {
+            schema: Type::String.schema_ref(),
+            value: PrimitiveFieldValue::Inline(bytes.to_vec()),
+        };
+        PrimitiveValue {
+            schema: cap_effect_shape().request_ty.schema_ref(),
+            body: PrimitiveValueBody::Product(vec![field(capability), field(plan)]),
+        }
+    }
+
+    fn cap_effect_preimage(capability: &[u8], plan: &[u8]) -> DemandPreimage {
+        let shape = cap_effect_shape();
+        let request = cap_effect_request(capability, plan);
+        declared_effect_preimage(&shape.primitive, Some(&shape), &request.identity(), &request)
+    }
+
+    /// The declaration-derived preimage has the exec reference shape: the
+    /// capability's identity is the preimage argument (never plan content), the
+    /// closure is the normalized request recipe over everything else, and no
+    /// source site enters the derivation — the rail's rung-069 behavior.
+    ///
+    /// r[verify machine.primitive.capability-role]
+    #[test]
+    fn capability_role_identities_key_the_effect_demand() {
+        let preimage = cap_effect_preimage(b"echo", b"once");
+        let capability_identity =
+            FramedNode::leaf(Type::String.schema_ref(), b"echo".to_vec()).identity();
+        assert_eq!(
+            preimage.arguments,
+            vec![capability_identity],
+            "the capability argument's identity is the demand's argument, \
+             in declaration order — the shape submit_exec hand-builds"
+        );
+
+        // A different capability re-keys the demand through the ARGUMENTS while
+        // the closure — the plan — is untouched: identity is "this plan under
+        // this capability", and the backend never enters either half.
+        let other_capability = cap_effect_preimage(b"sh", b"once");
+        assert_eq!(preimage.closure, other_capability.closure);
+        assert_ne!(preimage.arguments, other_capability.arguments);
+        assert_ne!(
+            DemandKey::from_preimage(&preimage),
+            DemandKey::from_preimage(&other_capability),
+        );
+
+        // A different plan re-keys through the CLOSURE while the capability
+        // argument stands.
+        let other_plan = cap_effect_preimage(b"echo", b"twice");
+        assert_ne!(preimage.closure, other_plan.closure);
+        assert_eq!(preimage.arguments, other_plan.arguments);
+
+        // Rung 069, for the rail: the derivation consumes no source location,
+        // so the same plan under the same capability at two distinct memo
+        // sites is one demand — only the cost-model locations differ.
+        let same_plan = cap_effect_preimage(b"echo", b"once");
+        assert_eq!(
+            DemandKey::from_preimage(&preimage),
+            DemandKey::from_preimage(&same_plan),
+        );
+        let base = Location::for_test_island("cap-effect", 0);
+        let site_a = Location::for_primitive(&base, "vix.test:cap-effect:v1:f0:n1");
+        let site_b = Location::for_primitive(&base, "vix.test:cap-effect:v1:f0:n2");
+        assert_ne!(site_a.id, site_b.id, "memo sites stay distinct");
+    }
+
+    /// A declaration without capability roles (and a shapeless primitive) keys
+    /// exactly as before — the whole request identity as the single preimage
+    /// argument. Nothing already registered re-keys.
+    ///
+    /// r[verify machine.primitive.capability-role]
+    #[test]
+    fn declarations_without_capability_roles_keep_the_request_identity_key() {
+        let mut shape = cap_effect_shape();
+        shape.args = vec![
+            crate::binding::ArgRole::Value {
+                expected: Type::String,
+            },
+            crate::binding::ArgRole::Value {
+                expected: Type::String,
+            },
+        ];
+        let request = cap_effect_request(b"echo", b"once");
+        let request_id = request.identity();
+        assert_eq!(
+            declared_effect_preimage(&shape.primitive, Some(&shape), &request_id, &request),
+            primitive_demand_preimage(&shape.primitive, &request_id),
+        );
+        assert_eq!(
+            declared_effect_preimage(&shape.primitive, None, &request_id, &request),
+            primitive_demand_preimage(&shape.primitive, &request_id),
+        );
     }
 
     fn primitive_island(partitioned: &crate::vir::PartitionedTest) -> &Island {

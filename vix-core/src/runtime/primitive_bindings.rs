@@ -194,6 +194,15 @@ pub fn tree_glob_primitive_id() -> PrimitiveId {
 /// zipped in order, so the request struct is the single source of the arg types.
 pub enum ArgRoleDecl {
     Value,
+    /// A capability argument. It lowers into the request record exactly like
+    /// `Value` — the request carries the capability as a semantic input — but
+    /// the rail keys the effect demand on the declaration: the capability's
+    /// *identity* enters the demand preimage as an argument while every other
+    /// request field enters the normalized request recipe, and its *value* is
+    /// redeemed only host-side by the effect's backend service.
+    ///
+    /// r[impl machine.primitive.capability-role]
+    Capability,
 }
 
 /// Everything a registered primitive's surface contract *is*, as const data.
@@ -263,6 +272,9 @@ pub fn synth_shape(decl: &PrimitiveDecl, request_ty: Type, response_ty: Type) ->
         .zip(fields)
         .map(|(arg, field)| match arg {
             ArgRoleDecl::Value => ArgRole::Value {
+                expected: field.ty.clone(),
+            },
+            ArgRoleDecl::Capability => ArgRole::Capability {
                 expected: field.ty.clone(),
             },
         })
