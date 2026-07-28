@@ -59,6 +59,15 @@ none of it is built now.
 > before any effect. `require(…)` raising a typed failure remains the explicit
 > fallback for requirements no invocation expresses, and is expected to be
 > rare.
+>
+> **Precision from implementation:** "checks at lowering" landed as
+> *partition-time* extraction checked at bind — still static (the requirement
+> is read from the plan without executing anything) and still pre-effect; a
+> lowering-phase diagnostic with a source span is an upgrade, not a different
+> mechanism. A *computed* capture is honestly reported and is not re-checked
+> when the plan materializes at run time — that enforcement point needs a hook
+> in the effect plane and is deferred, stated here so it cannot be mistaken
+> for implemented.
 
 > r[vixen.machine.facts-are-fields]
 >
@@ -81,6 +90,12 @@ none of it is built now.
 > degrade honestly to "needs `Rustc`, target decided at run time".
 
 ## What it looks like
+
+(Illustrative syntax: `t"…"` target literals and the `| exists` projection are
+the intended surface and do not exist yet — today's tests spell the check with
+`.text()` and plain strings. `Target` itself is currently a typed newtype over
+the canonical triple; the taxon-backed value of
+`machine.primitive.target-value` upgrades its innards, not its call sites.)
 
 The program — the requirement *is* the invocation:
 
