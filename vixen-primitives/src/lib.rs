@@ -20,6 +20,7 @@ mod primitive_value_decode;
 mod registry_url_primitive;
 mod tree_glob_primitive;
 mod tree_read_primitive;
+mod untar_primitive;
 
 pub mod stdlib;
 
@@ -124,6 +125,27 @@ fn tree_glob_stream_type() -> vix::vir::Type {
     vix::vir::Type::stream(vix::vir::Type::Path, vix::vir::Type::Path)
 }
 
+/// The free-function primitive surfaces `vixen` injects into a compilation —
+/// the contracts behind prelude names that `vix-core` does not know.
+///
+/// `vix-core`'s own [`vix::runtime::builtin_primitive_surfaces`] carries the
+/// language's bundled surfaces (`fetch`); this is the embedder half of the same
+/// rail, consumed through `Compiler::with_primitive_surfaces`. An injected
+/// surface answers to both its bare prelude name (`untar`) and its qualified
+/// spelling (`std::untar`), exactly as a bundled one does.
+///
+/// `untar` is here rather than in core because it stopped being a machine op:
+/// it is an ordinary hermetic primitive in this crate now (issue 2597), and the
+/// bare language no longer spells its name anywhere.
+#[must_use]
+pub fn injected_primitive_surfaces() -> Vec<vix::runtime::PrimitiveSurface> {
+    vec![vix::runtime::PrimitiveSurface {
+        surface_name: UNTAR_DECL.name,
+        id: untar_primitive_id(),
+        shape: vix::runtime::synth_shape(&UNTAR_DECL, untar_request_type(), untar_result_type()),
+    }]
+}
+
 pub use blob_gunzip_primitive::*;
 pub use blob_len_primitive::*;
 pub use decode_primitive::*;
@@ -134,3 +156,4 @@ pub use registry_url_primitive::*;
 pub use tree_glob_primitive::*;
 pub use tree_read_primitive::*;
 pub use typed_primitive::*;
+pub use untar_primitive::*;

@@ -391,12 +391,15 @@ pub fn tree_from_members(members: Vec<TarMember>) -> Result<Tree, TreeError> {
     Ok(tree)
 }
 
-/// The semantic [`Tree`] of a value's resident bytes, in either representation.
+/// The semantic [`Tree`] of a value's resident bytes, in any representation.
 ///
 /// Trees used to live at runtime as ustar bytes, and fixtures still ship that
-/// way; new producers write the carrier. Both decode to the same value here, so
-/// **identity is representation-independent**: an archive and a carrier that
-/// describe the same tree hash equal, which is exactly what
+/// way; the carrier is what a producer inside the machine writes; the canonical
+/// form is what a producer *outside* it writes, since a primitive can only
+/// intern bytes it is willing to have hashed (see `Tree::decode_canonical`). All
+/// three decode to the same value here, so **identity is
+/// representation-independent**: an archive and a carrier that describe the same
+/// tree hash equal, which is exactly what
 /// `machine.primitive.fetch-returns-a-blob` means when it says two archives
 /// unpacking to one tree have one tree identity and two blob identities.
 ///
@@ -405,8 +408,30 @@ pub fn tree_from_resident(bytes: &[u8]) -> Result<Tree, ResidentTreeError> {
     if Tree::is_carrier(bytes) {
         return Tree::decode(bytes).map_err(|_| ResidentTreeError::Malformed);
     }
+    // Tried before ustar and after the carrier: the three forms are disjoint on
+    // their first byte (kind tag 0/1/2 vs `v` vs a path character), so this
+    // cannot shadow an archive.
+    if let Ok(tree) = Tree::decode_canonical(bytes) {
+        return Ok(tree);
+    }
     let members = parse_ustar(bytes).map_err(|_| ResidentTreeError::Malformed)?;
     tree_from_members(members).map_err(ResidentTreeError::Model)
+}
+
+/// Canonical tree identity material, derived from the semantic [`Tree`] rather
+/// than from the bytes it happened to arrive in.
+///
+/// Where the rows come from is the whole point: `tree_from_resident` accepts any
+/// representation and they all yield one `Tree`, so **the same tree has one
+/// identity in every representation**. That is the precondition for flipping a
+/// producer to a different carrier without invalidating memo entries. The
+/// archive's block layout, padding, and member order never enter.
+///
+/// Idempotent: canonical bytes in, the same bytes out.
+///
+/// r[impl machine.identity.tree-model]
+pub fn canonical_resident_tree(bytes: &[u8]) -> Result<Vec<u8>, ResidentTreeError> {
+    Ok(tree_from_resident(bytes)?.encode_canonical())
 }
 
 #[cfg(test)]

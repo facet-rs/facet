@@ -720,6 +720,126 @@ impl Tree {
     }
 }
 
+// ---------------------------------------------------------------------------
+// The canonical form.
+//
+// This is the Tree's *identity material*: a flat, path-keyed encoding derived
+// from the semantic value rather than from the bytes it arrived in. Its byte
+// format is unchanged from the ustar-only era, which is why existing tree
+// identities survive the carrier.
+//
+// Since `untar` left the scheduler it is also a *resident* form. A primitive
+// outside `vix-core` cannot mint an identity that differs from the bytes it
+// interns — `EffectCtx::intern` derives one from the other — so a producer that
+// must land a specific tree identity lands these bytes. `decode_canonical` is
+// what makes that legal: the form has to be readable back, not merely hashable.
+//
+// This does NOT make the canonical form a second carrier. The carrier is the
+// representation a Tree is *stored* in by choice; this is the one encoding whose
+// bytes a hash is taken over. `tree_hash_does_not_share_a_preimage_with_a_storage_hash`
+// still holds — the two encodings differ, and neither is derived from the other.
+// ---------------------------------------------------------------------------
+
+impl Tree {
+    /// Serialize to the canonical identity form. Rows are the flattened walk in
+    /// path-byte order, which is the order the archive-derived encoding used and
+    /// therefore the order existing identities were computed in.
+    #[must_use]
+    pub fn encode_canonical(&self) -> Vec<u8> {
+        let mut rows = self.walk();
+        rows.sort_by(|left, right| left.0.as_bytes().cmp(right.0.as_bytes()));
+        let mut out = Vec::new();
+        for (path, entry) in rows {
+            match entry {
+                TreeEntry::File {
+                    content,
+                    executable,
+                } => {
+                    out.push(0);
+                    put_bytes(&mut out, path.as_bytes());
+                    out.push(u8::from(*executable));
+                    put_bytes(&mut out, content.as_bytes());
+                }
+                TreeEntry::Dir(_) => {
+                    out.push(1);
+                    put_bytes(&mut out, path.as_bytes());
+                }
+                TreeEntry::Symlink { target } => {
+                    out.push(2);
+                    put_bytes(&mut out, path.as_bytes());
+                    put_bytes(&mut out, target.as_bytes());
+                }
+            }
+        }
+        out
+    }
+
+    /// Parse the canonical identity form.
+    ///
+    /// Rejects any byte string that is not *exactly* what [`Tree::encode_canonical`]
+    /// produces for the tree it describes — the rows must consume the input and
+    /// must re-encode to it. Canonicity is the whole point of the form: a second
+    /// spelling of one tree would be a second identity for one value, so
+    /// admitting a merely-parseable encoding would defeat it. The re-encode check
+    /// subsumes row order, duplicate paths, and redundant framing in one test.
+    pub fn decode_canonical(bytes: &[u8]) -> Result<Tree, TreeDecodeError> {
+        let mut cursor = bytes;
+        let mut tree = Tree::new();
+        while !cursor.is_empty() {
+            let tag = take_u8(&mut cursor)?;
+            let path =
+                std::str::from_utf8(take_bytes(&mut cursor)?).map_err(|_| TreeDecodeError)?;
+            match tag {
+                0 => {
+                    let executable = match take_u8(&mut cursor)? {
+                        0 => false,
+                        1 => true,
+                        _ => return Err(TreeDecodeError),
+                    };
+                    let content = take_bytes(&mut cursor)?.to_vec();
+                    let entry = if executable {
+                        TreeEntry::executable(content)
+                    } else {
+                        TreeEntry::file(content)
+                    };
+                    tree.insert_path(path, entry).map_err(|_| TreeDecodeError)?;
+                }
+                1 => tree.insert_dir(path).map_err(|_| TreeDecodeError)?,
+                2 => {
+                    let target = std::str::from_utf8(take_bytes(&mut cursor)?)
+                        .map_err(|_| TreeDecodeError)?;
+                    // The same rule `tree_from_members` applies: an absolute
+                    // target is a non-relocatable ambient dependency, and a
+                    // forged canonical blob must not be able to smuggle one in.
+                    if target.starts_with('/') {
+                        return Err(TreeDecodeError);
+                    }
+                    tree.insert_path(path, TreeEntry::symlink(target.to_owned()))
+                        .map_err(|_| TreeDecodeError)?;
+                }
+                _ => return Err(TreeDecodeError),
+            }
+        }
+        if tree.encode_canonical() == bytes {
+            Ok(tree)
+        } else {
+            Err(TreeDecodeError)
+        }
+    }
+
+    /// Whether `bytes` are a canonical-form encoding.
+    ///
+    /// Unlike [`Tree::is_carrier`] this is not a magic check — the form has no
+    /// header — so it costs a full parse. It is unambiguous against the other
+    /// two representations all the same: a canonical row opens with a kind tag
+    /// of 0, 1, or 2, where a carrier opens with `v` and a ustar header opens
+    /// with a path character.
+    #[must_use]
+    pub fn is_canonical(bytes: &[u8]) -> bool {
+        Self::decode_canonical(bytes).is_ok()
+    }
+}
+
 fn put_len(out: &mut Vec<u8>, len: usize) {
     out.extend_from_slice(&(len as u64).to_le_bytes());
 }
@@ -1159,6 +1279,92 @@ mod tests {
             Err(TreeError::Collision {
                 path: "a.txt".to_owned()
             })
+        );
+    }
+
+    // ---- the canonical form ----------------------------------------------
+
+    /// Every entry kind the model has, including the two an archive loses
+    /// without a convention: an empty directory and the executable bit.
+    fn every_kind() -> Tree {
+        let mut tree = tree_of(&[
+            ("src/lib.rs", TreeEntry::file(*b"lib")),
+            ("build.sh", TreeEntry::executable(*b"#!/bin/sh")),
+            ("link", TreeEntry::symlink("src/lib.rs".to_owned())),
+        ]);
+        tree.insert_dir("empty").expect("empty directory inserts");
+        tree
+    }
+
+    /// The property the `untar` move rests on: the canonical form is not just
+    /// identity material any more, it is a resident representation, so it has to
+    /// read back as the value it was hashed from.
+    ///
+    /// r[verify machine.identity.tree-model]
+    #[test]
+    fn the_canonical_form_round_trips() {
+        let tree = every_kind();
+        let encoded = tree.encode_canonical();
+        let decoded = Tree::decode_canonical(&encoded).expect("canonical bytes decode");
+        assert_eq!(decoded, tree, "the value survives the round trip");
+        assert_eq!(
+            decoded.tree_hash(),
+            tree.tree_hash(),
+            "and so does its identity"
+        );
+    }
+
+    /// Canonicity is the point of the form: one tree must have exactly one
+    /// encoding, or it would have two identities. Rows in any order but
+    /// path-byte order are rejected rather than accepted-and-renormalized.
+    #[test]
+    fn a_non_canonically_ordered_encoding_is_rejected() {
+        let tree = tree_of(&[
+            ("a.txt", TreeEntry::file(*b"a")),
+            ("b.txt", TreeEntry::file(*b"b")),
+        ]);
+        let canonical = tree.encode_canonical();
+        // Both rows have the same shape, so swapping them is a well-formed
+        // encoding of the same tree — and still not the canonical one.
+        let row = canonical.len() / 2;
+        let mut swapped = canonical[row..].to_vec();
+        swapped.extend_from_slice(&canonical[..row]);
+        assert_ne!(swapped, canonical, "the fixture actually reorders");
+        assert_eq!(Tree::decode_canonical(&swapped), Err(TreeDecodeError));
+    }
+
+    /// A forged canonical blob must not be able to smuggle in what the archive
+    /// reader rejects. `tree_from_members` refuses an absolute symlink target as
+    /// a non-relocatable ambient dependency; this form refuses it too.
+    #[test]
+    fn a_forged_canonical_blob_cannot_carry_an_absolute_symlink() {
+        let mut forged = vec![2u8];
+        put_bytes(&mut forged, b"link");
+        put_bytes(&mut forged, b"/etc/passwd");
+        assert_eq!(Tree::decode_canonical(&forged), Err(TreeDecodeError));
+    }
+
+    /// The three resident representations are interchangeable, which is what
+    /// lets `untar` intern canonical bytes without changing any identity: the
+    /// carrier and the canonical form decode to one value with one hash.
+    ///
+    /// (The ustar leg lives in `fixture::tests`, where the archive writer is.)
+    ///
+    /// r[verify machine.identity.tree-model]
+    #[test]
+    fn the_carrier_and_the_canonical_form_describe_one_value() {
+        let tree = every_kind();
+        let carrier = tree.encode();
+        let canonical = tree.encode_canonical();
+        assert_ne!(
+            carrier, canonical,
+            "the two encodings are distinct — neither is derived from the other"
+        );
+        assert!(Tree::is_carrier(&carrier) && !Tree::is_canonical(&carrier));
+        assert!(Tree::is_canonical(&canonical) && !Tree::is_carrier(&canonical));
+        assert_eq!(
+            Tree::decode(&carrier).expect("carrier decodes"),
+            Tree::decode_canonical(&canonical).expect("canonical decodes")
         );
     }
 }

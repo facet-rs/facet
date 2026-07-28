@@ -22,7 +22,7 @@ use crate::vir::{
 };
 
 use super::fixture::{
-    FixtureEntryKind, FixtureReadError, FixtureStore, ResidentTreeError, tree_from_resident,
+    FixtureEntryKind, FixtureReadError, FixtureStore, canonical_resident_tree, tree_from_resident,
 };
 use super::identity::{
     DemandKey, DemandPreimage, Digest, Location, LocationId, RecipeId, ValueId, hash_framed,
@@ -40,7 +40,6 @@ use super::store::{
     FrozenValue, Handle, Interned, Store, StoreEntry, StoreJournal, StoreJournalError,
     StoreJournalLoadReport,
 };
-use super::tree::{Tree, TreeEntry};
 use super::{
     CallbackError, EffectCtx, PrimitiveCompletion, PrimitiveDispatcher, PrimitiveField,
     PrimitiveFieldValue, PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveValue,
@@ -3185,20 +3184,6 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                     resident: Vec::new(),
                     frozen: Some(FrozenValue::OrderedMap(frozen)),
                     node: Some(map_node),
-                }))
-            }
-            Op::Untar => {
-                let EffectTerm::Value(blob) = input(0, self)? else {
-                    return effect_fault("untar input was codata");
-                };
-                let canonical = canonical_resident_tree(&blob.resident)
-                    .map_err(|_| effect_machine_error("archive did not describe a tree"))?;
-                Ok(EffectTerm::Value(EffectValue {
-                    identity: FramedNode::leaf(effect_schema(&node.ty), canonical.clone())
-                        .identity(),
-                    resident: blob.resident,
-                    frozen: None,
-                    node: Some(FramedNode::leaf(effect_schema(&node.ty), canonical)),
                 }))
             }
             Op::If { .. } => effect_fault("effect island contained an If operation"),
@@ -8311,64 +8296,6 @@ fn archive_directory(root: &Path) -> Result<Vec<u8>, String> {
     }
     archive.resize(archive.len() + 1024, 0);
     Ok(archive)
-}
-
-/// Canonical tree identity material, derived from the semantic [`Tree`] rather
-/// than from the bytes it happened to arrive in.
-///
-/// The byte format is unchanged from the ustar-only version this replaces —
-/// entry kinds, slash-joined paths, the executable bit, and file/symlink
-/// payloads, in path-byte order — so an archive that listed every directory it
-/// contains keeps exactly the identity it had. What changes is where the rows
-/// come from: `tree_from_resident` accepts a carrier or a ustar archive and both
-/// yield one `Tree`, so **the same tree has one identity in either
-/// representation**. That is the precondition for flipping a producer to the
-/// carrier without invalidating memo entries, and it is what
-/// `machine.primitive.fetch-returns-a-blob` already asserts: two archives that
-/// unpack to one tree have one tree identity and two blob identities.
-///
-/// The archive's block layout, padding, and member order still never enter.
-///
-/// r[impl machine.identity.tree-model]
-fn canonical_resident_tree(bytes: &[u8]) -> Result<Vec<u8>, ResidentTreeError> {
-    Ok(canonical_tree(&tree_from_resident(bytes)?))
-}
-
-/// The identity material of a semantic [`Tree`]. Rows are sorted by path bytes,
-/// which is the order the archive-derived encoding used and therefore the order
-/// existing identities were computed in.
-fn canonical_tree(tree: &Tree) -> Vec<u8> {
-    let mut rows = tree.walk();
-    rows.sort_by(|left, right| left.0.as_bytes().cmp(right.0.as_bytes()));
-    let mut encoded = Vec::new();
-    for (path, entry) in rows {
-        match entry {
-            TreeEntry::File {
-                content,
-                executable,
-            } => {
-                encoded.push(0);
-                frame_effect_tree_field(&mut encoded, path.as_bytes());
-                encoded.push(u8::from(*executable));
-                frame_effect_tree_field(&mut encoded, content.as_bytes());
-            }
-            TreeEntry::Dir(_) => {
-                encoded.push(1);
-                frame_effect_tree_field(&mut encoded, path.as_bytes());
-            }
-            TreeEntry::Symlink { target } => {
-                encoded.push(2);
-                frame_effect_tree_field(&mut encoded, path.as_bytes());
-                frame_effect_tree_field(&mut encoded, target.as_bytes());
-            }
-        }
-    }
-    encoded
-}
-
-fn frame_effect_tree_field(out: &mut Vec<u8>, bytes: &[u8]) {
-    out.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
-    out.extend_from_slice(bytes);
 }
 
 fn invalid_realized_result(lowered: &LoweringArtifact, size: usize) -> TaskFault {

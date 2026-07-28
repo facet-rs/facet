@@ -185,8 +185,7 @@ const RSS_ENFORCEABLE: bool = false;
 /// [`Budget`] than the `#[test { ... }]` declaration before spawning the child.
 #[must_use]
 pub fn run_source_under_declared_budget(child_exe: &Path, source: &str) -> BudgetOutcome {
-    let compilation =
-        match vix::compiler::Compiler::with_config(crate::default_config()).compile(source) {
+    let compilation = match crate::default_compiler().compile(source) {
         Ok(compilation) => compilation,
         Err(diagnostics) => {
             return BudgetOutcome::SourceRejected {

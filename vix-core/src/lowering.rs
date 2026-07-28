@@ -6324,7 +6324,7 @@ fn lower_node(
                  by the checked node path and never as a value",
             ));
         }
-        Op::InvokeCodataPrimitive { .. } | Op::FixtureRegistry | Op::Untar => {
+        Op::InvokeCodataPrimitive { .. } | Op::FixtureRegistry => {
             return Err(lowering_diagnostic(
                 node.span,
                 "a machine-plane primitive is evaluated by the runtime effect plane, never lowered to a Weavy island",

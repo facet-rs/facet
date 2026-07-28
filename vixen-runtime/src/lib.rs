@@ -40,8 +40,8 @@ use vix::runtime::{
     CodataRegistry, EventSink, PrimitiveDispatcher, PrimitiveRegistry, RawPrimitive, Runtime,
 };
 use vixen_primitives::{
-    BlobGunzipPrimitive, BlobLenPrimitive, DecodePrimitive, PinnedFetchPrimitive, RegistryUrlPrimitive,
-    TreeGlobPrimitive, TreeReadPrimitive, TypedAdapter,
+    BlobGunzipPrimitive, BlobLenPrimitive, DecodePrimitive, PinnedFetchPrimitive,
+    RegistryUrlPrimitive, TreeGlobPrimitive, TreeReadPrimitive, TypedAdapter, UntarPrimitive,
 };
 
 /// The built-in registered primitives, as data: this is the *one* place that
@@ -57,6 +57,7 @@ pub fn builtin_primitives<Ctx>() -> Vec<Arc<dyn RawPrimitive<Ctx>>> {
         Arc::new(RegistryUrlPrimitive::default()),
         Arc::new(TypedAdapter::new::<Ctx>(BlobGunzipPrimitive)),
         Arc::new(BlobLenPrimitive::default()),
+        Arc::new(TypedAdapter::new::<Ctx>(UntarPrimitive)),
     ]
 }
 
@@ -103,9 +104,24 @@ pub fn install_builtins<S: EventSink, Ctx>(runtime: &mut Runtime<S, Ctx>) {
     runtime.set_codata_registry(default_codata_registry());
 }
 
+/// The compiler for the runnable system: [`default_config`] plus the free-function
+/// primitive surfaces `vixen` injects ([`vixen_primitives::injected_primitive_surfaces`]).
+///
+/// Constructing the compiler through the config alone is not enough any more —
+/// an injected surface is what makes `untar` resolve at all, now that it is a
+/// primitive in `vixen-primitives` rather than an intrinsic in `vix-core`.
+#[must_use]
+pub fn default_compiler() -> vix::compiler::Compiler {
+    vix::compiler::Compiler::with_config_and_primitive_surfaces(
+        default_config(),
+        vixen_primitives::injected_primitive_surfaces(),
+    )
+}
+
 /// The compiler config for the runnable system: the `vix-core` defaults plus the
 /// vixen stdlib prelude. `vix-core`'s own `CompilerConfig::default()` ships an
-/// empty prelude (the bare language).
+/// empty prelude (the bare language). Prefer [`default_compiler`], which also
+/// carries the injected primitive surfaces.
 #[must_use]
 pub fn default_config() -> CompilerConfig {
     // Reserve the domain host-type names with the core schema batch before they
