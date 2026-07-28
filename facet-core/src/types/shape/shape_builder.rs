@@ -63,7 +63,7 @@ const EMPTY_VESSEL: Shape = Shape {
     // closed instead of open. That is a breaking change (it needs `#[non_exhaustive]`
     // on `Variance` plus explicit declarations at ~109 sites across facet-core) and
     // is being designed for 1.0. Until then, every lifetime-capable shape must
-    // declare its variance explicitly, and `facet/tests/integration/variance_no_bogus_grow.rs`
+    // declare its variance explicitly, and `facet-core/tests/integration/variance_no_bogus_grow.rs`
     // asserts that none of them report `can_grow()`.
     variance: VarianceDesc::BIVARIANT,
     flags: ShapeFlags::empty(),
