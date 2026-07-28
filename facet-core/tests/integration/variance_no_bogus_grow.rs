@@ -166,6 +166,20 @@ fn lifetime_carrying_rows() -> Vec<Row> {
         std::sync::OnceLock<&'static str> => Invariant,
 
         // ---------------------------------------------------------------------
+        // The opaque wrappers, holding borrowed payloads. Both are lifetime
+        // *boundaries* — reflection cannot see through them — so both declare
+        // `Invariant` unconditionally, and owned payloads land there too (which is
+        // why they are not in the bivariant table below).
+        // `OpaqueBorrow<'facet, T>` is what the derive emits for
+        // `#[facet(opaque)]` fields, so it is the one that meets borrowed data in
+        // practice. Invariance is only half the guard here: the other half is shape
+        // identity, which is issue #1563 — see
+        // facet-reflect/tests/poke/opaque_lifetime_laundering.rs.
+        // ---------------------------------------------------------------------
+        facet_core::Opaque<&'static str> => Invariant,
+        facet_core::OpaqueBorrow<'static, &'static str> => Invariant,
+
+        // ---------------------------------------------------------------------
         // Collections that were already declared — regression guards.
         // ---------------------------------------------------------------------
         Vec<&'static str> => Covariant,

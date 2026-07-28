@@ -1,6 +1,6 @@
 use facet_testhelpers::{IPanic, test};
 
-use facet::{Facet, Opaque};
+use facet::{Facet, OpaqueBorrow};
 use facet_reflect::{HasFields, Peek, ReflectErrorKind};
 
 #[test]
@@ -407,7 +407,7 @@ fn peek_custom_serialize_errors() -> Result<(), IPanic> {
             } = err.kind
             {
                 assert_eq!(message, "35 is not allowed!");
-                assert_eq!(src_shape, Opaque::<NotDerivingFacet>::SHAPE);
+                assert_eq!(src_shape, OpaqueBorrow::<'_, NotDerivingFacet>::SHAPE);
                 assert_eq!(dst_shape, NotDerivingFacetProxy::SHAPE);
             } else {
                 panic!("expected custom serialization error, got: {err:?}");
