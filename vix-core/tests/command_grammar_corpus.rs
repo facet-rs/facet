@@ -3,7 +3,7 @@
 //! Vix executes these tools yet.
 
 use vix::surface::SurfaceParser;
-use vix::surface::ast::{CommandAtom, CommandPattern, Item};
+use vix::surface::ast::{CommandAtom, CommandFused, CommandPattern, Item};
 
 struct Case {
     name: &'static str,
@@ -438,11 +438,27 @@ fn pattern_term_count(pattern: &CommandPattern) -> usize {
                 .terms
                 .iter()
                 .map(|term| {
-                    1 + match &term.atom {
+                    let atom = match &term.atom {
                         CommandAtom::Optional(optional) => pattern_term_count(&optional.pattern),
                         CommandAtom::Group(group) => pattern_term_count(&group.pattern),
-                        CommandAtom::Literal(_) | CommandAtom::Slot(_) => 0,
-                    }
+                        CommandAtom::Literal(_) | CommandAtom::Str(_) | CommandAtom::Slot(_) => 0,
+                    };
+                    let fused = term
+                        .fused_atoms
+                        .iter()
+                        .map(|fused| {
+                            1 + match fused {
+                                CommandFused::Optional(optional) => {
+                                    pattern_term_count(&optional.pattern)
+                                }
+                                CommandFused::Group(group) => pattern_term_count(&group.pattern),
+                                CommandFused::Literal(_)
+                                | CommandFused::Str(_)
+                                | CommandFused::Slot(_) => 0,
+                            }
+                        })
+                        .sum::<usize>();
+                    1 + atom + fused
                 })
                 .sum::<usize>()
         })
@@ -471,8 +487,13 @@ fn parses_at_least_fifty_chunky_real_world_command_schemas_and_usages() {
         let Item::Command(command) = &file.items[0] else {
             panic!("{} schema", case.name);
         };
+        let pattern = command
+            .grammar
+            .pattern
+            .as_ref()
+            .unwrap_or_else(|| panic!("{} schema has a pattern", case.name));
         assert!(
-            pattern_term_count(&command.grammar.pattern) >= 8,
+            pattern_term_count(pattern) >= 8,
             "{} schema stopped being chunky",
             case.name,
         );
@@ -502,12 +523,20 @@ command Edge {
     let Item::Command(command) = &file.items[0] else {
         panic!("fixture is a command declaration");
     };
-    let literals = command.grammar.pattern.alternatives[0]
+    let literals = command
+        .grammar
+        .pattern
+        .as_ref()
+        .expect("pattern")
+        .alternatives[0]
         .terms
         .iter()
         .filter_map(|term| match &term.atom {
             CommandAtom::Literal(literal) => Some(literal.value.as_str()),
-            CommandAtom::Slot(_) | CommandAtom::Optional(_) | CommandAtom::Group(_) => None,
+            CommandAtom::Str(_)
+            | CommandAtom::Slot(_)
+            | CommandAtom::Optional(_)
+            | CommandAtom::Group(_) => None,
         })
         .collect::<Vec<_>>();
     assert_eq!(

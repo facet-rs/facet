@@ -545,7 +545,9 @@ impl Rewriter<'_> {
                 if let Some(return_type) = &mut command.return_type {
                     self.ty(return_type)?;
                 }
-                self.command_pattern(&mut command.grammar.pattern)?;
+                if let Some(pattern) = &mut command.grammar.pattern {
+                    self.command_pattern(pattern)?;
+                }
             }
         }
         Ok(())
@@ -555,13 +557,25 @@ impl Rewriter<'_> {
         for alternative in &mut pattern.alternatives {
             for term in &mut alternative.terms {
                 match &mut term.atom {
-                    ast::CommandAtom::Literal(_) => {}
+                    ast::CommandAtom::Literal(_) | ast::CommandAtom::Str(_) => {}
                     ast::CommandAtom::Slot(slot) => self.ty(&mut slot.ty)?,
                     ast::CommandAtom::Optional(optional) => {
                         self.command_pattern(&mut optional.pattern)?;
                     }
                     ast::CommandAtom::Group(group) => {
                         self.command_pattern(&mut group.pattern)?;
+                    }
+                }
+                for fused in &mut term.fused_atoms {
+                    match fused {
+                        ast::CommandFused::Literal(_) | ast::CommandFused::Str(_) => {}
+                        ast::CommandFused::Slot(slot) => self.ty(&mut slot.ty)?,
+                        ast::CommandFused::Optional(optional) => {
+                            self.command_pattern(&mut optional.pattern)?;
+                        }
+                        ast::CommandFused::Group(group) => {
+                            self.command_pattern(&mut group.pattern)?;
+                        }
                     }
                 }
             }

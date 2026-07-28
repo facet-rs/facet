@@ -41,6 +41,10 @@ pub enum DiagnosticCode {
     /// whose target type is not known from context: the runtime doc-parse
     /// primitive that would serve it does not exist yet.
     RuntimeDecodeUnavailable,
+    /// A command-grammar quantifier that silently denotes a different language
+    /// than it reads: `[…]+` admits zero occurrences, so it is `[…]*` in
+    /// disguise.
+    MisleadingQuantifier,
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

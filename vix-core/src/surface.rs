@@ -108,8 +108,80 @@ impl SurfaceParser {
                     },
                 })
             })?;
-        Ok(ast::lower_source_file(&resolved))
+        let file = ast::lower_source_file(&resolved);
+        command_grammar_diagnostics(&file)?;
+        Ok(file)
     }
+}
+
+/// Surface well-formedness of command declarations that the grammar itself
+/// stays permissive about, rejected here with a typed diagnostic instead of
+/// an opaque parse error.
+///
+/// r[impl lang.diagnostics.typed]
+fn command_grammar_diagnostics(file: &ast::SourceFile) -> Result<(), Diagnostics> {
+    fn check_items(items: &[ast::Item]) -> Result<(), Diagnostics> {
+        for item in items {
+            match item {
+                ast::Item::Command(command) => {
+                    if let Some(pattern) = &command.grammar.pattern {
+                        check_pattern(pattern)?;
+                    }
+                }
+                ast::Item::Mod(module) => check_items(&module.items)?,
+                ast::Item::Fn(_)
+                | ast::Item::Struct(_)
+                | ast::Item::Enum(_)
+                | ast::Item::Import(_) => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn check_pattern(pattern: &ast::CommandPattern) -> Result<(), Diagnostics> {
+        for alternative in &pattern.alternatives {
+            for term in &alternative.terms {
+                // `[x]+` reads "at least once" but the optional already admits
+                // zero occurrences — the term denotes the same argv language
+                // as `[x]*`.
+                if let (ast::CommandAtom::Optional(_), Some(quantifier), true) =
+                    (&term.atom, &term.quantifier, term.fused_atoms.is_empty())
+                    && quantifier.value == "+"
+                {
+                    return Err(Diagnostics::one(Diagnostic {
+                        code: DiagnosticCode::MisleadingQuantifier,
+                        primary: quantifier.span,
+                        labels: Vec::new(),
+                        payload: DiagnosticPayload::Parse {
+                            detail: "`[…]+` admits zero occurrences and denotes the same argv \
+                                     language as `[…]*`; write `[…]*` for zero-or-more or \
+                                     `(…)+` for one-or-more"
+                                .to_owned(),
+                        },
+                    }));
+                }
+                match &term.atom {
+                    ast::CommandAtom::Optional(optional) => check_pattern(&optional.pattern)?,
+                    ast::CommandAtom::Group(group) => check_pattern(&group.pattern)?,
+                    ast::CommandAtom::Literal(_)
+                    | ast::CommandAtom::Str(_)
+                    | ast::CommandAtom::Slot(_) => {}
+                }
+                for fused in &term.fused_atoms {
+                    match fused {
+                        ast::CommandFused::Optional(optional) => check_pattern(&optional.pattern)?,
+                        ast::CommandFused::Group(group) => check_pattern(&group.pattern)?,
+                        ast::CommandFused::Literal(_)
+                        | ast::CommandFused::Str(_)
+                        | ast::CommandFused::Slot(_) => {}
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    check_items(&file.items)
 }
 
 impl Default for SurfaceParser {

@@ -437,6 +437,11 @@ the command recipe.
 The command grammar parses argv roles and normalization. `Arg` is one argv
 element made of typed fragments (`Text`, `Path`, `TreePath`, `Blob`, or a
 capability-defined symbol); interpolation never stringifies a dependency.
+A `command` declaration spells `Arg` boundaries directly: whitespace separates
+argv elements, adjacent atoms fuse into one element's fragments
+(`-D{define: String}` is one `Arg`, `-D {define: String}` is two), and a
+quoted atom carries characters the bare literal reserves (`"{}"`, `"a b"`).
+An empty `grammar { }` declares a zero-argument program.
 Termination maps exits/signals to either an `A` constructor or a typed failure.
 The output protocol frames stdout/stderr. The product protocol says when a
 declared product becomes immutable and ready.
