@@ -135,8 +135,11 @@ primitives reference by identity.
 > [DESIGN] A registered request declaration marks which arguments are
 > capabilities (`ArgRoleDecl::Capability`). The rail derives the effect demand
 > preimage generically from the declaration: closure = the normalized request
-> recipe, arguments = the capability arguments' identities in declaration
-> order. This is the tier-1 exec identity
+> recipe (absent a command grammar: primitive identity plus every
+> non-capability argument identity, in declaration order, domain-separated),
+> arguments = the capability arguments' identities in declaration order.
+> A command grammar refines the *arguments before the request is built*
+> (`machine.primitive.exec-plan-normalized`), never the derivation itself. This is the tier-1 exec identity
 > (`machine.primitive.exec-two-tier-key`) generalized to every
 > capability-carrying effect; hand-rolled per-effect keying in scheduler code
 > is banned. The capability's identity enters the preimage; its value is
