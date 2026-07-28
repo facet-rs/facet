@@ -130,6 +130,42 @@ primitives reference by identity.
 > reading any input byte); tier 2 = tier 1 + input content hashes, closed over
 > the observed read-set. Lookup precedes input I/O by design.
 
+> r[machine.primitive.capability-role]
+>
+> [DESIGN] A registered request declaration marks which arguments are
+> capabilities (`ArgRoleDecl::Capability`). The rail derives the effect demand
+> preimage generically from the declaration: closure = the normalized request
+> recipe, arguments = the capability arguments' identities in declaration
+> order. This is the tier-1 exec identity
+> (`machine.primitive.exec-two-tier-key`) generalized to every
+> capability-carrying effect; hand-rolled per-effect keying in scheduler code
+> is banned. The capability's identity enters the preimage; its value is
+> redeemed only host-side by the effect's backend service.
+
+> r[machine.primitive.effect-backend-service]
+>
+> [DESIGN] An authority-crossing backend is an explicit `PrimitiveServices`
+> entry (the `OriginAdapter` shape), never scheduler code: exec's backend owns
+> spawn, stream, and wait. The demand key never mentions the backend, so a
+> confining backend (`machine.primitive.exec-hermetic-traps`) replaces a
+> host-trusting one behind the same capability identity without re-keying any
+> demand — enforcement upgrades the service and the witness quality, not the
+> memo. A host-trusting backend's receipts say so
+> (`ReadObservation::Unverifiable`), per `machine.primitive.memo-policy`.
+
+> r[machine.primitive.progressive-response]
+>
+> [DESIGN] An in-flight registered effect may publish progressive projections
+> of its response through `EffectCtx`: byte-stream extensions (addressed by
+> byte offset — `machine.primitive.exec-outcome`) and immutable product
+> readiness on the authority of the declared output protocol, with effect
+> completion as the fallback authority and filesystem polling banned. Each
+> served projection is its own demand with its own memo location (the
+> generalization of today's exec-only `submit_exec_projection`). The settled
+> tail of the response publishes once, at completion, through the demand-owned
+> ticket; a replayed stream is indistinguishable from a live one because the
+> witness records what was published.
+
 > r[machine.primitive.fetch-is-an-invocation]
 >
 > [DESIGN] Fetch is a memoized invocation with stable closure identity flowing
