@@ -843,7 +843,7 @@ fn facet_leaf_override(shape: &'static facet::Shape) -> Option<Type> {
     if let Some(name) = shape
         .attributes
         .iter()
-        .find(|attr| attr.ns == Some("vix") && attr.key == "wire_extern")
+        .find(|attr| attr.ns() == Some("vix") && attr.key() == "wire_extern")
         .and_then(|attr| attr.get_as::<&'static str>().copied())
     {
         return Some(Type::Extern(ExternKind::named(name)));

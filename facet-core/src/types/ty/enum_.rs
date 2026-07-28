@@ -82,7 +82,7 @@ impl Variant {
     pub fn has_attr(&self, ns: Option<&str>, key: &str) -> bool {
         self.attributes
             .iter()
-            .any(|attr| attr.ns == ns && attr.key == key)
+            .any(|attr| attr.ns() == ns && attr.key() == key)
     }
 
     /// Gets an attribute by namespace and key.
@@ -92,7 +92,7 @@ impl Variant {
     pub fn get_attr(&self, ns: Option<&str>, key: &str) -> Option<&super::Attr> {
         self.attributes
             .iter()
-            .find(|attr| attr.ns == ns && attr.key == key)
+            .find(|attr| attr.ns() == ns && attr.key() == key)
     }
 
     /// Checks whether the `Variant` has a builtin attribute with the given key.

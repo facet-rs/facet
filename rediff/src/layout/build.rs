@@ -43,7 +43,7 @@ fn get_shape_display_name(shape: &Shape) -> &'static str {
 /// Shapes without XML attributes are "proxy types" - Rust implementation details
 /// that wouldn't exist in actual XML output.
 fn shape_has_xml_attrs(shape: &Shape) -> bool {
-    shape.attributes.iter().any(|attr| attr.ns == Some("xml"))
+    shape.attributes.iter().any(|attr| attr.ns() == Some("xml"))
 }
 
 /// Get the display name for a shape.

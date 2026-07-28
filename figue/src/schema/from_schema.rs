@@ -170,7 +170,7 @@ fn extract_env_aliases(field: &Field) -> Vec<String> {
     let mut aliases = Vec::new();
     // Iterate through all attributes to find all env_alias entries
     for field_attr in field.attributes {
-        if field_attr.ns == Some("args") && field_attr.key == "env_alias" {
+        if field_attr.ns() == Some("args") && field_attr.key() == "env_alias" {
             // The attribute data is stored as &str directly
             if let Some(s) = field_attr.get_as::<&str>() {
                 aliases.push(s.to_string());
@@ -185,7 +185,7 @@ fn extract_env_aliases(field: &Field) -> Vec<String> {
 fn extract_field_aliases(field: &Field) -> Vec<String> {
     let mut aliases = Vec::new();
     for field_attr in field.attributes {
-        if field_attr.ns == Some("args") && field_attr.key == "alias" {
+        if field_attr.ns() == Some("args") && field_attr.key() == "alias" {
             if let Some(parsed) = field_attr.get_as::<Attr>()
                 && let Attr::Alias(alias) = parsed
             {
@@ -211,7 +211,7 @@ fn has_env_subst_all(shape: &'static Shape) -> bool {
     shape
         .attributes
         .iter()
-        .any(|attr| attr.ns == Some("args") && attr.key == "env_subst_all")
+        .any(|attr| attr.ns() == Some("args") && attr.key() == "env_subst_all")
 }
 
 /// Extract a custom type label from `#[facet(args::label = "...")]`.
@@ -358,7 +358,7 @@ fn extract_variant_aliases(variant: &Variant) -> Vec<String> {
     let mut aliases = Vec::new();
 
     for variant_attr in variant.attributes {
-        if variant_attr.ns == Some("args") && variant_attr.key == "alias" {
+        if variant_attr.ns() == Some("args") && variant_attr.key() == "alias" {
             if let Some(parsed) = variant_attr.get_as::<Attr>()
                 && let Attr::Alias(alias) = parsed
             {
@@ -1385,5 +1385,3 @@ const fn is_supported_counted_type(shape: &'static facet_core::Shape) -> bool {
 fn is_config_field(field: &facet_core::Field) -> bool {
     field.has_attr(Some("args"), "config")
 }
-
-

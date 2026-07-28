@@ -21,7 +21,7 @@ fn extension_attr_optional_string_payload_on_generic_container() {
     let attr = shape
         .attributes
         .iter()
-        .find(|a| a.ns == Some("testattrs") && a.key == "generic_name")
+        .find(|a| a.ns() == Some("testattrs") && a.key() == "generic_name")
         .expect("generic optional-string extension attribute should be present");
 
     let typed = attr

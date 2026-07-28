@@ -1228,24 +1228,29 @@ impl ParsedGrammar {
                             // enables auto-deref at the call site.
                             // Store the function pointer directly (not wrapped in Attr enum)
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $($args:tt)* }) => {{
-                                ::facet::Attr {
-                                    ns: #ns_expr,
-                                    key: #key_str,
-                                    // SAFETY: Static const block pointer is valid for 'static
-                                    data: unsafe { ::facet::OxRef::new(
-                                        ::facet::PtrConst::new_sized(&const {
-                                            // Define a wrapper function that calls the user's predicate.
-                                            // The call site `predicate(ptr.get::<$ty>())` enables auto-deref,
-                                            // so `fn(&str) -> bool` works for a `String` field.
-                                            unsafe fn __predicate_wrapper(ptr: ::facet::PtrConst) -> bool {
-                                                let predicate = ($($args)*);
-                                                predicate(ptr.get::<$ty>())
-                                            }
-                                            // Coerce function item to function pointer
-                                            __predicate_wrapper as #qualified_target_ty
-                                        } as *const #qualified_target_ty as *const ()),
-                                        <() as ::facet::Facet>::SHAPE
-                                    ) },
+                                // SAFETY: the pointer is to a `const` block, which is promoted to
+                                // `'static`, and the value stored is a function pointer (or an
+                                // `Option` of one), which is `Sync` — the requirement that `Attr`'s
+                                // `unsafe impl Sync` rests on. See facet-rs/facet#1573.
+                                unsafe {
+                                    ::facet::Attr::from_raw_parts(
+                                        #ns_expr,
+                                        #key_str,
+                                        ::facet::OxRef::new(
+                                            ::facet::PtrConst::new_sized(&const {
+                                                // Define a wrapper function that calls the user's predicate.
+                                                // The call site `predicate(ptr.get::<$ty>())` enables auto-deref,
+                                                // so `fn(&str) -> bool` works for a `String` field.
+                                                unsafe fn __predicate_wrapper(ptr: ::facet::PtrConst) -> bool {
+                                                    let predicate = ($($args)*);
+                                                    predicate(ptr.get::<$ty>())
+                                                }
+                                                // Coerce function item to function pointer
+                                                __predicate_wrapper as #qualified_target_ty
+                                            } as *const #qualified_target_ty as *const ()),
+                                            <() as ::facet::Facet>::SHAPE
+                                        ),
+                                    )
                                 }
                             }};
                             // Field-level: @ns { path } attr { field : Type } - no args is an error for predicate
@@ -1297,24 +1302,29 @@ impl ParsedGrammar {
                             // enables auto-deref at the call site.
                             // Store the function pointer directly (not wrapped in Attr enum)
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $($args:tt)* }) => {{
-                                ::facet::Attr {
-                                    ns: #ns_expr,
-                                    key: #key_str,
-                                    // SAFETY: Static const block pointer is valid for 'static
-                                    data: unsafe { ::facet::OxRef::new(
-                                        ::facet::PtrConst::new_sized(&const {
-                                            // Define a wrapper function that calls the user's validator.
-                                            // The call site `validator(ptr.get::<$ty>())` enables auto-deref,
-                                            // so `fn(&str) -> Result<(), String>` works for a `String` field.
-                                            unsafe fn __validator_wrapper(ptr: ::facet::PtrConst) -> ::core::result::Result<(), ::std::string::String> {
-                                                let validator = ($($args)*);
-                                                validator(ptr.get::<$ty>())
-                                            }
-                                            // Coerce function item to function pointer
-                                            __validator_wrapper as #qualified_target_ty
-                                        } as *const #qualified_target_ty as *const ()),
-                                        <() as ::facet::Facet>::SHAPE
-                                    ) },
+                                // SAFETY: the pointer is to a `const` block, which is promoted to
+                                // `'static`, and the value stored is a function pointer (or an
+                                // `Option` of one), which is `Sync` — the requirement that `Attr`'s
+                                // `unsafe impl Sync` rests on. See facet-rs/facet#1573.
+                                unsafe {
+                                    ::facet::Attr::from_raw_parts(
+                                        #ns_expr,
+                                        #key_str,
+                                        ::facet::OxRef::new(
+                                            ::facet::PtrConst::new_sized(&const {
+                                                // Define a wrapper function that calls the user's validator.
+                                                // The call site `validator(ptr.get::<$ty>())` enables auto-deref,
+                                                // so `fn(&str) -> Result<(), String>` works for a `String` field.
+                                                unsafe fn __validator_wrapper(ptr: ::facet::PtrConst) -> ::core::result::Result<(), ::std::string::String> {
+                                                    let validator = ($($args)*);
+                                                    validator(ptr.get::<$ty>())
+                                                }
+                                                // Coerce function item to function pointer
+                                                __validator_wrapper as #qualified_target_ty
+                                            } as *const #qualified_target_ty as *const ()),
+                                            <() as ::facet::Facet>::SHAPE
+                                        ),
+                                    )
                                 }
                             }};
                             // Field-level: @ns { path } attr { field : Type } - no args is an error for validator
@@ -1364,35 +1374,45 @@ impl ParsedGrammar {
                                 // Use <$ty as Default>::default() - $ty is already a metavariable
                                 // in the generated macro, so it will reference the field type
                                 quote! {
-                                    ::facet::Attr {
-                                        ns: #ns_expr,
-                                        key: #key_str,
-                                        // SAFETY: Static const block pointer is valid for 'static
-                                        data: unsafe { ::facet::OxRef::new(
-                                            ::facet::PtrConst::new_sized(&const {
-                                                𝟋Some(
-                                                    (|__ptr: ::facet::PtrUninit| unsafe {
-                                                        __ptr.put(<$ty as ::core::default::Default>::default())
-                                                    }) as ::facet::DefaultInPlaceFn
-                                                )
-                                            } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const ()),
-                                            <() as ::facet::Facet>::SHAPE
-                                        ) },
+                                    // SAFETY: the pointer is to a `const` block, which is promoted to
+                                    // `'static`, and the value stored is a function pointer (or an
+                                    // `Option` of one), which is `Sync` — the requirement that `Attr`'s
+                                    // `unsafe impl Sync` rests on. See facet-rs/facet#1573.
+                                    unsafe {
+                                        ::facet::Attr::from_raw_parts(
+                                            #ns_expr,
+                                            #key_str,
+                                            ::facet::OxRef::new(
+                                                ::facet::PtrConst::new_sized(&const {
+                                                    𝟋Some(
+                                                        (|__ptr: ::facet::PtrUninit| unsafe {
+                                                            __ptr.put(<$ty as ::core::default::Default>::default())
+                                                        }) as ::facet::DefaultInPlaceFn
+                                                    )
+                                                } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const ()),
+                                                <() as ::facet::Facet>::SHAPE
+                                            ),
+                                        )
                                     }
                                 }
                             } else {
                                 // No fallback - use None (runtime Default trait lookup)
                                 quote! {
-                                    ::facet::Attr {
-                                        ns: #ns_expr,
-                                        key: #key_str,
-                                        // SAFETY: Static const block pointer is valid for 'static
-                                        data: unsafe { ::facet::OxRef::new(
-                                            ::facet::PtrConst::new_sized(&const {
-                                                ::core::option::Option::<::facet::DefaultInPlaceFn>::None
-                                            } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const ()),
-                                            <() as ::facet::Facet>::SHAPE
-                                        ) },
+                                    // SAFETY: the pointer is to a `const` block, which is promoted to
+                                    // `'static`, and the value stored is a function pointer (or an
+                                    // `Option` of one), which is `Sync` — the requirement that `Attr`'s
+                                    // `unsafe impl Sync` rests on. See facet-rs/facet#1573.
+                                    unsafe {
+                                        ::facet::Attr::from_raw_parts(
+                                            #ns_expr,
+                                            #key_str,
+                                            ::facet::OxRef::new(
+                                                ::facet::PtrConst::new_sized(&const {
+                                                    ::core::option::Option::<::facet::DefaultInPlaceFn>::None
+                                                } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const ()),
+                                                <() as ::facet::Facet>::SHAPE
+                                            ),
+                                        )
                                     }
                                 }
                             };
@@ -1404,36 +1424,46 @@ impl ParsedGrammar {
                                 }};
                                 // Field-level with `= expr`: wrap in closure
                                 (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | = $expr:expr }) => {{
-                                    ::facet::Attr {
-                                        ns: #ns_expr,
-                                        key: #key_str,
-                                        // SAFETY: Static const block pointer is valid for 'static
-                                        data: unsafe { ::facet::OxRef::new(
-                                            ::facet::PtrConst::new_sized(&const {
-                                                𝟋Some(
-                                                    (|__ptr: ::facet::PtrUninit| unsafe { __ptr.put($expr) })
-                                                        as ::facet::DefaultInPlaceFn
-                                                )
-                                            } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const ()),
-                                            <() as ::facet::Facet>::SHAPE
-                                        ) },
+                                    // SAFETY: the pointer is to a `const` block, which is promoted to
+                                    // `'static`, and the value stored is a function pointer (or an
+                                    // `Option` of one), which is `Sync` — the requirement that `Attr`'s
+                                    // `unsafe impl Sync` rests on. See facet-rs/facet#1573.
+                                    unsafe {
+                                        ::facet::Attr::from_raw_parts(
+                                            #ns_expr,
+                                            #key_str,
+                                            ::facet::OxRef::new(
+                                                ::facet::PtrConst::new_sized(&const {
+                                                    𝟋Some(
+                                                        (|__ptr: ::facet::PtrUninit| unsafe { __ptr.put($expr) })
+                                                            as ::facet::DefaultInPlaceFn
+                                                    )
+                                                } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const ()),
+                                                <() as ::facet::Facet>::SHAPE
+                                            ),
+                                        )
                                     }
                                 }};
                                 // Field-level with just expr (no =): also wrap in closure
                                 (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $expr:expr }) => {{
-                                    ::facet::Attr {
-                                        ns: #ns_expr,
-                                        key: #key_str,
-                                        // SAFETY: Static const block pointer is valid for 'static
-                                        data: unsafe { ::facet::OxRef::new(
-                                            ::facet::PtrConst::new_sized(&const {
-                                                𝟋Some(
-                                                    (|__ptr: ::facet::PtrUninit| unsafe { __ptr.put($expr) })
-                                                        as ::facet::DefaultInPlaceFn
-                                                )
-                                            } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const ()),
-                                            <() as ::facet::Facet>::SHAPE
-                                        ) },
+                                    // SAFETY: the pointer is to a `const` block, which is promoted to
+                                    // `'static`, and the value stored is a function pointer (or an
+                                    // `Option` of one), which is `Sync` — the requirement that `Attr`'s
+                                    // `unsafe impl Sync` rests on. See facet-rs/facet#1573.
+                                    unsafe {
+                                        ::facet::Attr::from_raw_parts(
+                                            #ns_expr,
+                                            #key_str,
+                                            ::facet::OxRef::new(
+                                                ::facet::PtrConst::new_sized(&const {
+                                                    𝟋Some(
+                                                        (|__ptr: ::facet::PtrUninit| unsafe { __ptr.put($expr) })
+                                                            as ::facet::DefaultInPlaceFn
+                                                    )
+                                                } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const ()),
+                                                <() as ::facet::Facet>::SHAPE
+                                            ),
+                                        )
                                     }
                                 }};
                             }
@@ -1462,16 +1492,21 @@ impl ParsedGrammar {
                             quote! {
                                 // Container-level: no args means use Default trait (no fallback - no $ty available)
                                 (@ns { $ns:path } #key_ident { }) => {{
-                                    ::facet::Attr {
-                                        ns: #ns_expr,
-                                        key: #key_str,
-                                        // SAFETY: Static const block pointer is valid for 'static
-                                        data: unsafe { ::facet::OxRef::new(
-                                            ::facet::PtrConst::new_sized(&const {
-                                                ::core::option::Option::<::facet::DefaultInPlaceFn>::None
-                                            } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const ()),
-                                            <() as ::facet::Facet>::SHAPE
-                                        ) },
+                                    // SAFETY: the pointer is to a `const` block, which is promoted to
+                                    // `'static`, and the value stored is a function pointer (or an
+                                    // `Option` of one), which is `Sync` — the requirement that `Attr`'s
+                                    // `unsafe impl Sync` rests on. See facet-rs/facet#1573.
+                                    unsafe {
+                                        ::facet::Attr::from_raw_parts(
+                                            #ns_expr,
+                                            #key_str,
+                                            ::facet::OxRef::new(
+                                                ::facet::PtrConst::new_sized(&const {
+                                                    ::core::option::Option::<::facet::DefaultInPlaceFn>::None
+                                                } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const ()),
+                                                <() as ::facet::Facet>::SHAPE
+                                            ),
+                                        )
                                     }
                                 }};
                                 // Container-level with args: not typical, error

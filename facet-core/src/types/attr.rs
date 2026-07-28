@@ -9,24 +9,96 @@ use crate::{Facet, OxRef, PtrConst, Shape};
 ///
 /// The derive macro expands attributes to macro invocations that
 /// return `Attr` values with typed data.
+///
+/// # Why the fields are private
+///
+/// `Attr` carries a hand-written `unsafe impl Sync` (see below), and the whole
+/// of that impl's soundness rests on one claim: *the referent behind `data` is
+/// `Sync`*. `OxRef` is type-erased, so the compiler cannot check that claim —
+/// only the construction site can. Every constructor is therefore either
+/// bound by `T: Sync` ([`Attr::new`], [`Attr::new_shape`]) or `unsafe`
+/// ([`Attr::from_raw_parts`]).
+///
+/// Public fields would be a fourth, *safe and unchecked*, constructor: a struct
+/// literal skips the constructor entirely, and [`OxRef::from_ref`] carries no
+/// `Sync` bound of its own (correctly so — `OxRef` is itself neither `Send` nor
+/// `Sync`, so it needs none). That is exactly how facet-rs/facet#1573 stayed
+/// open after its fix in `1524e017a`: the `T: Sync` bound was added to
+/// `Attr::new`, but the fields were already `pub`, so
+/// `Attr { ns: None, key: "", data: OxRef::from_ref(rc) }` reached the same
+/// data race from 100% safe code. Read the fields through [`Attr::ns`],
+/// [`Attr::key`] and [`Attr::data`] instead.
 pub struct Attr {
     /// The namespace (e.g., Some("orm") in `#[facet(orm::primary_key)]`).
     /// None for builtin attributes like `#[facet(sensitive)]`.
-    pub ns: Option<&'static str>,
+    ns: Option<&'static str>,
 
     /// The key (e.g., "primary_key" in `#[facet(orm::primary_key)]`)
-    pub key: &'static str,
+    key: &'static str,
 
     /// Data stored by the attribute
-    pub data: OxRef<'static>,
+    data: OxRef<'static>,
 }
 
-// SAFETY: Attr only holds `&'static T` where `T: Sync` (enforced by `Attr::new`),
-// so the data can be safely accessed from any thread.
+// SAFETY: `Attr` only holds `&'static T` where `T: Sync`. That is enforced by
+// the `T: Sync` bound on `Attr::new`/`Attr::new_shape`, by the safety contract
+// of `Attr::from_raw_parts`, and — critically — by the fields being private, so
+// that those three are the *only* ways to build an `Attr`. `&'static T: Send`
+// and `&'static T: Sync` both reduce to `T: Sync`, so the same bound licenses
+// both impls below.
 unsafe impl Send for Attr {}
 unsafe impl Sync for Attr {}
 
 impl Attr {
+    /// Create an attribute from its already-erased parts.
+    ///
+    /// This is the entry point for code that has built the [`OxRef`] itself —
+    /// notably the derive macro, which stores `const`-promoted function
+    /// pointers whose types it cannot name at the expansion site. Prefer
+    /// [`Attr::new`], which checks the `Sync` requirement for you.
+    ///
+    /// # Safety
+    ///
+    /// The caller must guarantee that:
+    /// - `data` upholds [`OxRef::new`]'s contract: the pointer is valid,
+    ///   points to initialized data matching the shape, and stays valid and
+    ///   immutably borrowed for `'static`.
+    /// - **The pointed-to type is `Sync`.** `Attr` is `Send + Sync` by the
+    ///   `unsafe impl`s above, so an `Attr` built over non-`Sync` data can be
+    ///   shared across threads and read concurrently — e.g. an `Rc` whose
+    ///   non-atomic refcount then races. This is the requirement that
+    ///   facet-rs/facet#1573 is about; it is *not* implied by the first bullet.
+    #[inline]
+    pub const unsafe fn from_raw_parts(
+        ns: Option<&'static str>,
+        key: &'static str,
+        data: OxRef<'static>,
+    ) -> Self {
+        Self { ns, key, data }
+    }
+
+    /// The namespace (e.g., `Some("orm")` in `#[facet(orm::primary_key)]`).
+    /// `None` for builtin attributes like `#[facet(sensitive)]`.
+    #[inline]
+    pub const fn ns(&self) -> Option<&'static str> {
+        self.ns
+    }
+
+    /// The key (e.g., `"primary_key"` in `#[facet(orm::primary_key)]`).
+    #[inline]
+    pub const fn key(&self) -> &'static str {
+        self.key
+    }
+
+    /// The type-erased data stored by the attribute.
+    ///
+    /// [`OxRef`] is `Copy` and is itself neither `Send` nor `Sync`, so handing
+    /// one out does not leak `Attr`'s `Sync` promise to the caller.
+    #[inline]
+    pub const fn data(&self) -> OxRef<'static> {
+        self.data
+    }
+
     /// Create a new attribute with typed data.
     ///
     /// The data must be a static reference to a sized value that implements `Facet`.

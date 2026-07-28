@@ -1129,7 +1129,7 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
             let ns_all = inner_shape
                 .attributes
                 .iter()
-                .find(|attr| attr.ns == Some("xml") && attr.key == "ns_all")
+                .find(|attr| attr.ns() == Some("xml") && attr.key() == "ns_all")
                 .and_then(|attr| attr.get_as::<&str>().copied());
 
             let deny_unknown_fields = inner_shape.has_deny_unknown_fields_attr();

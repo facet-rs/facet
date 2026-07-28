@@ -61,7 +61,7 @@ struct GenericOpaque<S> {
 fn read_generic_size(attrs: &[facet::Attr]) -> usize {
     let attr = attrs
         .iter()
-        .find(|a| a.ns == Some("testattrs") && a.key == "generic_size")
+        .find(|a| a.ns() == Some("testattrs") && a.key() == "generic_size")
         .expect("generic extension attribute should be present");
     let typed = attr
         .get_as::<testattrs::Attr>()

@@ -582,7 +582,7 @@ impl DomSerializer for XmlSerializer {
         self.current_ns_all = shape
             .attributes
             .iter()
-            .find(|attr| attr.ns == Some("xml") && attr.key == "ns_all")
+            .find(|attr| attr.ns() == Some("xml") && attr.key() == "ns_all")
             .and_then(|attr| attr.get_as::<&str>().copied())
             .map(String::from);
 

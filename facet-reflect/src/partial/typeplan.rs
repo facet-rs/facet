@@ -1583,14 +1583,14 @@ impl TypePlanBuilder {
         let scalar_type = field_shape.scalar_type();
 
         for attr in field.attributes.iter() {
-            if attr.ns != Some("validate") {
+            if attr.ns() != Some("validate") {
                 continue;
             }
 
-            let kind = match attr.key {
+            let kind = match attr.key() {
                 "custom" => {
                     // SAFETY: validate::custom attribute stores a ValidatorFn
-                    let validator_fn = unsafe { *attr.data.ptr().get::<ValidatorFn>() };
+                    let validator_fn = unsafe { *attr.data().ptr().get::<ValidatorFn>() };
                     ValidatorKind::Custom(validator_fn)
                 }
                 "min" => {

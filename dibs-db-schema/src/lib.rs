@@ -630,8 +630,8 @@ impl TableDef {
 
         // Collect container-level composite indices
         for attr in self.shape.attributes.iter() {
-            if attr.ns == Some("dibs")
-                && attr.key == "composite_index"
+            if attr.ns() == Some("dibs")
+                && attr.key() == "composite_index"
                 && let Some(Attr::CompositeIndex(composite)) = attr.get_as::<Attr>()
             {
                 let cols: Vec<IndexColumn> = composite
@@ -652,8 +652,8 @@ impl TableDef {
                 });
             }
             // Collect container-level composite unique constraints
-            if attr.ns == Some("dibs")
-                && attr.key == "composite_unique"
+            if attr.ns() == Some("dibs")
+                && attr.key() == "composite_unique"
                 && let Some(Attr::CompositeUnique(composite)) = attr.get_as::<Attr>()
             {
                 let cols: Vec<IndexColumn> = composite
@@ -675,8 +675,8 @@ impl TableDef {
             }
 
             // Collect container-level CHECK constraints
-            if attr.ns == Some("dibs")
-                && attr.key == "check"
+            if attr.ns() == Some("dibs")
+                && attr.key() == "check"
                 && let Some(Attr::Check(check)) = attr.get_as::<Attr>()
             {
                 let expr = unescape_rust_string_escapes(check.expr);
@@ -688,8 +688,8 @@ impl TableDef {
             }
 
             // Collect container-level trigger-enforced checks
-            if attr.ns == Some("dibs")
-                && attr.key == "trigger_check"
+            if attr.ns() == Some("dibs")
+                && attr.key() == "trigger_check"
                 && let Some(Attr::TriggerCheck(trig)) = attr.get_as::<Attr>()
             {
                 let expr = unescape_rust_string_escapes(trig.expr);
@@ -948,7 +948,7 @@ fn subtype_default_icon(subtype: &str) -> Option<&'static str> {
 /// Get a string value from a dibs attribute on a shape.
 fn shape_get_dibs_attr_str(shape: &Shape, key: &str) -> Option<&'static str> {
     shape.attributes.iter().find_map(|attr| {
-        if attr.ns == Some("dibs") && attr.key == key {
+        if attr.ns() == Some("dibs") && attr.key() == key {
             attr.get_as::<&str>().copied()
         } else {
             None
@@ -961,13 +961,13 @@ fn field_has_dibs_attr(field: &facet::Field, key: &str) -> bool {
     field
         .attributes
         .iter()
-        .any(|attr| attr.ns == Some("dibs") && attr.key == key)
+        .any(|attr| attr.ns() == Some("dibs") && attr.key() == key)
 }
 
 /// Get a string value from a dibs attribute on a field.
 fn field_get_dibs_attr_str(field: &facet::Field, key: &str) -> Option<&'static str> {
     field.attributes.iter().find_map(|attr| {
-        if attr.ns == Some("dibs") && attr.key == key {
+        if attr.ns() == Some("dibs") && attr.key() == key {
             attr.get_as::<&str>().copied()
         } else {
             None
