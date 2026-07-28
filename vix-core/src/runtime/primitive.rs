@@ -105,6 +105,7 @@ pub struct PrimitiveServices {
     value_persistence: Option<Arc<dyn ValuePersistence>>,
     origin: Option<Arc<dyn OriginAdapter>>,
     fixture_store: Option<super::FixtureStore>,
+    exec_backend: Option<Arc<dyn super::ExecBackend>>,
 }
 
 impl PrimitiveServices {
@@ -126,6 +127,16 @@ impl PrimitiveServices {
         self
     }
 
+    /// Install the exec process-boundary service
+    /// (`machine.primitive.effect-backend-service`). Nothing keys on the
+    /// backend: swapping it never re-keys a demand, it changes what a witness
+    /// is worth.
+    #[must_use]
+    pub fn with_exec_backend(mut self, backend: Arc<dyn super::ExecBackend>) -> Self {
+        self.exec_backend = Some(backend);
+        self
+    }
+
     pub(crate) fn value_persistence(&self) -> Option<Arc<dyn ValuePersistence>> {
         self.value_persistence.clone()
     }
@@ -136,6 +147,15 @@ impl PrimitiveServices {
 
     pub(crate) fn fixture_store(&self) -> Option<super::FixtureStore> {
         self.fixture_store.clone()
+    }
+
+    /// The installed exec backend, or the host-trusting default — the current
+    /// behavior verbatim, whose receipts carry `Unverifiable` capability
+    /// witnesses (`machine.primitive.memo-policy`).
+    pub(crate) fn exec_backend(&self) -> Arc<dyn super::ExecBackend> {
+        self.exec_backend
+            .clone()
+            .unwrap_or_else(|| Arc::new(super::HostExecBackend))
     }
 }
 
