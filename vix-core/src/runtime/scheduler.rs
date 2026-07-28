@@ -1,11 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
-use std::io::{BufRead, BufReader, Read};
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, Ordering};
 
 use weavy::exec::{
     FallbackReason, FaultSite, LaneKind, ResolvedTaskValue, TaskFault, TaskStructuralValue,
@@ -21,6 +20,10 @@ use crate::vir::{
     ProgressiveProjection, Type, VariantPayload,
 };
 
+use super::exec_backend::{
+    ExecEvent, ExecInvocation, ExecOutputProtocol, ExecProduct, ExecWorkspace,
+    validate_exec_product_path,
+};
 use super::fixture::{
     FixtureEntryKind, FixtureReadError, FixtureStore, canonical_resident_tree, tree_from_resident,
 };
@@ -192,6 +195,14 @@ enum DeliveredCompletion {
         demand: DemandKey,
         publication: super::PrimitivePublication,
     },
+    /// An in-flight registered effect published one progressive projection of
+    /// its response through `EffectCtx` (`machine.primitive.progressive-response`).
+    /// The published value is staged in the demand's effect authority; only the
+    /// scheduler thread materializes it.
+    PrimitiveProgress {
+        demand: DemandKey,
+        publication: super::ProgressivePublication,
+    },
     Callback {
         token: i64,
         request: PrimitiveValue,
@@ -203,18 +214,13 @@ enum DeliveredCompletion {
         demand: DemandKey,
         output: Result<std::process::Output, String>,
     },
-    /// One command-grammar-authorized immutable exec product. The worker
+    /// One command-grammar-authorized immutable exec product. The backend
     /// snapshots the announced file immediately; only these bytes cross to the
     /// scheduler, never a filesystem readiness guess.
     ExecProgress {
         demand: DemandKey,
-        product: Result<ExecProgress, String>,
+        product: Result<ExecProduct, String>,
     },
-}
-
-struct ExecProgress {
-    path: String,
-    bytes: Vec<u8>,
 }
 
 /// The unified inbox was closed — every completion sender dropped — while work
@@ -260,6 +266,19 @@ impl CompletionInbox {
     /// termination for `demand` through the same unified event source.
     fn exec_sender(&self) -> std::sync::mpsc::Sender<DeliveredCompletion> {
         self.sender.clone()
+    }
+
+    /// The live progressive-publication route installed into a registered
+    /// effect's `EffectCtx`: forwards each in-flight publication for `demand`
+    /// into this same unified inbox (`machine.primitive.progressive-response`).
+    fn primitive_progress_sender(&self, demand: DemandKey) -> super::ProgressSender {
+        let sender = self.sender.clone();
+        Arc::new(move |publication| {
+            let _ = sender.send(DeliveredCompletion::PrimitiveProgress {
+                demand,
+                publication,
+            });
+        })
     }
 
     fn callback_transport(&self, token: i64) -> super::primitive::CallbackTransport {
@@ -474,15 +493,19 @@ struct ExecPending {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ExecProtocol {
-    ExitOnly,
-    ProgressiveLinesV1,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ExecProjectionAuthority {
     Protocol,
     ProcessExit,
+}
+
+/// What authorized serving a registered-effect projection: an in-flight
+/// `EffectCtx` publication, or the effect's completion as the fallback
+/// (`machine.primitive.progressive-response`). Filesystem polling is no
+/// authority and has no variant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EffectProjectionAuthority {
+    Protocol,
+    Completion,
 }
 
 struct ExecProjectionPending {
@@ -497,25 +520,30 @@ struct ExecProjectionPending {
     span: Span,
 }
 
-struct ExecWorkspace {
-    path: PathBuf,
+/// One projection demand parked against an in-flight REGISTERED effect —
+/// the generalization of [`ExecProjectionPending`] to the rail
+/// (`machine.primitive.progressive-response`). Resolved by the effect's live
+/// `EffectCtx` publication, or at the fallback authority: the publications its
+/// completion witnessed.
+struct EffectProjectionPending {
+    task_id: TaskId,
+    location: Location,
+    demand_preimage: DemandPreimage,
+    /// The registered effect demand this projection reads from.
+    execution: DemandKey,
+    /// The witness source the served projection is recorded against — the
+    /// effect's request or capability, supplied by the demanding caller.
+    source: ValueId,
+    projection: ReadProjection,
 }
 
-impl ExecWorkspace {
-    fn create() -> Result<Self, String> {
-        static NEXT_WORKSPACE: AtomicU64 = AtomicU64::new(0);
-        let ordinal = NEXT_WORKSPACE.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!("vix-exec-{}-{ordinal}", std::process::id()));
-        std::fs::create_dir(&path)
-            .map_err(|error| format!("create exec workspace `{}`: {error}", path.display()))?;
-        Ok(Self { path })
-    }
-}
-
-impl Drop for ExecWorkspace {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
-    }
+/// One projection demand against an in-flight registered effect, as the runner
+/// submits it. The mirror of [`ExecProjectionRequest`] on the generic rail.
+pub struct EffectProjectionRequest {
+    pub execution: DemandKey,
+    pub source: ValueId,
+    pub projection: ReadProjection,
+    pub location: Location,
 }
 
 /// One island demand submission: everything needed to resolve it from memo,
@@ -690,6 +718,12 @@ pub struct Runtime<S, Ctx = ()> {
     exec_projection_pending: BTreeMap<DemandKey, ExecProjectionPending>,
     /// Products that arrived before their projection root was submitted.
     exec_progress_ready: BTreeMap<(DemandKey, String), Vec<u8>>,
+    /// Registered-effect projection roots waiting on an in-flight publication
+    /// (`machine.primitive.progressive-response`), keyed by projection demand.
+    effect_projection_pending: BTreeMap<DemandKey, EffectProjectionPending>,
+    /// In-flight publications that arrived before their projection root was
+    /// submitted, materialized while the effect authority was live.
+    effect_progress_ready: BTreeMap<(DemandKey, ReadProjection), PrimitiveValue>,
 }
 
 #[derive(Clone, Default)]
@@ -845,6 +879,8 @@ impl<S: EventSink> Runtime<S, ()> {
             exec_pending: BTreeMap::new(),
             exec_projection_pending: BTreeMap::new(),
             exec_progress_ready: BTreeMap::new(),
+            effect_projection_pending: BTreeMap::new(),
+            effect_progress_ready: BTreeMap::new(),
         }
     }
 
@@ -886,6 +922,8 @@ impl<S: EventSink> Runtime<S, ()> {
             exec_pending: BTreeMap::new(),
             exec_projection_pending: BTreeMap::new(),
             exec_progress_ready: BTreeMap::new(),
+            effect_projection_pending: BTreeMap::new(),
+            effect_progress_ready: BTreeMap::new(),
         }
     }
 
@@ -922,6 +960,8 @@ impl<S: EventSink> Runtime<S, ()> {
                 exec_pending: BTreeMap::new(),
                 exec_projection_pending: BTreeMap::new(),
                 exec_progress_ready: BTreeMap::new(),
+                effect_projection_pending: BTreeMap::new(),
+                effect_progress_ready: BTreeMap::new(),
             },
             PersistentRuntimeJournalLoadReport {
                 store: store_report,
@@ -961,6 +1001,8 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             exec_pending: BTreeMap::new(),
             exec_projection_pending: BTreeMap::new(),
             exec_progress_ready: BTreeMap::new(),
+            effect_projection_pending: BTreeMap::new(),
+            effect_progress_ready: BTreeMap::new(),
         }
     }
 
@@ -1072,11 +1114,14 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 && self.primitive_pending.is_empty()
                 && self.exec_pending.is_empty()
                 && self.exec_projection_pending.is_empty()
-                && self.exec_progress_ready.is_empty(),
+                && self.exec_progress_ready.is_empty()
+                && self.effect_projection_pending.is_empty()
+                && self.effect_progress_ready.is_empty(),
             "scheduler is not quiescent at persistent-state extraction: \
              runnable={}, parked={}, wire_waiters={}, root_results={}, \
              primitive_pending={}, exec_pending={}, exec_projection_pending={}, \
-             exec_progress_ready={}",
+             exec_progress_ready={}, effect_projection_pending={}, \
+             effect_progress_ready={}",
             self.runnable.len(),
             self.parked.len(),
             self.wire_waiters.len(),
@@ -1085,6 +1130,8 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             self.exec_pending.len(),
             self.exec_projection_pending.len(),
             self.exec_progress_ready.len(),
+            self.effect_projection_pending.len(),
+            self.effect_progress_ready.len(),
         );
     }
 
@@ -1900,19 +1947,22 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 && self.wire_waiters.is_empty()
                 && self.primitive_pending.is_empty()
                 && self.exec_pending.is_empty()
-                && self.exec_projection_pending.is_empty(),
+                && self.exec_projection_pending.is_empty()
+                && self.effect_projection_pending.is_empty(),
             "root batch finished with live scheduler work: \
              runnable={}, parked={}, wire_waiters={}, primitive_pending={}, exec_pending={}, \
-             exec_projection_pending={}",
+             exec_projection_pending={}, effect_projection_pending={}",
             self.runnable.len(),
             self.parked.len(),
             self.wire_waiters.len(),
             self.primitive_pending.len(),
             self.exec_pending.len(),
             self.exec_projection_pending.len(),
+            self.effect_projection_pending.len(),
         );
         self.root_results.clear();
         self.exec_progress_ready.clear();
+        self.effect_progress_ready.clear();
     }
 
     /// Explicitly abandon one unresolved island demand. Every retained frame
@@ -2068,6 +2118,8 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
         self.exec_pending.clear();
         self.exec_projection_pending.clear();
         self.exec_progress_ready.clear();
+        self.effect_projection_pending.clear();
+        self.effect_progress_ready.clear();
     }
 
     /// Observe the scheduler-owned effect frontier after admitting a fresh
@@ -3437,7 +3489,14 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             }
         };
         let request_id = request_value.identity();
-        let primitive_preimage = primitive_demand_preimage(&plan.primitive, &request_id);
+        let primitive_preimage = declared_effect_preimage(
+            &plan.primitive,
+            self.primitive_dispatcher
+                .request_shape(&plan.primitive)
+                .as_ref(),
+            &request_id,
+            &request_value,
+        );
         let primitive_demand = DemandKey::from_preimage(&primitive_preimage);
         let memo_policy = match self.primitive_dispatcher.descriptor(&plan.primitive) {
             Some(descriptor) => descriptor.memo_policy,
@@ -3539,7 +3598,13 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             let ticket = match self.primitive_dispatcher.begin_or_join(
                 &plan.primitive,
                 request_id.clone(),
-                EffectCtx::new(primitive_demand, authority.clone()),
+                // The live progressive route rides the one unified inbox: an
+                // in-flight publication can serve a projection demand before
+                // the effect completes (machine.primitive.progressive-response).
+                EffectCtx::new(primitive_demand, authority.clone()).with_progress(
+                    self.completion_inbox
+                        .primitive_progress_sender(primitive_demand),
+                ),
                 &self.ctx,
             ) {
                 Ok(ticket) => ticket,
@@ -3622,6 +3687,10 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 demand,
                 publication,
             } => self.apply_primitive_completion(demand, publication),
+            DeliveredCompletion::PrimitiveProgress {
+                demand,
+                publication,
+            } => self.apply_primitive_progress(demand, publication),
             DeliveredCompletion::Callback {
                 token,
                 request,
@@ -3640,10 +3709,59 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
         }
     }
 
+    /// Apply one in-flight registered-effect publication drained from the
+    /// unified inbox: serve the matching parked projection demand, or hold the
+    /// materialized value for a projection submitted later. Materialization
+    /// happens HERE, while the demand's staged effect authority is live — a
+    /// buffered product outlives the authority that admitted it.
+    ///
+    /// r[impl machine.primitive.progressive-response]
+    fn apply_primitive_progress(
+        &mut self,
+        execution: DemandKey,
+        publication: super::ProgressivePublication,
+    ) -> Result<(), Box<MachineError>> {
+        let Some(pending) = self.primitive_pending.get(&execution) else {
+            // The effect already completed (or was cancelled): its completion
+            // is the remaining authority for any projection still parked.
+            self.counters.stale_completions_ignored += 1;
+            return Ok(());
+        };
+        let Some(value) = pending.authority.admitted_value(&publication.value) else {
+            // A publication naming an identity its own authority never staged
+            // is a primitive contract violation, never a servable product.
+            return Err(Box::new(MachineError::runtime(
+                MachineOperation::Effect,
+                RuntimeFault::EffectHostFailure {
+                    detail: format!(
+                        "progressive publication {:?} was not admitted by its effect authority",
+                        publication.value
+                    ),
+                },
+                None,
+                Some(execution),
+            )));
+        };
+        let waiting = self
+            .effect_projection_pending
+            .iter()
+            .find_map(|(key, pending)| {
+                (pending.execution == execution && pending.projection == publication.projection)
+                    .then_some(*key)
+            });
+        if let Some(key) = waiting {
+            self.publish_effect_projection(key, &value, EffectProjectionAuthority::Protocol)?;
+        } else {
+            self.effect_progress_ready
+                .insert((execution, publication.projection), value);
+        }
+        Ok(())
+    }
+
     fn apply_exec_progress(
         &mut self,
         execution: DemandKey,
-        product: Result<ExecProgress, String>,
+        product: Result<ExecProduct, String>,
     ) -> Result<(), Box<MachineError>> {
         let product = product.map_err(|detail| {
             Box::new(MachineError::runtime(
@@ -3855,6 +3973,37 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
         for waiter in waiters {
             self.resume_primitive_waiter(waiter, demand, &value, &publication.receipt)?;
         }
+        // Completion is the fallback authority for projections still parked
+        // against this effect (machine.primitive.progressive-response): the
+        // publications the completion witnessed serve them; a projection the
+        // effect never published is a loud fault, not a hang.
+        let parked_projections = self
+            .effect_projection_pending
+            .iter()
+            .filter(|(_, pending)| pending.execution == demand)
+            .map(|(key, pending)| (*key, pending.projection.clone()))
+            .collect::<Vec<_>>();
+        for (key, projection) in parked_projections {
+            let published = publication
+                .progressive
+                .iter()
+                .find(|candidate| candidate.projection == projection)
+                .and_then(|candidate| authority.admitted_value(&candidate.value))
+                .ok_or_else(|| {
+                    Box::new(MachineError::runtime(
+                        MachineOperation::Effect,
+                        RuntimeFault::EffectHostFailure {
+                            detail: format!(
+                                "effect completed without publishing demanded projection \
+                                 {projection:?}"
+                            ),
+                        },
+                        None,
+                        Some(key),
+                    ))
+                })?;
+            self.publish_effect_projection(key, &published, EffectProjectionAuthority::Completion)?;
+        }
         if memo_policy != PrimitiveMemoPolicy::Volatile
             && let Some(result) = self.store.handle_for_identity(&identity)
         {
@@ -3977,8 +4126,8 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
         // inline wait did.
         self.transition_task(task_id, TaskState::Running)?;
         if output.status.success() {
-            self.publish_completed_exec_projections(demand, &workspace.path)?;
-            let tree = archive_directory(&workspace.path).map_err(|detail| {
+            self.publish_completed_exec_projections(demand, workspace.path())?;
+            let tree = archive_directory(workspace.path()).map_err(|detail| {
                 Box::new(MachineError::runtime(
                     MachineOperation::Result,
                     RuntimeFault::EffectHostFailure { detail },
@@ -5097,9 +5246,9 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
         let (capability_ty, capability) = resolved_inputs.first().ok_or_else(malformed)?;
         let protocol = match capability_ty {
             Type::Record(record) if record.name == "ProgressiveSh" => {
-                ExecProtocol::ProgressiveLinesV1
+                ExecOutputProtocol::ProgressiveLinesV1
             }
-            _ => ExecProtocol::ExitOnly,
+            _ => ExecOutputProtocol::ExitOnly,
         };
         let mut materialized_argv = Vec::with_capacity(argv.len());
         for argument in argv {
@@ -5265,12 +5414,13 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 continue;
             }
 
-            // Spawn, then PARK: the scheduler holds no busy loop while the
-            // process runs. The blocking wait runs on an isolated worker thread
-            // that owns the process boundary and delivers the raw termination
-            // through the scheduler's one completion event source; the parked
-            // exec frame resumes only when the scheduler drains that completion
-            // and `apply_exec_completion` interns it
+            // Launch through the SERVICE, then PARK: the scheduler holds no
+            // busy loop and no process code while the command runs. The
+            // installed backend owns workspace, spawn, stream, and wait
+            // (machine.primitive.effect-backend-service) and delivers the raw
+            // termination through the scheduler's one completion event source;
+            // the parked exec frame resumes only when the scheduler drains
+            // that completion and `apply_exec_completion` interns it
             // (machine.scheduler.no-shadow-scheduler, block-on-event).
             self.counters.effect_spawns += 1;
             self.emit(EventKind::EffectSpawned {
@@ -5285,24 +5435,31 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                     Some(demand_key),
                 ))
             };
-            let workspace = ExecWorkspace::create().map_err(host_fault)?;
-            let mut child = std::process::Command::new(&program)
-                .args(&materialized_argv)
-                .current_dir(&workspace.path)
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()
-                .map_err(|error| host_fault(format!("spawn `{program}`: {error}")))?;
-            let stdout = child
-                .stdout
-                .take()
-                .ok_or_else(|| host_fault(format!("`{program}` stdout was not piped")))?;
-            let stderr = child
-                .stderr
-                .take()
-                .ok_or_else(|| host_fault(format!("`{program}` stderr was not piped")))?;
-            let workspace_path = workspace.path.clone();
+            let exec_sender = self.completion_inbox.exec_sender();
+            let events: super::ExecEventSender = Arc::new(move |event| {
+                let _ = exec_sender.send(match event {
+                    ExecEvent::Product(product) => DeliveredCompletion::ExecProgress {
+                        demand: demand_key,
+                        product,
+                    },
+                    ExecEvent::Terminated(output) => DeliveredCompletion::Exec {
+                        demand: demand_key,
+                        output,
+                    },
+                });
+            });
+            let workspace = self
+                .primitive_services
+                .exec_backend()
+                .begin(
+                    ExecInvocation {
+                        program: program.clone(),
+                        argv: materialized_argv.clone(),
+                        protocol,
+                    },
+                    events,
+                )
+                .map_err(host_fault)?;
             self.transition_task(task_id, TaskState::Parked)?;
             self.exec_pending.insert(
                 demand_key,
@@ -5321,50 +5478,6 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 },
             );
             self.observe_effect_frontier();
-            // `wait_with_output` lives ONLY inside this worker-thread closure;
-            // the scheduler thread never waits on the process boundary.
-            let exec_sender = self.completion_inbox.exec_sender();
-            let worker_program = program.clone();
-            std::thread::spawn(move || {
-                let progress_sender = exec_sender.clone();
-                let stdout_reader = std::thread::spawn(move || {
-                    read_exec_stdout(
-                        stdout,
-                        protocol,
-                        &workspace_path,
-                        demand_key,
-                        &progress_sender,
-                    )
-                });
-                let stderr_reader = std::thread::spawn(move || {
-                    let mut bytes = Vec::new();
-                    let mut stderr = stderr;
-                    stderr
-                        .read_to_end(&mut bytes)
-                        .map_err(|error| format!("read `{worker_program}` stderr: {error}"))?;
-                    Ok::<_, String>(bytes)
-                });
-                let output = (|| {
-                    let status = child
-                        .wait()
-                        .map_err(|error| format!("wait `{program}`: {error}"))?;
-                    let stdout = stdout_reader
-                        .join()
-                        .map_err(|_| format!("read `{program}` stdout worker panicked"))??;
-                    let stderr = stderr_reader
-                        .join()
-                        .map_err(|_| format!("read `{program}` stderr worker panicked"))??;
-                    Ok(std::process::Output {
-                        status,
-                        stdout,
-                        stderr,
-                    })
-                })();
-                let _ = exec_sender.send(DeliveredCompletion::Exec {
-                    demand: demand_key,
-                    output,
-                });
-            });
             break;
         }
         Ok(ExecSubmission {
@@ -5377,6 +5490,12 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
     /// projection has its own demand identity and memo location, but its
     /// readiness comes only from the producer command grammar (or, as the safe
     /// fallback, completed process output), never from filesystem polling.
+    ///
+    /// This is exec's PRIVATE copy of the mechanism
+    /// `machine.primitive.progressive-response` generalizes — the rail path is
+    /// [`Self::submit_effect_projection`]. It stays beside the generic one
+    /// (with its `ExecTreeText` special case and completed-outcome fallback)
+    /// until exec itself rides the rail and this path deletes with `Op::Exec`.
     pub fn submit_exec_projection(
         &mut self,
         request: ExecProjectionRequest,
@@ -5576,6 +5695,212 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             }
             ExecProjectionAuthority::ProcessExit => {
                 self.counters.progressive_exec_exit_publications += 1;
+            }
+        }
+        self.root_results.insert(
+            demand,
+            Evaluation {
+                handle: interned.handle,
+                identity: interned.identity,
+                passed: true,
+                memo: MemoVerdict::Miss,
+                failure: None,
+                failure_context: None,
+            },
+        );
+        Ok(())
+    }
+
+    /// Submit one projection demand against an in-flight REGISTERED effect —
+    /// the rail's generalization of [`Self::submit_exec_projection`]. The
+    /// projection has its own demand identity and memo location; its readiness
+    /// comes only from the effect's own `EffectCtx` publications (live, or as
+    /// witnessed by its completion), never from filesystem polling.
+    ///
+    /// Unlike exec's private path there is no completed-outcome parameter: a
+    /// projection submitted after the effect completed is served only if its
+    /// publication arrived in flight during this root batch. Serving from a
+    /// *memoized* completion's witnessed publications is the remaining step to
+    /// the full rule, deferred with exec's own move onto the rail.
+    ///
+    /// r[impl machine.primitive.progressive-response]
+    pub fn submit_effect_projection(
+        &mut self,
+        request: EffectProjectionRequest,
+    ) -> Result<RootSubmission, Box<MachineError>> {
+        let EffectProjectionRequest {
+            execution,
+            source,
+            projection,
+            location,
+        } = request;
+        let fingerprint = format!(
+            "effect-projection:{}:{}",
+            execution.0.hex(),
+            projection_fingerprint(&projection),
+        );
+        let demand_preimage = DemandPreimage {
+            closure: RecipeId::from_effect_fingerprint(&fingerprint),
+            arguments: Vec::new(),
+        };
+        let demand = DemandKey::from_preimage(&demand_preimage);
+        self.emit(EventKind::Demanded { key: demand });
+        if let Some(entry) = self.memo.get(&location.id)
+            && entry.location == location
+            && entry.key == demand
+            && entry.preimage == demand_preimage
+            && self.exact_memo_replayable(entry)
+        {
+            return Ok(RootSubmission::Ready(self.effect_memo_hit(
+                location.id,
+                entry.result,
+                &|_| None,
+            )?));
+        }
+        if let Some(record) = self.demands.get(&demand) {
+            match record.state {
+                DemandState::Ready | DemandState::Failed => {
+                    if let Some(handle) = record.result {
+                        return Ok(RootSubmission::Ready(self.effect_memo_hit(
+                            location.id,
+                            handle,
+                            &|_| None,
+                        )?));
+                    }
+                }
+                DemandState::Queued | DemandState::Running => {
+                    self.counters.demand_joins += 1;
+                    return Ok(RootSubmission::Pending(demand));
+                }
+                DemandState::Absent | DemandState::MachineFailed => {}
+            }
+        }
+
+        self.counters.memo_misses += 1;
+        self.emit(EventKind::Memo {
+            location: location.id,
+            verdict: MemoVerdict::Miss,
+            verified: 0,
+        });
+        self.demands.insert(
+            demand,
+            DemandRecord {
+                key: demand,
+                state: DemandState::Queued,
+                result: None,
+            },
+        );
+        self.emit(EventKind::DemandTransition {
+            key: demand,
+            from: DemandState::Absent,
+            to: DemandState::Queued,
+        });
+        self.counters.scheduler_requests += 1;
+        let task_id = self.spawn_task(demand);
+        self.transition_demand(demand, DemandState::Running)?;
+        self.transition_task(task_id, TaskState::Running)?;
+        self.transition_task(task_id, TaskState::Parked)?;
+        self.effect_projection_pending.insert(
+            demand,
+            EffectProjectionPending {
+                task_id,
+                location,
+                demand_preimage,
+                execution,
+                source,
+                projection: projection.clone(),
+            },
+        );
+
+        if let Some(value) = self
+            .effect_progress_ready
+            .remove(&(execution, projection))
+        {
+            self.publish_effect_projection(demand, &value, EffectProjectionAuthority::Protocol)?;
+            return Ok(RootSubmission::Ready(
+                self.root_results
+                    .remove(&demand)
+                    .expect("published progressive root has a result"),
+            ));
+        }
+        Ok(RootSubmission::Pending(demand))
+    }
+
+    /// Publish one served registered-effect projection: intern the published
+    /// value under the projection's own demand and memo location, witness the
+    /// read against the caller-named source, and resolve the parked root.
+    fn publish_effect_projection(
+        &mut self,
+        demand: DemandKey,
+        value: &PrimitiveValue,
+        authority: EffectProjectionAuthority,
+    ) -> Result<(), Box<MachineError>> {
+        let pending = self
+            .effect_projection_pending
+            .remove(&demand)
+            .ok_or_else(|| {
+                Box::new(MachineError::runtime(
+                    MachineOperation::Effect,
+                    RuntimeFault::QuiescentUnresolvedDemand { key: demand },
+                    None,
+                    Some(demand),
+                ))
+            })?;
+        // The mechanism serves byte-bodied publications: every progressive
+        // product so far (readiness snapshots, stream extensions) is a byte
+        // value. A structural publication is a typed fault until the rail
+        // needs one, not a silent partial intern.
+        let PrimitiveValueBody::Bytes(bytes) = &value.body else {
+            return Err(Box::new(MachineError::runtime(
+                MachineOperation::Effect,
+                RuntimeFault::EffectHostFailure {
+                    detail: "progressive effect publication was not a byte value".to_owned(),
+                },
+                None,
+                Some(demand),
+            )));
+        };
+        self.transition_task(pending.task_id, TaskState::Running)?;
+        let node = FramedNode::leaf(value.schema.clone(), bytes.clone());
+        let interned = self.store.intern_tree(&node, bytes);
+        self.store
+            .attach_frozen(interned.handle, FrozenValue::Opaque(bytes.clone()));
+        self.observe_interned(&interned);
+        let receipt = Receipt {
+            demand,
+            reads: vec![ReadWitness {
+                source: pending.source,
+                projection: pending.projection,
+                observation: ReadObservation::Value(interned.identity.clone()),
+            }],
+        };
+        self.record_performed_reads(&receipt);
+        self.memo.insert(
+            pending.location.id,
+            MemoEntry {
+                location: pending.location,
+                key: demand,
+                preimage: pending.demand_preimage,
+                result: interned.handle,
+                receipt: Some(receipt),
+                current_receipt: true,
+            },
+        );
+        if let Some(record) = self.demands.get_mut(&demand) {
+            record.result = Some(interned.handle);
+        }
+        self.transition_task(pending.task_id, TaskState::Completed)?;
+        self.transition_demand(demand, DemandState::Ready)?;
+        self.emit(EventKind::Completed {
+            key: demand,
+            identity: interned.identity.clone(),
+        });
+        match authority {
+            EffectProjectionAuthority::Protocol => {
+                self.counters.progressive_effect_protocol_publications += 1;
+            }
+            EffectProjectionAuthority::Completion => {
+                self.counters.progressive_effect_completion_publications += 1;
             }
         }
         self.root_results.insert(
@@ -7011,6 +7336,108 @@ fn primitive_demand_preimage(primitive: &super::PrimitiveId, request: &ValueId) 
     }
 }
 
+/// A projection's canonical spelling inside an effect-projection demand
+/// fingerprint. Explicit per variant: the fingerprint is identity-bearing, so
+/// it must not ride a debug or serialization format that owes it no stability.
+fn projection_fingerprint(projection: &ReadProjection) -> String {
+    match projection {
+        ReadProjection::Whole => "whole".to_owned(),
+        ReadProjection::Document => "document".to_owned(),
+        ReadProjection::RegistryManifest => "registry-manifest".to_owned(),
+        ReadProjection::CapabilityProgram => "capability-program".to_owned(),
+        ReadProjection::TreePath { path } => format!("tree-path:{path}"),
+        ReadProjection::ExecTreePath { execution, path } => {
+            format!("exec-tree-path:{}:{path}", execution.0.hex())
+        }
+        ReadProjection::Origin { coordinate } => format!("origin:{coordinate}"),
+    }
+}
+
+/// One request-record field's value identity, as demand keying sees it: an
+/// inline leaf hashes under its field schema, a child carries its own identity.
+/// This is the same identity the field's value would have as a standalone
+/// effect argument, so declaration-derived preimages and hand-built ones
+/// (`submit_exec`'s `capability.identity`) agree byte for byte.
+fn primitive_field_identity(field: &PrimitiveField) -> ValueId {
+    match &field.value {
+        PrimitiveFieldValue::Inline(bytes) => {
+            FramedNode::leaf(field.schema.clone(), bytes.clone()).identity()
+        }
+        PrimitiveFieldValue::Child(child) => child.identity(),
+    }
+}
+
+/// Derive a registered effect's demand preimage from its declaration. A shape
+/// with capability-role arguments keys as `closure = the normalized request
+/// recipe` (the primitive identity plus every non-capability argument identity,
+/// in declaration order) and `arguments = the capability argument identities in
+/// declaration order` — the "plan × capability" preimage `submit_exec` builds
+/// by hand for `Op::Exec` today, generalized to any declaration. The
+/// capability's identity is what the demand *means*; its value is redeemed only
+/// host-side by the effect's backend service and never enters the key. Source
+/// location is no input here, so the same plan under the same capability at a
+/// different site is the same demand (rung 069's exec behavior, for the rail).
+///
+/// A shapeless primitive, a declaration without capability roles, or a request
+/// whose structure does not match its declaration (unreachable through the
+/// compiled rail, which builds the record *from* the declaration) keys as
+/// before: the whole request identity as the single preimage argument. The
+/// fallback never half-derives — a key either separates the declared
+/// capabilities or is the ordinary request-identity key.
+///
+/// r[impl machine.primitive.capability-role]
+fn declared_effect_preimage(
+    primitive: &super::PrimitiveId,
+    shape: Option<&super::RequestShape>,
+    request_id: &ValueId,
+    request: &PrimitiveValue,
+) -> DemandPreimage {
+    let Some(shape) = shape else {
+        return primitive_demand_preimage(primitive, request_id);
+    };
+    if !shape
+        .args
+        .iter()
+        .any(|arg| matches!(arg, super::ArgRole::Capability { .. }))
+    {
+        return primitive_demand_preimage(primitive, request_id);
+    }
+    let PrimitiveValueBody::Product(fields) = &request.body else {
+        return primitive_demand_preimage(primitive, request_id);
+    };
+    if fields.len() != shape.args.len() {
+        return primitive_demand_preimage(primitive, request_id);
+    }
+    let version = primitive.version.to_le_bytes();
+    let mut plan_parts: Vec<Vec<u8>> = vec![
+        primitive.namespace.as_bytes().to_vec(),
+        primitive.name.as_bytes().to_vec(),
+        version.to_vec(),
+    ];
+    let mut arguments = Vec::new();
+    for (arg, field) in shape.args.iter().zip(fields) {
+        let identity = primitive_field_identity(field);
+        match arg {
+            super::ArgRole::Capability { .. } => arguments.push(identity),
+            super::ArgRole::Value { .. } => {
+                // Schema and content both enter the plan: two spellings of the
+                // same bytes under different schemas are different requests.
+                let mut schema = Vec::new();
+                identity
+                    .schema
+                    .write_canonical(&mut |bytes| schema.extend_from_slice(bytes));
+                plan_parts.push(schema);
+                plan_parts.push(identity.content.0.to_vec());
+            }
+        }
+    }
+    let plan_parts = plan_parts.iter().map(Vec::as_slice).collect::<Vec<_>>();
+    DemandPreimage {
+        closure: RecipeId(hash_framed(b"vix.primitive.effect-plan.v1", &plan_parts)),
+        arguments,
+    }
+}
+
 fn primitive_value_from_frame(
     frame: &[u8],
     region: super::FrameRegion,
@@ -8146,71 +8573,6 @@ fn effect_fault<T>(detail: &'static str) -> Result<T, Box<MachineError>> {
     Err(effect_machine_error(detail))
 }
 
-fn read_exec_stdout(
-    stdout: impl Read,
-    protocol: ExecProtocol,
-    workspace: &Path,
-    demand: DemandKey,
-    sender: &std::sync::mpsc::Sender<DeliveredCompletion>,
-) -> Result<Vec<u8>, String> {
-    const READY_PREFIX: &[u8] = b"vix-ready\t";
-    let mut reader = BufReader::new(stdout);
-    let mut output = Vec::new();
-    let mut line = Vec::new();
-    loop {
-        line.clear();
-        let read = reader
-            .read_until(b'\n', &mut line)
-            .map_err(|error| format!("read exec stdout: {error}"))?;
-        if read == 0 {
-            break;
-        }
-        if protocol == ExecProtocol::ProgressiveLinesV1 && line.starts_with(READY_PREFIX) {
-            let mut path = &line[READY_PREFIX.len()..];
-            if path.ends_with(b"\n") {
-                path = &path[..path.len() - 1];
-            }
-            if path.ends_with(b"\r") {
-                path = &path[..path.len() - 1];
-            }
-            let path = core::str::from_utf8(path)
-                .map_err(|_| "progressive exec path was not UTF-8".to_owned())?;
-            validate_exec_product_path(path)?;
-            let bytes = std::fs::read(workspace.join(path)).map_err(|error| {
-                format!("read progressive exec product `{path}` after readiness: {error}")
-            });
-            let _ = sender.send(DeliveredCompletion::ExecProgress {
-                demand,
-                product: bytes.map(|bytes| ExecProgress {
-                    path: path.to_owned(),
-                    bytes,
-                }),
-            });
-        } else {
-            output.extend_from_slice(&line);
-        }
-    }
-    Ok(output)
-}
-
-fn validate_exec_product_path(path: &str) -> Result<(), String> {
-    if path.is_empty() {
-        return Err("progressive exec product path was empty".to_owned());
-    }
-    let path = Path::new(path);
-    if path.is_absolute()
-        || path
-            .components()
-            .any(|component| !matches!(component, std::path::Component::Normal(_)))
-    {
-        return Err(format!(
-            "progressive exec product `{}` was not a relative normal path",
-            path.display()
-        ));
-    }
-    Ok(())
-}
-
 fn archive_directory(root: &Path) -> Result<Vec<u8>, String> {
     fn collect(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
         let mut entries = std::fs::read_dir(directory)
@@ -8891,6 +9253,528 @@ fn scheduler_decode() -> Stream<Check> {
             .register(primitive)
             .expect("the scheduler test registers decode once");
         PrimitiveDispatcher::new(Arc::new(registry))
+    }
+
+    // ---- the exec backend service seam -------------------------------------
+
+    const EXEC_BACKEND_SOURCE: &str = r#"
+#[test]
+fn backend_seam(echo: Echo) -> Stream<Check> {
+    let out = exec echo`"once"`;
+    yield expect_eq(out.stdout, out.stdout);
+}
+"#;
+
+    #[cfg(unix)]
+    fn exit_status(raw: i32) -> std::process::ExitStatus {
+        use std::os::unix::process::ExitStatusExt as _;
+        std::process::ExitStatus::from_raw(raw)
+    }
+
+    #[cfg(windows)]
+    fn exit_status(raw: i32) -> std::process::ExitStatus {
+        use std::os::windows::process::ExitStatusExt as _;
+        std::process::ExitStatus::from_raw(raw as u32)
+    }
+
+    /// A backend that never spawns: it records what crossed the seam and
+    /// delivers a canned termination through the given sender — the proof that
+    /// the scheduler's exec arm holds no process code of its own.
+    struct FakeExecBackend {
+        invocations: Arc<Mutex<Vec<crate::runtime::ExecInvocation>>>,
+        stdout: Vec<u8>,
+    }
+
+    impl crate::runtime::ExecBackend for FakeExecBackend {
+        fn begin(
+            &self,
+            invocation: crate::runtime::ExecInvocation,
+            events: crate::runtime::ExecEventSender,
+        ) -> Result<ExecWorkspace, String> {
+            self.invocations
+                .lock()
+                .expect("invocation mutex poisoned")
+                .push(invocation);
+            let workspace = ExecWorkspace::create()?;
+            (*events)(ExecEvent::Terminated(Ok(std::process::Output {
+                status: exit_status(0),
+                stdout: self.stdout.clone(),
+                stderr: Vec::new(),
+            })));
+            Ok(workspace)
+        }
+    }
+
+    /// The exec arm calls through the installed backend service: the fake
+    /// records the invocation that crossed the seam and resolves the demand
+    /// with a canned termination, no process spawned. Keying, parking, and
+    /// receipts stay scheduler-side and unchanged.
+    ///
+    /// r[verify machine.primitive.effect-backend-service]
+    #[test]
+    fn installed_exec_backend_owns_the_process_boundary() {
+        // The exec outcome's `tree` field is the embedder-declared `Tree` host
+        // type; reserve its schema name as the vixen runtime does (idempotent).
+        crate::schema::register_host_externs(&[crate::binding::TREE]);
+        let module = decode_compiler()
+            .compile(EXEC_BACKEND_SOURCE)
+            .expect("exec backend source compiles");
+        let partitioned = module.partition_test(&module.tests[0]);
+        let mut runtime = Runtime::new(EventLog::default());
+        let invocations = Arc::new(Mutex::new(Vec::new()));
+        runtime.primitive_services = crate::runtime::PrimitiveServices::default()
+            .with_exec_backend(Arc::new(FakeExecBackend {
+                invocations: invocations.clone(),
+                stdout: b"canned\n".to_vec(),
+            }));
+
+        let mut published = std::collections::BTreeMap::new();
+        for capability in &partitioned.capabilities {
+            let evaluation = runtime.publish_capability(&capability.ty, &capability.name);
+            published.insert(capability.id, evaluation);
+        }
+        let value = partitioned
+            .values
+            .iter()
+            .find(|value| {
+                matches!(
+                    value.island.effect_output().map(|node| &node.op),
+                    Some(crate::vir::Op::Exec { .. })
+                )
+            })
+            .expect("exec island partitions");
+        let capability = value
+            .island
+            .value_inputs
+            .iter()
+            .filter_map(|input| published.get(input).cloned())
+            .next()
+            .expect("exec island has one capability input");
+        let location = Location::for_test_value(&partitioned.name, &value.id.stable_segment());
+
+        let evaluation = runtime
+            .evaluate_exec(&value.island, &location, &capability, ChaosPolicy::default())
+            .expect("the canned termination resolves the exec demand");
+
+        assert!(evaluation.passed, "exit zero publishes the exec outcome");
+        let invocations = invocations.lock().expect("invocation mutex poisoned");
+        assert_eq!(
+            invocations.len(),
+            1,
+            "the process boundary was crossed exactly once, through the service"
+        );
+        assert_eq!(invocations[0].program, "echo");
+        assert_eq!(invocations[0].argv, vec!["once".to_owned()]);
+        assert_eq!(
+            invocations[0].protocol,
+            crate::runtime::ExecOutputProtocol::ExitOnly
+        );
+        assert_eq!(runtime.counters.effect_spawns, 1);
+    }
+
+    // ---- progressive publication on the registered-effect rail -------------
+
+    /// A live progressive publication is recorded in the transaction FIRST and
+    /// forwarded second: the completion's witness lists everything published,
+    /// which is what makes a replayed stream indistinguishable from a live one.
+    ///
+    /// r[verify machine.primitive.progressive-response]
+    #[test]
+    fn effect_ctx_records_then_forwards_progressive_publications() {
+        let demand = DemandKey::from_preimage(&DemandPreimage {
+            closure: RecipeId::from_canonical_vir(b"progress-forwarding"),
+            arguments: Vec::new(),
+        });
+        let authority = Arc::new(StagedEffectAuthority::default());
+        let forwarded = Arc::new(Mutex::new(Vec::new()));
+        let sink = forwarded.clone();
+        let ctx = EffectCtx::new(demand, authority.clone())
+            .with_progress(Arc::new(move |publication| {
+                sink.lock()
+                    .expect("forward mutex poisoned")
+                    .push(publication);
+            }));
+
+        let product = crate::runtime::EffectAuthority::intern_value(
+            &*authority,
+            PrimitiveValue::bytes(Type::String.schema_ref(), b"rmeta".to_vec()),
+        )
+        .expect("staged authority interns the product");
+        let publication = crate::runtime::ProgressivePublication {
+            projection: ReadProjection::TreePath {
+                path: "lib.rmeta".to_owned(),
+            },
+            value: product,
+        };
+        ctx.publish_progress(publication.clone());
+        assert_eq!(
+            *forwarded.lock().expect("forward mutex poisoned"),
+            vec![publication.clone()],
+            "the installed route saw the publication live"
+        );
+
+        let response = crate::runtime::EffectAuthority::intern_value(
+            &*authority,
+            PrimitiveValue::bytes(Type::String.schema_ref(), b"answer".to_vec()),
+        )
+        .expect("staged authority interns the response");
+        let completed = ctx
+            .finish(PrimitiveCompletion::Ok(response))
+            .expect("one completion transaction");
+        assert_eq!(
+            completed.progressive,
+            vec![publication],
+            "the completion witnesses what was published in flight"
+        );
+    }
+
+    /// One registered effect demand parked in flight, exactly as
+    /// `begin_primitive`'s first caller leaves it — minus the yielded frame,
+    /// which projection service never touches.
+    fn in_flight_effect(runtime: &mut Runtime<EventLog>) -> (DemandKey, Arc<StagedEffectAuthority>) {
+        let preimage = DemandPreimage {
+            closure: RecipeId::from_canonical_vir(b"effect-projection-producer"),
+            arguments: Vec::new(),
+        };
+        let demand = DemandKey::from_preimage(&preimage);
+        let authority = Arc::new(StagedEffectAuthority::default());
+        let ctx = EffectCtx::new(demand, authority.clone());
+        let (ticket, _completer) = ctx.ticket(|| {});
+        let subscription = ticket.join(runtime.completion_inbox.primitive_waiter(demand));
+        runtime.demands.insert(
+            demand,
+            DemandRecord {
+                key: demand,
+                state: DemandState::Running,
+                result: None,
+            },
+        );
+        runtime.primitive_pending.insert(
+            demand,
+            PrimitivePending {
+                ticket,
+                authority: authority.clone(),
+                subscription,
+                waiters: Vec::new(),
+                memo_location: Location::for_test_island("effect-projection", 0),
+                memo_preimage: preimage,
+                memo_policy: PrimitiveMemoPolicy::Volatile,
+                callbacks: Vec::new(),
+            },
+        );
+        (demand, authority)
+    }
+
+    fn rmeta_projection() -> ReadProjection {
+        ReadProjection::TreePath {
+            path: "lib.rmeta".to_owned(),
+        }
+    }
+
+    fn stage_bytes(authority: &StagedEffectAuthority, bytes: &[u8]) -> ValueId {
+        crate::runtime::EffectAuthority::intern_value(
+            authority,
+            PrimitiveValue::bytes(Type::String.schema_ref(), bytes.to_vec()),
+        )
+        .expect("staged authority interns the value")
+    }
+
+    /// The rustc shape, on the rail: a projection demand against an in-flight
+    /// registered effect resolves the moment the effect publishes the product
+    /// — observably before the effect completes — and the effect's own
+    /// completion is untouched by the served projection.
+    ///
+    /// r[verify machine.primitive.progressive-response]
+    #[test]
+    fn in_flight_publication_serves_a_projection_demand_before_completion() {
+        let mut runtime = Runtime::new(EventLog::default());
+        let (execution, authority) = in_flight_effect(&mut runtime);
+        let source = FramedNode::leaf(Type::String.schema_ref(), b"request".to_vec()).identity();
+
+        let submission = runtime
+            .submit_effect_projection(EffectProjectionRequest {
+                execution,
+                source: source.clone(),
+                projection: rmeta_projection(),
+                location: Location::for_test_value("effect-projection", "rmeta"),
+            })
+            .expect("projection demand submits against the in-flight effect");
+        let projection_demand = match submission {
+            RootSubmission::Pending(demand) => demand,
+            RootSubmission::Ready(_) => panic!("nothing was published yet"),
+        };
+
+        let product = stage_bytes(&authority, b"rmeta bytes");
+        runtime
+            .apply_completion(DeliveredCompletion::PrimitiveProgress {
+                demand: execution,
+                publication: crate::runtime::ProgressivePublication {
+                    projection: rmeta_projection(),
+                    value: product,
+                },
+            })
+            .expect("the live publication serves the parked projection");
+
+        assert!(
+            runtime.primitive_pending.contains_key(&execution),
+            "the producing effect is still in flight — the projection did not wait for it"
+        );
+        let served = runtime
+            .root_results
+            .get(&projection_demand)
+            .expect("the projection root resolved");
+        assert!(served.passed);
+        assert_eq!(
+            served.identity,
+            FramedNode::leaf(Type::String.schema_ref(), b"rmeta bytes".to_vec()).identity(),
+        );
+        assert_eq!(runtime.counters.progressive_effect_protocol_publications, 1);
+        assert!(runtime.effect_projection_pending.is_empty());
+
+        // The effect's own completion then resolves independently.
+        let response = stage_bytes(&authority, b"answer");
+        runtime
+            .apply_completion(DeliveredCompletion::RawPrimitive {
+                demand: execution,
+                publication: crate::runtime::PrimitivePublication {
+                    completion: PrimitiveCompletion::Ok(response),
+                    receipt: crate::runtime::Receipt {
+                        demand: execution,
+                        reads: Vec::new(),
+                    },
+                    journal: Vec::new(),
+                    progressive: Vec::new(),
+                },
+            })
+            .expect("the effect completes after its projection was served");
+        assert!(runtime.primitive_pending.is_empty());
+    }
+
+    /// A publication that lands before its projection is demanded is held,
+    /// materialized while the effect authority is live, and serves the later
+    /// submission immediately.
+    ///
+    /// r[verify machine.primitive.progressive-response]
+    #[test]
+    fn early_publication_serves_a_later_projection_demand() {
+        let mut runtime = Runtime::new(EventLog::default());
+        let (execution, authority) = in_flight_effect(&mut runtime);
+        let product = stage_bytes(&authority, b"early");
+        runtime
+            .apply_completion(DeliveredCompletion::PrimitiveProgress {
+                demand: execution,
+                publication: crate::runtime::ProgressivePublication {
+                    projection: rmeta_projection(),
+                    value: product,
+                },
+            })
+            .expect("an undemanded publication is held, not dropped");
+        assert_eq!(runtime.effect_progress_ready.len(), 1);
+
+        let source = FramedNode::leaf(Type::String.schema_ref(), b"request".to_vec()).identity();
+        let submission = runtime
+            .submit_effect_projection(EffectProjectionRequest {
+                execution,
+                source,
+                projection: rmeta_projection(),
+                location: Location::for_test_value("effect-projection", "early"),
+            })
+            .expect("the held publication serves the submission");
+        assert!(
+            matches!(submission, RootSubmission::Ready(evaluation) if evaluation.passed),
+            "the projection resolves at submission from the held publication"
+        );
+        assert_eq!(runtime.counters.progressive_effect_protocol_publications, 1);
+    }
+
+    /// Effect completion is the fallback authority: a projection the effect
+    /// never published in flight is served from the publications its
+    /// completion witnessed.
+    ///
+    /// r[verify machine.primitive.progressive-response]
+    #[test]
+    fn effect_completion_is_the_fallback_authority_for_parked_projections() {
+        let mut runtime = Runtime::new(EventLog::default());
+        let (execution, authority) = in_flight_effect(&mut runtime);
+        let source = FramedNode::leaf(Type::String.schema_ref(), b"request".to_vec()).identity();
+        let submission = runtime
+            .submit_effect_projection(EffectProjectionRequest {
+                execution,
+                source,
+                projection: rmeta_projection(),
+                location: Location::for_test_value("effect-projection", "fallback"),
+            })
+            .expect("projection demand submits against the in-flight effect");
+        let projection_demand = match submission {
+            RootSubmission::Pending(demand) => demand,
+            RootSubmission::Ready(_) => panic!("nothing was published yet"),
+        };
+
+        let product = stage_bytes(&authority, b"settled rmeta");
+        let response = stage_bytes(&authority, b"answer");
+        runtime
+            .apply_completion(DeliveredCompletion::RawPrimitive {
+                demand: execution,
+                publication: crate::runtime::PrimitivePublication {
+                    completion: PrimitiveCompletion::Ok(response),
+                    receipt: crate::runtime::Receipt {
+                        demand: execution,
+                        reads: Vec::new(),
+                    },
+                    journal: Vec::new(),
+                    progressive: vec![crate::runtime::ProgressivePublication {
+                        projection: rmeta_projection(),
+                        value: product,
+                    }],
+                },
+            })
+            .expect("completion serves the parked projection as fallback");
+
+        let served = runtime
+            .root_results
+            .get(&projection_demand)
+            .expect("the projection root resolved at completion");
+        assert!(served.passed);
+        assert_eq!(
+            served.identity,
+            FramedNode::leaf(Type::String.schema_ref(), b"settled rmeta".to_vec()).identity(),
+        );
+        assert_eq!(
+            runtime.counters.progressive_effect_completion_publications,
+            1
+        );
+        assert!(runtime.effect_projection_pending.is_empty());
+    }
+
+    // ---- declaration-derived effect preimages ------------------------------
+
+    /// A toy registered effect declaration: one capability-role argument, one
+    /// value argument — the smallest shape the capability-role rail keys.
+    fn cap_effect_shape() -> crate::binding::RequestShape {
+        use crate::vir::{RecordField, RecordType};
+        crate::binding::RequestShape {
+            args: vec![
+                crate::binding::ArgRole::Capability {
+                    expected: Type::String,
+                },
+                crate::binding::ArgRole::Value {
+                    expected: Type::String,
+                },
+            ],
+            request_ty: Type::Record(RecordType::new(
+                "CapEffectRequest",
+                vec![
+                    RecordField {
+                        name: "capability".to_owned(),
+                        ty: Type::String,
+                    },
+                    RecordField {
+                        name: "plan".to_owned(),
+                        ty: Type::String,
+                    },
+                ],
+            )),
+            result: Type::String,
+            primitive: super::super::PrimitiveId {
+                namespace: "vix.test".to_owned(),
+                name: "cap-effect".to_owned(),
+                version: 1,
+            },
+        }
+    }
+
+    fn cap_effect_request(capability: &[u8], plan: &[u8]) -> PrimitiveValue {
+        let field = |bytes: &[u8]| PrimitiveField {
+            schema: Type::String.schema_ref(),
+            value: PrimitiveFieldValue::Inline(bytes.to_vec()),
+        };
+        PrimitiveValue {
+            schema: cap_effect_shape().request_ty.schema_ref(),
+            body: PrimitiveValueBody::Product(vec![field(capability), field(plan)]),
+        }
+    }
+
+    fn cap_effect_preimage(capability: &[u8], plan: &[u8]) -> DemandPreimage {
+        let shape = cap_effect_shape();
+        let request = cap_effect_request(capability, plan);
+        declared_effect_preimage(&shape.primitive, Some(&shape), &request.identity(), &request)
+    }
+
+    /// The declaration-derived preimage has the exec reference shape: the
+    /// capability's identity is the preimage argument (never plan content), the
+    /// closure is the normalized request recipe over everything else, and no
+    /// source site enters the derivation — the rail's rung-069 behavior.
+    ///
+    /// r[verify machine.primitive.capability-role]
+    #[test]
+    fn capability_role_identities_key_the_effect_demand() {
+        let preimage = cap_effect_preimage(b"echo", b"once");
+        let capability_identity =
+            FramedNode::leaf(Type::String.schema_ref(), b"echo".to_vec()).identity();
+        assert_eq!(
+            preimage.arguments,
+            vec![capability_identity],
+            "the capability argument's identity is the demand's argument, \
+             in declaration order — the shape submit_exec hand-builds"
+        );
+
+        // A different capability re-keys the demand through the ARGUMENTS while
+        // the closure — the plan — is untouched: identity is "this plan under
+        // this capability", and the backend never enters either half.
+        let other_capability = cap_effect_preimage(b"sh", b"once");
+        assert_eq!(preimage.closure, other_capability.closure);
+        assert_ne!(preimage.arguments, other_capability.arguments);
+        assert_ne!(
+            DemandKey::from_preimage(&preimage),
+            DemandKey::from_preimage(&other_capability),
+        );
+
+        // A different plan re-keys through the CLOSURE while the capability
+        // argument stands.
+        let other_plan = cap_effect_preimage(b"echo", b"twice");
+        assert_ne!(preimage.closure, other_plan.closure);
+        assert_eq!(preimage.arguments, other_plan.arguments);
+
+        // Rung 069, for the rail: the derivation consumes no source location,
+        // so the same plan under the same capability at two distinct memo
+        // sites is one demand — only the cost-model locations differ.
+        let same_plan = cap_effect_preimage(b"echo", b"once");
+        assert_eq!(
+            DemandKey::from_preimage(&preimage),
+            DemandKey::from_preimage(&same_plan),
+        );
+        let base = Location::for_test_island("cap-effect", 0);
+        let site_a = Location::for_primitive(&base, "vix.test:cap-effect:v1:f0:n1");
+        let site_b = Location::for_primitive(&base, "vix.test:cap-effect:v1:f0:n2");
+        assert_ne!(site_a.id, site_b.id, "memo sites stay distinct");
+    }
+
+    /// A declaration without capability roles (and a shapeless primitive) keys
+    /// exactly as before — the whole request identity as the single preimage
+    /// argument. Nothing already registered re-keys.
+    ///
+    /// r[verify machine.primitive.capability-role]
+    #[test]
+    fn declarations_without_capability_roles_keep_the_request_identity_key() {
+        let mut shape = cap_effect_shape();
+        shape.args = vec![
+            crate::binding::ArgRole::Value {
+                expected: Type::String,
+            },
+            crate::binding::ArgRole::Value {
+                expected: Type::String,
+            },
+        ];
+        let request = cap_effect_request(b"echo", b"once");
+        let request_id = request.identity();
+        assert_eq!(
+            declared_effect_preimage(&shape.primitive, Some(&shape), &request_id, &request),
+            primitive_demand_preimage(&shape.primitive, &request_id),
+        );
+        assert_eq!(
+            declared_effect_preimage(&shape.primitive, None, &request_id, &request),
+            primitive_demand_preimage(&shape.primitive, &request_id),
+        );
     }
 
     fn primitive_island(partitioned: &crate::vir::PartitionedTest) -> &Island {

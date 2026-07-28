@@ -217,7 +217,10 @@ pub struct ReadWitness {
     pub observation: ReadObservation,
 }
 
-#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+// `Ord` because a projection is half of a progressive-readiness key: the
+// scheduler indexes published-but-not-yet-demanded products by
+// (effect demand, projection) — `machine.primitive.progressive-response`.
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum ReadProjection {
     Whole,

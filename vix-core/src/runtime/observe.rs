@@ -76,6 +76,13 @@ pub struct Counters {
     /// Progressive exec projections served at the safe protocol-less fallback:
     /// successful process exit and the completed immutable workspace tree.
     pub progressive_exec_exit_publications: u64,
+    /// Registered-effect projections served from an in-flight `EffectCtx`
+    /// progressive publication while the effect's own completion was still
+    /// outstanding (`machine.primitive.progressive-response`).
+    pub progressive_effect_protocol_publications: u64,
+    /// Registered-effect projections served at the fallback authority: the
+    /// effect's completion and the progressive publications recorded in it.
+    pub progressive_effect_completion_publications: u64,
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]

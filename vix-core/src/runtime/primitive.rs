@@ -105,6 +105,7 @@ pub struct PrimitiveServices {
     value_persistence: Option<Arc<dyn ValuePersistence>>,
     origin: Option<Arc<dyn OriginAdapter>>,
     fixture_store: Option<super::FixtureStore>,
+    exec_backend: Option<Arc<dyn super::ExecBackend>>,
 }
 
 impl PrimitiveServices {
@@ -126,6 +127,16 @@ impl PrimitiveServices {
         self
     }
 
+    /// Install the exec process-boundary service
+    /// (`machine.primitive.effect-backend-service`). Nothing keys on the
+    /// backend: swapping it never re-keys a demand, it changes what a witness
+    /// is worth.
+    #[must_use]
+    pub fn with_exec_backend(mut self, backend: Arc<dyn super::ExecBackend>) -> Self {
+        self.exec_backend = Some(backend);
+        self
+    }
+
     pub(crate) fn value_persistence(&self) -> Option<Arc<dyn ValuePersistence>> {
         self.value_persistence.clone()
     }
@@ -136,6 +147,15 @@ impl PrimitiveServices {
 
     pub(crate) fn fixture_store(&self) -> Option<super::FixtureStore> {
         self.fixture_store.clone()
+    }
+
+    /// The installed exec backend, or the host-trusting default — the current
+    /// behavior verbatim, whose receipts carry `Unverifiable` capability
+    /// witnesses (`machine.primitive.memo-policy`).
+    pub(crate) fn exec_backend(&self) -> Arc<dyn super::ExecBackend> {
+        self.exec_backend
+            .clone()
+            .unwrap_or_else(|| Arc::new(super::HostExecBackend))
     }
 }
 
@@ -645,11 +665,18 @@ impl EffectAuthority for StagedEffectAuthority {
     }
 }
 
+/// The scheduler-installed live delivery authority for in-flight progressive
+/// publications (`machine.primitive.progressive-response`): a `Send + Sync`
+/// sender the primitive may call from any worker thread; the scheduler alone
+/// consumes what it forwards.
+pub type ProgressSender = Arc<dyn Fn(ProgressivePublication) + Send + Sync>;
+
 #[derive(Clone)]
 pub struct EffectCtx {
     demand: DemandKey,
     authority: Arc<dyn EffectAuthority>,
     transaction: Arc<Mutex<EffectTransaction>>,
+    progress: Option<ProgressSender>,
 }
 
 #[derive(Default)]
@@ -667,7 +694,17 @@ impl EffectCtx {
             demand,
             authority,
             transaction: Arc::new(Mutex::new(EffectTransaction::default())),
+            progress: None,
         }
+    }
+
+    /// Install the live progressive-publication route. Without one,
+    /// [`Self::publish_progress`] still records the publication for the
+    /// completion's witness — it just cannot be served while in flight.
+    #[must_use]
+    pub fn with_progress(mut self, progress: ProgressSender) -> Self {
+        self.progress = Some(progress);
+        self
     }
 
     #[must_use]
@@ -765,12 +802,23 @@ impl EffectCtx {
             .push(observation);
     }
 
+    /// Publish one progressive projection of the in-flight response: an
+    /// immutable product's readiness or a byte-stream extension. The
+    /// publication is recorded in the transaction FIRST — the completion's
+    /// witness lists everything published, which is what makes a replayed
+    /// stream indistinguishable from a live one — and then forwarded live so
+    /// the scheduler can serve a waiting projection demand before completion.
+    ///
+    /// r[impl machine.primitive.progressive-response]
     pub fn publish_progress(&self, publication: ProgressivePublication) {
         self.transaction
             .lock()
             .expect("effect transaction mutex poisoned")
             .progressive
-            .push(publication);
+            .push(publication.clone());
+        if let Some(progress) = &self.progress {
+            (progress)(publication);
+        }
     }
 
     pub fn finish(
@@ -830,6 +878,15 @@ pub enum ArgRole {
     /// Lowered as an ordinary value and required to have the given type
     /// (`fetch`'s `PinnedBlobRef`).
     Value { expected: Type },
+    /// Lowered exactly like `Value` — the request record still carries the
+    /// capability as a semantic input — but declared so the scheduler derives
+    /// the effect demand preimage from it: the capability's identity enters the
+    /// preimage arguments while every other request field enters the normalized
+    /// request recipe. Its value is redeemed only host-side by the effect's
+    /// backend service, never by demand keying.
+    ///
+    /// r[impl machine.primitive.capability-role]
+    Capability { expected: Type },
 }
 
 /// How a registered primitive builds its request from its surface arguments — the
@@ -1093,6 +1150,15 @@ impl<Ctx> PrimitiveDispatcher<Ctx> {
         self.registry.descriptor(id)
     }
 
+    /// The registered primitive's declared [`RequestShape`], if it lowers its
+    /// surface call as data. The scheduler consults this to derive the effect
+    /// demand preimage from capability-role declarations
+    /// (`machine.primitive.capability-role`).
+    #[must_use]
+    pub fn request_shape(&self, id: &PrimitiveId) -> Option<RequestShape> {
+        self.registry.request_shape(id)
+    }
+
     pub fn retire(&self, demand: DemandKey) -> Option<RawEffectTicket> {
         self.in_flight
             .lock()
@@ -1131,6 +1197,13 @@ impl<Ctx> PrimitiveRegistry<Ctx> {
         self.primitives
             .get(id)
             .map(|primitive| primitive.descriptor())
+    }
+
+    #[must_use]
+    pub fn request_shape(&self, id: &PrimitiveId) -> Option<RequestShape> {
+        self.primitives
+            .get(id)
+            .and_then(|primitive| primitive.request_shape())
     }
 
     pub fn begin(
