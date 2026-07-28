@@ -665,11 +665,18 @@ impl EffectAuthority for StagedEffectAuthority {
     }
 }
 
+/// The scheduler-installed live delivery authority for in-flight progressive
+/// publications (`machine.primitive.progressive-response`): a `Send + Sync`
+/// sender the primitive may call from any worker thread; the scheduler alone
+/// consumes what it forwards.
+pub type ProgressSender = Arc<dyn Fn(ProgressivePublication) + Send + Sync>;
+
 #[derive(Clone)]
 pub struct EffectCtx {
     demand: DemandKey,
     authority: Arc<dyn EffectAuthority>,
     transaction: Arc<Mutex<EffectTransaction>>,
+    progress: Option<ProgressSender>,
 }
 
 #[derive(Default)]
@@ -687,7 +694,17 @@ impl EffectCtx {
             demand,
             authority,
             transaction: Arc::new(Mutex::new(EffectTransaction::default())),
+            progress: None,
         }
+    }
+
+    /// Install the live progressive-publication route. Without one,
+    /// [`Self::publish_progress`] still records the publication for the
+    /// completion's witness — it just cannot be served while in flight.
+    #[must_use]
+    pub fn with_progress(mut self, progress: ProgressSender) -> Self {
+        self.progress = Some(progress);
+        self
     }
 
     #[must_use]
@@ -785,12 +802,23 @@ impl EffectCtx {
             .push(observation);
     }
 
+    /// Publish one progressive projection of the in-flight response: an
+    /// immutable product's readiness or a byte-stream extension. The
+    /// publication is recorded in the transaction FIRST — the completion's
+    /// witness lists everything published, which is what makes a replayed
+    /// stream indistinguishable from a live one — and then forwarded live so
+    /// the scheduler can serve a waiting projection demand before completion.
+    ///
+    /// r[impl machine.primitive.progressive-response]
     pub fn publish_progress(&self, publication: ProgressivePublication) {
         self.transaction
             .lock()
             .expect("effect transaction mutex poisoned")
             .progressive
-            .push(publication);
+            .push(publication.clone());
+        if let Some(progress) = &self.progress {
+            (progress)(publication);
+        }
     }
 
     pub fn finish(
