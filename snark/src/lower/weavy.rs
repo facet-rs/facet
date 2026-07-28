@@ -11216,6 +11216,16 @@ impl<'a> RuntimeWeavyStepper<'a> {
         let mode_program = self
             .lexer_program
             .runtime_state_mode(state.id(), mode.id())?;
+        // `token.immediate` means flush against the previous token: once any
+        // extra (whitespace or a comment fragment) sits between the last
+        // committed entry and this lex position, an immediate terminal is not
+        // a candidate at all. Whitespace extras leave no stack entry, so the
+        // gap shows up as `end_byte != byte_position`; fragment-bearing extras
+        // (comments) show up as `extra: true` at the top of the stack.
+        let immediate_allowed = match self.stack.last() {
+            Some(entry) => !entry.extra && entry.end_byte == byte_position,
+            None => byte_position == 0,
+        };
         let mut best = None::<RuntimeWeavyTokenCandidate>;
         let mut best_rejected = None::<RuntimeWeavyTokenCandidate>;
         self.lexer_scratch.with_direct_set_matches(
@@ -11233,6 +11243,9 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     .chain(mode_program.non_direct_terminal_indices.iter().copied())
                 {
                     let terminal_row = &mode_program.terminals()[terminal_index];
+                    if terminal_row.immediate && !immediate_allowed {
+                        continue;
+                    }
                     let Some(match_) = self.match_compiled_terminal_with_set(
                         terminal_row,
                         byte_position,
@@ -13493,6 +13506,70 @@ mod tests {
 
         parse_prepared_weavy_with_report(&plan, &parser, &table, "a\n// comment\nb")
             .expect("line comment remains an extra where division is valid");
+    }
+
+    fn immediate_quantifier_fixture() -> (
+        ValidatedGrammar,
+        parser_ir::ParserGrammar,
+        parser_ir::ParseTable,
+    ) {
+        let grammar_json = snark_dsl::emit_source_with_boa(
+            r#"
+            module.exports = grammar({
+              name: "immediate_quantifier",
+              extras: ($) => [/\s+/, $.line_comment],
+              rules: {
+                source_file: ($) => repeat1(field("term", $.term)),
+                term: ($) => seq(
+                  field("atom", $.atom),
+                  optional(field("quantifier", $.quantifier)),
+                ),
+                atom: () => /[a-z]+/,
+                quantifier: () => token.immediate("*"),
+                line_comment: () => token(prec(1, seq("//", /[^\n]*/))),
+              },
+            });
+            "#,
+            "immediate-quantifier.js",
+        )
+        .expect("emit immediate quantifier grammar");
+        let raw = crate::grammar::RawGrammarJson::from_tree_sitter_json_str(&grammar_json)
+            .expect("import immediate quantifier grammar");
+        let validated = ValidatedGrammar::from_raw(&raw).expect("validate grammar");
+        let lexical = crate::lexical::LexicalFacts::from_grammar(&validated);
+        let parser = parser_ir::ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .expect("normalize grammar")
+            .prepare_productions_for_items()
+            .expect("prepare grammar");
+        let table = parser_ir::ParseTable::from_grammar(&parser).expect("build parse table");
+        (validated, parser, table)
+    }
+
+    #[test]
+    fn immediate_token_matches_flush_against_the_previous_token() {
+        let (validated, parser, table) = immediate_quantifier_fixture();
+        let plan = WeavyParsePlan::new(&validated, &parser, &table).expect("build Weavy plan");
+
+        parse_prepared_weavy_with_report(&plan, &parser, &table, "abc* def")
+            .expect("attached quantifier lexes as an immediate token");
+    }
+
+    #[test]
+    fn whitespace_before_an_immediate_token_removes_it_from_the_candidates() {
+        let (validated, parser, table) = immediate_quantifier_fixture();
+        let plan = WeavyParsePlan::new(&validated, &parser, &table).expect("build Weavy plan");
+
+        parse_prepared_weavy_with_report(&plan, &parser, &table, "abc *")
+            .expect_err("a detached `*` must not lex as the immediate quantifier");
+    }
+
+    #[test]
+    fn comment_extra_before_an_immediate_token_removes_it_from_the_candidates() {
+        let (validated, parser, table) = immediate_quantifier_fixture();
+        let plan = WeavyParsePlan::new(&validated, &parser, &table).expect("build Weavy plan");
+
+        parse_prepared_weavy_with_report(&plan, &parser, &table, "abc// gap\n*")
+            .expect_err("a comment extra must break immediate adjacency");
     }
 
     #[test]
