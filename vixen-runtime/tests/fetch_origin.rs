@@ -303,8 +303,10 @@ fn pinned_fetch_origin_returns_blob_and_separate_extraction() {
     assert_eq!(server.requests(), 2, "plain and chaos each request once");
     for run in [&report.plain, &report.chaos] {
         assert_eq!(
-            run.counters.primitive_invocations, 3,
-            "one registry-url resolve, one fetch, and one observed tree read: {run:#?}"
+            run.counters.primitive_invocations, 4,
+            "one registry-url resolve, one fetch, one untar, and one observed \
+             tree read — `untar` counts here because it is a registered \
+             primitive now rather than a machine op: {run:#?}"
         );
         assert_eq!(run.counters.fetches_performed, 1, "{run:#?}");
     }

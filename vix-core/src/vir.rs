@@ -1604,11 +1604,6 @@ pub enum Op {
     FixtureTree(String),
     /// Open the offline harness fixture registry (the lock-time manifest).
     FixtureRegistry,
-    /// Extract an archive Blob into a Tree whose identity is the canonical
-    /// tree encoding — never the archive bytes' ContentHash.
-    ///
-    /// r[impl machine.identity.tree-model]
-    Untar,
 }
 
 /// One SSA-like operation. Dependencies are explicit node ids; no Rust
@@ -4210,7 +4205,7 @@ fn structural_fingerprint(
 fn is_effect_root(node: &Node) -> bool {
     matches!(
         node.op,
-        Op::Exec { .. } | Op::FixtureRegistry | Op::Untar
+        Op::Exec { .. } | Op::FixtureRegistry
     ) || (node.effect.kind == EffectKind::Effect
         && matches!(node.op, Op::StreamCollect)
         && !matches!(node.ty, Type::Stream { .. }))
@@ -4750,7 +4745,6 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
             frame(&mut op, name.as_bytes());
         }
         Op::FixtureRegistry => op.push(94),
-        Op::Untar => op.push(97),
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());

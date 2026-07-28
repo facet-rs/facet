@@ -3351,7 +3351,7 @@ fn lower_value_expected(
         {
             let intrinsic = crate::binding::surface_intrinsic(&call.callee.value)
                 .expect("guard confirmed the callee is a built-in intrinsic");
-            lower_effect_intrinsic(nodes, bindings, context, call, intrinsic)
+            lower_effect_intrinsic(nodes, call, intrinsic)
         }
         ast::Expr::Call(call) if context.primitive_shape(&call.callee.value).is_some() => {
             let shape = context
@@ -5392,17 +5392,17 @@ fn lower_request_shape(
     })
 }
 
-/// The dedicated-op tree primitives (`fixture_tree`, `fixture_registry`, `untar`).
+/// The dedicated-op fixture primitives (`fixture_tree`, `fixture_registry`).
 /// Each lowers to an [`EffectKind::Effect`] node the partitioner hoists into its
 /// own effect island; nothing here is a Weavy-lowerable pure operation.
 ///
 /// Unlike `fetch`/`observe`, these are not `InvokePrimitive` requests — they are
 /// bespoke VIR ops, so they do not have a [`RequestShape`](crate::binding::RequestShape)
-/// yet and stay hand-lowered here.
+/// yet and stay hand-lowered here. Both take a literal or no argument, which is
+/// why no lowering environment reaches this far: `untar` was the one intrinsic
+/// with a value operand, and it is a primitive in `vixen-primitives` now.
 fn lower_effect_intrinsic(
     nodes: &mut Vec<Node>,
-    bindings: &BTreeMap<String, LoweredValue>,
-    context: &ModuleContext<'_>,
     call: &ast::Call,
     kind: crate::binding::Intrinsic,
 ) -> Result<LoweredValue, Diagnostics> {
@@ -5434,20 +5434,6 @@ fn lower_effect_intrinsic(
                 Type::Extern(ExternKind::Registry),
                 Op::FixtureRegistry,
                 Vec::new(),
-            )
-        }
-        Intrinsic::Untar => {
-            check_arity(call, 1)?;
-            let blob = lower_value(nodes, bindings, context, &call.args.args[0])?;
-            require_type(
-                &blob,
-                &Type::Extern(ExternKind::Blob),
-                expr_span(&call.args.args[0]),
-            )?;
-            (
-                Type::Extern(ExternKind::Host(crate::binding::TREE)),
-                Op::Untar,
-                vec![blob.node],
             )
         }
     };

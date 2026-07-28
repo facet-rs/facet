@@ -3,7 +3,7 @@ use vix::vir::{ExternKind, Type};
 
 use crate::rt::{
     CodataDrainCtx, CodataPrimitive, FixtureEntryKind, PrimitiveDescriptor, PrimitiveMachineError,
-    PrimitiveMemoPolicy, TarMember, fixture_tree_name, parse_ustar, tree_glob_primitive_id,
+    PrimitiveMemoPolicy, TreeEntry, fixture_tree_name, tree_from_resident, tree_glob_primitive_id,
     tree_glob_request_type,
 };
 
@@ -98,14 +98,17 @@ impl CodataPrimitive for TreeGlobPrimitive {
             return Ok(paths);
         }
 
-        // An archive tree carries its members in its resident bytes — a pure
-        // enumeration, no directory read.
-        let mut paths = parse_ustar(ctx.source_bytes())
-            .map_err(|_| invalid("archive tree resident bytes were malformed"))?
+        // A resident tree carries its members in its own bytes — a pure
+        // enumeration, no directory read. Decoded as a semantic Tree rather than
+        // as an archive: the resident representation (archive, carrier, or the
+        // canonical form `untar` interns) is a storage concern, and all three
+        // enumerate the same members.
+        let mut paths = tree_from_resident(ctx.source_bytes())
+            .map_err(|_| invalid("tree resident bytes were malformed"))?
+            .walk()
             .into_iter()
-            .filter_map(|member| match member {
-                TarMember::File { path, .. } if matches(&path) => Some(path),
-                _ => None,
+            .filter_map(|(path, entry)| {
+                (matches!(entry, TreeEntry::File { .. }) && matches(&path)).then_some(path)
             })
             .collect::<Vec<_>>();
         paths.sort();

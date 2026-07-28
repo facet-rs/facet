@@ -7300,11 +7300,16 @@ fn tree_fetch_band_compiles_to_typed_vir() {
     // embedder, not the bare language, so the compiler is configured with the
     // injected domain methods — as the runnable system does (issue 2520).
     vixen_primitives::register_host_types();
-    let compiler = Compiler::with_config(CompilerConfig {
-        methods: vixen_primitives::DOMAIN_METHODS,
-        host_types: vixen_primitives::HOST_TYPES,
-        ..CompilerConfig::default()
-    });
+    let compiler = Compiler::with_config_and_primitive_surfaces(
+        CompilerConfig {
+            methods: vixen_primitives::DOMAIN_METHODS,
+            host_types: vixen_primitives::HOST_TYPES,
+            ..CompilerConfig::default()
+        },
+        // `untar` is an injected free-function primitive now, not an intrinsic
+        // the bare language resolves on its own.
+        vixen_primitives::injected_primitive_surfaces(),
+    );
     for (rung, source) in [
         ("071", RUNG_071),
         ("072", RUNG_072),

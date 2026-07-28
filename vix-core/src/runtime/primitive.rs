@@ -495,7 +495,9 @@ impl EffectAuthority for StagedEffectAuthority {
                 })?
         };
         if let ReadProjection::TreePath { path } = projection {
-            if value.schema != Type::Extern(crate::vir::ExternKind::Host(crate::binding::TREE)).schema_ref() {
+            if value.schema
+                != Type::Extern(crate::vir::ExternKind::Host(crate::binding::TREE)).schema_ref()
+            {
                 return Err(PrimitiveMachineError::AuthorityViolation {
                     detail: "tree-path read source was not a Tree".to_owned(),
                 });
@@ -511,19 +513,16 @@ impl EffectAuthority for StagedEffectAuthority {
                         detail: format!("fixture tree path {path} is unavailable"),
                     })?
             } else {
-                super::parse_ustar(value.resident_bytes())
+                // Through the semantic Tree rather than the archive reader: a
+                // Tree's resident bytes may be an archive, a carrier, or the
+                // canonical form, and which one it is is a storage concern this
+                // read has no business knowing.
+                super::tree_from_resident(value.resident_bytes())
                     .map_err(|_| PrimitiveMachineError::InvalidRequest {
                         request: source.clone(),
                     })?
-                    .into_iter()
-                    .find_map(|member| match member {
-                        super::TarMember::File {
-                            path: candidate,
-                            bytes,
-                            ..
-                        } if candidate == *path => Some(bytes),
-                        _ => None,
-                    })
+                    .file_bytes(path)
+                    .map(<[u8]>::to_vec)
                     .ok_or_else(|| PrimitiveMachineError::Unavailable {
                         detail: format!("archive tree path {path} is unavailable"),
                     })?

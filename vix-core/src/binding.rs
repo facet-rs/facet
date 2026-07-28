@@ -120,8 +120,6 @@ pub enum Intrinsic {
     FixtureTree,
     /// `fixture_registry()` — the fixture registry (a dedicated machine op).
     FixtureRegistry,
-    /// `untar(blob)` — expand a blob to a tree (a dedicated machine op).
-    Untar,
 }
 
 /// The vix type a method dispatches on — the kind of its receiver. Moved here
@@ -444,7 +442,6 @@ pub fn builtin_bindings() -> BindingRegistry {
     for (name, kind) in [
         ("fixture_tree", Intrinsic::FixtureTree),
         ("fixture_registry", Intrinsic::FixtureRegistry),
-        ("untar", Intrinsic::Untar),
     ] {
         reg.insert(Binding::intrinsic(Placement::Prelude, name, kind));
         reg.insert(Binding::intrinsic(
@@ -852,7 +849,6 @@ mod tests {
         for (name, kind) in [
             ("fixture_tree", Intrinsic::FixtureTree),
             ("fixture_registry", Intrinsic::FixtureRegistry),
-            ("untar", Intrinsic::Untar),
         ] {
             let binding = reg.prelude(name).expect("prelude intrinsic");
             assert!(matches!(binding.target, BindingTarget::Intrinsic(_)));

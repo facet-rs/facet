@@ -904,7 +904,13 @@ fn prepare_modules_with_cache(
     config: CompilerConfig,
     mut cache: LoweringCache,
 ) -> Result<PreparedRun, RunError> {
-    let compilation = Compiler::with_config(config).compile_with_modules(source, modules)?;
+    // The injected surfaces are what make `untar` resolve: it is a primitive in
+    // `vixen-primitives` now, not an intrinsic `vix-core` knows the name of.
+    let compilation = Compiler::with_config_and_primitive_surfaces(
+        config,
+        vixen_primitives::injected_primitive_surfaces(),
+    )
+    .compile_with_modules(source, modules)?;
 
     // Lower every island the lanes will demand so its native code is compiled
     // and cached now, before execution. `get_or_lower` keys on canonical recipe
