@@ -9,6 +9,7 @@
 //! functions ([`stdlib::PRELUDE_SOURCES`]) — assembled into a runnable system by
 //! `vixen-runtime`.
 
+pub mod capability_package;
 pub mod typed_primitive;
 
 mod blob_gunzip_primitive;
@@ -71,6 +72,13 @@ pub const CAPABILITY_TYPES: &[vix::binding::CapabilityTypeDecl] = &[
     vix::binding::CapabilityTypeDecl {
         name: "ProgressiveSh",
     },
+    // The machine-manifest generality packages (`vixen.machine.requirements-
+    // from-use`): flag-shaped, env-shaped, and fact-shaped target disciplines.
+    // Their grammars are data in [`capability_package::CAPABILITY_PACKAGES`];
+    // this list only makes the names nameable as `#[test]` parameters.
+    vix::binding::CapabilityTypeDecl { name: "Rustc" },
+    vix::binding::CapabilityTypeDecl { name: "Go" },
+    vix::binding::CapabilityTypeDecl { name: "MingwGcc" },
 ];
 
 /// Reserve `vixen`'s host-extern type names ([`HOST_TYPES`]) with `vix-core`'s

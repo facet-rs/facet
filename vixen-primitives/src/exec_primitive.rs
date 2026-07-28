@@ -32,7 +32,7 @@ use std::sync::Arc;
 
 use vix::compiler::{byte_stream_type, capability_type, exec_outcome_type};
 use vix::runtime::{
-    ExecEvent, ExecInvocation, ExecOutputProtocol, ProcessTermination, ReadProjection,
+    ExecEvent, ExecInvocation, ProcessTermination, ReadProjection,
     archive_directory, canonical_resident_tree, exec_primitive_id, exec_request_type,
     tree_from_resident,
 };
@@ -218,15 +218,12 @@ fn parse_request(
     let Type::Record(capability_record) = &capability_ty else {
         return Err(invalid("capability was not a record value"));
     };
-    // The output protocol is a contract of the capability package
-    // (`machine.primitive.command-package`). Today's packages carry it in the
-    // capability's type: `ProgressiveSh` speaks `vix-ready` readiness lines;
-    // everything else is exit-only.
-    let protocol = if capability_record.name == "ProgressiveSh" {
-        ExecOutputProtocol::ProgressiveLinesV1
-    } else {
-        ExecOutputProtocol::ExitOnly
-    };
+    // The output protocol and the command grammar are contracts of the
+    // capability package (`machine.primitive.command-package`), read from the
+    // registered package data — never a per-tool match arm in this function.
+    let package = crate::capability_package::capability_package(&capability_record.name)
+        .ok_or_else(|| invalid("capability names no registered package"))?;
+    let protocol = package.protocol;
     let PrimitiveValueBody::Product(capability_fields) = &capability.body else {
         return Err(invalid("capability had no fields"));
     };
@@ -250,10 +247,16 @@ fn parse_request(
                 .map_err(|_| invalid("argv element was not UTF-8"))
         })
         .collect::<Result<Vec<_>, _>>()?;
+    // The package's grammar carves declared environment roles out of the
+    // materialized plan (env-shaped packages spell them as leading `NAME=VALUE`
+    // elements). The demand preimage already hashed the full normalized plan;
+    // this split is host-side value redemption, like the program name itself.
+    let (env, argv) = package.split_invocation(argv);
     Ok(ParsedRequest {
         invocation: ExecInvocation {
             program,
             argv,
+            env,
             protocol,
         },
     })
