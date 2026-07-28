@@ -225,7 +225,7 @@ where
 
         const fn build_type_name<'a, K: Facet<'a>, V: Facet<'a>>() -> TypeNameFn {
             fn type_name_impl<'a, K: Facet<'a>, V: Facet<'a>>(
-                _shape: &'static Shape,
+                _shape: &Shape,
                 f: &mut core::fmt::Formatter<'_>,
                 opts: TypeNameOpts,
             ) -> core::fmt::Result {

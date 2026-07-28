@@ -12,7 +12,7 @@ use crate::{
 
 // Helper functions to create type_name formatters
 fn type_name_yoke<'a, Y, C>(
-    _shape: &'static crate::Shape,
+    _shape: &crate::Shape,
     f: &mut core::fmt::Formatter<'_>,
     opts: TypeNameOpts,
 ) -> core::fmt::Result

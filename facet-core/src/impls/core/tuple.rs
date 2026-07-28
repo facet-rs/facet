@@ -164,7 +164,7 @@ static TUPLE_TYPE_OPS: TypeOpsIndirect = TypeOpsIndirect {
 
 /// Type-erased type_name for tuples - reads field types from the shape
 fn tuple_type_name(
-    shape: &'static Shape,
+    shape: &Shape,
     f: &mut fmt::Formatter<'_>,
     opts: TypeNameOpts,
 ) -> fmt::Result {

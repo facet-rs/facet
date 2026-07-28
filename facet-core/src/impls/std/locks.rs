@@ -16,7 +16,7 @@ use crate::{
 // ============================================================================
 
 fn type_name_mutex<'a, T: Facet<'a>>(
-    _shape: &'static Shape,
+    _shape: &Shape,
     f: &mut core::fmt::Formatter<'_>,
     opts: TypeNameOpts,
 ) -> core::fmt::Result {
@@ -132,7 +132,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Mutex<T> {
 // ============================================================================
 
 fn type_name_rwlock<'a, T: Facet<'a>>(
-    _shape: &'static Shape,
+    _shape: &Shape,
     f: &mut core::fmt::Formatter<'_>,
     opts: TypeNameOpts,
 ) -> core::fmt::Result {
@@ -283,7 +283,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for RwLock<T> {
 // ============================================================================
 
 fn type_name_mutex_guard<'a, T: Facet<'a>>(
-    _shape: &'static Shape,
+    _shape: &Shape,
     f: &mut core::fmt::Formatter<'_>,
     opts: TypeNameOpts,
 ) -> core::fmt::Result {
@@ -358,7 +358,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for MutexGuard<'a, T> {
 }
 
 fn type_name_rwlock_read_guard<'a, T: Facet<'a>>(
-    _shape: &'static Shape,
+    _shape: &Shape,
     f: &mut core::fmt::Formatter<'_>,
     opts: TypeNameOpts,
 ) -> core::fmt::Result {
@@ -435,7 +435,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for RwLockReadGuard<'a, T> {
 }
 
 fn type_name_rwlock_write_guard<'a, T: Facet<'a>>(
-    _shape: &'static Shape,
+    _shape: &Shape,
     f: &mut core::fmt::Formatter<'_>,
     opts: TypeNameOpts,
 ) -> core::fmt::Result {
@@ -516,7 +516,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for RwLockWriteGuard<'a, T> {
 // ============================================================================
 
 fn type_name_oncelock<'a, T: Facet<'a>>(
-    _shape: &'static Shape,
+    _shape: &Shape,
     f: &mut core::fmt::Formatter<'_>,
     opts: TypeNameOpts,
 ) -> core::fmt::Result {
@@ -622,7 +622,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for OnceLock<T> {
 // ============================================================================
 
 fn type_name_lazylock<'a, T: Facet<'a>>(
-    _shape: &'static Shape,
+    _shape: &Shape,
     f: &mut core::fmt::Formatter<'_>,
     opts: TypeNameOpts,
 ) -> core::fmt::Result {

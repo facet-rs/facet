@@ -173,7 +173,7 @@ unsafe fn vec_swap_erased(ptr: PtrMut, a: usize, b: usize, shape: &'static Shape
 
 /// Type-erased type_name implementation for Vec
 fn vec_type_name(
-    shape: &'static Shape,
+    shape: &Shape,
     f: &mut core::fmt::Formatter<'_>,
     opts: TypeNameOpts,
 ) -> core::fmt::Result {

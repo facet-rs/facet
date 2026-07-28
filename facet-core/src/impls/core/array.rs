@@ -19,7 +19,7 @@ const fn get_array_def(shape: &'static Shape) -> Option<&'static ArrayDef> {
 
 /// Type-erased type_name for arrays - reads T and N from the shape
 fn array_type_name(
-    shape: &'static Shape,
+    shape: &Shape,
     f: &mut fmt::Formatter<'_>,
     opts: TypeNameOpts,
 ) -> fmt::Result {

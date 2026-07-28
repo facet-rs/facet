@@ -23,7 +23,7 @@ impl core::fmt::Debug for DebugViaShape {
 
 /// Type-erased type_name implementation for SmallVec
 fn smallvec_type_name<A: Array>(
-    shape: &'static Shape,
+    shape: &Shape,
     f: &mut core::fmt::Formatter<'_>,
     opts: TypeNameOpts,
 ) -> core::fmt::Result {
