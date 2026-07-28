@@ -302,6 +302,12 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Box<[U]> {
                 name: "T",
                 shape: <[U]>::SHAPE,
             }])
+            // `Box<[U]>` propagates `U`'s variance, exactly like `Box<T>` above.
+            // This arm is a separate impl and was missing the declaration.
+            .variance(VarianceDesc {
+                base: Variance::Bivariant,
+                deps: &const { [VarianceDep::covariant(U::SHAPE)] },
+            })
             .build()
     };
 }
