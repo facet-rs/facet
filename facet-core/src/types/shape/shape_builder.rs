@@ -48,6 +48,23 @@ const EMPTY_VESSEL: Shape = Shape {
     opaque_adapter: None,
     // Default to bivariant - types with no lifetime parameters impose no
     // constraints on lifetimes. Types that need specific variance must set it explicitly.
+    //
+    // DANGER: `Bivariant` is the *identity element* of the variance lattice, and it
+    // is also serving here as the placeholder for "nobody declared this". Those are
+    // not the same thing, and conflating them is unsound: `Variance::can_grow()`
+    // returns `true` for `Bivariant`, so any lifetime-carrying shape that forgets to
+    // call `.variance(..)` silently reports "I have no lifetimes" and
+    // `Peek::try_grow_lifetime::<'static>()` hands out a dangling reference to safe
+    // code. `computed_variance_inner` only rescues `UserType::Struct`/`Enum` (which
+    // it repairs by walking fields); everything else falls through to `_ => desc.base`.
+    //
+    // TODO: the systemic fix is a distinct `Variance::Unknown` that is *not*
+    // `can_grow()` and *not* `can_shrink()`, so that a missing declaration fails
+    // closed instead of open. That is a breaking change (it needs `#[non_exhaustive]`
+    // on `Variance` plus explicit declarations at ~109 sites across facet-core) and
+    // is being designed for 1.0. Until then, every lifetime-capable shape must
+    // declare its variance explicitly, and `facet/tests/integration/variance_no_bogus_grow.rs`
+    // asserts that none of them report `can_grow()`.
     variance: VarianceDesc::BIVARIANT,
     flags: ShapeFlags::empty(),
     affinity: crate::ReprAffinity::None,

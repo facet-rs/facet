@@ -346,9 +346,11 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for MutexGuard<'a, T> {
                 shape: T::SHAPE,
             }])
             .inner(T::SHAPE)
-            // MutexGuard<T> is invariant w.r.t. T because it provides mutable access
+            // `MutexGuard<'a, T>` holds `&'a Mutex<T>`, so the base is `Covariant`
+            // (from `'a`) — NOT `Bivariant`. It is invariant w.r.t. `T` because it
+            // hands out mutable access.
             .variance(VarianceDesc {
-                base: Variance::Bivariant,
+                base: Variance::Covariant,
                 deps: &const { [VarianceDep::invariant(T::SHAPE)] },
             })
             .build()
@@ -421,9 +423,11 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for RwLockReadGuard<'a, T> {
                 shape: T::SHAPE,
             }])
             .inner(T::SHAPE)
-            // RwLockReadGuard<T> could be covariant but we keep it bivariant for consistency
+            // `RwLockReadGuard<'a, T>` holds `&'a RwLock<T>`, so the base is
+            // `Covariant` (from `'a`) — NOT `Bivariant`. It only ever hands out
+            // `&T`, so `T` is in covariant position.
             .variance(VarianceDesc {
-                base: Variance::Bivariant,
+                base: Variance::Covariant,
                 deps: &const { [VarianceDep::covariant(T::SHAPE)] },
             })
             .build()
@@ -496,9 +500,11 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for RwLockWriteGuard<'a, T> {
                 shape: T::SHAPE,
             }])
             .inner(T::SHAPE)
-            // RwLockWriteGuard<T> is invariant w.r.t. T because it provides mutable access
+            // `RwLockWriteGuard<'a, T>` holds `&'a RwLock<T>`, so the base is
+            // `Covariant` (from `'a`) — NOT `Bivariant`. It is invariant w.r.t. `T`
+            // because it hands out mutable access.
             .variance(VarianceDesc {
-                base: Variance::Bivariant,
+                base: Variance::Covariant,
                 deps: &const { [VarianceDep::invariant(T::SHAPE)] },
             })
             .build()

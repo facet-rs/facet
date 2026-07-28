@@ -1,7 +1,7 @@
 use crate::{
     Def, Facet, KnownPointer, OxPtrConst, OxPtrMut, OxPtrUninit, PointerDef, PointerFlags,
     PointerVTable, PtrConst, Shape, ShapeBuilder, Type, TypeNameFn, TypeNameOpts, TypeOpsIndirect,
-    TypeParam, UserType, VTableIndirect,
+    TypeParam, UserType, VTableIndirect, Variance, VarianceDep, VarianceDesc,
 };
 use crate::{PtrMut, PtrUninit};
 use alloc::borrow::Cow;
@@ -316,6 +316,28 @@ where
                 },
             ])
             .inner(T::SHAPE)
+            // `enum Cow<'a, B> { Borrowed(&'a B), Owned(<B as ToOwned>::Owned) }`.
+            //
+            // The base MUST be `Covariant`: the `Borrowed` arm holds a real `&'a B`,
+            // so `Cow` carries a lifetime of its own. Declaring `base: Bivariant` with
+            // only a covariant dep on `T` is the easy mistake here — it makes
+            // `Cow<'a, str>` report `Bivariant` (because `str` is bivariant), which is
+            // precisely the use-after-free this commit fixes.
+            //
+            // Both parameters are in *invariant* position: rustc says "the enum
+            // `Cow<'a, B>` is invariant over the parameter `B`", because
+            // `<B as ToOwned>::Owned` is an associated-type projection.
+            // `VarianceDep::invariant` passes `Bivariant` through unchanged, so the
+            // overwhelmingly common `Cow<'a, str>` still lands on `Covariant`.
+            .variance(VarianceDesc {
+                base: Variance::Covariant,
+                deps: &const {
+                    [
+                        VarianceDep::invariant(T::SHAPE),
+                        VarianceDep::invariant(<T::Owned>::SHAPE),
+                    ]
+                },
+            })
             .vtable_indirect(&const { build_cow_vtable::<T>() })
             .type_ops_indirect(&const { build_cow_type_ops::<'a, T>() })
             .build()
