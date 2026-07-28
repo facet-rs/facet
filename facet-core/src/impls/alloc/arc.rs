@@ -363,6 +363,12 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Arc<[U]> {
                 name: "T",
                 shape: <[U]>::SHAPE,
             }])
+            // `Arc<[U]>` propagates `U`'s variance, exactly like `Arc<T>` above.
+            // This arm is a separate impl and was missing the declaration.
+            .variance(VarianceDesc {
+                base: Variance::Bivariant,
+                deps: &const { [VarianceDep::covariant(U::SHAPE)] },
+            })
             .build()
     };
 }
@@ -565,6 +571,11 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Weak<[U]> {
                 name: "T",
                 shape: <[U]>::SHAPE,
             }])
+            // `sync::Weak<[U]>` propagates `U`'s variance, like `Weak<T>` above.
+            .variance(VarianceDesc {
+                base: Variance::Bivariant,
+                deps: &const { [VarianceDep::covariant(U::SHAPE)] },
+            })
             .build()
     };
 }

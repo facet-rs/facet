@@ -9,7 +9,8 @@ use crate::{PtrConst, PtrMut, PtrUninit};
 
 use crate::{
     Def, Facet, IterVTable, MapDef, MapVTable, OxPtrMut, OxPtrUninit, SetDef, SetVTable, Shape,
-    ShapeBuilder, Type, TypeNameFn, TypeNameOpts, TypeOpsIndirect, TypeParam, UserType,
+    ShapeBuilder, Type, TypeNameFn, TypeNameOpts, TypeOpsIndirect, TypeParam, UserType, Variance,
+    VarianceDep, VarianceDesc,
 };
 
 type IndexMapIterator<'mem, K, V> = indexmap::map::Iter<'mem, K, V>;
@@ -347,6 +348,18 @@ where
                     shape: V::SHAPE,
                 },
             ])
+            // `IndexMap<K, V, S>` stores `(K, V)` pairs in a `Vec` plus a table of
+            // indices; there is no interior mutability, so it is covariant with
+            // respect to both `K` and `V` — same as `HashMap`/`BTreeMap`.
+            .variance(VarianceDesc {
+                base: Variance::Bivariant,
+                deps: &const {
+                    [
+                        VarianceDep::covariant(K::SHAPE),
+                        VarianceDep::covariant(V::SHAPE),
+                    ]
+                },
+            })
             .type_ops_indirect(
                 &const {
                     TypeOpsIndirect {
@@ -423,6 +436,11 @@ where
                 },
             ])
             .inner(T::SHAPE)
+            // `IndexSet<T, S>` propagates `T`'s variance — same as `HashSet`/`BTreeSet`.
+            .variance(VarianceDesc {
+                base: Variance::Bivariant,
+                deps: &const { [VarianceDep::covariant(T::SHAPE)] },
+            })
             .type_ops_indirect(
                 &const {
                     TypeOpsIndirect {

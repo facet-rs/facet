@@ -5,7 +5,8 @@ use core::hash::Hash;
 
 use crate::{
     Def, Facet, HashProxy, OxPtrConst, OxPtrMut, PointerType, Shape, ShapeBuilder, Type,
-    TypeOpsIndirect, TypeParam, VTableIndirect, ValuePointerType, VarianceDesc,
+    TypeOpsIndirect, TypeParam, VTableIndirect, ValuePointerType, Variance, VarianceDep,
+    VarianceDesc,
 };
 
 // For raw pointers, we use indirect vtable since they're generic over T
@@ -166,6 +167,15 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for *const T {
             .inner(T::SHAPE)
             .vtable_indirect(&const { build_const_ptr_vtable::<T>() })
             .type_ops_indirect(&const { build_const_ptr_type_ops::<T>() })
+            // `*const T` is covariant with respect to T (per Rust Reference), so it
+            // propagates T's variance. Without this declaration `*const &'a str`
+            // reported `Bivariant` (the `ShapeBuilder` default), which claims "this
+            // type has no lifetime parameters at all" and lets `grow_lifetime`
+            // succeed.
+            .variance(VarianceDesc {
+                base: Variance::Bivariant,
+                deps: &const { [VarianceDep::covariant(T::SHAPE)] },
+            })
             .eq()
             .copy()
             .build()
