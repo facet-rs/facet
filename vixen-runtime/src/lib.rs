@@ -22,6 +22,7 @@
 //! `vix-core` can never silently collide with one in `vixen-primitives`.
 
 pub mod budget;
+pub mod manifest;
 pub mod module_graph;
 pub mod ratchet;
 

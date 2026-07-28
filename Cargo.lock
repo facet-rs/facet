@@ -9539,6 +9539,7 @@ dependencies = [
  "blake3",
  "facet",
  "facet-json",
+ "facet-toml",
  "libc",
  "semver",
  "tempfile",
