@@ -7,12 +7,12 @@ use vix::compiler::{Compiler, CompilerConfig};
 use vix::diagnostic::Diagnostics;
 use vix::lowering::{LoweringCache, LoweringCacheCounters, LoweringError, attribution_for};
 use vix::runtime::{
-    ChaosPolicy, Counters, DemandState, Evaluation, Event, EventKind, EventLog,
-    ExecProjectionRequest, FailureContext, FailureValue, FramedNode, GeneratorOutcome,
-    IslandInputs, Location, MachineError, PersistentRuntimeJournal, PersistentRuntimeJournalError,
+    ChaosPolicy, Counters, DemandState, EffectProjectionRequest, Evaluation, Event, EventKind,
+    EventLog, FailureContext, FailureValue, FramedNode, GeneratorOutcome, IslandInputs, Location,
+    MachineError, PersistentRuntimeJournal, PersistentRuntimeJournalError,
     PersistentRuntimeJournalLoadReport, PersistentRuntimeState, PrimitiveServices,
-    RealizedWireDemand, RootSubmission, Runtime, SnapshotCapture, SnapshotOutcome, TaskState,
-    ValueId, ValueRootRequest, WireDemand,
+    ReadProjection, RealizedWireDemand, RootSubmission, Runtime, SnapshotCapture, SnapshotOutcome,
+    TaskState, ValueId, ValueRootRequest, WireDemand,
 };
 use vix::vir::{
     DescribedWire, FunctionId, Island, Module, Op, PartitionedRecipe, PartitionedValue, TraceCheck,
@@ -1205,9 +1205,13 @@ enum FrontierWaiter {
     },
 }
 
-struct ExecProducer {
+/// One registered-effect producer the progressive frontier may project from:
+/// its effect demand key (projection demands park against it) and the witness
+/// source a served projection is recorded against — per the exec-rail design,
+/// the capability whose output protocol vouched for the product.
+struct EffectProducer {
     demand: vix::runtime::DemandKey,
-    capability: ValueId,
+    source: ValueId,
 }
 
 fn finish_value_check(pending: PendingValueCheck, evaluation: Evaluation) -> CheckRun {
@@ -1535,7 +1539,7 @@ fn run_lane(
         let mut in_flight = BTreeMap::<vix::runtime::DemandKey, Vec<FrontierWaiter>>::new();
         let mut completed = vec![None; partitioned.values.len()];
         let mut completed_progressive = vec![None; partitioned.progressive_values.len()];
-        let mut exec_producers = BTreeMap::<ValueIslandId, ExecProducer>::new();
+        let mut effect_producers = BTreeMap::<ValueIslandId, EffectProducer>::new();
         while !remaining.is_empty() || !remaining_progressive.is_empty() || !in_flight.is_empty() {
             let ready_values = remaining
                 .iter()
@@ -1552,7 +1556,7 @@ fn run_lane(
                 .iter()
                 .copied()
                 .filter(|index| {
-                    exec_producers.contains_key(&partitioned.progressive_values[*index].producer)
+                    effect_producers.contains_key(&partitioned.progressive_values[*index].producer)
                 })
                 .collect::<Vec<_>>();
             let ready_checks = remaining_flat_checks
@@ -1603,29 +1607,31 @@ fn run_lane(
                         preimage: module.invocation_preimage(value.id.function, value.id.node),
                     });
                     let submission = if value.island.purpose == vix::vir::IslandPurpose::Effect {
+                        // A registered-effect island root (exec, today) rides
+                        // the declaration-driven rail: the scheduler derives
+                        // the demand from the primitive's capability-role
+                        // declaration and returns it so progressive
+                        // projections can park against the in-flight effect.
                         if matches!(
                             value.island.effect_output().map(|node| &node.op),
-                            Some(vix::vir::Op::Exec { .. })
+                            Some(vix::vir::Op::InvokePrimitive { .. })
                         ) {
-                            let capability = arguments
-                                .first()
-                                .expect("exec island has one capability input")
-                                .identity
-                                .clone();
-                            let submission = runtime.submit_exec(
+                            let submission = runtime.submit_registered_effect(
                                 &value.island,
                                 &location,
                                 &arguments,
                                 chaos,
                                 realized_as,
                             )?;
-                            exec_producers.insert(
-                                value.id,
-                                ExecProducer {
-                                    demand: submission.demand,
-                                    capability,
-                                },
-                            );
+                            if let Some(source) = submission.capability.clone() {
+                                effect_producers.insert(
+                                    value.id,
+                                    EffectProducer {
+                                        demand: submission.demand,
+                                        source,
+                                    },
+                                );
+                            }
                             submission.root
                         } else {
                             let fingerprint = value
@@ -1675,23 +1681,24 @@ fn run_lane(
                 for index in ready_progressive {
                     remaining_progressive.remove(&index);
                     let value = &partitioned.progressive_values[index];
-                    let producer = exec_producers
+                    let producer = effect_producers
                         .get(&value.producer)
-                        .expect("progressive frontier admitted only submitted exec producers");
-                    let function = &module.functions[value.id.function.0 as usize];
-                    let node = &function.nodes[value.id.node.0 as usize];
-                    let submission = runtime.submit_exec_projection(ExecProjectionRequest {
+                        .expect("progressive frontier admitted only submitted effect producers");
+                    // The projection rides the generic rail
+                    // (machine.primitive.progressive-response): its own demand
+                    // and memo location, served by the producer's live
+                    // publication or its completion as the fallback. The
+                    // witness source is the CAPABILITY — the authority whose
+                    // output protocol vouched for the product.
+                    let vix::vir::ProgressiveProjection::TreePath { path } = &value.projection;
+                    let submission = runtime.submit_effect_projection(EffectProjectionRequest {
                         execution: producer.demand,
-                        capability: producer.capability.clone(),
-                        completed: published_values.get(&value.producer).cloned(),
-                        projection: value.projection.clone(),
+                        source: producer.source.clone(),
+                        projection: ReadProjection::TreePath { path: path.clone() },
                         location: scoped_location(
                             Location::for_test_value(&partitioned.name, &value.id.stable_segment()),
                             source_revision,
                         ),
-                        function: value.id.function,
-                        node: value.id.node,
-                        span: node.span,
                     })?;
                     match submission {
                         RootSubmission::Ready(evaluation) => {

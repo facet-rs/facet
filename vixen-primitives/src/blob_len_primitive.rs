@@ -129,7 +129,8 @@ fn blob_field(
             PrimitiveValueBody::Bytes(bytes) => bytes.clone(),
             PrimitiveValueBody::Product(_)
             | PrimitiveValueBody::Sequence { .. }
-            | PrimitiveValueBody::Variant { .. } => {
+            | PrimitiveValueBody::Variant { .. }
+            | PrimitiveValueBody::OrderedMap(_) => {
                 return Err(PrimitiveMachineError::AuthorityViolation {
                     detail: "blob-len request field was not resident Blob bytes".to_owned(),
                 });

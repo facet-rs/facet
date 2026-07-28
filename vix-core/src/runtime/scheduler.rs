@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::ops::Deref;
-use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -16,23 +15,18 @@ use crate::lowering::{LoweringArtifact, LoweringAttribution, ValueInputBinding};
 use crate::schema::SchemaRef;
 use crate::support::Span;
 use crate::vir::{
-    CommandPiece, ExternKind, Function, FunctionId, Island, IslandId, NodeId, Op,
-    ProgressiveProjection, Type, VariantPayload,
+    ExternKind, Function, FunctionId, Island, IslandId, NodeId, Op, Type, VariantPayload,
 };
 
-use super::exec_backend::{
-    ExecEvent, ExecInvocation, ExecOutputProtocol, ExecProduct, ExecWorkspace, archive_directory,
-    validate_exec_product_path,
-};
 use super::fixture::{
-    FixtureEntryKind, FixtureReadError, FixtureStore, canonical_resident_tree, tree_from_resident,
+    FixtureEntryKind, FixtureReadError, FixtureStore, canonical_resident_tree,
 };
 use super::identity::{
     DemandKey, DemandPreimage, Digest, Location, LocationId, RecipeId, ValueId, hash_framed,
 };
 use super::identity::{FramedField, FramedNode, FramedValue};
 use super::model::{
-    DemandRecord, DemandState, FailureContext, FailureValue, MemoVerdict, ProcessTermination,
+    DemandRecord, DemandState, FailureContext, FailureValue, MemoVerdict,
     ReadObservation, ReadProjection, ReadWitness, Receipt, TaskId, TaskRecord, TaskState,
 };
 use super::observe::{
@@ -208,19 +202,6 @@ enum DeliveredCompletion {
         request: PrimitiveValue,
         reply: std::sync::mpsc::SyncSender<Result<PrimitiveValue, CallbackError>>,
     },
-    /// An exec process terminated at its isolated worker boundary. The raw
-    /// termination is interned by the scheduler thread, never by the worker.
-    Exec {
-        demand: DemandKey,
-        output: Result<std::process::Output, String>,
-    },
-    /// One command-grammar-authorized immutable exec product. The backend
-    /// snapshots the announced file immediately; only these bytes cross to the
-    /// scheduler, never a filesystem readiness guess.
-    ExecProgress {
-        demand: DemandKey,
-        product: Result<ExecProduct, String>,
-    },
 }
 
 /// The unified inbox was closed — every completion sender dropped — while work
@@ -260,12 +241,6 @@ impl CompletionInbox {
                 publication,
             });
         }
-    }
-
-    /// A `Send + 'static` sender clone the exec worker uses to deliver a process
-    /// termination for `demand` through the same unified event source.
-    fn exec_sender(&self) -> std::sync::mpsc::Sender<DeliveredCompletion> {
-        self.sender.clone()
     }
 
     /// The live progressive-publication route installed into a registered
@@ -516,29 +491,6 @@ struct PrimitiveWaiter {
     site: PrimitiveSuspensionSite,
 }
 
-/// An exec demand in flight at its isolated worker-thread process boundary. The
-/// scheduler holds only the memoization context; the raw termination crosses
-/// the unified inbox and is interned and memoized solely by `apply_completion`.
-struct ExecPending {
-    task_id: TaskId,
-    location: Location,
-    demand_preimage: DemandPreimage,
-    receipt: Receipt,
-    result_ty: Type,
-    plan_recipe: RecipeId,
-    function: FunctionId,
-    node: NodeId,
-    span: Span,
-    realized_as: Option<RealizedWireDemand>,
-    workspace: ExecWorkspace,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ExecProjectionAuthority {
-    Protocol,
-    ProcessExit,
-}
-
 /// What authorized serving a registered-effect projection: an in-flight
 /// `EffectCtx` publication, or the effect's completion as the fallback
 /// (`machine.primitive.progressive-response`). Filesystem polling is no
@@ -549,20 +501,7 @@ enum EffectProjectionAuthority {
     Completion,
 }
 
-struct ExecProjectionPending {
-    task_id: TaskId,
-    location: Location,
-    demand_preimage: DemandPreimage,
-    execution: DemandKey,
-    capability: ValueId,
-    path: String,
-    function: FunctionId,
-    node: NodeId,
-    span: Span,
-}
-
-/// One projection demand parked against an in-flight REGISTERED effect —
-/// the generalization of [`ExecProjectionPending`] to the rail
+/// One projection demand parked against an in-flight REGISTERED effect
 /// (`machine.primitive.progressive-response`). Resolved by the effect's live
 /// `EffectCtx` publication, or at the fallback authority: the publications its
 /// completion witnessed.
@@ -579,7 +518,7 @@ struct EffectProjectionPending {
 }
 
 /// One projection demand against an in-flight registered effect, as the runner
-/// submits it. The mirror of [`ExecProjectionRequest`] on the generic rail.
+/// submits it.
 pub struct EffectProjectionRequest {
     pub execution: DemandKey,
     pub source: ValueId,
@@ -651,23 +590,6 @@ pub struct Evaluation {
 pub enum RootSubmission {
     Ready(Evaluation),
     Pending(DemandKey),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ExecSubmission {
-    pub demand: DemandKey,
-    pub root: RootSubmission,
-}
-
-pub struct ExecProjectionRequest {
-    pub execution: DemandKey,
-    pub capability: ValueId,
-    pub completed: Option<Evaluation>,
-    pub projection: ProgressiveProjection,
-    pub location: Location,
-    pub function: FunctionId,
-    pub node: NodeId,
-    pub span: Span,
 }
 
 /// One top-level pure/value demand submitted by the runner. The request owns
@@ -752,13 +674,6 @@ pub struct Runtime<S, Ctx = ()> {
     /// A yielded frame parks here off the recursive Rust stack until its
     /// completion crosses the unified inbox.
     primitive_pending: BTreeMap<DemandKey, PrimitivePending>,
-    /// Exec demands in flight at the isolated worker-thread boundary, keyed by
-    /// the exec demand. The scheduler thread performs no synchronous wait.
-    exec_pending: BTreeMap<DemandKey, ExecPending>,
-    /// Progressive exec product roots waiting on a command-protocol event.
-    exec_projection_pending: BTreeMap<DemandKey, ExecProjectionPending>,
-    /// Products that arrived before their projection root was submitted.
-    exec_progress_ready: BTreeMap<(DemandKey, String), Vec<u8>>,
     /// Registered-effect projection roots waiting on an in-flight publication
     /// (`machine.primitive.progressive-response`), keyed by projection demand.
     effect_projection_pending: BTreeMap<DemandKey, EffectProjectionPending>,
@@ -917,9 +832,6 @@ impl<S: EventSink> Runtime<S, ()> {
             wire_waiters: BTreeMap::new(),
             root_results: BTreeMap::new(),
             primitive_pending: BTreeMap::new(),
-            exec_pending: BTreeMap::new(),
-            exec_projection_pending: BTreeMap::new(),
-            exec_progress_ready: BTreeMap::new(),
             effect_projection_pending: BTreeMap::new(),
             effect_progress_ready: BTreeMap::new(),
         }
@@ -960,9 +872,6 @@ impl<S: EventSink> Runtime<S, ()> {
             wire_waiters: BTreeMap::new(),
             root_results: BTreeMap::new(),
             primitive_pending: BTreeMap::new(),
-            exec_pending: BTreeMap::new(),
-            exec_projection_pending: BTreeMap::new(),
-            exec_progress_ready: BTreeMap::new(),
             effect_projection_pending: BTreeMap::new(),
             effect_progress_ready: BTreeMap::new(),
         }
@@ -998,9 +907,6 @@ impl<S: EventSink> Runtime<S, ()> {
                 wire_waiters: BTreeMap::new(),
                 root_results: BTreeMap::new(),
                 primitive_pending: BTreeMap::new(),
-                exec_pending: BTreeMap::new(),
-                exec_projection_pending: BTreeMap::new(),
-                exec_progress_ready: BTreeMap::new(),
                 effect_projection_pending: BTreeMap::new(),
                 effect_progress_ready: BTreeMap::new(),
             },
@@ -1039,9 +945,6 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             wire_waiters: BTreeMap::new(),
             root_results: BTreeMap::new(),
             primitive_pending: BTreeMap::new(),
-            exec_pending: BTreeMap::new(),
-            exec_projection_pending: BTreeMap::new(),
-            exec_progress_ready: BTreeMap::new(),
             effect_projection_pending: BTreeMap::new(),
             effect_progress_ready: BTreeMap::new(),
         }
@@ -1153,24 +1056,17 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 && self.wire_waiters.is_empty()
                 && self.root_results.is_empty()
                 && self.primitive_pending.is_empty()
-                && self.exec_pending.is_empty()
-                && self.exec_projection_pending.is_empty()
-                && self.exec_progress_ready.is_empty()
                 && self.effect_projection_pending.is_empty()
                 && self.effect_progress_ready.is_empty(),
             "scheduler is not quiescent at persistent-state extraction: \
              runnable={}, parked={}, wire_waiters={}, root_results={}, \
-             primitive_pending={}, exec_pending={}, exec_projection_pending={}, \
-             exec_progress_ready={}, effect_projection_pending={}, \
+             primitive_pending={}, effect_projection_pending={}, \
              effect_progress_ready={}",
             self.runnable.len(),
             self.parked.len(),
             self.wire_waiters.len(),
             self.root_results.len(),
             self.primitive_pending.len(),
-            self.exec_pending.len(),
-            self.exec_projection_pending.len(),
-            self.exec_progress_ready.len(),
             self.effect_projection_pending.len(),
             self.effect_progress_ready.len(),
         );
@@ -1236,7 +1132,6 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                                 == *observed;
                         }
                     }
-                    ReadProjection::ExecTreePath { .. } => {}
                     ReadProjection::Whole
                     | ReadProjection::Document
                     | ReadProjection::RegistryManifest
@@ -1987,22 +1882,17 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 && self.parked.is_empty()
                 && self.wire_waiters.is_empty()
                 && self.primitive_pending.is_empty()
-                && self.exec_pending.is_empty()
-                && self.exec_projection_pending.is_empty()
                 && self.effect_projection_pending.is_empty(),
             "root batch finished with live scheduler work: \
-             runnable={}, parked={}, wire_waiters={}, primitive_pending={}, exec_pending={}, \
-             exec_projection_pending={}, effect_projection_pending={}",
+             runnable={}, parked={}, wire_waiters={}, primitive_pending={}, \
+             effect_projection_pending={}",
             self.runnable.len(),
             self.parked.len(),
             self.wire_waiters.len(),
             self.primitive_pending.len(),
-            self.exec_pending.len(),
-            self.exec_projection_pending.len(),
             self.effect_projection_pending.len(),
         );
         self.root_results.clear();
-        self.exec_progress_ready.clear();
         self.effect_progress_ready.clear();
     }
 
@@ -2091,7 +1981,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
     fn pump_until(&mut self, done: impl Fn(&Self) -> bool) -> Result<(), Box<MachineError>> {
         while !done(self) {
             if let Some(mut ctx) = self.runnable.pop() {
-                if !self.primitive_pending.is_empty() || !self.exec_pending.is_empty() {
+                if !self.primitive_pending.is_empty() {
                     self.counters.overlap_observations += 1;
                 }
                 match self.drive_context(&mut ctx)? {
@@ -2110,7 +2000,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                         self.begin_primitive(ctx, request)?;
                     }
                 }
-            } else if !self.primitive_pending.is_empty() || !self.exec_pending.is_empty() {
+            } else if !self.primitive_pending.is_empty() {
                 self.drain_one_completion()?;
             } else {
                 // Quiescent: nothing runnable, nothing pending, `done` unmet.
@@ -2156,18 +2046,15 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             }
             self.primitive_dispatcher.retire(demand);
         }
-        self.exec_pending.clear();
-        self.exec_projection_pending.clear();
-        self.exec_progress_ready.clear();
         self.effect_projection_pending.clear();
         self.effect_progress_ready.clear();
     }
 
     /// Observe the scheduler-owned effect frontier after admitting a fresh
-    /// primitive or exec demand. Two simultaneous pending effects are causal
+    /// registered-effect demand. Two simultaneous pending effects are causal
     /// overlap regardless of worker completion timing.
     fn observe_effect_frontier(&mut self) {
-        let pending = self.primitive_pending.len() + self.exec_pending.len();
+        let pending = self.primitive_pending.len();
         self.counters.peak_effects_in_flight =
             self.counters.peak_effects_in_flight.max(pending as u64);
         if pending > 1 {
@@ -3772,12 +3659,6 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 let _ = reply.send(result);
                 Ok(())
             }
-            DeliveredCompletion::Exec { demand, output } => {
-                self.apply_exec_completion(demand, output)
-            }
-            DeliveredCompletion::ExecProgress { demand, product } => {
-                self.apply_exec_progress(demand, product)
-            }
         }
     }
 
@@ -3826,36 +3707,6 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
         } else {
             self.effect_progress_ready
                 .insert((execution, publication.projection), value);
-        }
-        Ok(())
-    }
-
-    fn apply_exec_progress(
-        &mut self,
-        execution: DemandKey,
-        product: Result<ExecProduct, String>,
-    ) -> Result<(), Box<MachineError>> {
-        let product = product.map_err(|detail| {
-            Box::new(MachineError::runtime(
-                MachineOperation::Effect,
-                RuntimeFault::EffectHostFailure { detail },
-                None,
-                Some(execution),
-            ))
-        })?;
-        let key = self
-            .exec_projection_pending
-            .iter()
-            .find_map(|(key, pending)| {
-                (pending.execution == execution && pending.path == product.path).then_some(*key)
-            });
-        if let Some(key) = key {
-            self.publish_exec_projection(key, product.bytes, ExecProjectionAuthority::Protocol)?;
-        } else if self.exec_pending.contains_key(&execution) {
-            self.exec_progress_ready
-                .insert((execution, product.path), product.bytes);
-        } else {
-            self.counters.stale_completions_ignored += 1;
         }
         Ok(())
     }
@@ -4020,6 +3871,9 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             .filter(|read| matches!(read.projection, ReadProjection::Origin { .. }))
             .count() as u64;
         if let Some(root) = root {
+            // An EFFECT-marked invocation is hoisted into its own island and
+            // never lowered into a Weavy frame, so a root-submitted effect can
+            // have no frame waiter to resume.
             debug_assert!(
                 waiters.is_empty(),
                 "a root-submitted registered effect has no frame waiters"
@@ -4370,189 +4224,6 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             site,
         });
         self.runnable.push(ctx);
-        Ok(())
-    }
-
-    /// Apply an exec process termination drained from the unified inbox: intern
-    /// the outcome, memoize it, resolve the exec demand, and publish its result.
-    /// This is the only place an exec outcome is interned; the scheduler thread
-    /// never waits on the process (`machine.scheduler.block-on-event`).
-    fn apply_exec_completion(
-        &mut self,
-        demand: DemandKey,
-        output: Result<std::process::Output, String>,
-    ) -> Result<(), Box<MachineError>> {
-        let Some(pending) = self.exec_pending.remove(&demand) else {
-            self.counters.stale_completions_ignored += 1;
-            return Ok(());
-        };
-        let ExecPending {
-            task_id,
-            location,
-            demand_preimage,
-            receipt,
-            result_ty,
-            plan_recipe,
-            function,
-            node,
-            span,
-            realized_as,
-            workspace,
-        } = pending;
-        let output = output.map_err(|detail| {
-            Box::new(MachineError::runtime(
-                MachineOperation::Drive,
-                RuntimeFault::EffectHostFailure { detail },
-                None,
-                Some(demand),
-            ))
-        })?;
-        // The parked exec frame resumes on the scheduler thread: transition it
-        // back to running before recording its outcome, exactly as the former
-        // inline wait did.
-        self.transition_task(task_id, TaskState::Running)?;
-        if output.status.success() {
-            self.publish_completed_exec_projections(demand, workspace.path())?;
-            let tree = archive_directory(workspace.path()).map_err(|detail| {
-                Box::new(MachineError::runtime(
-                    MachineOperation::Result,
-                    RuntimeFault::EffectHostFailure { detail },
-                    None,
-                    Some(demand),
-                ))
-            })?;
-            let interned =
-                self.intern_exec_outcome(&result_ty, &tree, &output.stdout, &output.stderr);
-            self.memo.insert(
-                location.id,
-                MemoEntry {
-                    location: location.clone(),
-                    key: demand,
-                    preimage: demand_preimage,
-                    result: interned.handle,
-                    receipt: Some(receipt),
-                    current_receipt: true,
-                },
-            );
-            if let Some(record) = self.demands.get_mut(&demand) {
-                record.result = Some(interned.handle);
-            }
-            self.transition_task(task_id, TaskState::Completed)?;
-            self.transition_demand(demand, DemandState::Ready)?;
-            self.emit(EventKind::Completed {
-                key: demand,
-                identity: interned.identity.clone(),
-            });
-            if let Some(realized) = realized_as {
-                self.wire_demands.push(realized);
-            }
-            self.root_results.insert(
-                demand,
-                Evaluation {
-                    handle: interned.handle,
-                    identity: interned.identity,
-                    passed: true,
-                    memo: MemoVerdict::Miss,
-                    failure: None,
-                    failure_context: None,
-                },
-            );
-            return Ok(());
-        }
-        let termination = match output.status.code() {
-            Some(code) => ProcessTermination::Exited {
-                code: i64::from(code),
-            },
-            None => {
-                #[cfg(unix)]
-                let signal = {
-                    use std::os::unix::process::ExitStatusExt as _;
-                    i64::from(output.status.signal().unwrap_or_default())
-                };
-                #[cfg(not(unix))]
-                let signal = 0;
-                ProcessTermination::Signaled { signal }
-            }
-        };
-        let failure = FailureValue::ProcessFailure {
-            recipe: plan_recipe,
-            site: node.0,
-            termination,
-        };
-        let report_context =
-            matches!(&failure, FailureValue::ProcessFailure { recipe, .. } if *recipe == plan_recipe)
-                .then(|| FailureContext {
-                    function,
-                    node,
-                    span,
-                    demand_chain: vec![demand],
-                });
-        let interned = self.store.intern_failure(failure.clone(), &output.stderr);
-        self.observe_interned(&interned);
-        self.memo.insert(
-            location.id,
-            MemoEntry {
-                location: location.clone(),
-                key: demand,
-                preimage: demand_preimage,
-                result: interned.handle,
-                receipt: Some(receipt),
-                current_receipt: true,
-            },
-        );
-        if let Some(record) = self.demands.get_mut(&demand) {
-            record.result = Some(interned.handle);
-        }
-        self.transition_task(task_id, TaskState::Completed)?;
-        self.transition_demand(demand, DemandState::Failed)?;
-        self.emit(EventKind::LanguageFailed {
-            task: task_id,
-            key: demand,
-            failure: failure.clone(),
-        });
-        if let Some(realized) = realized_as {
-            self.wire_demands.push(realized);
-        }
-        self.root_results.insert(
-            demand,
-            Evaluation {
-                handle: interned.handle,
-                identity: interned.identity,
-                passed: false,
-                memo: MemoVerdict::Miss,
-                failure: Some(failure),
-                failure_context: report_context,
-            },
-        );
-        Ok(())
-    }
-
-    fn publish_completed_exec_projections(
-        &mut self,
-        execution: DemandKey,
-        workspace: &Path,
-    ) -> Result<(), Box<MachineError>> {
-        let projections = self
-            .exec_projection_pending
-            .iter()
-            .filter(|(_, pending)| pending.execution == execution)
-            .map(|(demand, pending)| (*demand, pending.path.clone()))
-            .collect::<Vec<_>>();
-        for (demand, path) in projections {
-            let bytes = std::fs::read(workspace.join(&path)).map_err(|error| {
-                Box::new(MachineError::runtime(
-                    MachineOperation::Result,
-                    RuntimeFault::EffectHostFailure {
-                        detail: format!(
-                            "read exec product `{path}` at process completion: {error}"
-                        ),
-                    },
-                    None,
-                    Some(demand),
-                ))
-            })?;
-            self.publish_exec_projection(demand, bytes, ExecProjectionAuthority::ProcessExit)?;
-        }
         Ok(())
     }
 
@@ -5448,555 +5119,6 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
         }
     }
 
-    /// Evaluate one exec effect island: a scheduler-owned effect demand. The
-    /// demand key is the tier-1 exec identity — normalized plan × capability
-    /// identity — so the same command under the same capability is ONE demand
-    /// no matter how many source sites spell it; a second demand is a memo hit
-    /// and spawns nothing. A miss spawns the process, parks the demand, and is
-    /// resumed by process completion; the termination grammar then maps the
-    /// exit to the typed outcome or a typed `ProcessFailure`.
-    ///
-    /// r[impl machine.primitive.exec-identity]
-    /// r[impl machine.primitive.exec-outcome]
-    /// r[impl machine.primitive.exit-status-is-not-a-value]
-    pub fn evaluate_exec(
-        &mut self,
-        island: &Island,
-        location: &Location,
-        capability: &Evaluation,
-        chaos: ChaosPolicy,
-    ) -> Result<Evaluation, Box<MachineError>> {
-        let evaluation = match self
-            .submit_exec(
-                island,
-                location,
-                core::slice::from_ref(capability),
-                chaos,
-                None,
-            )?
-            .root
-        {
-            RootSubmission::Ready(evaluation) => evaluation,
-            RootSubmission::Pending(root) => self.run_until_root(root)?,
-        };
-        self.finish_root_batch();
-        Ok(evaluation)
-    }
-
-    /// Submit one exec root without synchronously draining its process
-    /// completion. An identical in-flight plan joins the same demand; a fresh
-    /// process parks at the worker boundary and returns its demand key to the
-    /// shared multi-root frontier.
-    pub fn submit_exec(
-        &mut self,
-        island: &Island,
-        location: &Location,
-        arguments: &[Evaluation],
-        chaos: ChaosPolicy,
-        realized_as: Option<RealizedWireDemand>,
-    ) -> Result<ExecSubmission, Box<MachineError>> {
-        let malformed = || {
-            Box::new(MachineError::runtime(
-                MachineOperation::Drive,
-                RuntimeFault::MalformedEffectIsland,
-                None,
-                None,
-            ))
-        };
-        let node = island.effect_output().ok_or_else(malformed)?.clone();
-        let Op::Exec { argv } = &node.op else {
-            return Err(malformed());
-        };
-        let published_arguments = self.effect_arguments(arguments)?;
-        let mut resolved_inputs = Vec::with_capacity(node.inputs.len());
-        let mut reads = Vec::new();
-        for input in &node.inputs {
-            let value = self.evaluate_effect_node(
-                island,
-                island.function,
-                *input,
-                &published_arguments,
-                &mut reads,
-            )?;
-            let EffectTerm::Value(value) = value else {
-                return Err(malformed());
-            };
-            let ty = island
-                .nodes
-                .iter()
-                .find(|candidate| candidate.id == *input)
-                .map(|candidate| candidate.ty.clone())
-                .ok_or_else(malformed)?;
-            resolved_inputs.push((ty, value));
-        }
-        let (capability_ty, capability) = resolved_inputs.first().ok_or_else(malformed)?;
-        let protocol = match capability_ty {
-            Type::Record(record) if record.name == "ProgressiveSh" => {
-                ExecOutputProtocol::ProgressiveLinesV1
-            }
-            _ => ExecOutputProtocol::ExitOnly,
-        };
-        let mut materialized_argv = Vec::with_capacity(argv.len());
-        for argument in argv {
-            let mut rendered = String::new();
-            for piece in &argument.pieces {
-                match piece {
-                    CommandPiece::Literal(literal) => rendered.push_str(literal),
-                    CommandPiece::Input { index } => {
-                        let (ty, value) = resolved_inputs
-                            .get(usize::try_from(*index).map_err(|_| malformed())?)
-                            .ok_or_else(malformed)?;
-                        match ty {
-                            Type::Int => {
-                                let value = read_i64(&value.resident).ok_or_else(malformed)?;
-                                write!(&mut rendered, "{value}").expect("writing to String");
-                            }
-                            Type::String | Type::Path => {
-                                rendered.push_str(
-                                    core::str::from_utf8(&value.resident)
-                                        .map_err(|_| malformed())?,
-                                );
-                            }
-                            _ => return Err(malformed()),
-                        }
-                    }
-                }
-            }
-            materialized_argv.push(rendered);
-        }
-        let plan_recipe = exec_plan_recipe(&materialized_argv);
-        let demand_preimage = DemandPreimage {
-            closure: plan_recipe,
-            arguments: vec![capability.identity.clone()],
-        };
-        let demand_key = DemandKey::from_preimage(&demand_preimage);
-        let receipt = Receipt {
-            demand: demand_key,
-            reads: vec![ReadWitness {
-                source: capability.identity.clone(),
-                projection: ReadProjection::CapabilityProgram,
-                observation: ReadObservation::Unverifiable,
-            }],
-        };
-        self.emit(EventKind::Demanded { key: demand_key });
-        let effect_context = |failure: &FailureValue| -> Option<FailureContext> {
-            matches!(failure, FailureValue::ProcessFailure { recipe, .. } if *recipe == plan_recipe)
-                .then(|| FailureContext {
-                    function: island.function,
-                    node: node.id,
-                    span: node.span,
-                    demand_chain: vec![demand_key],
-                })
-        };
-
-        // Location memo, exactly as a pure demand consults it.
-        if let Some(entry) = self.memo.get(&location.id)
-            && entry.location == *location
-            && entry.key == demand_key
-            && entry.preimage == demand_preimage
-            && self.exact_memo_replayable(entry)
-        {
-            let handle = entry.result;
-            return Ok(ExecSubmission {
-                demand: demand_key,
-                root: RootSubmission::Ready(self.effect_memo_hit(
-                    location.id,
-                    handle,
-                    &effect_context,
-                )?),
-            });
-        }
-        // Same-run demand-key reuse: the same plan under the same capability at
-        // a DIFFERENT source location is the same demand. The memo path serves
-        // it without a second spawn (rung 069's whole content).
-        //
-        // r[impl machine.memo.no-recompute-at-lookup]
-        if let Some(record) = self.demands.get(&demand_key) {
-            match record.state {
-                DemandState::Ready | DemandState::Failed => {
-                    if let Some(handle) = record.result {
-                        let evaluation =
-                            self.effect_memo_hit(location.id, handle, &effect_context)?;
-                        self.memo.insert(
-                            location.id,
-                            MemoEntry {
-                                location: location.clone(),
-                                key: demand_key,
-                                preimage: demand_preimage.clone(),
-                                result: handle,
-                                receipt: None,
-                                current_receipt: false,
-                            },
-                        );
-                        return Ok(ExecSubmission {
-                            demand: demand_key,
-                            root: RootSubmission::Ready(evaluation),
-                        });
-                    }
-                }
-                DemandState::Running | DemandState::Queued => {
-                    self.counters.demand_joins += 1;
-                    self.counters.memo_hits_exact += 1;
-                    self.emit(EventKind::Memo {
-                        location: location.id,
-                        verdict: MemoVerdict::Exact,
-                        verified: 0,
-                    });
-                    return Ok(ExecSubmission {
-                        demand: demand_key,
-                        root: RootSubmission::Pending(demand_key),
-                    });
-                }
-                _ => {}
-            }
-        }
-
-        self.counters.memo_misses += 1;
-        self.emit(EventKind::Memo {
-            location: location.id,
-            verdict: MemoVerdict::Miss,
-            verified: 0,
-        });
-        self.demands.insert(
-            demand_key,
-            DemandRecord {
-                key: demand_key,
-                state: DemandState::Queued,
-                result: None,
-            },
-        );
-        self.emit(EventKind::DemandTransition {
-            key: demand_key,
-            from: DemandState::Absent,
-            to: DemandState::Queued,
-        });
-
-        // The capability's executable identity travels as the value's resident
-        // bytes; the value identity already entered the demand key above.
-        let program = String::from_utf8(capability.resident.clone()).map_err(|_| malformed())?;
-
-        let mut kill_armed = chaos.kill_first_running_task;
-        loop {
-            self.counters.scheduler_requests += 1;
-            let task_id = self.spawn_task(demand_key);
-            self.transition_demand(demand_key, DemandState::Running)?;
-            self.transition_task(task_id, TaskState::Running)?;
-            self.emit(EventKind::IslandEntered {
-                task: task_id,
-                island: island.id,
-            });
-            self.emit(EventKind::SafePoint {
-                task: task_id,
-                class: SafePointClass::Edge,
-            });
-            if kill_armed {
-                // The chaos kill lands at the edge safepoint: the task is
-                // discarded, the demand requeued, and the replay — which is the
-                // semantics — performs the effect exactly once.
-                kill_armed = false;
-                self.counters.task_discards += 1;
-                self.transition_task(task_id, TaskState::Discarded)?;
-                self.transition_demand(demand_key, DemandState::Queued)?;
-                continue;
-            }
-
-            // Launch through the SERVICE, then PARK: the scheduler holds no
-            // busy loop and no process code while the command runs. The
-            // installed backend owns workspace, spawn, stream, and wait
-            // (machine.primitive.effect-backend-service) and delivers the raw
-            // termination through the scheduler's one completion event source;
-            // the parked exec frame resumes only when the scheduler drains
-            // that completion and `apply_exec_completion` interns it
-            // (machine.scheduler.no-shadow-scheduler, block-on-event).
-            self.counters.effect_spawns += 1;
-            self.emit(EventKind::EffectSpawned {
-                task: task_id,
-                key: demand_key,
-            });
-            let host_fault = |detail: String| {
-                Box::new(MachineError::runtime(
-                    MachineOperation::Drive,
-                    RuntimeFault::EffectHostFailure { detail },
-                    None,
-                    Some(demand_key),
-                ))
-            };
-            let exec_sender = self.completion_inbox.exec_sender();
-            let events: super::ExecEventSender = Arc::new(move |event| {
-                let _ = exec_sender.send(match event {
-                    ExecEvent::Product(product) => DeliveredCompletion::ExecProgress {
-                        demand: demand_key,
-                        product,
-                    },
-                    ExecEvent::Terminated(output) => DeliveredCompletion::Exec {
-                        demand: demand_key,
-                        output,
-                    },
-                });
-            });
-            let workspace = self
-                .primitive_services
-                .exec_backend()
-                .begin(
-                    ExecInvocation {
-                        program: program.clone(),
-                        argv: materialized_argv.clone(),
-                        protocol,
-                    },
-                    events,
-                )
-                .map_err(host_fault)?;
-            self.transition_task(task_id, TaskState::Parked)?;
-            self.exec_pending.insert(
-                demand_key,
-                ExecPending {
-                    task_id,
-                    location: location.clone(),
-                    demand_preimage: demand_preimage.clone(),
-                    receipt: receipt.clone(),
-                    result_ty: node.ty.clone(),
-                    plan_recipe,
-                    function: island.function,
-                    node: node.id,
-                    span: node.span,
-                    realized_as,
-                    workspace,
-                },
-            );
-            self.observe_effect_frontier();
-            break;
-        }
-        Ok(ExecSubmission {
-            demand: demand_key,
-            root: RootSubmission::Pending(demand_key),
-        })
-    }
-
-    /// Submit one immutable product projection of a running exec demand. The
-    /// projection has its own demand identity and memo location, but its
-    /// readiness comes only from the producer command grammar (or, as the safe
-    /// fallback, completed process output), never from filesystem polling.
-    ///
-    /// This is exec's PRIVATE copy of the mechanism
-    /// `machine.primitive.progressive-response` generalizes — the rail path is
-    /// [`Self::submit_effect_projection`]. It stays beside the generic one
-    /// (with its `ExecTreeText` special case and completed-outcome fallback)
-    /// until exec itself rides the rail and this path deletes with `Op::Exec`.
-    pub fn submit_exec_projection(
-        &mut self,
-        request: ExecProjectionRequest,
-    ) -> Result<RootSubmission, Box<MachineError>> {
-        let ExecProjectionRequest {
-            execution,
-            capability,
-            completed,
-            projection,
-            location,
-            function,
-            node,
-            span,
-        } = request;
-        let ProgressiveProjection::ExecTreeText { path } = projection;
-        validate_exec_product_path(&path).map_err(|detail| {
-            Box::new(MachineError::runtime(
-                MachineOperation::Effect,
-                RuntimeFault::EffectHostFailure { detail },
-                None,
-                Some(execution),
-            ))
-        })?;
-        let fingerprint = format!("exec-tree-text:{}:{path}", execution.0.hex());
-        let demand_preimage = DemandPreimage {
-            closure: RecipeId::from_effect_fingerprint(&fingerprint),
-            arguments: Vec::new(),
-        };
-        let demand = DemandKey::from_preimage(&demand_preimage);
-        self.emit(EventKind::Demanded { key: demand });
-        if let Some(entry) = self.memo.get(&location.id)
-            && entry.location == location
-            && entry.key == demand
-            && entry.preimage == demand_preimage
-            && self.exact_memo_replayable(entry)
-        {
-            return Ok(RootSubmission::Ready(self.effect_memo_hit(
-                location.id,
-                entry.result,
-                &|_| None,
-            )?));
-        }
-        if let Some(record) = self.demands.get(&demand) {
-            match record.state {
-                DemandState::Ready | DemandState::Failed => {
-                    if let Some(handle) = record.result {
-                        return Ok(RootSubmission::Ready(self.effect_memo_hit(
-                            location.id,
-                            handle,
-                            &|_| None,
-                        )?));
-                    }
-                }
-                DemandState::Queued | DemandState::Running => {
-                    self.counters.demand_joins += 1;
-                    return Ok(RootSubmission::Pending(demand));
-                }
-                DemandState::Absent | DemandState::MachineFailed => {}
-            }
-        }
-
-        self.counters.memo_misses += 1;
-        self.emit(EventKind::Memo {
-            location: location.id,
-            verdict: MemoVerdict::Miss,
-            verified: 0,
-        });
-        self.demands.insert(
-            demand,
-            DemandRecord {
-                key: demand,
-                state: DemandState::Queued,
-                result: None,
-            },
-        );
-        self.emit(EventKind::DemandTransition {
-            key: demand,
-            from: DemandState::Absent,
-            to: DemandState::Queued,
-        });
-        self.counters.scheduler_requests += 1;
-        let task_id = self.spawn_task(demand);
-        self.transition_demand(demand, DemandState::Running)?;
-        self.transition_task(task_id, TaskState::Running)?;
-        self.transition_task(task_id, TaskState::Parked)?;
-        self.exec_projection_pending.insert(
-            demand,
-            ExecProjectionPending {
-                task_id,
-                location,
-                demand_preimage,
-                execution,
-                capability,
-                path: path.clone(),
-                function,
-                node,
-                span,
-            },
-        );
-
-        let ready = self
-            .exec_progress_ready
-            .remove(&(execution, path.clone()))
-            .map(|bytes| (bytes, ExecProjectionAuthority::Protocol))
-            .or_else(|| {
-                completed.as_ref().and_then(|evaluation| {
-                    self.exec_tree_text_from_outcome(evaluation.handle, &path)
-                        .ok()
-                        .map(|bytes| (bytes, ExecProjectionAuthority::ProcessExit))
-                })
-            });
-        if let Some((bytes, authority)) = ready {
-            self.publish_exec_projection(demand, bytes, authority)?;
-            return Ok(RootSubmission::Ready(
-                self.root_results
-                    .remove(&demand)
-                    .expect("published progressive root has a result"),
-            ));
-        }
-        Ok(RootSubmission::Pending(demand))
-    }
-
-    fn publish_exec_projection(
-        &mut self,
-        demand: DemandKey,
-        bytes: Vec<u8>,
-        authority: ExecProjectionAuthority,
-    ) -> Result<(), Box<MachineError>> {
-        let pending = self
-            .exec_projection_pending
-            .remove(&demand)
-            .ok_or_else(|| {
-                Box::new(MachineError::runtime(
-                    MachineOperation::Effect,
-                    RuntimeFault::QuiescentUnresolvedDemand { key: demand },
-                    None,
-                    Some(demand),
-                ))
-            })?;
-        core::str::from_utf8(&bytes).map_err(|_| {
-            Box::new(MachineError::runtime(
-                MachineOperation::Effect,
-                RuntimeFault::EffectHostFailure {
-                    detail: format!("progressive exec product `{}` was not UTF-8", pending.path),
-                },
-                Some(MachineAttribution {
-                    function: pending.function,
-                    node: pending.node,
-                    span: pending.span,
-                    weavy_function: None,
-                    weavy_pc: None,
-                }),
-                Some(demand),
-            ))
-        })?;
-        self.transition_task(pending.task_id, TaskState::Running)?;
-        let node = FramedNode::leaf(semantic_schema_ref(&Type::String), bytes.clone());
-        let interned = self.store.intern_tree(&node, &bytes);
-        self.store
-            .attach_frozen(interned.handle, FrozenValue::Opaque(bytes));
-        self.observe_interned(&interned);
-        let receipt = Receipt {
-            demand,
-            reads: vec![ReadWitness {
-                source: pending.capability,
-                projection: ReadProjection::ExecTreePath {
-                    execution: pending.execution,
-                    path: pending.path,
-                },
-                observation: ReadObservation::Value(interned.identity.clone()),
-            }],
-        };
-        self.record_performed_reads(&receipt);
-        self.memo.insert(
-            pending.location.id,
-            MemoEntry {
-                location: pending.location,
-                key: demand,
-                preimage: pending.demand_preimage,
-                result: interned.handle,
-                receipt: Some(receipt),
-                current_receipt: true,
-            },
-        );
-        if let Some(record) = self.demands.get_mut(&demand) {
-            record.result = Some(interned.handle);
-        }
-        self.transition_task(pending.task_id, TaskState::Completed)?;
-        self.transition_demand(demand, DemandState::Ready)?;
-        self.emit(EventKind::Completed {
-            key: demand,
-            identity: interned.identity.clone(),
-        });
-        match authority {
-            ExecProjectionAuthority::Protocol => {
-                self.counters.progressive_exec_protocol_publications += 1;
-            }
-            ExecProjectionAuthority::ProcessExit => {
-                self.counters.progressive_exec_exit_publications += 1;
-            }
-        }
-        self.root_results.insert(
-            demand,
-            Evaluation {
-                handle: interned.handle,
-                identity: interned.identity,
-                passed: true,
-                memo: MemoVerdict::Miss,
-                failure: None,
-                failure_context: None,
-            },
-        );
-        Ok(())
-    }
-
     /// Submit one registered-effect island ROOT without synchronously draining
     /// its completion: the declaration-driven replacement for the retired
     /// exec-only `submit_exec`. The island's request subtree is interpreted on
@@ -6314,7 +5436,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
     }
 
     /// Submit one projection demand against an in-flight REGISTERED effect —
-    /// the rail's generalization of [`Self::submit_exec_projection`]. The
+    /// the rail's generalization of the retired exec-only projection path. The
     /// projection has its own demand identity and memo location; its readiness
     /// comes only from the effect's own `EffectCtx` publications (live, or as
     /// witnessed by its completion), never from filesystem polling.
@@ -6544,27 +5666,6 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
         Ok(())
     }
 
-    fn exec_tree_text_from_outcome(&self, handle: Handle, path: &str) -> Result<Vec<u8>, String> {
-        let frozen = self
-            .store
-            .entry(handle)
-            .and_then(StoreEntry::frozen)
-            .ok_or_else(|| "completed exec outcome had no frozen value".to_owned())?;
-        let FrozenValue::Product(fields) = frozen else {
-            return Err("completed exec outcome was not a frozen product".to_owned());
-        };
-        let Some(FrozenValue::Opaque(tree)) = fields.first() else {
-            return Err("completed exec outcome had no frozen Tree".to_owned());
-        };
-        // A projection, not a scan: `a/b` is the entry named `b` of the directory
-        // named `a`, and a symlink at any step is returned rather than followed.
-        tree_from_resident(tree)
-            .map_err(|error| format!("completed exec Tree did not describe a tree: {error}"))?
-            .file_bytes(path)
-            .map(<[u8]>::to_vec)
-            .ok_or_else(|| format!("completed exec Tree had no file `{path}`"))
-    }
-
     /// Serve one effect demand from an existing store result: the shared exact-
     /// hit path of the location memo and the same-run demand-key reuse.
     fn effect_memo_hit(
@@ -6597,117 +5698,6 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             failure_context: failure.as_ref().and_then(effect_context),
             failure,
         })
-    }
-
-    /// Intern one completed `ExecOutcome`: the workspace becomes one canonical
-    /// immutable Tree, while stdout and stderr are UTF-8 line-framed streams.
-    fn intern_exec_outcome(
-        &mut self,
-        outcome_ty: &Type,
-        tree: &[u8],
-        stdout: &[u8],
-        stderr: &[u8],
-    ) -> Interned {
-        let (tree_ty, stream_ty, lines_ty) = match outcome_ty {
-            Type::Record(record) => {
-                let tree_ty = record.fields[0].ty.clone();
-                let stream_ty = record.fields[1].ty.clone();
-                let lines_ty = match &stream_ty {
-                    Type::Record(stream) => stream.fields[0].ty.clone(),
-                    _ => Type::map(Type::Int, Type::String),
-                };
-                (tree_ty, stream_ty, lines_ty)
-            }
-            _ => {
-                let lines_ty = Type::map(Type::Int, Type::String);
-                (
-                    Type::Extern(ExternKind::Host(crate::binding::TREE)),
-                    outcome_ty.clone(),
-                    lines_ty,
-                )
-            }
-        };
-        let int_schema = semantic_schema_ref(&Type::Int);
-        let string_schema = semantic_schema_ref(&Type::String);
-        let stream_value = |bytes: &[u8]| -> (FramedNode, FrozenValue) {
-            let text = String::from_utf8_lossy(bytes);
-            let text_bytes = text.as_bytes().to_vec();
-            let mut rows = Vec::new();
-            let mut frozen_rows = Vec::new();
-            for (index, line) in text.lines().enumerate() {
-                let key =
-                    FramedNode::leaf(int_schema.clone(), (index as i64).to_le_bytes().to_vec());
-                let value = FramedNode::leaf(string_schema.clone(), line.as_bytes().to_vec());
-                rows.push((key.identity(), value.identity()));
-                frozen_rows.push((
-                    FrozenValue::Inline((index as i64).to_le_bytes().to_vec()),
-                    FrozenValue::Opaque(line.as_bytes().to_vec()),
-                ));
-            }
-            let map = FramedNode::OrderedMap {
-                schema: semantic_schema_ref(&lines_ty),
-                rows,
-            };
-            let record = FramedNode::Variant {
-                schema: semantic_schema_ref(&stream_ty),
-                tag: 0,
-                fields: vec![
-                    FramedField {
-                        schema: semantic_schema_ref(&lines_ty),
-                        value: FramedValue::Optional(Some(map.identity())),
-                    },
-                    FramedField {
-                        schema: string_schema.clone(),
-                        value: FramedValue::Optional(Some(
-                            FramedNode::leaf(string_schema.clone(), text_bytes.clone()).identity(),
-                        )),
-                    },
-                ],
-            };
-            (
-                record,
-                FrozenValue::Product(vec![
-                    FrozenValue::OrderedMap(frozen_rows),
-                    FrozenValue::Opaque(text_bytes),
-                ]),
-            )
-        };
-        // The bytes are this machine's own capture, so a tree that does not
-        // decode is a machine invariant violation, not an input error — the same
-        // posture the archive-only encoder took after its caller validated.
-        let canonical = canonical_resident_tree(tree).expect("exec capture describes a tree");
-        let tree_node = FramedNode::leaf(semantic_schema_ref(&tree_ty), canonical);
-        let (stdout_node, stdout_frozen) = stream_value(stdout);
-        let (stderr_node, stderr_frozen) = stream_value(stderr);
-        let outcome = FramedNode::Variant {
-            schema: semantic_schema_ref(outcome_ty),
-            tag: 0,
-            fields: vec![
-                FramedField {
-                    schema: semantic_schema_ref(&tree_ty),
-                    value: FramedValue::Optional(Some(tree_node.identity())),
-                },
-                FramedField {
-                    schema: semantic_schema_ref(&stream_ty),
-                    value: FramedValue::Optional(Some(stdout_node.identity())),
-                },
-                FramedField {
-                    schema: semantic_schema_ref(&stream_ty),
-                    value: FramedValue::Optional(Some(stderr_node.identity())),
-                },
-            ],
-        };
-        let interned = self.store.intern_tree(&outcome, &[]);
-        self.store.attach_frozen(
-            interned.handle,
-            FrozenValue::Product(vec![
-                FrozenValue::Opaque(tree.to_vec()),
-                stdout_frozen,
-                stderr_frozen,
-            ]),
-        );
-        self.observe_interned(&interned);
-        interned
     }
 
     /// Intern the payload an authored `fail` carries and build the failure the
@@ -7973,9 +6963,6 @@ fn projection_fingerprint(projection: &ReadProjection) -> String {
         ReadProjection::RegistryManifest => "registry-manifest".to_owned(),
         ReadProjection::CapabilityProgram => "capability-program".to_owned(),
         ReadProjection::TreePath { path } => format!("tree-path:{path}"),
-        ReadProjection::ExecTreePath { execution, path } => {
-            format!("exec-tree-path:{}:{path}", execution.0.hex())
-        }
         ReadProjection::Origin { coordinate } => format!("origin:{coordinate}"),
     }
 }
@@ -7984,7 +6971,7 @@ fn projection_fingerprint(projection: &ReadProjection) -> String {
 /// inline leaf hashes under its field schema, a child carries its own identity.
 /// This is the same identity the field's value would have as a standalone
 /// effect argument, so declaration-derived preimages and hand-built ones
-/// (`submit_exec`'s `capability.identity`) agree byte for byte.
+/// (the retired `submit_exec`'s `capability.identity`) agree byte for byte.
 fn primitive_field_identity(field: &PrimitiveField) -> ValueId {
     match &field.value {
         PrimitiveFieldValue::Inline(bytes) => {
@@ -7998,8 +6985,8 @@ fn primitive_field_identity(field: &PrimitiveField) -> ValueId {
 /// with capability-role arguments keys as `closure = the normalized request
 /// recipe` (the primitive identity plus every non-capability argument identity,
 /// in declaration order) and `arguments = the capability argument identities in
-/// declaration order` — the "plan × capability" preimage `submit_exec` builds
-/// by hand for `Op::Exec` today, generalized to any declaration. The
+/// declaration order` — the "plan × capability" preimage the retired
+/// `submit_exec` built by hand for `Op::Exec`, generalized to any declaration. The
 /// capability's identity is what the demand *means*; its value is redeemed only
 /// host-side by the effect's backend service and never enters the key. Source
 /// location is no input here, so the same plan under the same capability at a
@@ -8012,8 +6999,11 @@ fn primitive_field_identity(field: &PrimitiveField) -> ValueId {
 /// fallback never half-derives — a key either separates the declared
 /// capabilities or is the ordinary request-identity key.
 ///
+/// Public so an embedder's identity test can pin the derivation by
+/// construction — a re-keying should be a deliberate, visible change.
+///
 /// r[impl machine.primitive.capability-role]
-fn declared_effect_preimage(
+pub fn declared_effect_preimage(
     primitive: &super::PrimitiveId,
     shape: Option<&super::RequestShape>,
     request_id: &ValueId,
@@ -9249,23 +8239,6 @@ fn failure_context(
     }
 }
 
-/// Tier-1 exec plan identity: the normalized command. The v1 ratchet capability
-/// packages' command grammar is fully positional, so the normalized plan is the
-/// parsed argv itself, framed element by element.
-///
-/// r[impl machine.primitive.exec-identity]
-/// r[impl machine.primitive.exec-plan-normalized]
-fn exec_plan_recipe(argv: &[String]) -> RecipeId {
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"vix.exec.plan.v1");
-    bytes.extend_from_slice(&(argv.len() as u64).to_le_bytes());
-    for argument in argv {
-        bytes.extend_from_slice(&(argument.len() as u64).to_le_bytes());
-        bytes.extend_from_slice(argument.as_bytes());
-    }
-    RecipeId::from_canonical_vir(&bytes)
-}
-
 enum DecodedResult {
     OkScalar(bool),
     /// A scalar `Int`/`Bool` value island published its exact result word — the
@@ -9803,123 +8776,6 @@ fn scheduler_decode() -> Stream<Check> {
             .register(primitive)
             .expect("the scheduler test registers decode once");
         PrimitiveDispatcher::new(Arc::new(registry))
-    }
-
-    // ---- the exec backend service seam -------------------------------------
-
-    const EXEC_BACKEND_SOURCE: &str = r#"
-#[test]
-fn backend_seam(echo: Echo) -> Stream<Check> {
-    let out = exec echo`"once"`;
-    yield expect_eq(out.stdout, out.stdout);
-}
-"#;
-
-    #[cfg(unix)]
-    fn exit_status(raw: i32) -> std::process::ExitStatus {
-        use std::os::unix::process::ExitStatusExt as _;
-        std::process::ExitStatus::from_raw(raw)
-    }
-
-    #[cfg(windows)]
-    fn exit_status(raw: i32) -> std::process::ExitStatus {
-        use std::os::windows::process::ExitStatusExt as _;
-        std::process::ExitStatus::from_raw(raw as u32)
-    }
-
-    /// A backend that never spawns: it records what crossed the seam and
-    /// delivers a canned termination through the given sender — the proof that
-    /// the scheduler's exec arm holds no process code of its own.
-    struct FakeExecBackend {
-        invocations: Arc<Mutex<Vec<crate::runtime::ExecInvocation>>>,
-        stdout: Vec<u8>,
-    }
-
-    impl crate::runtime::ExecBackend for FakeExecBackend {
-        fn begin(
-            &self,
-            invocation: crate::runtime::ExecInvocation,
-            events: crate::runtime::ExecEventSender,
-        ) -> Result<ExecWorkspace, String> {
-            self.invocations
-                .lock()
-                .expect("invocation mutex poisoned")
-                .push(invocation);
-            let workspace = ExecWorkspace::create()?;
-            (*events)(ExecEvent::Terminated(Ok(std::process::Output {
-                status: exit_status(0),
-                stdout: self.stdout.clone(),
-                stderr: Vec::new(),
-            })));
-            Ok(workspace)
-        }
-    }
-
-    /// The exec arm calls through the installed backend service: the fake
-    /// records the invocation that crossed the seam and resolves the demand
-    /// with a canned termination, no process spawned. Keying, parking, and
-    /// receipts stay scheduler-side and unchanged.
-    ///
-    /// r[verify machine.primitive.effect-backend-service]
-    #[test]
-    fn installed_exec_backend_owns_the_process_boundary() {
-        // The exec outcome's `tree` field is the embedder-declared `Tree` host
-        // type; reserve its schema name as the vixen runtime does (idempotent).
-        crate::schema::register_host_externs(&[crate::binding::TREE]);
-        let module = decode_compiler()
-            .compile(EXEC_BACKEND_SOURCE)
-            .expect("exec backend source compiles");
-        let partitioned = module.partition_test(&module.tests[0]);
-        let mut runtime = Runtime::new(EventLog::default());
-        let invocations = Arc::new(Mutex::new(Vec::new()));
-        runtime.primitive_services = crate::runtime::PrimitiveServices::default()
-            .with_exec_backend(Arc::new(FakeExecBackend {
-                invocations: invocations.clone(),
-                stdout: b"canned\n".to_vec(),
-            }));
-
-        let mut published = std::collections::BTreeMap::new();
-        for capability in &partitioned.capabilities {
-            let evaluation = runtime.publish_capability(&capability.ty, &capability.name);
-            published.insert(capability.id, evaluation);
-        }
-        let value = partitioned
-            .values
-            .iter()
-            .find(|value| {
-                matches!(
-                    value.island.effect_output().map(|node| &node.op),
-                    Some(crate::vir::Op::Exec { .. })
-                )
-            })
-            .expect("exec island partitions");
-        let capability = value
-            .island
-            .value_inputs
-            .iter()
-            .filter_map(|input| published.get(input).cloned())
-            .next()
-            .expect("exec island has one capability input");
-        let location = Location::for_test_value(&partitioned.name, &value.id.stable_segment());
-
-        let evaluation = runtime
-            .evaluate_exec(&value.island, &location, &capability, ChaosPolicy::default())
-            .expect("the canned termination resolves the exec demand");
-
-        assert!(evaluation.passed, "exit zero publishes the exec outcome");
-        let invocations = invocations.lock().expect("invocation mutex poisoned");
-        assert_eq!(
-            invocations.len(),
-            1,
-            "the process boundary was crossed exactly once, through the service"
-        );
-        assert_eq!(invocations[0].program, "echo");
-        assert_eq!(invocations[0].argv, vec!["once".to_owned()]);
-        assert_eq!(
-            invocations[0].protocol,
-            crate::runtime::ExecOutputProtocol::ExitOnly
-        );
-        assert_eq!(runtime.counters.effect_spawns, 1);
     }
 
     // ---- progressive publication on the registered-effect rail -------------

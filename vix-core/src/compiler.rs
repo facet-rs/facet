@@ -11,13 +11,15 @@ use taxon::{
 
 use crate::decode::{self, DecodeFormat, DecodedValue};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics, Label};
-use crate::runtime::{tree_read_primitive_id, tree_read_request_type};
+use crate::runtime::{
+    exec_primitive_id, exec_request_type, tree_read_primitive_id, tree_read_request_type,
+};
 use crate::schema::{SchemaBatch, SchemaRef, SchemaSet};
 use crate::support::{Span, Spanned};
 use crate::surface::{SurfaceParser, ast};
 use crate::vir::DescribedWire;
 use crate::vir::{
-    ArrayMapGrain, ArrayMapGrainKey, Budget, CheckRecipe, CommandArgument, CommandPiece,
+    ArrayMapGrain, ArrayMapGrainKey, Budget, CheckRecipe,
     ControlRegion, EffectFacts, EffectKind, EnumType, EnumVariant, ExternKind, Function,
     FunctionId, GeneratorArm, GeneratorBody, GeneratorStep, MatchArm as VirMatchArm, Module, Node,
     NodeId, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT, ORDERING_GREATER_VARIANT,
@@ -74,6 +76,13 @@ pub struct CompilerConfig {
     /// `vix-core` alone ships **none**; the axiom externs
     /// (`Blob`/`Registry`/`Schema`/`PinnedUrl`) stay hardcoded.
     pub host_types: &'static [crate::binding::HostTypeDecl],
+    /// Capability-type declarations the embedder injects: the command packages
+    /// a program may receive as `#[test]` parameters (`Echo`, `Sh`,
+    /// `ProgressiveSh`, …). Each resolves to the opaque one-field capability
+    /// record [`capability_type`] builds, and `vix-core` alone ships **none** —
+    /// a tool name is a capability package's, never the machine's
+    /// (`machine.capability.no-argv-dialect`).
+    pub capabilities: &'static [crate::binding::CapabilityTypeDecl],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -708,12 +717,14 @@ struct TypeResolver<'a> {
     resolved: BTreeMap<String, Type>,
     schemas: SchemaSet,
     host_types: &'a [crate::binding::HostTypeDecl],
+    capabilities: &'a [crate::binding::CapabilityTypeDecl],
 }
 
 impl<'a> TypeResolver<'a> {
     fn new(
         source: &'a ast::SourceFile,
         host_types: &'a [crate::binding::HostTypeDecl],
+        capabilities: &'a [crate::binding::CapabilityTypeDecl],
     ) -> Result<Self, Diagnostics> {
         let schemas = semantic_schema_set(source, host_types)?;
         let mut declarations = BTreeMap::new();
@@ -759,6 +770,7 @@ impl<'a> TypeResolver<'a> {
             resolved: BTreeMap::from([("Ordering".to_owned(), Type::ordering())]),
             schemas,
             host_types,
+            capabilities,
         })
     }
 
@@ -1205,8 +1217,15 @@ impl<'a> TypeResolver<'a> {
                 Ok(Type::Extern(ExternKind::PinnedUrl))
             }
             ast::Type::Path(path) if path_is(path, "Check") => Ok(Type::Check),
+            // Injected capability types. Like host types these are the
+            // embedder's declarations, not the machine's vocabulary: the core
+            // knows only the SHAPE a capability has (one opaque `$program`),
+            // never which packages exist (machine.capability.no-argv-dialect).
             ast::Type::Path(path)
-                if CAPABILITY_TYPE_NAMES.iter().any(|name| path_is(path, name)) =>
+                if self
+                    .capabilities
+                    .iter()
+                    .any(|decl| path_is(path, decl.name)) =>
             {
                 Ok(capability_type(&path_name(path)))
             }
@@ -1313,14 +1332,6 @@ impl<'a> TypeResolver<'a> {
     }
 }
 
-/// The capability types the ratchet harness can supply to a `#[test]` as
-/// parameters. A capability value is opaque: its single `$program` field is
-/// not a legal surface identifier, so a program can neither construct nor
-/// project one — it can only receive it and tag a command template with it.
-///
-/// r[impl machine.primitive.capabilities-by-identity]
-pub const CAPABILITY_TYPE_NAMES: &[&str] = &["Echo", "Sh", "ProgressiveSh"];
-
 /// The type names the core language resolves itself — the plain-path resolver
 /// arms plus the generic bases and the pre-seeded `Ordering`. The injected
 /// host-type arm resolves *after* every one of these, so a host type declared
@@ -1408,11 +1419,12 @@ fn lower_module(
     config: CompilerConfig,
     primitive_surfaces: &[crate::runtime::PrimitiveSurface],
 ) -> Result<Module, Diagnostics> {
-    let mut types = TypeResolver::new(source, config.host_types)?.resolve_all(source)?;
-    for name in CAPABILITY_TYPE_NAMES {
+    let mut types = TypeResolver::new(source, config.host_types, config.capabilities)?
+        .resolve_all(source)?;
+    for decl in config.capabilities {
         types
-            .entry((*name).to_owned())
-            .or_insert_with(|| capability_type(name));
+            .entry(decl.name.to_owned())
+            .or_insert_with(|| capability_type(decl.name));
     }
     // Injected host types (`Tree`, `TreeEntry`) are nameable like any declared
     // type — the language no longer hardcodes them. Their extern-backed value
@@ -1435,7 +1447,10 @@ fn lower_module(
             )));
         }
         if CORE_TYPE_SPELLINGS.contains(&decl.name)
-            || CAPABILITY_TYPE_NAMES.contains(&decl.name)
+            || config
+                .capabilities
+                .iter()
+                .any(|capability| capability.name == decl.name)
         {
             return Err(Diagnostics::one(Diagnostic::unsupported(
                 Span { start: 0, end: 0 },
@@ -4260,6 +4275,13 @@ fn tree_projection_syntax(expression: &ast::Expr) -> Option<(&ast::Expr, Vec<&as
     (!segments.is_empty()).then_some((base, segments))
 }
 
+/// Whether `node` projects the still-running response tree of a registered
+/// effect invocation. No capability name is consulted
+/// (`machine.capability.no-argv-dialect`): WHICH output protocol serves the
+/// projection — a live progressive publication or the effect's completion as
+/// the fallback — is the capability package's runtime concern, not a
+/// compile-time fork. Either authority resolves the same projection demand
+/// (`machine.primitive.progressive-response`).
 fn progressive_exec_tree_root(nodes: &[Node], node: NodeId) -> bool {
     let Some(project) = nodes.get(node.0 as usize) else {
         return false;
@@ -4267,24 +4289,14 @@ fn progressive_exec_tree_root(nodes: &[Node], node: NodeId) -> bool {
     let Op::Project { index: 0 } = project.op else {
         return false;
     };
-    let Some(exec) = project
+    let Some(producer) = project
         .inputs
         .first()
         .and_then(|input| nodes.get(input.0 as usize))
     else {
         return false;
     };
-    if !matches!(exec.op, Op::Exec { .. }) {
-        return false;
-    }
-    let Some(capability) = exec
-        .inputs
-        .first()
-        .and_then(|input| nodes.get(input.0 as usize))
-    else {
-        return false;
-    };
-    matches!(&capability.ty, Type::Record(record) if record.name == "ProgressiveSh")
+    matches!(producer.op, Op::InvokePrimitive { .. }) && producer.effect.kind == EffectKind::Effect
 }
 
 fn lower_tree_text_projection(
@@ -4325,23 +4337,26 @@ fn lower_tree_text_projection(
         paths.push(path);
     }
 
-    // An exec-origin projection off a still-running `ProgressiveSh` tree is read
-    // progressively: the value island is realized by the exec engine's
-    // command-protocol projection (`submit_exec_projection`) so one subfile can
-    // land before the whole process exits. Every other tree (fixture, extracted
-    // archive, completed exec output) is a settled, interned value the store-
-    // backed `TreeReadPrimitive` reads directly. Both spell the same tree-read
-    // request; only the effect facts differ — `EFFECT` marks the exec-origin
-    // read as an effect root the partitioner hoists and hands to the engine,
-    // while `PURE` keeps the settled read an ordinary in-frame primitive call.
-    // The progressive rail is only reachable when the projection path is a
-    // compile-time constant: the exec engine subscribes to a named product
-    // (`out/early.txt`), which the partitioner reads back off the request. A
-    // computed path cannot name a product ahead of time, so it falls back to a
-    // settled read of the completed exec tree (identical to a fixture read).
-    // This gate and the partitioner's node-level twin
-    // (`vir::progressive_exec_tree_path`) must agree: the partitioner asserts
-    // that every EFFECT-marked tree-read extracts, so a drift fails loudly.
+    // A projection off a registered effect's still-running response tree is
+    // read progressively: the value island is realized as a projection demand
+    // against the in-flight effect (`submit_effect_projection`,
+    // `machine.primitive.progressive-response`) so one subfile can land before
+    // the whole process exits — or, at the fallback authority, from the
+    // publications the effect's completion witnessed. Every other tree
+    // (fixture, extracted archive, completed exec output) is a settled,
+    // interned value the store-backed `TreeReadPrimitive` reads directly. Both
+    // spell the same tree-read request; only the effect facts differ —
+    // `EFFECT` marks the effect-origin read as an effect root the partitioner
+    // hoists into the projection frontier, while `PURE` keeps the settled read
+    // an ordinary in-frame primitive call. The progressive rail is only
+    // reachable when the projection path is a compile-time constant: the
+    // frontier subscribes to a named product (`out/early.txt`), which the
+    // partitioner reads back off the request. A computed path cannot name a
+    // product ahead of time, so it falls back to a settled read of the
+    // completed tree (identical to a fixture read). This gate and the
+    // partitioner's node-level twin (`vir::progressive_exec_tree_path`) must
+    // agree: the partitioner asserts that every EFFECT-marked tree-read
+    // extracts, so a drift fails loudly.
     let progressive = progressive_exec_tree_root(nodes, tree.node)
         && segments
             .iter()
@@ -8908,17 +8923,26 @@ fn lower_command(
     )))
 }
 
+/// One materialization fragment of a command argv element, as lowering sees
+/// it: a literal run of template characters, or a typed `{name}` splice.
+enum TemplatePiece {
+    Literal(String),
+    Value(LoweredValue),
+}
+
 /// The ratchet capability packages' command grammar: whitespace-separated
 /// argv elements; a double-quoted element keeps interior whitespace and drops
 /// its quotes. `{name}` splices resolve to typed Int, String, or Path inputs;
-/// the scheduler renders those values before normalizing the exec plan, so
+/// the plan is materialized in VIR — rendering ops and adjacency
+/// concatenation — so the request the effect demand hashes already carries
+/// the normalized argv (`machine.primitive.exec-plan-normalized`), and
 /// distinct mapper arguments remain distinct effect demands.
 ///
 /// r[impl lang.command.typed]
 fn parse_command_template(
     template: &Spanned<String>,
     bindings: &BTreeMap<String, LoweredValue>,
-) -> Result<(Vec<CommandArgument>, Vec<NodeId>), Diagnostics> {
+) -> Result<Vec<Vec<TemplatePiece>>, Diagnostics> {
     let text = template
         .value
         .strip_prefix('`')
@@ -8961,8 +8985,7 @@ fn parse_command_template(
             raw_argv.push(element);
         }
     }
-    let mut inputs = Vec::new();
-    let argv = raw_argv
+    raw_argv
         .into_iter()
         .map(|argument| {
             let mut pieces = Vec::new();
@@ -8980,7 +9003,7 @@ fn parse_command_template(
                     continue;
                 }
                 if !literal.is_empty() {
-                    pieces.push(CommandPiece::Literal(core::mem::take(&mut literal)));
+                    pieces.push(TemplatePiece::Literal(core::mem::take(&mut literal)));
                 }
                 let mut name = String::new();
                 loop {
@@ -9016,25 +9039,25 @@ fn parse_command_template(
                         value.ty.name(),
                     ));
                 }
-                inputs.push(value.node);
-                pieces.push(CommandPiece::Input {
-                    index: u32::try_from(inputs.len())
-                        .expect("command interpolation input count fits u32"),
-                });
+                pieces.push(TemplatePiece::Value(value.clone()));
             }
             if !literal.is_empty() || pieces.is_empty() {
-                pieces.push(CommandPiece::Literal(literal));
+                pieces.push(TemplatePiece::Literal(literal));
             }
-            Ok(CommandArgument { pieces })
+            Ok(pieces)
         })
-        .collect::<Result<Vec<_>, Diagnostics>>()?;
-    Ok((argv, inputs))
+        .collect()
 }
 
-/// `exec command` — an effect demand. The capability value is the node's only
-/// input, so its identity enters the demand preimage; the parsed argv enters
-/// the canonical recipe. The result is the `ExecOutcome` value; a nonzero exit
-/// is a typed language failure at this node's site.
+/// `exec command` — a registered effect demand on the generic rail. The
+/// command grammar runs HERE: the template parses into argv elements and each
+/// element materializes as VIR (string literals, `Int`/`Path` rendering ops,
+/// adjacency concatenation), so the request record the effect demand hashes
+/// already carries the normalized plan. The capability is the request's
+/// capability-role argument — its identity enters the demand preimage, its
+/// value is redeemed host-side (`machine.primitive.capability-role`). The
+/// result is the `ExecOutcome` value; a nonzero exit is a typed language
+/// failure at this node's site.
 fn lower_exec(
     nodes: &mut Vec<Node>,
     bindings: &BTreeMap<String, LoweredValue>,
@@ -9049,19 +9072,86 @@ fn lower_exec(
             capability.ty.name(),
         ));
     }
-    let (argv, interpolation_inputs) = parse_command_template(&exec.command.template, bindings)?;
+    let template = parse_command_template(&exec.command.template, bindings)?;
+    let span = exec.span;
+    let mut elements = Vec::with_capacity(template.len());
+    for pieces in template {
+        let mut element: Option<NodeId> = None;
+        for piece in pieces {
+            let rendered = match piece {
+                TemplatePiece::Literal(text) => push_node(
+                    nodes,
+                    span,
+                    Type::String,
+                    EffectFacts::PURE,
+                    Vec::new(),
+                    Op::String(text),
+                ),
+                TemplatePiece::Value(value) => match value.ty {
+                    Type::String => value.node,
+                    Type::Int => push_node(
+                        nodes,
+                        span,
+                        Type::String,
+                        EffectFacts::PURE,
+                        vec![value.node],
+                        Op::IntToString,
+                    ),
+                    Type::Path => push_node(
+                        nodes,
+                        span,
+                        Type::String,
+                        EffectFacts::PURE,
+                        vec![value.node],
+                        Op::PathToString,
+                    ),
+                    _ => unreachable!("parse_command_template admits Int, String, and Path only"),
+                },
+            };
+            element = Some(match element {
+                None => rendered,
+                // Adjacency fuses: flush fragments continue one argv element.
+                Some(previous) => push_node(
+                    nodes,
+                    span,
+                    Type::String,
+                    EffectFacts::PURE,
+                    vec![previous, rendered],
+                    Op::StringConcat,
+                ),
+            });
+        }
+        elements.push(element.expect("every argv element has at least one piece"));
+    }
+    let argv_ty = Type::Array(Box::new(Type::String));
+    let argv = push_node(
+        nodes,
+        span,
+        argv_ty,
+        EffectFacts::PURE,
+        elements,
+        Op::Array,
+    );
+    let request_ty = exec_request_type(&capability.ty);
+    let request = push_node(
+        nodes,
+        span,
+        request_ty,
+        EffectFacts::PURE,
+        vec![capability.node, argv],
+        Op::Record,
+    );
     let ty = exec_outcome_type();
-    let mut inputs = Vec::with_capacity(1 + interpolation_inputs.len());
-    inputs.push(capability.node);
-    inputs.extend(interpolation_inputs);
     Ok(LoweredValue {
         node: push_node(
             nodes,
-            exec.span,
+            span,
             ty.clone(),
             EffectFacts::EFFECT,
-            inputs,
-            Op::Exec { argv },
+            vec![request],
+            Op::InvokePrimitive {
+                primitive: exec_primitive_id(),
+            },
         ),
         ty,
     })

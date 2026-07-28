@@ -40,7 +40,7 @@ use vix::runtime::{
     CodataRegistry, EventSink, PrimitiveDispatcher, PrimitiveRegistry, RawPrimitive, Runtime,
 };
 use vixen_primitives::{
-    BlobGunzipPrimitive, BlobLenPrimitive, DecodePrimitive, PinnedFetchPrimitive,
+    BlobGunzipPrimitive, BlobLenPrimitive, DecodePrimitive, ExecPrimitive, PinnedFetchPrimitive,
     RegistryUrlPrimitive, TreeGlobPrimitive, TreeReadPrimitive, TypedAdapter, UntarPrimitive,
 };
 
@@ -58,6 +58,11 @@ pub fn builtin_primitives<Ctx>() -> Vec<Arc<dyn RawPrimitive<Ctx>>> {
         Arc::new(TypedAdapter::new::<Ctx>(BlobGunzipPrimitive)),
         Arc::new(BlobLenPrimitive::default()),
         Arc::new(TypedAdapter::new::<Ctx>(UntarPrimitive)),
+        // The process-running effect, on the registered rail (exec-rail.md):
+        // the capability-role request keys the demand, the `ExecBackend`
+        // service owns the process boundary, and `vix-core` spells no tool
+        // name.
+        Arc::new(ExecPrimitive::default()),
     ]
 }
 
@@ -132,6 +137,7 @@ pub fn default_config() -> CompilerConfig {
         prelude: vixen_primitives::stdlib::PRELUDE_SOURCES,
         methods: vixen_primitives::DOMAIN_METHODS,
         host_types: vixen_primitives::HOST_TYPES,
+        capabilities: vixen_primitives::CAPABILITY_TYPES,
         ..CompilerConfig::default()
     }
 }
