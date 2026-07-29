@@ -481,7 +481,9 @@ enum Prepared {
     /// A source prepared through [`crate::ratchet::prepare_source`]. `Err` holds
     /// a preparation failure (e.g. the source did not compile) surfaced at
     /// execution as a failed report.
-    Source(Result<crate::ratchet::PreparedRun, String>),
+    /// Boxed: `PreparedRun` carries the compilation, cache, and machine
+    /// manifest, dwarfing every other variant.
+    Source(Result<Box<crate::ratchet::PreparedRun>, String>),
     /// An immediate completion.
     Immediate,
     /// A completion after the given delay, exercised in the execution phase.
@@ -499,7 +501,9 @@ enum Prepared {
 fn prepare_workload(workload: &Workload) -> Prepared {
     match workload {
         Workload::RunSource { source } => Prepared::Source(
-            crate::ratchet::prepare_source(source).map_err(|error| format!("{error:?}")),
+            crate::ratchet::prepare_source(source)
+                .map(Box::new)
+                .map_err(|error| format!("{error:?}")),
         ),
         Workload::Immediate => Prepared::Immediate,
         Workload::Delay { duration_ns } => Prepared::Delay(Duration::from_nanos(*duration_ns)),

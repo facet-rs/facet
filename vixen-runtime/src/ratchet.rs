@@ -10,9 +10,9 @@ use vix::runtime::{
     ChaosPolicy, Counters, DemandState, EffectProjectionRequest, Evaluation, Event, EventKind,
     EventLog, FailureContext, FailureValue, FramedNode, GeneratorOutcome, IslandInputs, Location,
     MachineError, PersistentRuntimeJournal, PersistentRuntimeJournalError,
-    PersistentRuntimeJournalLoadReport, PersistentRuntimeState, PrimitiveServices,
-    ReadProjection, RealizedWireDemand, RootSubmission, Runtime, SnapshotCapture, SnapshotOutcome,
-    TaskState, ValueId, ValueRootRequest, WireDemand,
+    PersistentRuntimeJournalLoadReport, PersistentRuntimeState, PrimitiveServices, ReadProjection,
+    RealizedWireDemand, RootSubmission, Runtime, SnapshotCapture, SnapshotOutcome, TaskState,
+    ValueId, ValueRootRequest, WireDemand,
 };
 use vix::vir::{
     DescribedWire, FunctionId, Island, Module, Op, PartitionedRecipe, PartitionedValue, TraceCheck,
@@ -509,6 +509,12 @@ pub struct SuiteRun {
     pub receipt_count: u64,
     pub all_demands_ready: bool,
     pub all_tasks_terminal: bool,
+    /// Typed pre-effect capability refusals
+    /// (`vixen.machine.binding-fails-before-effects`): a test listed here had
+    /// a root capability parameter the machine manifest could not satisfy, so
+    /// NONE of its islands were submitted — no check ran, no demand parked,
+    /// no process spawned. Non-empty refusals fail the report.
+    pub refusals: Vec<crate::manifest::CapabilityRefusal>,
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -584,11 +590,13 @@ impl RatchetReport {
     pub fn agrees(&self) -> bool {
         self.plain.check_family() == self.chaos.check_family()
             && self.plain.value_family() == self.chaos.value_family()
+            && self.plain.refusals == self.chaos.refusals
     }
 
     #[must_use]
     pub fn passed(&self) -> bool {
         self.agrees()
+            && self.plain.refusals.is_empty()
             && self.plain.checks.iter().all(|check| check.passed)
             && self.chaos.checks.iter().all(|check| check.passed)
             && self.plain.all_demands_ready
@@ -611,6 +619,10 @@ impl RatchetReport {
 pub struct PreparedRun {
     compilation: vix::compiler::Compilation,
     cache: LoweringCache,
+    /// The machine manifest the run binds root capability parameters against
+    /// (`vixen.machine.manifest`). Defaults to [`MachineManifest::ratchet_default`];
+    /// [`PreparedRun::with_manifest`] substitutes an explicit machine word.
+    manifest: crate::manifest::MachineManifest,
 }
 
 /// Execution lifecycle boundaries exposed to the outer budget runner. Each
@@ -668,6 +680,18 @@ pub fn run_source(source: &str) -> Result<RatchetReport, RunError> {
     run_source_with_config(source, crate::default_config())
 }
 
+/// Run under an explicit machine manifest instead of the harness default —
+/// the embedder's declared machine word, which root capability parameters
+/// bind against before anything runs (`vixen.machine.manifest`).
+pub fn run_source_with_manifest(
+    source: &str,
+    manifest: crate::manifest::MachineManifest,
+) -> Result<RatchetReport, RunError> {
+    prepare_source_with_config(source, crate::default_config())?
+        .with_manifest(manifest)
+        .execute()
+}
+
 /// Run a root source alongside named library modules (the `//! uses:` harness
 /// directive of rungs 106–110): identical to [`run_source`] in every lane
 /// aspect, with imports resolved against the presented module set.
@@ -716,8 +740,7 @@ pub fn run_source_with_snapshots_and_lane(
 /// source mark. This is an explicit diagnostic lane: ordinary [`run_source`]
 /// uses bounded Production tracing and preserves only structural task events.
 pub fn run_source_innards(source: &str) -> Result<RatchetReport, RunError> {
-    prepare_source_with_cache(source, crate::default_config(), LoweringCache::innards())?
-        .execute()
+    prepare_source_with_cache(source, crate::default_config(), LoweringCache::innards())?.execute()
 }
 /// Run every declared test twice under explicit shape-selection configuration.
 /// The forced-copy molten differential compiles the same source with
@@ -801,6 +824,7 @@ pub fn run_source_revision_audit_with_lane(
         None,
         Some(&first_revision),
         None,
+        &first_prepared.manifest,
     )?;
     let journal = state.to_journal();
     let journal_json = journal.to_json()?;
@@ -830,6 +854,7 @@ pub fn run_source_revision_audit_with_lane(
         Some(&mut load),
         Some(&second_revision),
         None,
+        &second_prepared.manifest,
     )?;
     let first_value_checks = first
         .checks
@@ -943,10 +968,22 @@ fn prepare_modules_with_cache(
         }
     }
 
-    Ok(PreparedRun { compilation, cache })
+    Ok(PreparedRun {
+        compilation,
+        cache,
+        manifest: crate::manifest::MachineManifest::ratchet_default(),
+    })
 }
 
 impl PreparedRun {
+    /// Substitute the machine manifest the run binds against — the embedder's
+    /// declared machine word replacing the harness default.
+    #[must_use]
+    pub fn with_manifest(mut self, manifest: crate::manifest::MachineManifest) -> Self {
+        self.manifest = manifest;
+        self
+    }
+
     /// Run every declared test twice over the warm cache. The chaos lane discards
     /// the first running task at an edge safepoint and must publish the same
     /// identities. No compilation happens here: every `get_or_lower` is a hit.
@@ -1013,6 +1050,7 @@ impl PreparedRun {
             None,
             None,
             None,
+            &self.manifest,
         )?;
         let mut second_state = PersistentRuntimeState::default();
         let second = run_lane(
@@ -1031,6 +1069,7 @@ impl PreparedRun {
             None,
             None,
             None,
+            &self.manifest,
         )?;
         let first_value_checks = first
             .checks
@@ -1078,6 +1117,7 @@ impl PreparedRun {
             None,
             None,
             None,
+            &self.manifest,
         )?;
         let journal = state.to_journal();
         let journal_json = journal.to_json()?;
@@ -1104,6 +1144,7 @@ impl PreparedRun {
             Some(&mut load),
             None,
             None,
+            &self.manifest,
         )?;
         let first_value_checks = first
             .checks
@@ -1149,6 +1190,7 @@ impl PreparedRun {
             None,
             None,
             Some(&primitive_services),
+            &self.manifest,
         )?;
         let chaos = run_lane(
             &self.compilation.module,
@@ -1169,6 +1211,7 @@ impl PreparedRun {
             None,
             None,
             Some(&primitive_services),
+            &self.manifest,
         )?;
         Ok(RatchetReport {
             warnings: self.compilation.warnings,
@@ -1452,6 +1495,7 @@ fn run_lane(
     persistent_journal_report: Option<&mut PersistentRuntimeJournalLoadReport>,
     source_revision: Option<&str>,
     primitive_services: Option<&PrimitiveServices>,
+    manifest: &crate::manifest::MachineManifest,
 ) -> Result<SuiteRun, RunError> {
     let mut journal_load_report = None;
     let mut runtime = if let Some(journal) = persistent_journal_in {
@@ -1474,6 +1518,7 @@ fn run_lane(
     observe(ready_phase);
     let mut checks = Vec::new();
     let mut values = Vec::new();
+    let mut refusals = Vec::new();
     // Trace checks are deferred until every selected value check completes; they
     // are evaluated once, together, against the frozen completed-run snapshot.
     // Each deferred trace carries the resolved canonical preimage of its
@@ -1511,8 +1556,30 @@ fn run_lane(
             .map(|wire| (wire.id, wire))
             .collect();
         let mut published_values = BTreeMap::new();
+        // Root capability parameters bind against the machine manifest by
+        // declared type — the manifest is the source of every capability value,
+        // never a conjuring. An unsatisfiable requirement (type absent, or a
+        // target the offered facts lack) refuses the whole test HERE, before
+        // any island is submitted: no check runs, no demand parks, no process
+        // spawns (the acceptance tests pin this by counter).
+        //
+        // r[impl vixen.machine.binding-fails-before-effects]
+        let requirements = crate::manifest::test_requirements(&partitioned);
+        let test_refusals = manifest.bind(&requirements);
+        if !test_refusals.is_empty() {
+            refusals.extend(test_refusals);
+            continue;
+        }
         for capability in &partitioned.capabilities {
-            let evaluation = runtime.publish_capability(&capability.ty, &capability.name);
+            let offer = crate::manifest::capability_type_name(&capability.ty)
+                .and_then(|ty| manifest.offer(ty))
+                .expect("binding admitted only manifest-offered capability types");
+            let evaluation = runtime.publish_capability(
+                &capability.ty,
+                &offer.program,
+                offer.toolchain.as_deref(),
+                offer.targets.iter().map(|target| target.as_str()),
+            );
             published_values.insert(capability.id, evaluation);
         }
         // Submit every value island whose published inputs are ready, regardless
@@ -2132,5 +2199,6 @@ fn run_lane(
         receipt_count,
         all_demands_ready,
         all_tasks_terminal,
+        refusals,
     })
 }

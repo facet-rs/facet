@@ -341,13 +341,35 @@ fn the_effect_demand_key_is_a_pure_function_of_plan_and_capability() {
     let request = |program: &str, argv: &[&str]| -> PrimitiveValue {
         let capability = PrimitiveValue {
             schema: capability_ty.schema_ref(),
-            body: PrimitiveValueBody::Product(vec![PrimitiveField {
-                schema: Type::String.schema_ref(),
-                value: PrimitiveFieldValue::Child(Box::new(PrimitiveValue::bytes(
-                    Type::String.schema_ref(),
-                    program.as_bytes().to_vec(),
-                ))),
-            }]),
+            body: PrimitiveValueBody::Product(vec![
+                PrimitiveField {
+                    schema: Type::String.schema_ref(),
+                    value: PrimitiveFieldValue::Child(Box::new(PrimitiveValue::bytes(
+                        Type::String.schema_ref(),
+                        program.as_bytes().to_vec(),
+                    ))),
+                },
+                PrimitiveField {
+                    schema: Type::option(Type::String).schema_ref(),
+                    value: PrimitiveFieldValue::Child(Box::new(PrimitiveValue {
+                        schema: Type::option(Type::String).schema_ref(),
+                        body: PrimitiveValueBody::Variant {
+                            tag: vix::vir::OPTION_NONE_VARIANT,
+                            fields: Vec::new(),
+                        },
+                    })),
+                },
+                PrimitiveField {
+                    schema: Type::Array(Box::new(Type::String)).schema_ref(),
+                    value: PrimitiveFieldValue::Child(Box::new(PrimitiveValue {
+                        schema: Type::Array(Box::new(Type::String)).schema_ref(),
+                        body: PrimitiveValueBody::Sequence {
+                            element_schema: Type::String.schema_ref(),
+                            elements: Vec::new(),
+                        },
+                    })),
+                },
+            ]),
         };
         let argv_ty = Type::Array(Box::new(Type::String));
         let argv = PrimitiveValue {
@@ -393,15 +415,42 @@ fn the_effect_demand_key_is_a_pure_function_of_plan_and_capability() {
     // The capability's identity IS the preimage argument — never its program
     // bytes, and never the plan.
     let base = preimage("echo", &["once"]);
+    let string_ty = Type::String;
+    let toolchain_ty = Type::option(Type::String);
+    let targets_ty = Type::Array(Box::new(Type::String));
     let capability_identity = FramedNode::Variant {
         schema: capability_ty.schema_ref(),
         tag: 0,
-        fields: vec![vix::runtime::FramedField {
-            schema: Type::String.schema_ref(),
-            value: vix::runtime::FramedValue::Optional(Some(
-                FramedNode::leaf(Type::String.schema_ref(), b"echo".to_vec()).identity(),
-            )),
-        }],
+        fields: vec![
+            vix::runtime::FramedField {
+                schema: string_ty.schema_ref(),
+                value: vix::runtime::FramedValue::Optional(Some(
+                    FramedNode::leaf(string_ty.schema_ref(), b"echo".to_vec()).identity(),
+                )),
+            },
+            vix::runtime::FramedField {
+                schema: toolchain_ty.schema_ref(),
+                value: vix::runtime::FramedValue::Optional(Some(
+                    FramedNode::Variant {
+                        schema: toolchain_ty.schema_ref(),
+                        tag: vix::vir::OPTION_NONE_VARIANT.into(),
+                        fields: Vec::new(),
+                    }
+                    .identity(),
+                )),
+            },
+            vix::runtime::FramedField {
+                schema: targets_ty.schema_ref(),
+                value: vix::runtime::FramedValue::Optional(Some(
+                    FramedNode::SeqChildren {
+                        schema: targets_ty.schema_ref(),
+                        element_schema: string_ty.schema_ref(),
+                        children: Vec::new(),
+                    }
+                    .identity(),
+                )),
+            },
+        ],
     }
     .identity();
     assert_eq!(
