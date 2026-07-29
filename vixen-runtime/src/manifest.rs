@@ -21,7 +21,7 @@ use std::collections::BTreeMap;
 
 use vix::vir::{Island, Module, Node, Op, PartitionedTest, Type};
 use vixen_primitives::capability_package::{
-    CapabilityPackage, PlanElement, Target, TargetCapture, capability_package,
+    PlanElement, Target, TargetCapture, capability_package,
 };
 
 /// The triple this build of the runner is running on — the manifest's default
@@ -162,8 +162,7 @@ impl MachineManifest {
             host: String,
             capability: Vec<OfferDoc>,
         }
-        let doc: ManifestDoc =
-            facet_toml::from_str(source).map_err(|error| error.to_string())?;
+        let doc: ManifestDoc = facet_toml::from_str(source).map_err(|error| error.to_string())?;
         Ok(Self {
             host: Target::new(doc.host),
             capabilities: doc
@@ -213,10 +212,6 @@ impl MachineManifest {
             for requirement in &capability.targets {
                 let required = match requirement {
                     TargetRequirement::Literal(target) => target,
-                    // The fact-shaped discipline: the plan implicitly
-                    // requires the machine's host, demanded of the
-                    // capability's own target facts.
-                    TargetRequirement::Host => &self.host,
                     TargetRequirement::Computed => continue,
                 };
                 if !offer.targets.contains(required) {
@@ -238,9 +233,6 @@ pub enum TargetRequirement {
     /// degrades honestly to "target decided at run time"; bind time cannot
     /// check it.
     Computed,
-    /// The fact-shaped discipline's implicit requirement: the plan requires
-    /// the machine's host, resolved against the manifest at bind time.
-    Host,
 }
 
 /// One capability parameter's requirement row: presence (the declared type)
@@ -283,7 +275,11 @@ pub struct CapabilityRefusal {
 
 impl core::fmt::Display for CapabilityRefusal {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "error[capability]: `{}` demands {}", self.test, self.required_type)?;
+        write!(
+            f,
+            "error[capability]: `{}` demands {}",
+            self.test, self.required_type
+        )?;
         if let Some(target) = &self.required_target {
             write!(f, " producing {target}")?;
         }
@@ -339,18 +335,11 @@ pub fn test_requirements(partitioned: &PartitionedTest) -> TestRequirements {
         let Some(ty) = capability_type_name(&capability.ty) else {
             continue;
         };
-        let package = capability_package(ty);
-        let mut targets = Vec::new();
-        // The fact-shaped discipline: no capture exists anywhere in the plan;
-        // the capability's presence itself demands the host of its facts.
-        if package.is_some_and(CapabilityPackage::requires_host_fact) {
-            targets.push(TargetRequirement::Host);
-        }
         by_type.entry(ty.to_owned()).or_insert_with(|| {
             rows.push(CapabilityRequirement {
                 parameter: capability.name.clone(),
                 ty: ty.to_owned(),
-                targets,
+                targets: Vec::new(),
             });
             rows.len() - 1
         });
@@ -398,8 +387,8 @@ fn collect_exec_requirements(
         let [capability_id, argv_id] = request.inputs.as_slice() else {
             continue;
         };
-        let Some(ty) = node_by_id(*capability_id)
-            .and_then(|capability| capability_type_name(&capability.ty))
+        let Some(ty) =
+            node_by_id(*capability_id).and_then(|capability| capability_type_name(&capability.ty))
         else {
             continue;
         };

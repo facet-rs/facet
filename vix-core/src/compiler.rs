@@ -19,14 +19,13 @@ use crate::support::{Span, Spanned};
 use crate::surface::{SurfaceParser, ast};
 use crate::vir::DescribedWire;
 use crate::vir::{
-    ArrayMapGrain, ArrayMapGrainKey, Budget, CheckRecipe,
-    ControlRegion, EffectFacts, EffectKind, EnumType, EnumVariant, ExternKind, Function,
-    FunctionId, GeneratorArm, GeneratorBody, GeneratorStep, MatchArm as VirMatchArm, Module, Node,
-    NodeId, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT, ORDERING_GREATER_VARIANT,
-    ORDERING_LESS_VARIANT, Op, OrderedMatchArm, Parameter, ParameterId, ParameterKind,
-    RESULT_ERR_VARIANT, RESULT_OK_VARIANT, RecordField, RecordType, Test, TestMetadata, TraceCheck,
-    Type, VariantPayload, WireArg, WireSelector, YieldSite, YieldSiteId, decode_error_type,
-    decode_primitive_id, decode_request_type,
+    ArrayMapGrain, ArrayMapGrainKey, Budget, CheckRecipe, ControlRegion, EffectFacts, EffectKind,
+    EnumType, EnumVariant, ExternKind, Function, FunctionId, GeneratorArm, GeneratorBody,
+    GeneratorStep, MatchArm as VirMatchArm, Module, Node, NodeId, OPTION_NONE_VARIANT,
+    OPTION_SOME_VARIANT, ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, OrderedMatchArm,
+    Parameter, ParameterId, ParameterKind, RESULT_ERR_VARIANT, RESULT_OK_VARIANT, RecordField,
+    RecordType, Test, TestMetadata, TraceCheck, Type, VariantPayload, WireArg, WireSelector,
+    YieldSite, YieldSiteId, decode_error_type, decode_primitive_id, decode_request_type,
 };
 
 pub struct Compiler {
@@ -1235,10 +1234,7 @@ impl<'a> TypeResolver<'a> {
             // fallback). `lower_module` has already rejected any host type whose
             // name is not a reserved builtin schema.
             ast::Type::Path(path)
-                if self
-                    .host_types
-                    .iter()
-                    .any(|decl| path_is(path, decl.name)) =>
+                if self.host_types.iter().any(|decl| path_is(path, decl.name)) =>
             {
                 let name = self
                     .host_types
@@ -1339,21 +1335,45 @@ impl<'a> TypeResolver<'a> {
 /// declaration up front rather than letting it sit silently shadowed. Kept in
 /// lockstep with `TypeResolver::resolve_type_with` / `lower_declared_type`.
 const CORE_TYPE_SPELLINGS: &[&str] = &[
-    "Bool", "Int", "String", "Path", "Check", "Ordering", "Blob", "Registry", "PinnedUrl",
-    "Schema", "Option", "Map", "Set", "Stream",
+    "Bool",
+    "Int",
+    "String",
+    "Path",
+    "Check",
+    "Ordering",
+    "Blob",
+    "Registry",
+    "PinnedUrl",
+    "Schema",
+    "Option",
+    "Map",
+    "Set",
+    "Stream",
 ];
 
-/// The single opaque field carrying a capability's executable identity.
+/// The opaque fields carrying a capability offer's identity-bearing data.
 pub const CAPABILITY_PROGRAM_FIELD: &str = "$program";
+pub const CAPABILITY_TOOLCHAIN_FIELD: &str = "$toolchain";
+pub const CAPABILITY_TARGETS_FIELD: &str = "$targets";
 
 #[must_use]
 pub fn capability_type(name: &str) -> Type {
     Type::Record(RecordType::new(
         name,
-        vec![RecordField {
-            name: CAPABILITY_PROGRAM_FIELD.to_owned(),
-            ty: Type::String,
-        }],
+        vec![
+            RecordField {
+                name: CAPABILITY_PROGRAM_FIELD.to_owned(),
+                ty: Type::String,
+            },
+            RecordField {
+                name: CAPABILITY_TOOLCHAIN_FIELD.to_owned(),
+                ty: Type::option(Type::String),
+            },
+            RecordField {
+                name: CAPABILITY_TARGETS_FIELD.to_owned(),
+                ty: Type::Array(Box::new(Type::String)),
+            },
+        ],
     ))
 }
 
@@ -1362,7 +1382,13 @@ pub fn is_capability_type(ty: &Type) -> bool {
     matches!(
         ty,
         Type::Record(record)
-            if record.fields.len() == 1 && record.fields[0].name == CAPABILITY_PROGRAM_FIELD
+            if matches!(record.fields.as_slice(), [program, toolchain, targets]
+                if program.name == CAPABILITY_PROGRAM_FIELD
+                    && program.ty == Type::String
+                    && toolchain.name == CAPABILITY_TOOLCHAIN_FIELD
+                    && toolchain.ty == Type::option(Type::String)
+                    && targets.name == CAPABILITY_TARGETS_FIELD
+                    && targets.ty == Type::Array(Box::new(Type::String)))
     )
 }
 
@@ -1419,8 +1445,8 @@ fn lower_module(
     config: CompilerConfig,
     primitive_surfaces: &[crate::runtime::PrimitiveSurface],
 ) -> Result<Module, Diagnostics> {
-    let mut types = TypeResolver::new(source, config.host_types, config.capabilities)?
-        .resolve_all(source)?;
+    let mut types =
+        TypeResolver::new(source, config.host_types, config.capabilities)?.resolve_all(source)?;
     for decl in config.capabilities {
         types
             .entry(decl.name.to_owned())
@@ -3966,8 +3992,13 @@ fn lower_uniform_generic_call(
     let mut lowered_arguments = Vec::with_capacity(arguments.len());
     for (parameter, argument) in where_parameters.iter().zip(arguments) {
         let expected_argument = lower_declared_type(&parameter.ty, &argument_env).ok();
-        let value =
-            lower_value_expected(nodes, bindings, context, argument, expected_argument.as_ref())?;
+        let value = lower_value_expected(
+            nodes,
+            bindings,
+            context,
+            argument,
+            expected_argument.as_ref(),
+        )?;
         infer_type_argument(
             &parameter.ty,
             &value.ty,
@@ -4435,9 +4466,11 @@ fn lower_method_call(
     let receiver = lower_value(nodes, bindings, context, &call.receiver)?;
     // Axiom methods resolve against the builtin registry; the embedder's injected
     // host-type methods (`Tree.glob`, …) resolve against `config.methods`.
-    let Some(entry) = crate::binding::prelude_method(&receiver.ty, &call.name.value).or_else(|| {
-        crate::binding::injected_method(context.config.methods, &receiver.ty, &call.name.value)
-    }) else {
+    let Some(entry) =
+        crate::binding::prelude_method(&receiver.ty, &call.name.value).or_else(|| {
+            crate::binding::injected_method(context.config.methods, &receiver.ty, &call.name.value)
+        })
+    else {
         // Uniform function-call syntax: `recv.method(args)` on a value with no
         // builtin method resolves to a free function `method` whose sole
         // positional parameter is the receiver, with the method's positional
@@ -9124,14 +9157,7 @@ fn lower_exec(
         elements.push(element.expect("every argv element has at least one piece"));
     }
     let argv_ty = Type::Array(Box::new(Type::String));
-    let argv = push_node(
-        nodes,
-        span,
-        argv_ty,
-        EffectFacts::PURE,
-        elements,
-        Op::Array,
-    );
+    let argv = push_node(nodes, span, argv_ty, EffectFacts::PURE, elements, Op::Array);
     let request_ty = exec_request_type(&capability.ty);
     let request = push_node(
         nodes,
@@ -9356,21 +9382,31 @@ fn lower_generic_call(
             }
         }
         for parameter in &where_parameters {
-            let field = named_fields.get(parameter.name.value.as_str()).ok_or_else(|| {
-                Diagnostics::one(Diagnostic::unsupported(
-                    call.span,
-                    format!("missing `where` argument `{}`", parameter.name.value),
-                ))
-            })?;
+            let field = named_fields
+                .get(parameter.name.value.as_str())
+                .ok_or_else(|| {
+                    Diagnostics::one(Diagnostic::unsupported(
+                        call.span,
+                        format!("missing `where` argument `{}`", parameter.name.value),
+                    ))
+                })?;
             let expected_argument = lower_declared_type(&parameter.ty, &argument_env).ok();
             let value = if let Some(expression) = &field.value {
-                lower_value_expected(nodes, bindings, context, expression, expected_argument.as_ref())?
+                lower_value_expected(
+                    nodes,
+                    bindings,
+                    context,
+                    expression,
+                    expected_argument.as_ref(),
+                )?
             } else {
                 lookup_binding(bindings, &field.name.value, field.name.span)?
             };
             bound.push((parameter.name.value.clone(), value));
         }
-        return inline_stream_call(nodes, context, template, &arguments, bound, expected, call.span);
+        return inline_stream_call(
+            nodes, context, template, &arguments, bound, expected, call.span,
+        );
     }
 
     let (id, signature) =
