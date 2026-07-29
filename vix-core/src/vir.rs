@@ -1857,6 +1857,12 @@ pub enum ProgressiveProjection {
     /// The UTF-8 text of one file of the producer's response tree, addressed
     /// by its constant path.
     TreePath { path: String },
+    /// One byte range of a named byte stream of the producer's response,
+    /// addressed by byte offset (`machine.primitive.exec-outcome`): `stream`
+    /// is the response record's field name, `[start, end)` the half-open
+    /// range. Served the moment the published frontier covers `end` — while
+    /// the producer still runs.
+    StreamRange { stream: String, start: u64, end: u64 },
 }
 
 /// The described invocation a hoisted value or wire island realizes: the callee
@@ -2153,7 +2159,9 @@ impl Module {
                 )
             })
             .collect::<BTreeMap<_, _>>();
-        let progressive_values = progressive_exec_tree_text_values(function);
+        let mut progressive_values = progressive_exec_tree_text_values(function);
+        progressive_values.extend(progressive_exec_stream_values(function));
+        let progressive_values = progressive_values;
         let progressive_ids = progressive_values
             .iter()
             .map(|value| (value.id.node, value.id))
@@ -3540,6 +3548,99 @@ fn progressive_exec_tree_path(function: &Function, request: NodeId) -> Option<(N
     Some((producer.id, path))
 }
 
+/// Extract every EFFECT-marked `blob-slice` invocation as a byte-range
+/// projection island — the stream twin of
+/// [`progressive_exec_tree_text_values`]. The compiler marks a `Blob.take`
+/// `EFFECT` only when its receiver projects a still-running effect's response
+/// and its length is a compile-time constant
+/// (`compiler::progressive_exec_stream_root`); this extraction re-derives the
+/// producer, the stream's field name, and the byte bounds at the node level,
+/// and the two gates failing to agree is a loud drift fault, exactly as for
+/// the tree rail.
+fn progressive_exec_stream_values(function: &Function) -> Vec<PartitionedProgressiveValue> {
+    function
+        .nodes
+        .iter()
+        .filter_map(|node| {
+            if node.effect.kind != EffectKind::Effect {
+                return None;
+            }
+            let Op::InvokePrimitive { primitive } = &node.op else {
+                return None;
+            };
+            if *primitive != crate::runtime::blob_slice_primitive_id() {
+                return None;
+            }
+            let request = *node
+                .inputs
+                .first()
+                .expect("a primitive invocation carries its request input");
+            let (exec, stream, start, end) = progressive_exec_stream_range(function, request)
+                .unwrap_or_else(|| {
+                    unreachable!(
+                        "an EFFECT-marked blob-slice failed progressive extraction: the \
+                         compiler's `take` gate and `progressive_exec_stream_range` have \
+                         drifted"
+                    )
+                });
+            Some(PartitionedProgressiveValue {
+                id: ValueIslandId {
+                    function: function.id,
+                    node: node.id,
+                },
+                producer: ValueIslandId {
+                    function: function.id,
+                    node: exec,
+                },
+                projection: ProgressiveProjection::StreamRange { stream, start, end },
+                ty: node.ty.clone(),
+            })
+        })
+        .collect()
+}
+
+/// Match a blob-slice request `Record { blob, start, end }` whose `blob` field
+/// projects a byte-stream field of a still-running registered effect's
+/// response. Returns the producer node, the projected field's NAME (the
+/// stream's address — read off the producer's response record type, never a
+/// name the machine matches on), and the constant byte bounds.
+fn progressive_exec_stream_range(
+    function: &Function,
+    request: NodeId,
+) -> Option<(NodeId, String, u64, u64)> {
+    let request = function.nodes.get(request.0 as usize)?;
+    if !matches!(request.op, Op::Record) {
+        return None;
+    }
+    let blob = *request.inputs.first()?;
+    let start = constant_int(function, *request.inputs.get(1)?)?;
+    let end = constant_int(function, *request.inputs.get(2)?)?;
+    let (start, end) = (u64::try_from(start).ok()?, u64::try_from(end).ok()?);
+
+    let blob = function.nodes.get(blob.0 as usize)?;
+    let Op::Project { index } = blob.op else {
+        return None;
+    };
+    let producer = function.nodes.get(blob.inputs.first()?.0 as usize)?;
+    if !matches!(producer.op, Op::InvokePrimitive { .. })
+        || producer.effect.kind != EffectKind::Effect
+    {
+        return None;
+    }
+    let Type::Record(response) = &producer.ty else {
+        return None;
+    };
+    let stream = response.fields.get(index as usize)?.name.clone();
+    Some((producer.id, stream, start, end))
+}
+
+fn constant_int(function: &Function, node: NodeId) -> Option<i64> {
+    match function.nodes.get(node.0 as usize)?.op {
+        Op::Int(value) => Some(value),
+        _ => None,
+    }
+}
+
 /// Fold a `Path`/`PathJoin` tree of segment literals into its `/`-joined
 /// spelling, or `None` if any segment is a runtime value.
 fn constant_path(function: &Function, node: NodeId) -> Option<String> {
@@ -3576,8 +3677,19 @@ fn progressive_projection_effect_nodes(function: &Function, output: NodeId) -> V
         return nodes;
     }
     nodes.push(request_id);
-    if let Some(path_id) = request.inputs.get(1).copied() {
-        collect_constant_path_nodes(function, path_id, &mut nodes);
+    for input in request.inputs.iter().skip(1).copied() {
+        // A tree-read request carries its constant path at input 1; a
+        // blob-slice request carries constant byte bounds at inputs 1 and 2.
+        // Every such constant belongs to the projection edge, not to any
+        // shared island.
+        if matches!(
+            function.nodes.get(input.0 as usize).map(|node| &node.op),
+            Some(Op::Int(_))
+        ) {
+            nodes.push(input);
+        } else {
+            collect_constant_path_nodes(function, input, &mut nodes);
+        }
     }
     nodes
 }

@@ -213,6 +213,98 @@ fn rmeta_pipeline(sh: ProgressiveSh) -> Stream<Check> {
     }
 }
 
+/// The cargo shape: **dependent work starts off early stdout bytes, long
+/// before the process exits.** This is the stdout twin of the `.rmeta` test
+/// above — the rustc/cargo pipeline where a consumer acts on rustc's early
+/// JSON artifact lines while codegen still runs.
+///
+/// A producer prints an early line, sleeps, prints more, exits. The program
+/// demands the stream's first six bytes (`producer.stdout.take(6)` — a byte
+/// range addressed by offset, `machine.primitive.exec-outcome`) and does
+/// dependent work on it through the stdlib `lines` wrapper — line framing as
+/// an explicit stdlib projection over the bytes, never machine vocabulary.
+/// Separately it demands the settled stream (the completed Blob, via `lines`).
+///
+/// Pinned, in scheduler event order:
+/// - the byte range's value completed BEFORE the producer's aggregate outcome
+///   — i.e. before termination, because the settled stdout contains the line
+///   printed after the sleep;
+/// - the live stream frontier, not the completion fallback, served it
+///   (protocol publications ≥ 1, completion publications 0);
+/// - the dependent check consuming the early bytes also completed before the
+///   producer settled.
+///
+/// The partition pins the shape: the `take` is a progressive value island
+/// projecting `StreamRange { stdout, 0, 6 }` off the exec producer.
+///
+/// r[verify machine.primitive.progressive-response]
+/// r[verify machine.primitive.exec-outcome]
+#[test]
+fn early_stdout_bytes_and_their_dependent_work_complete_before_the_producer_exits() {
+    const SOURCE: &str = r#"
+#[test]
+fn cargo_shape(sh: Sh) -> Stream<Check> {
+    let producer = exec sh`-c "printf 'early\n'; sleep 0.3; printf 'late\n'"`;
+    let head = producer.stdout.take(6);
+    yield expect_eq(head.lines(), ["early"]);
+    yield expect_eq(producer.stdout.lines(), ["early", "late"]);
+}
+"#;
+    let module = vixen_runtime::default_compiler()
+        .compile(SOURCE)
+        .expect("the cargo-shape program compiles");
+    let partitioned = module.partition_test(&module.tests[0]);
+    let [projection] = partitioned.progressive_values.as_slice() else {
+        panic!("the early byte range is a progressive value island");
+    };
+    assert_eq!(
+        projection.projection,
+        vix::vir::ProgressiveProjection::StreamRange {
+            stream: "stdout".to_owned(),
+            start: 0,
+            end: 6,
+        },
+        "the take is a byte range addressed by offset, on the stdout stream"
+    );
+    let (producer_island, head_island) = (projection.producer, projection.id);
+
+    let report = run_source(SOURCE).expect("the cargo-shape program runs");
+    assert!(
+        passed(&report),
+        "the early bytes read `early` and the settled stream both lines: {report:#?}"
+    );
+
+    for lane in [&report.plain, &report.chaos] {
+        assert!(
+            lane.counters.progressive_effect_protocol_publications >= 1,
+            "the live stream frontier served the byte range while the process ran"
+        );
+        assert_eq!(
+            lane.counters.progressive_effect_completion_publications, 0,
+            "the completion fallback was never needed — the bytes were published in flight"
+        );
+        let producer_at = completed_at(lane, &value_identity(lane, producer_island));
+        let head_at = completed_at(lane, &value_identity(lane, head_island));
+        assert!(
+            head_at < producer_at,
+            "the early byte range resolved before the producer's aggregate outcome"
+        );
+        let dependent_at = lane
+            .events
+            .iter()
+            .filter_map(|event| match &event.kind {
+                EventKind::Completed { .. } if event.sequence > head_at => Some(event.sequence),
+                _ => None,
+            })
+            .min()
+            .expect("dependent work completed after the early bytes");
+        assert!(
+            dependent_at < producer_at,
+            "work depending on the early bytes completed before the producer terminated"
+        );
+    }
+}
+
 /// Acceptance 3: **nothing re-keys**, at the identity the move preserves.
 ///
 /// The rail derives the effect demand from the primitive's declaration rather

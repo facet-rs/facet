@@ -14,6 +14,7 @@ pub mod typed_primitive;
 
 mod blob_gunzip_primitive;
 mod blob_len_primitive;
+mod blob_slice_primitive;
 mod blob_text_primitive;
 mod decode_primitive;
 mod exec_primitive;
@@ -189,6 +190,7 @@ pub fn injected_primitive_surfaces() -> Vec<vix::runtime::PrimitiveSurface> {
 
 pub use blob_gunzip_primitive::*;
 pub use blob_len_primitive::*;
+pub use blob_slice_primitive::*;
 pub use blob_text_primitive::*;
 pub use decode_primitive::*;
 pub use exec_primitive::*;

@@ -1753,11 +1753,22 @@ fn run_lane(
                     // publication or its completion as the fallback. The
                     // witness source is the CAPABILITY — the authority whose
                     // output protocol vouched for the product.
-                    let vix::vir::ProgressiveProjection::TreePath { path } = &value.projection;
+                    let projection = match &value.projection {
+                        vix::vir::ProgressiveProjection::TreePath { path } => {
+                            ReadProjection::TreePath { path: path.clone() }
+                        }
+                        vix::vir::ProgressiveProjection::StreamRange { stream, start, end } => {
+                            ReadProjection::StreamRange {
+                                stream: stream.clone(),
+                                start: *start,
+                                end: *end,
+                            }
+                        }
+                    };
                     let submission = runtime.submit_effect_projection(EffectProjectionRequest {
                         execution: producer.demand,
                         source: producer.source.clone(),
-                        projection: ReadProjection::TreePath { path: path.clone() },
+                        projection,
                         location: scoped_location(
                             Location::for_test_value(&partitioned.name, &value.id.stable_segment()),
                             source_revision,

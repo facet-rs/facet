@@ -143,6 +143,50 @@ pub fn tree_read_primitive_id() -> PrimitiveId {
 // generic request-record rail and core holds nothing of it. `tree-read`'s
 // contract stays here because core's exec/progressive machinery names it.
 
+// ---- blob-slice -----------------------------------------------------------
+//
+// `Blob.take(n)` — the byte-range projection of a Blob, and the STREAM twin of
+// the tree-read contract above: on a settled Blob it is an ordinary hermetic
+// slice, while on a still-running effect's stream field the compiler marks the
+// same request `EFFECT` and the partitioner realizes it as a byte-range
+// projection demand (`ReadProjection::StreamRange`) served the moment the
+// published frontier covers it (`machine.primitive.progressive-response`,
+// `machine.primitive.exec-outcome`). The contract lives here for tree-read's
+// reason: core's progressive machinery names it.
+
+/// The request record `Blob.take(len)` lowers to: the blob, and the half-open
+/// byte range `[start, end)`. The surface method pins `start = 0`; the request
+/// carries both bounds so the range vocabulary is complete.
+#[must_use]
+pub fn blob_slice_request_type() -> Type {
+    Type::Record(RecordType::new(
+        "BlobSliceRequest",
+        vec![
+            RecordField {
+                name: "blob".to_owned(),
+                ty: Type::Extern(ExternKind::Blob),
+            },
+            RecordField {
+                name: "start".to_owned(),
+                ty: Type::Int,
+            },
+            RecordField {
+                name: "end".to_owned(),
+                ty: Type::Int,
+            },
+        ],
+    ))
+}
+
+#[must_use]
+pub fn blob_slice_primitive_id() -> PrimitiveId {
+    PrimitiveId {
+        namespace: "vix.machine".to_owned(),
+        name: "blob-slice".to_owned(),
+        version: 1,
+    }
+}
+
 // ---- exec -----------------------------------------------------------------
 //
 // `exec` is surface *syntax* (the `exec cap`…`` keyword), so its lowering lives

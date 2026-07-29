@@ -4301,6 +4301,30 @@ fn progressive_exec_tree_root(nodes: &[Node], node: NodeId) -> bool {
     matches!(producer.op, Op::InvokePrimitive { .. }) && producer.effect.kind == EffectKind::Effect
 }
 
+/// Whether `node` projects a byte-stream field of a still-running registered
+/// effect invocation — the stream twin of [`progressive_exec_tree_root`]. Any
+/// Blob-typed field projection of an effect qualifies: WHICH field is a stream
+/// is the response record's own shape, never a name the machine matches on.
+fn progressive_exec_stream_root(nodes: &[Node], node: NodeId) -> bool {
+    let Some(project) = nodes.get(node.0 as usize) else {
+        return false;
+    };
+    if project.ty != Type::Extern(ExternKind::Blob) {
+        return false;
+    }
+    let Op::Project { .. } = project.op else {
+        return false;
+    };
+    let Some(producer) = project
+        .inputs
+        .first()
+        .and_then(|input| nodes.get(input.0 as usize))
+    else {
+        return false;
+    };
+    matches!(producer.op, Op::InvokePrimitive { .. }) && producer.effect.kind == EffectKind::Effect
+}
+
 fn lower_tree_text_projection(
     nodes: &mut Vec<Node>,
     bindings: &BTreeMap<String, LoweredValue>,
@@ -4435,6 +4459,76 @@ fn lower_method_call(
         return lower_tree_text_projection(nodes, bindings, context, call, base, &segments);
     }
     let receiver = lower_value(nodes, bindings, context, &call.receiver)?;
+    // `Blob.take(len)` — the byte-range projection, and the stream twin of the
+    // `.text()` tree projection above: one request spelling
+    // (`blob_slice_request_type`), two authorities. On a settled Blob it is an
+    // ordinary hermetic slice; on a projection of a still-running effect's
+    // response (an exec stream field) with a compile-time length it is marked
+    // `EFFECT`, and the partitioner realizes it as a byte-range projection
+    // demand served the moment the published frontier covers it — before the
+    // process exits (`machine.primitive.progressive-response`). Like the tree
+    // rail, a computed length cannot name its range ahead of time and falls
+    // back to the settled read. This gate and the partitioner's node-level
+    // twin (`vir::progressive_exec_stream_range`) must agree.
+    if call.name.value == "take"
+        && call.named_args.is_none()
+        && method_positional_args(call).len() == 1
+        && receiver.ty == Type::Extern(ExternKind::Blob)
+    {
+        let length = lower_value_expected(
+            nodes,
+            bindings,
+            context,
+            &method_positional_args(call)[0],
+            Some(&Type::Int),
+        )?;
+        require_type(
+            &length,
+            &Type::Int,
+            expr_span(&method_positional_args(call)[0]),
+        )?;
+        let progressive = progressive_exec_stream_root(nodes, receiver.node)
+            && matches!(
+                nodes.get(length.node.0 as usize).map(|node| &node.op),
+                Some(Op::Int(_))
+            );
+        let start = push_node(
+            nodes,
+            call.span,
+            Type::Int,
+            EffectFacts::PURE,
+            Vec::new(),
+            Op::Int(0),
+        );
+        let request_ty = crate::runtime::blob_slice_request_type();
+        let request = push_node(
+            nodes,
+            call.span,
+            request_ty,
+            EffectFacts::PURE,
+            vec![receiver.node, start, length.node],
+            Op::Record,
+        );
+        let facts = if progressive {
+            EffectFacts::EFFECT
+        } else {
+            EffectFacts::PURE
+        };
+        let ty = Type::Extern(ExternKind::Blob);
+        return Ok(LoweredValue {
+            node: push_node(
+                nodes,
+                call.span,
+                ty.clone(),
+                facts,
+                vec![request],
+                Op::InvokePrimitive {
+                    primitive: crate::runtime::blob_slice_primitive_id(),
+                },
+            ),
+            ty,
+        });
+    }
     // Axiom methods resolve against the builtin registry; the embedder's injected
     // host-type methods (`Tree.glob`, …) resolve against `config.methods`.
     let Some(entry) = crate::binding::prelude_method(&receiver.ty, &call.name.value).or_else(|| {
