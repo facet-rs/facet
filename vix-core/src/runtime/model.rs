@@ -233,6 +233,17 @@ pub enum ReadProjection {
     Origin {
         coordinate: String,
     },
+    /// One immutable published range of a named byte stream of the effect's
+    /// response, addressed by byte offset (`machine.primitive.exec-outcome`:
+    /// OS writes and transport frames are not keys — the offsets are the
+    /// address, the chunking that produced them is not identity). `stream` is
+    /// the response record's field name (`stdout`, `stderr`); `start`/`end`
+    /// bound the half-open byte range.
+    StreamRange {
+        stream: String,
+        start: u64,
+        end: u64,
+    },
 }
 
 impl ReadProjection {
@@ -241,7 +252,11 @@ impl ReadProjection {
         match self {
             Self::TreePath { path } => Some(path),
             Self::Origin { coordinate } => Some(coordinate),
-            Self::Whole | Self::Document | Self::RegistryManifest | Self::CapabilityProgram => None,
+            Self::Whole
+            | Self::Document
+            | Self::RegistryManifest
+            | Self::CapabilityProgram
+            | Self::StreamRange { .. } => None,
         }
     }
 }

@@ -499,6 +499,12 @@ struct PrimitiveWaiter {
 enum EffectProjectionAuthority {
     Protocol,
     Completion,
+    /// The retained witnessed publications of a completion this scheduler
+    /// already applied — the replay authority for a projection demanded when
+    /// its producer is no longer in flight (a memo-hit producer in a later
+    /// root batch). Program-observably identical to the live authorities; the
+    /// dedicated counter is runner observability, not semantics.
+    Memo,
 }
 
 /// One projection demand parked against an in-flight REGISTERED effect
@@ -680,6 +686,25 @@ pub struct Runtime<S, Ctx = ()> {
     /// In-flight publications that arrived before their projection root was
     /// submitted, materialized while the effect authority was live.
     effect_progress_ready: BTreeMap<(DemandKey, ReadProjection), PrimitiveValue>,
+    /// The assembled prefix of each named byte stream an in-flight effect has
+    /// published so far, keyed by (effect demand, stream name). Chunk
+    /// extensions are contiguous by contract (each starts at the current
+    /// frontier), so a demanded [`ReadProjection::StreamRange`] serves the
+    /// moment the frontier covers its end offset — chunk boundaries are
+    /// transport frames, never keys (`machine.primitive.exec-outcome`).
+    /// Transient: dropped when the effect completes (the retained completion
+    /// publications take over) and on transient-state clears.
+    effect_stream_ready: BTreeMap<(DemandKey, String), Vec<u8>>,
+    /// The progressive publications each completed effect witnessed, keyed by
+    /// the effect demand and materialized while its authority was live. This
+    /// is what serves a projection demanded when the effect is no longer in
+    /// flight — a memo-hit producer in a later root batch replays its streams
+    /// and products from here with the same observable behavior as a live run
+    /// (`machine.primitive.progressive-response`: the witness records what was
+    /// published). In-memory only: exec receipts are `Unverifiable`, so
+    /// cross-process replay recomputes by settled policy and this map is
+    /// never extracted into `PersistentRuntimeState`.
+    completed_effect_progress: BTreeMap<DemandKey, Vec<(ReadProjection, PrimitiveValue)>>,
 }
 
 #[derive(Clone, Default)]
@@ -834,6 +859,8 @@ impl<S: EventSink> Runtime<S, ()> {
             primitive_pending: BTreeMap::new(),
             effect_projection_pending: BTreeMap::new(),
             effect_progress_ready: BTreeMap::new(),
+            effect_stream_ready: BTreeMap::new(),
+            completed_effect_progress: BTreeMap::new(),
         }
     }
 
@@ -874,6 +901,8 @@ impl<S: EventSink> Runtime<S, ()> {
             primitive_pending: BTreeMap::new(),
             effect_projection_pending: BTreeMap::new(),
             effect_progress_ready: BTreeMap::new(),
+            effect_stream_ready: BTreeMap::new(),
+            completed_effect_progress: BTreeMap::new(),
         }
     }
 
@@ -909,6 +938,8 @@ impl<S: EventSink> Runtime<S, ()> {
                 primitive_pending: BTreeMap::new(),
                 effect_projection_pending: BTreeMap::new(),
                 effect_progress_ready: BTreeMap::new(),
+                effect_stream_ready: BTreeMap::new(),
+                completed_effect_progress: BTreeMap::new(),
             },
             PersistentRuntimeJournalLoadReport {
                 store: store_report,
@@ -947,6 +978,8 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             primitive_pending: BTreeMap::new(),
             effect_projection_pending: BTreeMap::new(),
             effect_progress_ready: BTreeMap::new(),
+            effect_stream_ready: BTreeMap::new(),
+            completed_effect_progress: BTreeMap::new(),
         }
     }
 
@@ -1132,10 +1165,13 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                                 == *observed;
                         }
                     }
+                    // A stream-range witness names bytes only its producing
+                    // effect ever published; no fixture can re-verify it.
                     ReadProjection::Whole
                     | ReadProjection::Document
                     | ReadProjection::RegistryManifest
-                    | ReadProjection::CapabilityProgram => {}
+                    | ReadProjection::CapabilityProgram
+                    | ReadProjection::StreamRange { .. } => {}
                 }
                 false
             }
@@ -2048,6 +2084,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
         }
         self.effect_projection_pending.clear();
         self.effect_progress_ready.clear();
+        self.effect_stream_ready.clear();
     }
 
     /// Observe the scheduler-owned effect frontier after admitting a fresh
@@ -3695,6 +3732,71 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 Some(execution),
             )));
         };
+        // A byte-stream extension appends to the stream's assembled prefix and
+        // serves every parked range the new frontier covers. The chunk itself
+        // is never a key: a demanded range is addressed by byte offset alone,
+        // so the chunking that delivered the bytes leaves no trace in what is
+        // served (`machine.primitive.exec-outcome`).
+        if let ReadProjection::StreamRange { stream, start, end } = &publication.projection {
+            let PrimitiveValueBody::Bytes(bytes) = &value.body else {
+                return Err(Box::new(MachineError::runtime(
+                    MachineOperation::Effect,
+                    RuntimeFault::EffectHostFailure {
+                        detail: "byte-stream extension was not a byte value".to_owned(),
+                    },
+                    None,
+                    Some(execution),
+                )));
+            };
+            let buffer = self
+                .effect_stream_ready
+                .entry((execution, stream.clone()))
+                .or_default();
+            if *start != buffer.len() as u64 || end.checked_sub(*start) != Some(bytes.len() as u64)
+            {
+                return Err(Box::new(MachineError::runtime(
+                    MachineOperation::Effect,
+                    RuntimeFault::EffectHostFailure {
+                        detail: format!(
+                            "byte-stream extension [{start}, {end}) of `{stream}` did not extend \
+                             the published frontier {} contiguously",
+                            buffer.len()
+                        ),
+                    },
+                    None,
+                    Some(execution),
+                )));
+            }
+            buffer.extend_from_slice(bytes);
+            let frontier = buffer.len() as u64;
+            let servable = self
+                .effect_projection_pending
+                .iter()
+                .filter_map(|(key, pending)| match &pending.projection {
+                    ReadProjection::StreamRange {
+                        stream: demanded_stream,
+                        start: demanded_start,
+                        end: demanded_end,
+                    } if pending.execution == execution
+                        && demanded_stream == stream
+                        && *demanded_start <= *demanded_end
+                        && *demanded_end <= frontier =>
+                    {
+                        Some((*key, *demanded_start as usize, *demanded_end as usize))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            for (key, demanded_start, demanded_end) in servable {
+                let buffer = &self.effect_stream_ready[&(execution, stream.clone())];
+                let ranged = PrimitiveValue::bytes(
+                    stream_range_schema(),
+                    buffer[demanded_start..demanded_end].to_vec(),
+                );
+                self.publish_effect_projection(key, &ranged, EffectProjectionAuthority::Protocol)?;
+            }
+            return Ok(());
+        }
         let waiting = self
             .effect_projection_pending
             .iter()
@@ -3918,7 +4020,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
         for waiter in waiters {
             self.resume_primitive_waiter(waiter, demand, &value, &publication.receipt)?;
         }
-        self.serve_parked_effect_projections(demand, &publication.progressive, &authority)?;
+        self.settle_effect_publications(demand, &publication.progressive, &authority)?;
         if memo_policy != PrimitiveMemoPolicy::Volatile
             && let Some(result) = self.store.handle_for_identity(&identity)
         {
@@ -3934,6 +4036,35 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
         Ok(())
     }
 
+    /// Settle a completing effect's progressive publications: materialize them
+    /// while the demand's staged authority is live, serve every projection
+    /// still parked against the effect (completion is the fallback authority —
+    /// `machine.primitive.progressive-response`), drop the live stream/product
+    /// buffers, and RETAIN the materialized publications so a projection
+    /// demanded after this completion — including against a memo-hit producer
+    /// in a later root batch — replays from the witnessed record instead of
+    /// faulting.
+    fn settle_effect_publications(
+        &mut self,
+        demand: DemandKey,
+        progressive: &[super::ProgressivePublication],
+        authority: &StagedEffectAuthority,
+    ) -> Result<(), Box<MachineError>> {
+        let retained = progressive
+            .iter()
+            .filter_map(|publication| {
+                authority
+                    .admitted_value(&publication.value)
+                    .map(|value| (publication.projection.clone(), value))
+            })
+            .collect::<Vec<_>>();
+        self.serve_parked_effect_projections(demand, &retained)?;
+        self.effect_stream_ready.retain(|(key, _), _| *key != demand);
+        self.effect_progress_ready.retain(|(key, _), _| *key != demand);
+        self.completed_effect_progress.insert(demand, retained);
+        Ok(())
+    }
+
     /// Completion is the fallback authority for projections still parked
     /// against this effect (`machine.primitive.progressive-response`): the
     /// publications the completion witnessed serve them; a projection the
@@ -3941,8 +4072,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
     fn serve_parked_effect_projections(
         &mut self,
         demand: DemandKey,
-        progressive: &[super::ProgressivePublication],
-        authority: &StagedEffectAuthority,
+        progressive: &[(ReadProjection, PrimitiveValue)],
     ) -> Result<(), Box<MachineError>> {
         let parked_projections = self
             .effect_projection_pending
@@ -3951,23 +4081,19 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             .map(|(key, pending)| (*key, pending.projection.clone()))
             .collect::<Vec<_>>();
         for (key, projection) in parked_projections {
-            let published = progressive
-                .iter()
-                .find(|candidate| candidate.projection == projection)
-                .and_then(|candidate| authority.admitted_value(&candidate.value))
-                .ok_or_else(|| {
-                    Box::new(MachineError::runtime(
-                        MachineOperation::Effect,
-                        RuntimeFault::EffectHostFailure {
-                            detail: format!(
-                                "effect completed without publishing demanded projection \
-                                 {projection:?}"
-                            ),
-                        },
-                        None,
-                        Some(key),
-                    ))
-                })?;
+            let published = published_projection(&projection, progressive).ok_or_else(|| {
+                Box::new(MachineError::runtime(
+                    MachineOperation::Effect,
+                    RuntimeFault::EffectHostFailure {
+                        detail: format!(
+                            "effect completed without publishing demanded projection \
+                             {projection:?}"
+                        ),
+                    },
+                    None,
+                    Some(key),
+                ))
+            })?;
             self.publish_effect_projection(key, &published, EffectProjectionAuthority::Completion)?;
         }
         Ok(())
@@ -4021,7 +4147,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 // flight are served from the completion FIRST, so their
                 // Completed events precede the root's — a progressive product
                 // never appears to postdate its producer's settlement.
-                self.serve_parked_effect_projections(demand, &publication.progressive, authority)?;
+                self.settle_effect_publications(demand, &publication.progressive, authority)?;
                 let effect_value =
                     effect_value_from_primitive(&result_ty, value).map_err(|error| {
                         Box::new(MachineError::runtime(
@@ -4087,7 +4213,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 // A demanded projection the failed effect never published is a
                 // loud fault through the same fallback; publications it DID
                 // witness before failing still serve.
-                self.serve_parked_effect_projections(demand, &publication.progressive, authority)?;
+                self.settle_effect_publications(demand, &publication.progressive, authority)?;
                 let failure = FailureValue::ProcessFailure {
                     recipe: demand_preimage.closure,
                     site: node.0,
@@ -5547,25 +5673,74 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                     .expect("published progressive root has a result"),
             ));
         }
+        // A demanded byte range serves the moment the live stream's assembled
+        // frontier covers it — the byte offsets are the address, never the
+        // chunk boundaries that delivered them.
+        if let ReadProjection::StreamRange { stream, start, end } = &projection
+            && *start <= *end
+            && let Some(buffer) = self.effect_stream_ready.get(&(execution, stream.clone()))
+            && *end <= buffer.len() as u64
+        {
+            let ranged = PrimitiveValue::bytes(
+                stream_range_schema(),
+                buffer[usize::try_from(*start).unwrap_or(usize::MAX)
+                    ..usize::try_from(*end).unwrap_or(usize::MAX)]
+                    .to_vec(),
+            );
+            self.publish_effect_projection(demand, &ranged, EffectProjectionAuthority::Protocol)?;
+            return Ok(RootSubmission::Ready(
+                self.root_results
+                    .remove(&demand)
+                    .expect("published progressive root has a result"),
+            ));
+        }
         // A projection may park only against an authority that can still serve
-        // it: an in-flight effect (live publication, or its completion as the
-        // fallback). Serving from a MEMOIZED completion's witnessed
-        // publications is the deferred remainder of the rule — until it lands,
-        // demanding a projection of an already-settled effect is a loud typed
-        // fault, never a hang.
+        // it. When the effect is no longer in flight, the retained record of
+        // its completion's witnessed publications is that authority: the
+        // projection replays from what was published — a memo-hit producer's
+        // stream is indistinguishable from a live one because the witness
+        // recorded what was published (`machine.primitive.progressive-response`).
+        // A projection the witnessed record cannot serve, or an effect this
+        // scheduler never completed, stays a loud typed fault, never a hang.
         if !self.primitive_pending.contains_key(&execution) {
             let pending = self
                 .effect_projection_pending
                 .remove(&demand)
                 .expect("the just-parked projection remains present");
+            if let Some(retained) = self.completed_effect_progress.get(&execution) {
+                if let Some(published) = published_projection(&projection, retained) {
+                    self.effect_projection_pending.insert(demand, pending);
+                    self.publish_effect_projection(
+                        demand,
+                        &published,
+                        EffectProjectionAuthority::Memo,
+                    )?;
+                    return Ok(RootSubmission::Ready(
+                        self.root_results
+                            .remove(&demand)
+                            .expect("published progressive root has a result"),
+                    ));
+                }
+                self.transition_task(pending.task_id, TaskState::Running)?;
+                return Err(Box::new(MachineError::runtime(
+                    MachineOperation::Effect,
+                    RuntimeFault::EffectHostFailure {
+                        detail: format!(
+                            "projection {projection:?} was demanded of completed effect \
+                             {execution:?}, whose witnessed publications cannot serve it"
+                        ),
+                    },
+                    None,
+                    Some(demand),
+                )));
+            }
             self.transition_task(pending.task_id, TaskState::Running)?;
             return Err(Box::new(MachineError::runtime(
                 MachineOperation::Effect,
                 RuntimeFault::EffectHostFailure {
                     detail: format!(
                         "projection {projection:?} was demanded of effect {execution:?}, which \
-                         is not in flight; serving from a memoized completion is not yet \
-                         implemented"
+                         is not in flight and has no completion witnessed by this scheduler"
                     ),
                 },
                 None,
@@ -5650,6 +5825,9 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             }
             EffectProjectionAuthority::Completion => {
                 self.counters.progressive_effect_completion_publications += 1;
+            }
+            EffectProjectionAuthority::Memo => {
+                self.counters.progressive_effect_replay_publications += 1;
             }
         }
         self.root_results.insert(
@@ -6964,7 +7142,85 @@ fn projection_fingerprint(projection: &ReadProjection) -> String {
         ReadProjection::CapabilityProgram => "capability-program".to_owned(),
         ReadProjection::TreePath { path } => format!("tree-path:{path}"),
         ReadProjection::Origin { coordinate } => format!("origin:{coordinate}"),
+        ReadProjection::StreamRange { stream, start, end } => {
+            format!("stream-range:{stream}:{start}:{end}")
+        }
     }
+}
+
+/// Resolve one demanded projection against a set of materialized publications:
+/// an exact projection match for product-shaped projections, byte-range
+/// assembly for stream projections. `None` is the caller's loud fault — the
+/// publications on record cannot serve the demand.
+fn published_projection(
+    projection: &ReadProjection,
+    publications: &[(ReadProjection, PrimitiveValue)],
+) -> Option<PrimitiveValue> {
+    if let ReadProjection::StreamRange { stream, start, end } = projection {
+        return assemble_stream_range(stream, *start, *end, publications);
+    }
+    publications
+        .iter()
+        .find(|(published, _)| published == projection)
+        .map(|(_, value)| value.clone())
+}
+
+/// Assemble one demanded byte range of a named stream from its witnessed chunk
+/// extensions. The chunks are contiguous from offset zero by publication
+/// contract; the demanded range serves iff the assembled frontier covers its
+/// end offset. Chunk boundaries leave no trace in the served value — offsets
+/// are the address, transport frames are not keys
+/// (`machine.primitive.exec-outcome`).
+fn assemble_stream_range(
+    stream: &str,
+    start: u64,
+    end: u64,
+    publications: &[(ReadProjection, PrimitiveValue)],
+) -> Option<PrimitiveValue> {
+    if start > end {
+        return None;
+    }
+    let mut chunks = publications
+        .iter()
+        .filter_map(|(projection, value)| match projection {
+            ReadProjection::StreamRange {
+                stream: chunk_stream,
+                start: chunk_start,
+                ..
+            } if chunk_stream == stream => Some((*chunk_start, value)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    chunks.sort_by_key(|(chunk_start, _)| *chunk_start);
+    let mut bytes = Vec::new();
+    for (chunk_start, value) in chunks {
+        if chunk_start != bytes.len() as u64 {
+            return None;
+        }
+        let PrimitiveValueBody::Bytes(chunk) = &value.body else {
+            return None;
+        };
+        bytes.extend_from_slice(chunk);
+        if bytes.len() as u64 >= end {
+            break;
+        }
+    }
+    if (bytes.len() as u64) < end {
+        return None;
+    }
+    Some(PrimitiveValue::bytes(
+        stream_range_schema(),
+        bytes[usize::try_from(start).ok()?..usize::try_from(end).ok()?].to_vec(),
+    ))
+}
+
+/// The schema every served [`ReadProjection::StreamRange`] value carries: a
+/// stream's ranges are Blob-shaped byte values by rail definition
+/// (`machine.primitive.exec-outcome`: byte codata whose completed values are
+/// Blobs). One schema for live, completion-fallback, and replayed serving —
+/// the served value's identity must not depend on which authority served it.
+fn stream_range_schema() -> crate::schema::SchemaRef {
+    crate::vir::Type::Extern(crate::vir::ExternKind::Blob).schema_ref()
 }
 
 /// One request-record field's value identity, as demand keying sees it: an
@@ -9051,6 +9307,262 @@ fn scheduler_decode() -> Stream<Check> {
             1
         );
         assert!(runtime.effect_projection_pending.is_empty());
+    }
+
+    fn blob_schema() -> crate::schema::SchemaRef {
+        Type::Extern(crate::vir::ExternKind::Blob).schema_ref()
+    }
+
+    fn stage_stream_chunk(
+        authority: &StagedEffectAuthority,
+        bytes: &[u8],
+    ) -> crate::runtime::ValueId {
+        crate::runtime::EffectAuthority::intern_value(
+            authority,
+            PrimitiveValue::bytes(blob_schema(), bytes.to_vec()),
+        )
+        .expect("staged authority interns the chunk")
+    }
+
+    fn stream_range(start: u64, end: u64) -> ReadProjection {
+        ReadProjection::StreamRange {
+            stream: "stdout".to_owned(),
+            start,
+            end,
+        }
+    }
+
+    fn publish_chunk(
+        runtime: &mut Runtime<EventLog>,
+        execution: DemandKey,
+        authority: &StagedEffectAuthority,
+        start: u64,
+        bytes: &[u8],
+    ) {
+        let value = stage_stream_chunk(authority, bytes);
+        runtime
+            .apply_completion(DeliveredCompletion::PrimitiveProgress {
+                demand: execution,
+                publication: crate::runtime::ProgressivePublication {
+                    projection: stream_range(start, start + bytes.len() as u64),
+                    value,
+                },
+            })
+            .expect("the stream extension applies");
+    }
+
+    /// The cargo shape, at the byte level: a demanded byte range of a live
+    /// stream serves the moment the published frontier covers it — across
+    /// chunk boundaries, before the effect completes. The chunking that
+    /// delivered the bytes leaves no trace in the served value.
+    ///
+    /// r[verify machine.primitive.progressive-response]
+    /// r[verify machine.primitive.exec-outcome]
+    #[test]
+    fn stream_extensions_serve_a_parked_byte_range_across_chunk_boundaries() {
+        let mut runtime = Runtime::new(EventLog::default());
+        let (execution, authority) = in_flight_effect(&mut runtime);
+        let source = FramedNode::leaf(Type::String.schema_ref(), b"request".to_vec()).identity();
+        let submission = runtime
+            .submit_effect_projection(EffectProjectionRequest {
+                execution,
+                source,
+                projection: stream_range(0, 6),
+                location: Location::for_test_value("effect-projection", "stream-head"),
+            })
+            .expect("the range demand parks against the in-flight effect");
+        let projection_demand = match submission {
+            RootSubmission::Pending(demand) => demand,
+            RootSubmission::Ready(_) => panic!("nothing was published yet"),
+        };
+
+        publish_chunk(&mut runtime, execution, &authority, 0, b"earl");
+        assert!(
+            !runtime.root_results.contains_key(&projection_demand),
+            "a frontier short of the demanded end serves nothing"
+        );
+        publish_chunk(&mut runtime, execution, &authority, 4, b"y\nlate");
+        assert!(
+            runtime.primitive_pending.contains_key(&execution),
+            "the producing effect is still in flight"
+        );
+        let served = runtime
+            .root_results
+            .get(&projection_demand)
+            .expect("the covered range resolved");
+        assert!(served.passed);
+        assert_eq!(
+            served.identity,
+            FramedNode::leaf(blob_schema(), b"early\n".to_vec()).identity(),
+            "the served range is the demanded bytes, chunk boundaries erased"
+        );
+        assert_eq!(runtime.counters.progressive_effect_protocol_publications, 1);
+    }
+
+    /// A range demanded after its bytes were already published serves at
+    /// submission from the assembled live prefix — including a range that is
+    /// interior to the published chunks.
+    ///
+    /// r[verify machine.primitive.progressive-response]
+    #[test]
+    fn a_byte_range_demanded_after_publication_serves_from_the_assembled_prefix() {
+        let mut runtime = Runtime::new(EventLog::default());
+        let (execution, authority) = in_flight_effect(&mut runtime);
+        publish_chunk(&mut runtime, execution, &authority, 0, b"ab");
+        publish_chunk(&mut runtime, execution, &authority, 2, b"cdef");
+
+        let source = FramedNode::leaf(Type::String.schema_ref(), b"request".to_vec()).identity();
+        let submission = runtime
+            .submit_effect_projection(EffectProjectionRequest {
+                execution,
+                source,
+                projection: stream_range(1, 5),
+                location: Location::for_test_value("effect-projection", "interior"),
+            })
+            .expect("the covered range serves at submission");
+        let RootSubmission::Ready(evaluation) = submission else {
+            panic!("the published frontier already covers [1, 5)");
+        };
+        assert_eq!(
+            evaluation.identity,
+            FramedNode::leaf(blob_schema(), b"bcde".to_vec()).identity(),
+        );
+        assert_eq!(runtime.counters.progressive_effect_protocol_publications, 1);
+    }
+
+    /// Replay: a projection demanded when its producer is no longer in flight
+    /// serves from the retained completion's witnessed publications — a
+    /// product by exact projection, a stream range by byte-offset assembly —
+    /// with the same served identities a live run produces. This is the
+    /// memoized-completion serving that stages 1–2 deferred as a loud fault.
+    ///
+    /// r[verify machine.primitive.progressive-response]
+    #[test]
+    fn a_completed_effect_replays_projections_from_its_witnessed_publications() {
+        let mut runtime = Runtime::new(EventLog::default());
+        let (execution, authority) = in_flight_effect(&mut runtime);
+        let product = stage_bytes(&authority, b"settled rmeta");
+        let chunk_a = stage_stream_chunk(&authority, b"early\n");
+        let chunk_b = stage_stream_chunk(&authority, b"late\n");
+        let response = stage_bytes(&authority, b"answer");
+        runtime
+            .apply_completion(DeliveredCompletion::RawPrimitive {
+                demand: execution,
+                publication: crate::runtime::PrimitivePublication {
+                    completion: PrimitiveCompletion::Ok(response),
+                    receipt: crate::runtime::Receipt {
+                        demand: execution,
+                        reads: Vec::new(),
+                    },
+                    journal: Vec::new(),
+                    progressive: vec![
+                        crate::runtime::ProgressivePublication {
+                            projection: rmeta_projection(),
+                            value: product,
+                        },
+                        crate::runtime::ProgressivePublication {
+                            projection: stream_range(0, 6),
+                            value: chunk_a,
+                        },
+                        crate::runtime::ProgressivePublication {
+                            projection: stream_range(6, 11),
+                            value: chunk_b,
+                        },
+                    ],
+                },
+            })
+            .expect("the effect completes with witnessed publications");
+        assert!(runtime.primitive_pending.is_empty());
+        assert!(
+            runtime.effect_stream_ready.is_empty(),
+            "live stream buffers do not outlive their effect"
+        );
+
+        let source = FramedNode::leaf(Type::String.schema_ref(), b"request".to_vec()).identity();
+        let submission = runtime
+            .submit_effect_projection(EffectProjectionRequest {
+                execution,
+                source: source.clone(),
+                projection: rmeta_projection(),
+                location: Location::for_test_value("effect-projection", "replayed-product"),
+            })
+            .expect("the retained completion serves the product");
+        let RootSubmission::Ready(evaluation) = submission else {
+            panic!("a witnessed product replays at submission");
+        };
+        assert_eq!(
+            evaluation.identity,
+            FramedNode::leaf(Type::String.schema_ref(), b"settled rmeta".to_vec()).identity(),
+        );
+
+        // A range no live consumer ever demanded — assembled across the
+        // witnessed chunk boundary, exactly as a live demand would have been.
+        let submission = runtime
+            .submit_effect_projection(EffectProjectionRequest {
+                execution,
+                source,
+                projection: stream_range(4, 9),
+                location: Location::for_test_value("effect-projection", "replayed-range"),
+            })
+            .expect("the retained completion serves the range");
+        let RootSubmission::Ready(evaluation) = submission else {
+            panic!("a witnessed stream range replays at submission");
+        };
+        assert_eq!(
+            evaluation.identity,
+            FramedNode::leaf(blob_schema(), b"y\nlat".to_vec()).identity(),
+        );
+        assert_eq!(runtime.counters.progressive_effect_replay_publications, 2);
+        assert_eq!(runtime.counters.progressive_effect_protocol_publications, 0);
+        assert_eq!(
+            runtime.counters.progressive_effect_completion_publications,
+            0
+        );
+    }
+
+    /// The fault stays loud where the witness cannot serve: a range beyond the
+    /// witnessed frontier of a completed effect is a typed machine error,
+    /// never a hang and never fabricated bytes.
+    ///
+    /// r[verify machine.primitive.progressive-response]
+    #[test]
+    fn a_range_beyond_the_witnessed_frontier_of_a_completed_effect_faults() {
+        let mut runtime = Runtime::new(EventLog::default());
+        let (execution, authority) = in_flight_effect(&mut runtime);
+        let chunk = stage_stream_chunk(&authority, b"short");
+        let response = stage_bytes(&authority, b"answer");
+        runtime
+            .apply_completion(DeliveredCompletion::RawPrimitive {
+                demand: execution,
+                publication: crate::runtime::PrimitivePublication {
+                    completion: PrimitiveCompletion::Ok(response),
+                    receipt: crate::runtime::Receipt {
+                        demand: execution,
+                        reads: Vec::new(),
+                    },
+                    journal: Vec::new(),
+                    progressive: vec![crate::runtime::ProgressivePublication {
+                        projection: stream_range(0, 5),
+                        value: chunk,
+                    }],
+                },
+            })
+            .expect("the effect completes with a short stream");
+
+        let source = FramedNode::leaf(Type::String.schema_ref(), b"request".to_vec()).identity();
+        let error = runtime
+            .submit_effect_projection(EffectProjectionRequest {
+                execution,
+                source,
+                projection: stream_range(0, 32),
+                location: Location::for_test_value("effect-projection", "beyond-frontier"),
+            })
+            .expect_err("a range the witness never covered cannot be served");
+        let detail = format!("{error:?}");
+        assert!(
+            detail.contains("witnessed publications cannot serve"),
+            "the fault names the unservable witnessed record: {detail}"
+        );
     }
 
     // ---- declaration-derived effect preimages ------------------------------

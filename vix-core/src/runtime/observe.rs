@@ -77,6 +77,12 @@ pub struct Counters {
     /// Registered-effect projections served at the fallback authority: the
     /// effect's completion and the progressive publications recorded in it.
     pub progressive_effect_completion_publications: u64,
+    /// Registered-effect projections replayed from a retained completion's
+    /// witnessed publications — the producer was no longer in flight (a
+    /// memo-hit demand in a later root batch), so the witnessed record served
+    /// with the same observable behavior as a live publication
+    /// (`machine.primitive.progressive-response`).
+    pub progressive_effect_replay_publications: u64,
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
