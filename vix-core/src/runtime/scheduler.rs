@@ -6456,9 +6456,23 @@ fn realize_value(
                 };
                 let (node, resident, framed_bytes) =
                     realize_array(&resolver, value_ref, bytes, element, store, lowered)?;
-                // A non-snapshot published array is not frozen: freezing is extra
-                // structural work with no consumer off the snapshot path.
-                (node, resident, framed_bytes, None)
+                // A published array of handle-bearing elements (strings, blobs,
+                // nested collections) MUST freeze: its raw resident buffer
+                // carries producer-task molten handles, which no other task can
+                // resolve — a consumer island binding the published value by
+                // store handle would read dangling handles. (First real
+                // consumer: a stdlib call like `lines(out.stdout)` hoisted as a
+                // shared publication, its `[String]` bound by the check
+                // island.) Scalar-element arrays keep the cheaper unfrozen
+                // publication: their cells are the values themselves.
+                let frozen = if type_contains_handle(element) {
+                    Some(freeze_dense_array(
+                        &resolver, value_ref, element, store, lowered,
+                    )?)
+                } else {
+                    None
+                };
+                (node, resident, framed_bytes, frozen)
             }
             _ => {
                 let value = value.value_ref()?;
@@ -8248,6 +8262,19 @@ fn primitive_value_to_frozen(
                     PrimitiveFieldValue::Child(value) => {
                         primitive_value_to_frozen(&declared.ty, value)
                     }
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(FrozenValue::Product(fields))
+        }
+        (Type::Tuple(elements), PrimitiveValueBody::Product(fields))
+            if elements.len() == fields.len() =>
+        {
+            let fields = elements
+                .iter()
+                .zip(fields)
+                .map(|(declared, field)| match &field.value {
+                    PrimitiveFieldValue::Inline(bytes) => Ok(FrozenValue::Inline(bytes.clone())),
+                    PrimitiveFieldValue::Child(value) => primitive_value_to_frozen(declared, value),
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(FrozenValue::Product(fields))

@@ -78,7 +78,7 @@ fn demanding_the_settled_answer_parks_until_the_process_terminates() {
 #[test]
 fn settled_tail(sh: Sh) -> Stream<Check> {
     let out = exec sh`-c "printf 'first\n'; sleep 0.2; printf 'last\n'"`;
-    yield expect_eq(out.stdout.collect().values(), ["first", "last"]);
+    yield expect_eq(out.stdout.lines(), ["first", "last"]);
 }
 "#;
     let report = run_source(SOURCE).expect("the settled-tail program runs");
@@ -160,7 +160,7 @@ fn rmeta_pipeline(sh: ProgressiveSh) -> Stream<Check> {
     let producer = exec sh`-c "mkdir -p out; printf rmeta > out/lib.rmeta; printf 'vix-ready\tout/lib.rmeta\n'; sleep 0.3; printf done > out/lib.rlib; printf 'linked\n'"`;
     let early = (producer.tree / "out" / "lib.rmeta").text();
     yield expect_eq(early, "rmeta");
-    yield expect_eq(producer.stdout.collect().values(), ["linked"]);
+    yield expect_eq(producer.stdout.lines(), ["linked"]);
 }
 "#;
     let module = vixen_runtime::default_compiler()
@@ -268,8 +268,8 @@ fn a_different_plan_or_capability_is_a_different_demand() {
 fn distinct_plans(echo: Echo) -> Stream<Check> {
     let a = exec echo`"once"`;
     let b = exec echo`"twice"`;
-    yield expect_eq(a.stdout.collect().values(), ["once"]);
-    yield expect_eq(b.stdout.collect().values(), ["twice"]);
+    yield expect_eq(a.stdout.lines(), ["once"]);
+    yield expect_eq(b.stdout.lines(), ["twice"]);
     yield ran_processes(2);
 }
 "#;
@@ -290,7 +290,7 @@ fn distinct_plans(echo: Echo) -> Stream<Check> {
 fn distinct_capabilities(echo: Echo, sh: Sh) -> Stream<Check> {
     let a = exec echo`"once"`;
     let b = exec sh`-c "printf 'once\n'"`;
-    yield expect_eq(a.stdout.collect().values(), b.stdout.collect().values());
+    yield expect_eq(a.stdout.lines(), b.stdout.lines());
     yield ran_processes(2);
 }
 "#;

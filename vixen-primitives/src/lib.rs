@@ -14,6 +14,7 @@ pub mod typed_primitive;
 
 mod blob_gunzip_primitive;
 mod blob_len_primitive;
+mod blob_text_primitive;
 mod decode_primitive;
 mod exec_primitive;
 mod fetch_primitive;
@@ -124,6 +125,16 @@ pub const DOMAIN_METHODS: &[vix::binding::MethodDecl] = &[
     },
     vix::binding::MethodDecl {
         receiver: vix::binding::ReceiverType::Blob,
+        name: "try_text",
+        arity: 0,
+        lowering: vix::binding::MethodLowering::Primitive(vix::binding::PrimitiveMethodDecl {
+            request: blob_text_request_type,
+            result: blob_text_result_type,
+            id: blob_text_primitive_id,
+        }),
+    },
+    vix::binding::MethodDecl {
+        receiver: vix::binding::ReceiverType::Blob,
         name: "len",
         arity: 0,
         lowering: vix::binding::MethodLowering::Primitive(vix::binding::PrimitiveMethodDecl {
@@ -178,6 +189,7 @@ pub fn injected_primitive_surfaces() -> Vec<vix::runtime::PrimitiveSurface> {
 
 pub use blob_gunzip_primitive::*;
 pub use blob_len_primitive::*;
+pub use blob_text_primitive::*;
 pub use decode_primitive::*;
 pub use exec_primitive::*;
 pub use fetch_primitive::*;

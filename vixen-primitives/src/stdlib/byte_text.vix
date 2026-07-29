@@ -1,0 +1,20 @@
+// Text decoding and line framing over byte-true Blobs — the EXPLICIT
+// projections `machine.primitive.exec-outcome` settles for exec's stream
+// values, and ordinary Blob combinators everywhere else. Decoding is
+// lossless: bytes that are not UTF-8 raise the primitive's typed
+// `DecodeError` (via `fail`), never a replacement character. Line framing is
+// stdlib — a vix function over `String.lines` — not machine vocabulary.
+//
+// Called method-style through uniform function-call syntax:
+// `out.stdout.text()`, `out.stdout.lines()`.
+
+pub fn text(bytes: Blob) -> String {
+    match bytes.try_text() {
+        Ok(decoded) => decoded,
+        Err(error) => fail error,
+    }
+}
+
+pub fn lines(bytes: Blob) -> [String] {
+    text(bytes).lines()
+}

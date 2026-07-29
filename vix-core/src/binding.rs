@@ -134,7 +134,6 @@ pub enum ReceiverType {
     Stream,
     Int,
     Path,
-    ByteStream,
     Blob,
     Registry,
     /// A declared host type ([`crate::vir::ExternKind::Host`]), dispatched by its
@@ -203,7 +202,6 @@ impl ReceiverType {
             Type::Stream { .. } => Some(Self::Stream),
             Type::Int => Some(Self::Int),
             Type::Path => Some(Self::Path),
-            Type::Record(record) if record.name == "ByteStream" => Some(Self::ByteStream),
             Type::Extern(ExternKind::Blob) => Some(Self::Blob),
             Type::Extern(ExternKind::Registry) => Some(Self::Registry),
             // A declared host type dispatches by its name.
@@ -248,8 +246,6 @@ pub enum MethodOp {
     StreamSplitMin,
     PathToString,
     IntToString,
-    ByteStreamCollect,
-    ByteStreamTrim,
     // The domain methods (`Tree.glob`, `Registry.url`, `Blob.len`) are retired
     // from this enum: `Registry.url`/`Blob.len` ride the primitive rail
     // ([`MethodLowering::Primitive`]) and `Tree.glob` the codata rail
@@ -524,8 +520,6 @@ const METHOD_BINDINGS: &[(ReceiverType, &str, usize, MethodOp)] = &[
     (ReceiverType::Stream, "filter_map", 1, MethodOp::StreamFilterMap),
     (ReceiverType::Stream, "flat_map", 1, MethodOp::StreamFlatMap),
     (ReceiverType::Stream, "collect", 0, MethodOp::StreamCollect),
-    (ReceiverType::ByteStream, "collect", 0, MethodOp::ByteStreamCollect),
-    (ReceiverType::ByteStream, "trim", 0, MethodOp::ByteStreamTrim),
     (ReceiverType::Stream, "split_min", 0, MethodOp::StreamSplitMin),
     (ReceiverType::Path, "to_string", 0, MethodOp::PathToString),
     (ReceiverType::Int, "to_string", 0, MethodOp::IntToString),

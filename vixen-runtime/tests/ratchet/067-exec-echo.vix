@@ -4,5 +4,5 @@
 #[test]
 fn exec_echo(echo: Echo) -> Stream<Check> {
     let out = exec echo`"hello ratchet"`;
-    yield expect_eq(out.stdout.collect().values(), ["hello ratchet"]);
+    yield expect_eq(out.stdout.lines(), ["hello ratchet"]);
 }

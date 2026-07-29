@@ -8,5 +8,5 @@
 #[test]
 fn undeclared_capability() -> Stream<Check> {
     let out = exec cc`-o hello hello.c`;
-    yield expect_eq(out.stdout.collect().len(), 0);
+    yield expect_eq(out.stdout.lines().len(), 0);
 }

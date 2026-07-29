@@ -3525,7 +3525,10 @@ fn progressive_exec_tree_path(function: &Function, request: NodeId) -> Option<(N
     let path = constant_path(function, *request.inputs.get(1)?)?;
 
     let tree = function.nodes.get(tree.0 as usize)?;
-    let Op::Project { index: 0 } = tree.op else {
+    let Op::Project {
+        index: crate::compiler::EXEC_OUTCOME_TREE_FIELD,
+    } = tree.op
+    else {
         return None;
     };
     let producer = function.nodes.get(tree.inputs.first()?.0 as usize)?;

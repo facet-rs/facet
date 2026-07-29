@@ -41,8 +41,9 @@ use vix::runtime::{
     CodataRegistry, EventSink, PrimitiveDispatcher, PrimitiveRegistry, RawPrimitive, Runtime,
 };
 use vixen_primitives::{
-    BlobGunzipPrimitive, BlobLenPrimitive, DecodePrimitive, ExecPrimitive, PinnedFetchPrimitive,
-    RegistryUrlPrimitive, TreeGlobPrimitive, TreeReadPrimitive, TypedAdapter, UntarPrimitive,
+    BlobGunzipPrimitive, BlobLenPrimitive, BlobTextPrimitive, DecodePrimitive, ExecPrimitive,
+    PinnedFetchPrimitive, RegistryUrlPrimitive, TreeGlobPrimitive, TreeReadPrimitive, TypedAdapter,
+    UntarPrimitive,
 };
 
 /// The built-in registered primitives, as data: this is the *one* place that
@@ -58,6 +59,7 @@ pub fn builtin_primitives<Ctx>() -> Vec<Arc<dyn RawPrimitive<Ctx>>> {
         Arc::new(RegistryUrlPrimitive::default()),
         Arc::new(TypedAdapter::new::<Ctx>(BlobGunzipPrimitive)),
         Arc::new(BlobLenPrimitive::default()),
+        Arc::new(BlobTextPrimitive::default()),
         Arc::new(TypedAdapter::new::<Ctx>(UntarPrimitive)),
         // The process-running effect, on the registered rail (exec-rail.md):
         // the capability-role request keys the demand, the `ExecBackend`

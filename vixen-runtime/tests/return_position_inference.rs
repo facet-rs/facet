@@ -20,6 +20,10 @@ pub fn main() -> Pkg { decode_json("{\"name\":\"blake3\"}") }
     // `&[&str]` data — safe to name across the dev-dependency.
     Compiler::with_config(CompilerConfig {
         prelude: vixen_primitives::stdlib::PRELUDE_SOURCES,
+        // The stdlib `text`/`lines` wrappers spell the injected
+        // `Blob.try_text` method, so the prelude needs the embedder's method
+        // declarations to compile.
+        methods: vixen_primitives::DOMAIN_METHODS,
         ..CompilerConfig::default()
     })
     .compile(src)
