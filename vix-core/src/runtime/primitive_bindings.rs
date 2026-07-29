@@ -143,6 +143,47 @@ pub fn tree_read_primitive_id() -> PrimitiveId {
 // generic request-record rail and core holds nothing of it. `tree-read`'s
 // contract stays here because core's exec/progressive machinery names it.
 
+// ---- exec -----------------------------------------------------------------
+//
+// `exec` is surface *syntax* (the `exec cap`…`` keyword), so its lowering lives
+// in the core compiler and — exactly like `tree-read` — the contract it lowers
+// against lives here while the implementation lives in `vixen-primitives`.
+// The request record's capability field keeps the program's own capability
+// type: two capabilities of different types are different request schemas, and
+// the demand preimage separates them by the capability's IDENTITY
+// (`machine.primitive.capability-role`), never by any name the machine matches
+// on (`machine.capability.no-argv-dialect`).
+
+/// The request record `exec` lowers to: the capability (a capability-role
+/// argument — its identity keys the demand) and the materialized argv (the
+/// normalized plan — the command grammar already ran at lowering, so the rail
+/// hashes what it is given: `machine.primitive.exec-plan-normalized`).
+#[must_use]
+pub fn exec_request_type(capability: &Type) -> Type {
+    Type::Record(RecordType::new(
+        "ExecRequest",
+        vec![
+            RecordField {
+                name: "capability".to_owned(),
+                ty: capability.clone(),
+            },
+            RecordField {
+                name: "argv".to_owned(),
+                ty: Type::Array(Box::new(Type::String)),
+            },
+        ],
+    ))
+}
+
+#[must_use]
+pub fn exec_primitive_id() -> PrimitiveId {
+    PrimitiveId {
+        namespace: "vix.machine".to_owned(),
+        name: "exec".to_owned(),
+        version: 1,
+    }
+}
+
 // ---- tree-glob (codata) ---------------------------------------------------
 //
 // `glob` is the build language's "find files" op: `Tree.glob(pattern) ->

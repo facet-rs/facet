@@ -170,6 +170,25 @@ pub struct HostTypeDecl {
     pub name: &'static str,
 }
 
+/// A capability-type declaration the embedder injects into the compiler
+/// ([`crate::compiler::CompilerConfig::capabilities`]). `name` is the command
+/// package's nominal type (`Echo`, `Sh`, `ProgressiveSh`, …); it resolves to
+/// the opaque one-field record `compiler::capability_type` builds, whose
+/// `$program` field is not a legal surface identifier, so a program can
+/// neither construct nor project a capability — only receive one and tag a
+/// command template with it.
+///
+/// It is a *declaration* precisely because the machine must hold no tool
+/// vocabulary: which packages exist, what their command grammars accept, and
+/// what output protocol they speak are all the capability packages' own
+/// (`machine.capability.no-argv-dialect`). `vix-core` ships none.
+///
+/// r[impl machine.primitive.capabilities-by-identity]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CapabilityTypeDecl {
+    pub name: &'static str,
+}
+
 impl ReceiverType {
     /// Classify a lowered receiver's [`crate::vir::Type`] into the method
     /// dispatch key, or `None` if the type carries no builtin methods.

@@ -6412,6 +6412,9 @@ fn tree_compiler() -> Compiler {
     vixen_primitives::register_host_types();
     Compiler::with_config(CompilerConfig {
         host_types: vixen_primitives::HOST_TYPES,
+        // The command packages are declarations now, not core vocabulary: a
+        // compiler that is not handed them cannot resolve `ProgressiveSh`.
+        capabilities: vixen_primitives::CAPABILITY_TYPES,
         ..CompilerConfig::default()
     })
 }
@@ -6432,21 +6435,27 @@ fn progressive_tree(sh: ProgressiveSh) -> Stream<Check> {
     let [projection] = partitioned.progressive_values.as_slice() else {
         panic!("one exec tree text projection is partial");
     };
-    assert_eq!(projection.producer.node.0, 1);
+    let producer_node = &module.functions[projection.producer.function.0 as usize].nodes
+        [projection.producer.node.0 as usize];
+    assert!(
+        matches!(&producer_node.op, VirOp::InvokePrimitive { primitive }
+            if *primitive == vix::runtime::exec_primitive_id()),
+        "the projection's producer is the registered exec effect"
+    );
     assert_eq!(
         projection.projection,
-        vix::vir::ProgressiveProjection::ExecTreeText {
+        vix::vir::ProgressiveProjection::TreePath {
             path: "out/early.txt".to_owned(),
         }
     );
     assert!(
         partitioned.values.iter().all(|value| {
             value.island.effect_output().is_none_or(|node| {
-                !(matches!(node.op, VirOp::InvokePrimitive { .. })
-                    && node.effect.kind == vix::vir::EffectKind::Effect)
+                !matches!(&node.op, VirOp::InvokePrimitive { primitive }
+                    if *primitive == vix::runtime::tree_read_primitive_id())
             })
         }),
-        "the exec-origin tree read is realized progressively, never serialized as \
+        "the effect-origin tree read is realized progressively, never serialized as \
          a whole-value effect island",
     );
     let producer = projection.producer;
@@ -6459,10 +6468,10 @@ fn progressive_tree(sh: ProgressiveSh) -> Stream<Check> {
     assert!(report.agrees());
     for lane in [&report.plain, &report.chaos] {
         assert_eq!(
-            lane.counters.progressive_exec_protocol_publications, 1,
-            "the command protocol, not process exit, authorized the projection",
+            lane.counters.progressive_effect_protocol_publications, 1,
+            "the command protocol, not effect completion, authorized the projection",
         );
-        assert_eq!(lane.counters.progressive_exec_exit_publications, 0);
+        assert_eq!(lane.counters.progressive_effect_completion_publications, 0);
         let producer_identity = &lane
             .values
             .iter()

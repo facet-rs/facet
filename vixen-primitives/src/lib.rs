@@ -14,6 +14,7 @@ pub mod typed_primitive;
 mod blob_gunzip_primitive;
 mod blob_len_primitive;
 mod decode_primitive;
+mod exec_primitive;
 mod fetch_primitive;
 mod http_origin;
 mod primitive_value_decode;
@@ -48,6 +49,27 @@ pub const HOST_TYPES: &[vix::binding::HostTypeDecl] = &[
     },
     vix::binding::HostTypeDecl {
         name: vix::binding::TREE_ENTRY,
+    },
+];
+
+/// The capability packages `vixen` declares — the command packages a program
+/// may receive as `#[test]` parameters — injected into the compiler through
+/// [`vix::compiler::CompilerConfig::capabilities`]. They live here for the same
+/// reason `untar` does: a tool name is a capability package's, never the
+/// machine's, and `machine.capability.no-argv-dialect` bans a per-tool arm in
+/// machine code. `vix-core` now spells none of these names.
+///
+/// The three are the ratchet corpus's v1 packages. `Echo` and `Sh` speak the
+/// exit-only output protocol; `ProgressiveSh` speaks `vix-ready\t<path>`
+/// readiness lines, which the exec primitive — not the machine — reads off the
+/// capability's typed content.
+///
+/// r[impl machine.primitive.capabilities-by-identity]
+pub const CAPABILITY_TYPES: &[vix::binding::CapabilityTypeDecl] = &[
+    vix::binding::CapabilityTypeDecl { name: "Echo" },
+    vix::binding::CapabilityTypeDecl { name: "Sh" },
+    vix::binding::CapabilityTypeDecl {
+        name: "ProgressiveSh",
     },
 ];
 
@@ -149,6 +171,7 @@ pub fn injected_primitive_surfaces() -> Vec<vix::runtime::PrimitiveSurface> {
 pub use blob_gunzip_primitive::*;
 pub use blob_len_primitive::*;
 pub use decode_primitive::*;
+pub use exec_primitive::*;
 pub use fetch_primitive::*;
 pub use http_origin::*;
 pub use primitive_value_decode::*;

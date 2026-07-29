@@ -283,8 +283,6 @@ impl SchemaBatch {
             "StreamCheck",
             "Ordering",
             "DecodeError",
-            "Echo",
-            "Sh",
             "Fn",
             "Array",
             "Map",
@@ -357,20 +355,6 @@ impl SchemaBatch {
                 .collect(),
             },
         );
-        for name in ["Echo", "Sh"] {
-            batch.add_named(
-                name,
-                Vec::new(),
-                Kind::Struct {
-                    name: name.into(),
-                    fields: vec![Field {
-                        name: "$program".into(),
-                        schema: string_ref.clone(),
-                        required: true,
-                    }],
-                },
-            );
-        }
         batch.add_named(
             "Fn",
             vec!["P".into(), "R".into()],

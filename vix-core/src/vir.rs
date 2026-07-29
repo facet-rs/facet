@@ -683,18 +683,6 @@ pub struct ArrayMapGrain {
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
-pub struct CommandArgument {
-    pub pieces: Vec<CommandPiece>,
-}
-
-#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
-#[repr(u8)]
-pub enum CommandPiece {
-    Literal(String),
-    Input { index: u32 },
-}
-
-#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Type {
     /// The type of an expression that does not return: `fail e`. It is
@@ -1571,17 +1559,6 @@ pub enum Op {
     /// The operand is an inline scalar; the result is a fresh resident
     /// molten byte run, identical in byte semantics to a string literal.
     IntToString,
-    /// Run a command through the exec effect primitive. The single input is the
-    /// capability value (referenced by identity — its `ValueId` enters the
-    /// demand preimage); `argv` is the command grammar's parse of the template.
-    /// The node's value is the `ExecOutcome` the termination grammar produces;
-    /// a nonzero exit is a typed language failure, never a status integer.
-    ///
-    /// r[impl machine.primitive.exec-outcome]
-    /// r[impl machine.primitive.capabilities-by-identity]
-    Exec {
-        argv: Vec<CommandArgument>,
-    },
     /// Postfix `?`: catch the operand's demand edge. The operand becomes its
     /// own demanded island; this node's value is `Result::Ok(value)` when that
     /// demand publishes and `Result::Err(failure)` when it language-fails —
@@ -1871,10 +1848,15 @@ pub struct PartitionedProgressiveValue {
     pub ty: Type,
 }
 
+/// The projection vocabulary a progressive value island demands of its
+/// producer — the value's own schema-level projection, never an effect-shaped
+/// special case (`machine.primitive.progressive-response`).
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ProgressiveProjection {
-    ExecTreeText { path: String },
+    /// The UTF-8 text of one file of the producer's response tree, addressed
+    /// by its constant path.
+    TreePath { path: String },
 }
 
 /// The described invocation a hoisted value or wire island realizes: the callee
@@ -2198,6 +2180,16 @@ impl Module {
             .iter()
             .map(|node| (node.id, self.value_island_id(function.id, node.id)))
             .collect::<BTreeMap<_, _>>();
+        // A registered effect root builds its own REQUEST: the construction
+        // nodes between the effect's published value inputs and the invocation
+        // (the record, the materialized argv) belong to the effect island and
+        // are interpreted on the effect plane. Hoisting one as a shared
+        // publication instead would compute it in a Weavy island and hand it
+        // back as an opaque published value — which the effect plane cannot
+        // reopen for an aggregate (a published array is deliberately not
+        // frozen). Recomputing pure construction is free; the operands it
+        // consumes are still ordinary published values.
+        let effect_request_nodes = effect_request_construction(function, &effect_nodes);
         let mut shared = function
             .nodes
             .iter()
@@ -2208,6 +2200,7 @@ impl Module {
             })
             .filter(|node| is_shared_publication_candidate(node))
             .filter(|node| !effect_ids.contains_key(&node.id))
+            .filter(|node| !effect_request_nodes.contains(&node.id))
             .collect::<Vec<_>>();
         let candidate_ids = shared.iter().map(|node| node.id).collect::<BTreeSet<_>>();
         shared.retain(|candidate| {
@@ -2277,13 +2270,17 @@ impl Module {
         // Registered primitive invocations are eager value publications. Their
         // Weavy task must suspend and resume through the generic host boundary;
         // a downstream legacy effect island may consume the published value,
-        // but can never absorb and reinterpret the invocation itself. An
-        // exec-origin tree read (`(exec.tree / ..).text()`) is the exception:
-        // it is a tree-read primitive marked `EFFECT` that the exec engine
-        // realizes progressively, so it is already a progressive value and must
-        // not also be hoisted as a settled shared publication.
+        // but can never absorb and reinterpret the invocation itself. The
+        // `EFFECT`-marked invocations are the exceptions, and they are already
+        // published by another route: an effect-origin tree read
+        // (`(out.tree / ..).text()`) is a progressive value served against its
+        // still-running producer, and a registered EFFECT root (exec) is an
+        // effect island submitted on the effect plane. Hoisting either one a
+        // second time here would publish one node as two islands.
         for node in function.nodes.iter().filter(|node| {
-            matches!(node.op, Op::InvokePrimitive { .. }) && !progressive_ids.contains_key(&node.id)
+            matches!(node.op, Op::InvokePrimitive { .. })
+                && node.effect.kind != EffectKind::Effect
+                && !progressive_ids.contains_key(&node.id)
         }) {
             if !shared.iter().any(|candidate| candidate.id == node.id) {
                 shared.push(node);
@@ -3464,10 +3461,10 @@ fn progressive_exec_tree_text_values(function: &Function) -> Vec<PartitionedProg
         .nodes
         .iter()
         .filter_map(|node| {
-            // The exec-origin `.text()` rail lowers to a tree-read primitive
+            // The effect-origin `.text()` rail lowers to a tree-read primitive
             // marked `EFFECT` (see `is_effect_root`); a settled fixture/archive
             // read is the same primitive marked `PURE`. Only the effectful one
-            // can name a still-running `ProgressiveSh` producer.
+            // can name a still-running producer.
             if node.effect.kind != EffectKind::Effect {
                 return None;
             }
@@ -3504,7 +3501,7 @@ fn progressive_exec_tree_text_values(function: &Function) -> Vec<PartitionedProg
                     function: function.id,
                     node: exec,
                 },
-                projection: ProgressiveProjection::ExecTreeText { path },
+                projection: ProgressiveProjection::TreePath { path },
                 ty: node.ty.clone(),
             })
         })
@@ -3512,10 +3509,13 @@ fn progressive_exec_tree_text_values(function: &Function) -> Vec<PartitionedProg
 }
 
 /// Match a tree-read request `Record { tree, path }` whose `tree` field projects
-/// a still-running `ProgressiveSh` exec output. Returns the exec producer node
-/// and the constant projection path, or `None` when the tree is not exec-origin
+/// a still-running registered effect's response. Returns the producer node and
+/// the constant projection path, or `None` when the tree is not effect-origin
 /// or the path is not a compile-time constant (either falls back to a settled,
-/// interned tree read).
+/// interned tree read). No capability name enters this decision
+/// (`machine.capability.no-argv-dialect`): which authority ultimately serves
+/// the projection — a live protocol publication or the effect's completion —
+/// is the capability package's runtime concern.
 fn progressive_exec_tree_path(function: &Function, request: NodeId) -> Option<(NodeId, String)> {
     let request = function.nodes.get(request.0 as usize)?;
     if !matches!(request.op, Op::Record) {
@@ -3528,18 +3528,13 @@ fn progressive_exec_tree_path(function: &Function, request: NodeId) -> Option<(N
     let Op::Project { index: 0 } = tree.op else {
         return None;
     };
-    let exec = function.nodes.get(tree.inputs.first()?.0 as usize)?;
-    if !matches!(exec.op, Op::Exec { .. }) {
+    let producer = function.nodes.get(tree.inputs.first()?.0 as usize)?;
+    if !matches!(producer.op, Op::InvokePrimitive { .. })
+        || producer.effect.kind != EffectKind::Effect
+    {
         return None;
     }
-    let capability = function.nodes.get(exec.inputs.first()?.0 as usize)?;
-    let Type::Record(capability) = &capability.ty else {
-        return None;
-    };
-    if capability.name != "ProgressiveSh" {
-        return None;
-    }
-    Some((exec.id, path))
+    Some((producer.id, path))
 }
 
 /// Fold a `Path`/`PathJoin` tree of segment literals into its `/`-joined
@@ -4203,19 +4198,56 @@ fn structural_fingerprint(
 /// lower into a Weavy program. A codata effect recipe (`Op::InvokeCodataPrimitive`,
 /// type `Stream<..>`) is not itself a root — the collection realizing it is.
 fn is_effect_root(node: &Node) -> bool {
-    matches!(
-        node.op,
-        Op::Exec { .. } | Op::FixtureRegistry
-    ) || (node.effect.kind == EffectKind::Effect
-        && matches!(node.op, Op::StreamCollect)
-        && !matches!(node.ty, Type::Stream { .. }))
-        // An exec-origin tree-read (`(exec.tree / ..).text()`) lowers to a
-        // tree-read primitive marked `EFFECT`: it is realized progressively by
-        // the exec engine, never lowered to Weavy, so it is an island boundary.
-        // Settled tree-reads (fixture/archive/completed-exec) stay `PURE` and
-        // are ordinary in-frame primitive calls, not roots.
+    matches!(node.op, Op::FixtureRegistry)
+        || (node.effect.kind == EffectKind::Effect
+            && matches!(node.op, Op::StreamCollect)
+            && !matches!(node.ty, Type::Stream { .. }))
+        // An `EFFECT`-marked primitive invocation is an island boundary: a
+        // registered effect root (exec) submitted on the effect plane, or an
+        // effect-origin tree-read (`(out.tree / ..).text()`) realized
+        // progressively against its still-running producer. Neither is ever
+        // lowered to Weavy. Settled tree-reads (fixture/archive/completed
+        // outputs) stay `PURE` and are ordinary in-frame primitive calls, not
+        // roots.
         || (node.effect.kind == EffectKind::Effect
             && matches!(node.op, Op::InvokePrimitive { .. }))
+}
+
+/// The pure *construction* nodes of every registered-effect root's request: the
+/// record/aggregate spine reachable from the invocation's request input,
+/// stopping at anything that is itself an effect root or a call (those stay
+/// ordinary publications the effect island consumes as value inputs).
+///
+/// These belong to the effect island — it interprets its own request on the
+/// effect plane — so they are excluded from shared publication.
+fn effect_request_construction(function: &Function, effect_nodes: &[&Node]) -> BTreeSet<NodeId> {
+    let mut construction = BTreeSet::new();
+    let mut frontier = effect_nodes
+        .iter()
+        .filter(|node| matches!(node.op, Op::InvokePrimitive { .. }))
+        .filter_map(|node| node.inputs.first().copied())
+        .collect::<Vec<_>>();
+    while let Some(id) = frontier.pop() {
+        let Some(node) = function.nodes.get(id.0 as usize) else {
+            continue;
+        };
+        // Anything with its own publication identity stops the walk: a call, a
+        // codata recipe, or another effect root is a value the request
+        // consumes, not part of the request's construction.
+        if node.effect.kind != EffectKind::Pure
+            || matches!(
+                node.op,
+                Op::Call(_) | Op::CallValue | Op::AwaitWire { .. } | Op::Parameter(_)
+            )
+        {
+            continue;
+        }
+        if !construction.insert(id) {
+            continue;
+        }
+        frontier.extend(node.inputs.iter().copied());
+    }
+    construction
 }
 
 fn is_shared_publication_candidate(node: &Node) -> bool {
@@ -4234,7 +4266,7 @@ fn is_shared_publication_candidate(node: &Node) -> bool {
         {
             matches!(
                 node.op,
-                Op::Call(_) | Op::CallValue | Op::If { .. } | Op::Match { .. } | Op::Exec { .. }
+                Op::Call(_) | Op::CallValue | Op::If { .. } | Op::Match { .. }
             )
         }
         _ => false,
@@ -4717,27 +4749,9 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::PathToString => op.push(82),
         Op::IntToString => op.push(84),
         Op::Range => op.push(83),
-        Op::Exec { argv } => {
-            op.push(85);
-            frame(&mut op, &(argv.len() as u64).to_le_bytes());
-            for argument in argv {
-                let mut encoded = Vec::new();
-                encoded.extend_from_slice(&(argument.pieces.len() as u64).to_le_bytes());
-                for piece in &argument.pieces {
-                    match piece {
-                        CommandPiece::Literal(literal) => {
-                            encoded.push(0);
-                            frame(&mut encoded, literal.as_bytes());
-                        }
-                        CommandPiece::Input { index } => {
-                            encoded.push(1);
-                            encoded.extend_from_slice(&index.to_le_bytes());
-                        }
-                    }
-                }
-                frame(&mut op, &encoded);
-            }
-        }
+        // Ordinal 85 belonged to `Op::Exec`, retired when exec became a
+        // registered primitive on the generic rail; it stays unassigned so no
+        // historical recipe identity is ever reused.
         Op::Try => op.push(86),
         Op::Fail => op.push(87),
         Op::FixtureTree(name) => {

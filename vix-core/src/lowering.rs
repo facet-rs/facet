@@ -6303,13 +6303,6 @@ fn lower_node(
                 "PublishSite is lowered by the generator-task control dispatch, not the value path",
             ));
         }
-        Op::Exec { .. } => {
-            return Err(lowering_diagnostic(
-                node.span,
-                "Exec is a scheduler-owned effect demand; an effect island is never lowered to a \
-                 Weavy frame",
-            ));
-        }
         Op::Try => {
             return Err(lowering_diagnostic(
                 node.span,

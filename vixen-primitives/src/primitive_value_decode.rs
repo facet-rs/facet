@@ -65,7 +65,8 @@ fn expect_bytes<'a>(
         PrimitiveValueBody::Bytes(bytes) => Ok(bytes),
         PrimitiveValueBody::Product(_)
         | PrimitiveValueBody::Sequence { .. }
-        | PrimitiveValueBody::Variant { .. } => Err(invalid(root)),
+        | PrimitiveValueBody::Variant { .. }
+        | PrimitiveValueBody::OrderedMap(_) => Err(invalid(root)),
     }
 }
 
