@@ -2939,6 +2939,13 @@ fn lower_check(
                 count: trace_bound(call)?,
             }));
         }
+        "finished_before" => {
+            check_arity(call, 2)?;
+            return Ok(CheckRecipe::Trace(TraceCheck::FinishedBefore {
+                first: completion_binding(bindings, &call.args.args[0])?,
+                second: completion_binding(bindings, &call.args.args[1])?,
+            }));
+        }
         "overlapped" => {
             check_arity(call, 0)?;
             return Ok(CheckRecipe::Trace(TraceCheck::Overlapped));
@@ -3141,6 +3148,24 @@ fn trace_function_calls(
         )
     })?;
     Ok(TraceCheck::FunctionCallsExactly { function, times })
+}
+
+/// Resolve one `finished_before` operand: an identifier naming a let-bound
+/// value whose completion the check orders. Like a described wire the binding
+/// is held, never demanded — only its authored node enters the check, and the
+/// runner reads that node's `Completed` sequence from the frozen event log by
+/// the published value's provenance.
+fn completion_binding(
+    bindings: &BTreeMap<String, LoweredValue>,
+    expression: &ast::Expr,
+) -> Result<NodeId, Diagnostics> {
+    let ast::Expr::Identifier(identifier) = expression else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            expr_span(expression),
+            "a finished_before operand names a let-bound value",
+        )));
+    };
+    Ok(lookup_binding(bindings, &identifier.value, identifier.span)?.node)
 }
 
 /// Describe the operand of a `demanded` / `never_demanded` / `demanded_once`

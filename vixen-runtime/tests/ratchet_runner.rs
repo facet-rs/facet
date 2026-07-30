@@ -138,6 +138,7 @@ const RUNG_109: &str = include_str!("ratchet/109-name-collision.reject.vix");
 const RUNG_110: &str = include_str!("ratchet/110-module-memo-boundary.vix");
 const RUNG_126: &str = include_str!("ratchet/126-effects-overlap.vix");
 const RUNG_127: &str = include_str!("ratchet/127-fanout-parallel.vix");
+const RUNG_128: &str = include_str!("ratchet/128-progressive-tree.vix");
 const RUNG_129: &str = include_str!("ratchet/129-no-inline-draining.vix");
 const LIB_GEOMETRY: &str = include_str!("ratchet/lib/geometry.vix");
 const RUNG_138: &str = include_str!("ratchet/138-map-accumulator.vix");
@@ -6631,6 +6632,69 @@ fn rung_127_effectful_array_map_fans_out_through_the_scheduler_frontier() {
         assert_eq!(lane.counters.effect_spawns, 4);
         assert!(lane.counters.peak_effects_in_flight >= 4);
         assert!(lane.counters.overlap_observations >= 1);
+    }
+}
+
+/// Rung 128 — progressive exec trees: stage two consumes ONLY the announced
+/// early subfile and must complete — by `Completed`-event order, never a
+/// wall-clock inference — before stage one's process exits. The surface claim
+/// is `finished_before(consumer, producer)`: a trace check over the frozen
+/// event log's Completed sequences, resolved by the two bindings' published
+/// value provenance. The counters pin the serving authority: the capability's
+/// output protocol vouched for the product while the process ran; the
+/// completion fallback was never needed.
+///
+/// r[verify machine.primitive.progressive-response]
+/// r[verify machine.scheduler.block-on-event]
+#[test]
+fn rung_128_progressive_subfile_consumer_finishes_before_the_producer_exits() {
+    let report = run_source(RUNG_128).expect("rung 128 runs through the production frontier");
+    assert!(report.passed(), "rung 128 checks pass: {report:?}");
+    assert!(report.agrees(), "rung 128 lanes agree: {report:?}");
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.effect_spawns, 1);
+        assert_eq!(
+            lane.counters.progressive_effect_protocol_publications, 1,
+            "the output protocol served early.txt while the process ran"
+        );
+        assert_eq!(
+            lane.counters.progressive_effect_completion_publications, 0,
+            "the completion fallback was never needed — the product was announced in flight"
+        );
+    }
+}
+
+/// The reversed claim is red. `finished_before(producer, consumer)` over the
+/// same progressive shape observes the producer's aggregate outcome completing
+/// AFTER the protocol-served subfile, so the strict ordering check fails in
+/// both lanes. This pins that `finished_before` reads real event order —
+/// never a vacuous pass — while the value check on the subfile still passes.
+#[test]
+fn finished_before_reversed_operands_is_a_red_check() {
+    const SOURCE: &str = r#"
+#[test]
+fn reversed(sh: ProgressiveSh) -> Stream<Check> {
+    let producer = exec sh`-c "mkdir -p out; echo ready > out/early.txt; printf 'vix-ready\tout/early.txt\n'; sleep 0.3"`;
+    let consumer = (producer.tree / "out" / "early.txt").text();
+    yield expect_eq(consumer.trim(), "ready");
+    yield finished_before(producer, consumer);
+}
+"#;
+    let report = run_source(SOURCE).expect("the reversed-ordering program runs");
+    assert!(
+        !report.passed(),
+        "the reversed ordering claim is a red check: {report:?}"
+    );
+    for lane in [&report.plain, &report.chaos] {
+        let [subfile, ordering] = lane.checks.as_slice() else {
+            panic!("the program yields exactly two checks: {report:?}");
+        };
+        assert!(subfile.passed, "the subfile value check still passes");
+        assert!(!ordering.passed, "the ordering trace check goes red");
+        assert!(
+            ordering.trace_failure.is_some(),
+            "a failed trace check carries its descriptor and observed sequence"
+        );
     }
 }
 
