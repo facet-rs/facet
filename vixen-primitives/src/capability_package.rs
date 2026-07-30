@@ -89,10 +89,9 @@ pub enum TargetDiscipline {
         normalize: fn(os: &str, arch: &str) -> Target,
     },
     /// mingw-gcc/`cl.exe`-shaped: the target is in no invocation at all — the
-    /// binary/environment IS the target. The requirement is a fact demanded
-    /// of the capability itself: the plan implicitly requires the machine's
-    /// host, checked against the offered capability's own target facts.
-    HostFact,
+    /// binary/environment IS the target. The package supplies the fixed target
+    /// demanded of the capability; it is not inferred from the runner's host.
+    FixedTarget { target: &'static str },
 }
 
 /// One capability package's registered slice: its nominal type, its output
@@ -173,7 +172,9 @@ pub const CAPABILITY_PACKAGES: &[CapabilityPackage] = &[
     CapabilityPackage {
         name: "MingwGcc",
         protocol: ExecOutputProtocol::ExitOnly,
-        target_discipline: TargetDiscipline::HostFact,
+        target_discipline: TargetDiscipline::FixedTarget {
+            target: "x86_64-pc-windows-gnu",
+        },
     },
 ];
 
@@ -207,9 +208,14 @@ impl CapabilityPackage {
     /// split happens host-side, at value redemption, exactly like the program
     /// name itself.
     #[must_use]
-    pub fn split_invocation(&self, argv: Vec<String>) -> (Vec<(String, String)>, Vec<String>) {
+    pub fn split_invocation(
+        &self,
+        argv: Vec<String>,
+    ) -> (Vec<String>, Vec<(String, String)>, Vec<String>) {
         match self.target_discipline {
-            TargetDiscipline::EnvRoles { .. } => {
+            TargetDiscipline::EnvRoles {
+                os_role, arch_role, ..
+            } => {
                 let mut env = Vec::new();
                 let mut rest = Vec::new();
                 let mut in_leading = true;
@@ -221,9 +227,9 @@ impl CapabilityPackage {
                     in_leading = false;
                     rest.push(element);
                 }
-                (env, rest)
+                (vec![os_role.to_owned(), arch_role.to_owned()], env, rest)
             }
-            _ => (Vec::new(), argv),
+            _ => (Vec::new(), Vec::new(), argv),
         }
     }
 
@@ -234,7 +240,10 @@ impl CapabilityPackage {
     #[must_use]
     pub fn target_captures(&self, plan: &[PlanElement]) -> Vec<TargetCapture> {
         match self.target_discipline {
-            TargetDiscipline::Neutral | TargetDiscipline::HostFact => Vec::new(),
+            TargetDiscipline::Neutral => Vec::new(),
+            TargetDiscipline::FixedTarget { target } => {
+                vec![TargetCapture::Literal(Target::new(target))]
+            }
             TargetDiscipline::ArgvFlag { flag, normalize } => {
                 let mut captures = Vec::new();
                 let mut elements = plan.iter().peekable();
@@ -298,14 +307,6 @@ impl CapabilityPackage {
             }
         }
     }
-
-    /// Whether this package's plans implicitly require the machine's host as
-    /// their target — the fact-shaped end of the table: no capture exists, the
-    /// capability's own target facts are the claim.
-    #[must_use]
-    pub fn requires_host_fact(&self) -> bool {
-        matches!(self.target_discipline, TargetDiscipline::HostFact)
-    }
 }
 
 #[cfg(test)]
@@ -317,8 +318,14 @@ mod tests {
     /// (grammar, protocol), and a registered package must be nameable.
     #[test]
     fn every_declared_capability_type_has_exactly_one_package() {
-        let types: Vec<&str> = crate::CAPABILITY_TYPES.iter().map(|decl| decl.name).collect();
-        let packages: Vec<&str> = CAPABILITY_PACKAGES.iter().map(|package| package.name).collect();
+        let types: Vec<&str> = crate::CAPABILITY_TYPES
+            .iter()
+            .map(|decl| decl.name)
+            .collect();
+        let packages: Vec<&str> = CAPABILITY_PACKAGES
+            .iter()
+            .map(|package| package.name)
+            .collect();
         assert_eq!(types, packages);
     }
 }

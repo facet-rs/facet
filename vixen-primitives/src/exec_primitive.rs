@@ -32,9 +32,8 @@ use std::sync::Arc;
 
 use vix::compiler::{capability_type, exec_outcome_type};
 use vix::runtime::{
-    ExecEvent, ExecInvocation, ProcessTermination, ReadProjection,
-    archive_directory, canonical_resident_tree, exec_primitive_id, exec_request_type,
-    tree_from_resident,
+    ExecEvent, ExecInvocation, ProcessTermination, ReadProjection, archive_directory,
+    canonical_resident_tree, exec_primitive_id, exec_request_type, tree_from_resident,
 };
 use vix::schema::SchemaPattern;
 use vix::vir::Type;
@@ -240,12 +239,17 @@ fn parse_request(
     let PrimitiveValueBody::Product(capability_fields) = &capability.body else {
         return Err(invalid("capability had no fields"));
     };
-    let program_bytes = match capability_fields.as_slice() {
-        [field] => match &field.value {
-            PrimitiveFieldValue::Inline(bytes) => bytes.clone(),
-            PrimitiveFieldValue::Child(child) => child.resident_bytes().to_vec(),
-        },
-        _ => return Err(invalid("capability does not carry exactly its program")),
+    if capability_fields.len() != capability_record.fields.len() {
+        return Err(invalid("capability fields disagree with its declared type"));
+    }
+    let program_index = capability_record
+        .fields
+        .iter()
+        .position(|field| field.name == vix::compiler::CAPABILITY_PROGRAM_FIELD)
+        .ok_or_else(|| invalid("capability has no program field"))?;
+    let program_bytes = match &capability_fields[program_index].value {
+        PrimitiveFieldValue::Inline(bytes) => bytes.clone(),
+        PrimitiveFieldValue::Child(child) => child.resident_bytes().to_vec(),
     };
     let program = String::from_utf8(program_bytes)
         .map_err(|_| invalid("capability program was not UTF-8"))?;
@@ -264,11 +268,12 @@ fn parse_request(
     // materialized plan (env-shaped packages spell them as leading `NAME=VALUE`
     // elements). The demand preimage already hashed the full normalized plan;
     // this split is host-side value redemption, like the program name itself.
-    let (env, argv) = package.split_invocation(argv);
+    let (env_remove, env, argv) = package.split_invocation(argv);
     Ok(ParsedRequest {
         invocation: ExecInvocation {
             program,
             argv,
+            env_remove,
             env,
             protocol,
         },
@@ -377,9 +382,8 @@ fn successful_outcome(
 ) -> Result<ValueId, PrimitiveMachineError> {
     let unavailable = |detail: String| PrimitiveMachineError::Unavailable { detail };
     let archived = archive_directory(workspace).map_err(unavailable)?;
-    let canonical = canonical_resident_tree(&archived).map_err(|error| {
-        unavailable(format!("exec capture does not describe a tree: {error}"))
-    })?;
+    let canonical = canonical_resident_tree(&archived)
+        .map_err(|error| unavailable(format!("exec capture does not describe a tree: {error}")))?;
     let tree = tree_from_resident(&canonical)
         .map_err(|error| unavailable(format!("exec capture did not decode: {error}")))?;
     for (path, entry) in tree.walk() {

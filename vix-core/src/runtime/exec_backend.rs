@@ -41,6 +41,10 @@ pub enum ExecOutputProtocol {
 pub struct ExecInvocation {
     pub program: String,
     pub argv: Vec<String>,
+    /// Ambient variables whose names carry declared command-grammar roles.
+    /// They are removed before explicit assignments are applied so the host
+    /// process environment cannot add an unkeyed target requirement.
+    pub env_remove: Vec<String>,
     /// Environment assignments applied on top of the (host-trusting) ambient
     /// environment, in plan order.
     pub env: Vec<(String, String)>,
@@ -150,12 +154,17 @@ impl ExecBackend for HostExecBackend {
         let ExecInvocation {
             program,
             argv,
+            env_remove,
             env,
             protocol,
         } = invocation;
         let workspace = ExecWorkspace::create()?;
-        let mut child = std::process::Command::new(&program)
-            .args(&argv)
+        let mut command = std::process::Command::new(&program);
+        command.args(&argv);
+        for name in env_remove {
+            command.env_remove(name);
+        }
+        let mut child = command
             .envs(env)
             .current_dir(workspace.path())
             .stdin(std::process::Stdio::null())

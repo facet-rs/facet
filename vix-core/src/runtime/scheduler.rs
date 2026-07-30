@@ -18,16 +18,14 @@ use crate::vir::{
     ExternKind, Function, FunctionId, Island, IslandId, NodeId, Op, Type, VariantPayload,
 };
 
-use super::fixture::{
-    FixtureEntryKind, FixtureReadError, FixtureStore, canonical_resident_tree,
-};
+use super::fixture::{FixtureEntryKind, FixtureReadError, FixtureStore, canonical_resident_tree};
 use super::identity::{
     DemandKey, DemandPreimage, Digest, Location, LocationId, RecipeId, ValueId, hash_framed,
 };
 use super::identity::{FramedField, FramedNode, FramedValue};
 use super::model::{
-    DemandRecord, DemandState, FailureContext, FailureValue, MemoVerdict,
-    ReadObservation, ReadProjection, ReadWitness, Receipt, TaskId, TaskRecord, TaskState,
+    DemandRecord, DemandState, FailureContext, FailureValue, MemoVerdict, ReadObservation,
+    ReadProjection, ReadWitness, Receipt, TaskId, TaskRecord, TaskState,
 };
 use super::observe::{
     Counters, Event, EventKind, EventSink, ExecutionFacts, ExecutionFallbackFact,
@@ -5209,31 +5207,52 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
         &self.store
     }
 
-    /// Intern one harness-supplied capability value: an opaque record whose
-    /// single field is the executable identity. The demand root calls this
-    /// before any island of the test runs; every consuming island receives the
-    /// capability as an ordinary pre-published value input, so its `ValueId`
-    /// enters each effect demand's preimage. The resident bytes carry the
-    /// program name — a non-identity storage concern the exec primitive reads
-    /// back at spawn time.
+    /// Intern one harness-supplied capability value: an opaque record carrying
+    /// the executable reference and the manifest's typed facts. The demand root
+    /// calls this before any island of the test runs; every consuming island
+    /// receives the capability as an ordinary pre-published value input, so the
+    /// complete offer's `ValueId` enters each effect demand's preimage. The
+    /// resident bytes still carry the program name for host-side redemption;
+    /// the frozen structural value carries every identity-bearing field.
     ///
     /// r[impl machine.primitive.capabilities-by-identity]
-    pub fn publish_capability(&mut self, ty: &Type, program: &str) -> Evaluation {
-        let string_schema = semantic_schema_ref(&Type::String);
-        let program_leaf = FramedNode::leaf(string_schema.clone(), program.as_bytes().to_vec());
-        let node = FramedNode::Variant {
-            schema: semantic_schema_ref(ty),
-            tag: 0,
-            fields: vec![FramedField {
-                schema: string_schema,
-                value: FramedValue::Optional(Some(program_leaf.identity())),
-            }],
-        };
-        let interned = self.store.intern_tree(&node, program.as_bytes());
-        self.store.attach_frozen(
-            interned.handle,
-            FrozenValue::Product(vec![FrozenValue::Opaque(program.as_bytes().to_vec())]),
+    pub fn publish_capability<'a>(
+        &mut self,
+        ty: &Type,
+        program: &str,
+        toolchain: Option<&str>,
+        targets: impl IntoIterator<Item = &'a str>,
+    ) -> Evaluation {
+        let mut targets = targets.into_iter().collect::<Vec<_>>();
+        targets.sort_unstable();
+        targets.dedup();
+        let toolchain = toolchain.map_or_else(
+            || FrozenValue::Variant {
+                tag: crate::vir::OPTION_NONE_VARIANT,
+                fields: Vec::new(),
+            },
+            |toolchain| FrozenValue::Variant {
+                tag: crate::vir::OPTION_SOME_VARIANT,
+                fields: vec![FrozenValue::Opaque(toolchain.as_bytes().to_vec())],
+            },
         );
+        let frozen = FrozenValue::Product(vec![
+            FrozenValue::Opaque(program.as_bytes().to_vec()),
+            toolchain,
+            FrozenValue::DenseArray(
+                targets
+                    .into_iter()
+                    .map(|target| FrozenValue::Opaque(target.as_bytes().to_vec()))
+                    .collect(),
+            ),
+        ]);
+        let framed = effect_value_from_frozen(ty, frozen.clone())
+            .expect("capability offer agrees with the opaque capability record");
+        let node = framed
+            .node
+            .expect("a structural capability value always has a framed node");
+        let interned = self.store.intern_tree(&node, program.as_bytes());
+        self.store.attach_frozen(interned.handle, frozen);
         self.observe_interned(&interned);
         Evaluation {
             handle: interned.handle,
@@ -5293,7 +5312,9 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 return Err(Box::new(MachineError::runtime(
                     MachineOperation::Drive,
                     RuntimeFault::EffectHostFailure {
-                        detail: format!("effect island invokes unregistered primitive {primitive:?}"),
+                        detail: format!(
+                            "effect island invokes unregistered primitive {primitive:?}"
+                        ),
                     },
                     None,
                     None,
@@ -5484,13 +5505,11 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                     insert_schema_type(&node.ty, &mut catalog);
                 }
             }
-            let mut authority = StagedEffectAuthority::new(vec![(
-                request_id.clone(),
-                request_value.clone(),
-            )])
-            .with_schema_types(catalog)
-            .with_fixture_store(self.fixture_store.clone())
-            .with_exec_backend(self.primitive_services.exec_backend());
+            let mut authority =
+                StagedEffectAuthority::new(vec![(request_id.clone(), request_value.clone())])
+                    .with_schema_types(catalog)
+                    .with_fixture_store(self.fixture_store.clone())
+                    .with_exec_backend(self.primitive_services.exec_backend());
             if let Some(persistence) = self.primitive_services.value_persistence() {
                 authority = authority.with_value_persistence(persistence);
             }
@@ -5509,9 +5528,8 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                     // an in-flight publication can serve a projection demand
                     // before the effect completes
                     // (machine.primitive.progressive-response).
-                    EffectCtx::new(demand_key, authority.clone()).with_progress(
-                        self.completion_inbox.primitive_progress_sender(demand_key),
-                    ),
+                    EffectCtx::new(demand_key, authority.clone())
+                        .with_progress(self.completion_inbox.primitive_progress_sender(demand_key)),
                     &self.ctx,
                 )
                 .map_err(|error| {
@@ -9077,8 +9095,8 @@ fn scheduler_decode() -> Stream<Check> {
         let authority = Arc::new(StagedEffectAuthority::default());
         let forwarded = Arc::new(Mutex::new(Vec::new()));
         let sink = forwarded.clone();
-        let ctx = EffectCtx::new(demand, authority.clone())
-            .with_progress(Arc::new(move |publication| {
+        let ctx =
+            EffectCtx::new(demand, authority.clone()).with_progress(Arc::new(move |publication| {
                 sink.lock()
                     .expect("forward mutex poisoned")
                     .push(publication);
@@ -9120,7 +9138,9 @@ fn scheduler_decode() -> Stream<Check> {
     /// One registered effect demand parked in flight, exactly as
     /// `begin_primitive`'s first caller leaves it — minus the yielded frame,
     /// which projection service never touches.
-    fn in_flight_effect(runtime: &mut Runtime<EventLog>) -> (DemandKey, Arc<StagedEffectAuthority>) {
+    fn in_flight_effect(
+        runtime: &mut Runtime<EventLog>,
+    ) -> (DemandKey, Arc<StagedEffectAuthority>) {
         let preimage = DemandPreimage {
             closure: RecipeId::from_canonical_vir(b"effect-projection-producer"),
             arguments: Vec::new(),
@@ -9643,7 +9663,12 @@ fn scheduler_decode() -> Stream<Check> {
     fn cap_effect_preimage(capability: &[u8], plan: &[u8]) -> DemandPreimage {
         let shape = cap_effect_shape();
         let request = cap_effect_request(capability, plan);
-        declared_effect_preimage(&shape.primitive, Some(&shape), &request.identity(), &request)
+        declared_effect_preimage(
+            &shape.primitive,
+            Some(&shape),
+            &request.identity(),
+            &request,
+        )
     }
 
     /// The declaration-derived preimage has the exec reference shape: the

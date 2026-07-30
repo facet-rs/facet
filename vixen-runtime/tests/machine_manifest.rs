@@ -11,16 +11,21 @@
 
 #![cfg(unix)]
 
+use std::sync::{Arc, Mutex};
+
+use vix::runtime::{
+    EventLog, ExecBackend, ExecEventSender, ExecInvocation, ExecWorkspace, HostExecBackend,
+    PrimitiveServices, Runtime,
+};
 use vixen_primitives::capability_package::Target;
 use vixen_runtime::manifest::{
     CapabilityOffer, MachineManifest, TargetRequirement, host_target, static_requirements,
 };
-use vixen_runtime::ratchet::{RatchetReport, run_source_with_manifest};
+use vixen_runtime::ratchet::{RatchetReport, prepare_source, run_source_with_manifest};
 
 /// A manifest offering `capabilities` on an `x86_64-unknown-linux-gnu`-style
 /// host — the design note's "Linux-only machine", spelled with the actual
-/// host triple so the fact-shaped (host-demanding) tests are runnable
-/// anywhere the suite runs.
+/// host triple so diagnostics carry the runner's declared host fact.
 fn manifest(capabilities: Vec<CapabilityOffer>) -> MachineManifest {
     MachineManifest {
         host: host_target(),
@@ -34,6 +39,25 @@ fn offer(ty: &str, program: &str, targets: &[&str]) -> CapabilityOffer {
         program: program.to_owned(),
         toolchain: None,
         targets: targets.iter().copied().map(Target::new).collect(),
+    }
+}
+
+#[derive(Default)]
+struct RecordingExecBackend {
+    invocations: Mutex<Vec<ExecInvocation>>,
+}
+
+impl ExecBackend for RecordingExecBackend {
+    fn begin(
+        &self,
+        invocation: ExecInvocation,
+        events: ExecEventSender,
+    ) -> Result<ExecWorkspace, String> {
+        self.invocations
+            .lock()
+            .expect("invocation recorder mutex poisoned")
+            .push(invocation.clone());
+        HostExecBackend.begin(invocation, events)
     }
 }
 
@@ -102,7 +126,8 @@ fn a_capability_type_absent_from_the_manifest_refuses_before_any_effect() {
     );
     let diagnostic = refusal.to_string();
     assert!(
-        diagnostic.contains("`build` demands Rustc") && diagnostic.contains("no effect was started"),
+        diagnostic.contains("`build` demands Rustc")
+            && diagnostic.contains("no effect was started"),
         "the diagnostic names the demanding side: {diagnostic}"
     );
 }
@@ -155,9 +180,54 @@ fn the_exe_case_runs_when_the_manifest_offers_the_target() {
     let report = run_source_with_manifest(EXE_CASE, offering).expect("the exe case runs");
     assert!(report.passed(), "the offered target runs: {report:#?}");
     for lane in [&report.plain, &report.chaos] {
-        assert_eq!(lane.counters.effect_spawns, 1, "one process, really spawned");
+        assert_eq!(
+            lane.counters.effect_spawns, 1,
+            "one process, really spawned"
+        );
         assert!(lane.refusals.is_empty());
     }
+}
+
+/// The exec rail keys a plan under the capability value's identity, so every
+/// manifest fact that defines the offered capability must participate in that
+/// identity. Target order and duplication are not facts: containment treats
+/// the target list as a set, so publication canonicalizes it.
+#[test]
+fn capability_identity_carries_toolchain_and_canonical_target_facts() {
+    let capability_ty = vix::compiler::capability_type("Rustc");
+    let mut runtime = Runtime::new(EventLog::default());
+    let base = runtime.publish_capability(
+        &capability_ty,
+        "/toolchains/rustc",
+        Some("1.89.0"),
+        ["x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"],
+    );
+    let changed_toolchain = runtime.publish_capability(
+        &capability_ty,
+        "/toolchains/rustc",
+        Some("1.90.0"),
+        ["x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"],
+    );
+    let changed_targets = runtime.publish_capability(
+        &capability_ty,
+        "/toolchains/rustc",
+        Some("1.89.0"),
+        ["x86_64-unknown-linux-gnu"],
+    );
+    let reordered_targets = runtime.publish_capability(
+        &capability_ty,
+        "/toolchains/rustc",
+        Some("1.89.0"),
+        [
+            "x86_64-pc-windows-msvc",
+            "x86_64-unknown-linux-gnu",
+            "x86_64-pc-windows-msvc",
+        ],
+    );
+
+    assert_ne!(base.identity, changed_toolchain.identity);
+    assert_ne!(base.identity, changed_targets.identity);
+    assert_eq!(base.identity, reordered_targets.identity);
 }
 
 /// The go-shaped program: the target rides declared environment roles, not a
@@ -212,7 +282,11 @@ fn build(go: Go) -> Stream<Check> {
 }
 "#;
     let tools = tempfile::tempdir().expect("tool dir");
-    let go = fake_tool(&tools, "go", r#"printf '%s/%s' "$GOOS" "$GOARCH" > target.txt"#);
+    let go = fake_tool(
+        &tools,
+        "go",
+        r#"printf '%s/%s' "$GOOS" "$GOARCH" > target.txt"#,
+    );
     let offering = manifest(vec![offer("Go", &go, &["x86_64-unknown-linux-gnu"])]);
     let report = run_source_with_manifest(ENV_CASE_HOST, offering).expect("the env case runs");
     assert!(
@@ -221,6 +295,44 @@ fn build(go: Go) -> Stream<Check> {
     );
     for lane in [&report.plain, &report.chaos] {
         assert_eq!(lane.counters.effect_spawns, 1);
+    }
+}
+
+/// A package-declared environment role is also an ambient-environment deny
+/// list. When the plan omits GOOS/GOARCH, inherited variables must not decide a
+/// target behind the manifest binder's back.
+#[test]
+fn env_target_roles_are_removed_from_the_ambient_process_environment() {
+    const ENV_DEFAULTS: &str = r#"
+#[test]
+fn build(go: Go) -> Stream<Check> {
+    let out = exec go`build`;
+    yield expect_eq((out.tree / "target.txt").text(), "clean");
+}
+"#;
+    let tools = tempfile::tempdir().expect("tool dir");
+    let go = fake_tool(&tools, "go", "printf clean > target.txt");
+    let backend = Arc::new(RecordingExecBackend::default());
+    let report = prepare_source(ENV_DEFAULTS)
+        .expect("the env-default case prepares")
+        .with_manifest(manifest(vec![offer("Go", &go, &[])]))
+        .execute_with_primitive_services(
+            PrimitiveServices::default().with_exec_backend(backend.clone()),
+        )
+        .expect("the env-default case runs");
+    assert!(report.passed(), "the env-default case passes: {report:#?}");
+
+    let invocations = backend
+        .invocations
+        .lock()
+        .expect("invocation recorder mutex poisoned");
+    assert_eq!(invocations.len(), 2, "plain and chaos each spawn once");
+    for invocation in invocations.iter() {
+        assert_eq!(invocation.env_remove, ["GOOS", "GOARCH"]);
+        assert!(
+            invocation.env.is_empty(),
+            "the plan assigned no environment"
+        );
     }
 }
 
@@ -242,7 +354,10 @@ fn neutral(sh: Sh) -> Stream<Check> {
 "#;
     let report = run_source_with_manifest(NEUTRAL, MachineManifest::ratchet_default())
         .expect("a neutral invocation runs anywhere its tool exists");
-    assert!(report.passed(), "no target requirement was invented: {report:#?}");
+    assert!(
+        report.passed(),
+        "no target requirement was invented: {report:#?}"
+    );
     for lane in [&report.plain, &report.chaos] {
         assert_eq!(lane.counters.effect_spawns, 1);
         assert!(lane.refusals.is_empty());
@@ -273,7 +388,9 @@ fn the_requirement_set_is_reported_without_executing() {
     assert_eq!(rustc.ty, "Rustc");
     assert_eq!(
         rustc.targets,
-        vec![TargetRequirement::Literal(Target::new("x86_64-pc-windows-msvc"))],
+        vec![TargetRequirement::Literal(Target::new(
+            "x86_64-pc-windows-msvc"
+        ))],
         "needs Rustc producing x86_64-pc-windows-msvc, statically"
     );
 }
@@ -315,9 +432,9 @@ fn build(rustc: Rustc) -> Stream<Check> {
 
 /// The fact-shaped end of the generality table: `MingwGcc` spells no target
 /// anywhere in an invocation — the capability's own target facts are the
-/// claim, checked against the plan's implicit demand for the host. Both
-/// ways: an offer whose facts include the host runs; a cross-target offer
-/// refuses pre-effect.
+/// claim, checked against the package's fixed Windows target. Both ways: a
+/// native-only offer refuses pre-effect; the cross-target offer runs on a
+/// Linux host.
 ///
 /// r[verify vixen.machine.requirements-from-use]
 /// r[verify vixen.machine.facts-are-fields]
@@ -330,29 +447,30 @@ fn compile(gcc: MingwGcc) -> Stream<Check> {
     yield expect_eq((out.tree / "a.out").text(), "obj");
 }
 "#;
-    // A per-target gcc whose facts claim only a foreign target: the plan
-    // implicitly requires the host, so binding refuses before any effect.
-    let cross = manifest(vec![offer(
+    // The package says this binary targets Windows. A native-only offer cannot
+    // satisfy that fact, regardless of the runner's host.
+    let native_only = manifest(vec![offer(
         "MingwGcc",
         "gcc-must-never-spawn",
-        &["x86_64-pc-windows-gnu"],
+        &[host_target().as_str()],
     )]);
-    let report = run_source_with_manifest(FACT_CASE, cross)
+    let report = run_source_with_manifest(FACT_CASE, native_only)
         .expect("a binding refusal is a report verdict, never a runner error");
     let refusal = assert_refused(&report);
     assert_eq!(refusal.required_type, "MingwGcc");
     assert_eq!(
         refusal.required_target.as_deref(),
-        Some(host_target().as_str()),
-        "no capture exists; the requirement is the machine's host"
+        Some("x86_64-pc-windows-gnu"),
+        "no capture exists; the package supplies its fixed target"
     );
 
-    // The same program under an offer whose facts include the host: runs.
+    // A Windows-targeting MinGW capability is legitimate on the Linux runner:
+    // the capability's target and the machine's host are different facts.
     let tools = tempfile::tempdir().expect("tool dir");
     let gcc = fake_tool(&tools, "gcc", "printf obj > a.out");
-    let native = manifest(vec![offer("MingwGcc", &gcc, &[host_target().as_str()])]);
-    let report = run_source_with_manifest(FACT_CASE, native).expect("the native gcc runs");
-    assert!(report.passed(), "host-fact facts admit the host: {report:#?}");
+    let cross = manifest(vec![offer("MingwGcc", &gcc, &["x86_64-pc-windows-gnu"])]);
+    let report = run_source_with_manifest(FACT_CASE, cross).expect("the cross gcc runs");
+    assert!(report.passed(), "the fixed target is offered: {report:#?}");
     for lane in [&report.plain, &report.chaos] {
         assert_eq!(lane.counters.effect_spawns, 1);
     }

@@ -10,9 +10,9 @@ use vix::runtime::{
     ChaosPolicy, Counters, DemandState, EffectProjectionRequest, Evaluation, Event, EventKind,
     EventLog, FailureContext, FailureValue, FramedNode, GeneratorOutcome, IslandInputs, Location,
     MachineError, PersistentRuntimeJournal, PersistentRuntimeJournalError,
-    PersistentRuntimeJournalLoadReport, PersistentRuntimeState, PrimitiveServices,
-    ReadProjection, RealizedWireDemand, RootSubmission, Runtime, SnapshotCapture, SnapshotOutcome,
-    TaskState, ValueId, ValueRootRequest, WireDemand,
+    PersistentRuntimeJournalLoadReport, PersistentRuntimeState, PrimitiveServices, ReadProjection,
+    RealizedWireDemand, RootSubmission, Runtime, SnapshotCapture, SnapshotOutcome, TaskState,
+    ValueId, ValueRootRequest, WireDemand,
 };
 use vix::vir::{
     DescribedWire, FunctionId, Island, Module, Op, PartitionedRecipe, PartitionedValue, TraceCheck,
@@ -740,8 +740,7 @@ pub fn run_source_with_snapshots_and_lane(
 /// source mark. This is an explicit diagnostic lane: ordinary [`run_source`]
 /// uses bounded Production tracing and preserves only structural task events.
 pub fn run_source_innards(source: &str) -> Result<RatchetReport, RunError> {
-    prepare_source_with_cache(source, crate::default_config(), LoweringCache::innards())?
-        .execute()
+    prepare_source_with_cache(source, crate::default_config(), LoweringCache::innards())?.execute()
 }
 /// Run every declared test twice under explicit shape-selection configuration.
 /// The forced-copy molten differential compiles the same source with
@@ -1575,7 +1574,12 @@ fn run_lane(
             let offer = crate::manifest::capability_type_name(&capability.ty)
                 .and_then(|ty| manifest.offer(ty))
                 .expect("binding admitted only manifest-offered capability types");
-            let evaluation = runtime.publish_capability(&capability.ty, &offer.program);
+            let evaluation = runtime.publish_capability(
+                &capability.ty,
+                &offer.program,
+                offer.toolchain.as_deref(),
+                offer.targets.iter().map(|target| target.as_str()),
+            );
             published_values.insert(capability.id, evaluation);
         }
         // Submit every value island whose published inputs are ready, regardless
