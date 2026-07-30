@@ -78,7 +78,7 @@ fn demanding_the_settled_answer_parks_until_the_process_terminates() {
 #[test]
 fn settled_tail(sh: Sh) -> Stream<Check> {
     let out = exec sh`-c "printf 'first\n'; sleep 0.2; printf 'last\n'"`;
-    yield expect_eq(out.stdout.collect().values(), ["first", "last"]);
+    yield expect_eq(out.stdout.lines(), ["first", "last"]);
 }
 "#;
     let report = run_source(SOURCE).expect("the settled-tail program runs");
@@ -160,7 +160,7 @@ fn rmeta_pipeline(sh: ProgressiveSh) -> Stream<Check> {
     let producer = exec sh`-c "mkdir -p out; printf rmeta > out/lib.rmeta; printf 'vix-ready\tout/lib.rmeta\n'; sleep 0.3; printf done > out/lib.rlib; printf 'linked\n'"`;
     let early = (producer.tree / "out" / "lib.rmeta").text();
     yield expect_eq(early, "rmeta");
-    yield expect_eq(producer.stdout.collect().values(), ["linked"]);
+    yield expect_eq(producer.stdout.lines(), ["linked"]);
 }
 "#;
     let module = vixen_runtime::default_compiler()
@@ -209,6 +209,98 @@ fn rmeta_pipeline(sh: ProgressiveSh) -> Stream<Check> {
         assert!(
             dependent_at < producer_at,
             "work depending on the early product completed before the producer terminated"
+        );
+    }
+}
+
+/// The cargo shape: **dependent work starts off early stdout bytes, long
+/// before the process exits.** This is the stdout twin of the `.rmeta` test
+/// above — the rustc/cargo pipeline where a consumer acts on rustc's early
+/// JSON artifact lines while codegen still runs.
+///
+/// A producer prints an early line, sleeps, prints more, exits. The program
+/// demands the stream's first six bytes (`producer.stdout.take(6)` — a byte
+/// range addressed by offset, `machine.primitive.exec-outcome`) and does
+/// dependent work on it through the stdlib `lines` wrapper — line framing as
+/// an explicit stdlib projection over the bytes, never machine vocabulary.
+/// Separately it demands the settled stream (the completed Blob, via `lines`).
+///
+/// Pinned, in scheduler event order:
+/// - the byte range's value completed BEFORE the producer's aggregate outcome
+///   — i.e. before termination, because the settled stdout contains the line
+///   printed after the sleep;
+/// - the live stream frontier, not the completion fallback, served it
+///   (protocol publications ≥ 1, completion publications 0);
+/// - the dependent check consuming the early bytes also completed before the
+///   producer settled.
+///
+/// The partition pins the shape: the `take` is a progressive value island
+/// projecting `StreamRange { stdout, 0, 6 }` off the exec producer.
+///
+/// r[verify machine.primitive.progressive-response]
+/// r[verify machine.primitive.exec-outcome]
+#[test]
+fn early_stdout_bytes_and_their_dependent_work_complete_before_the_producer_exits() {
+    const SOURCE: &str = r#"
+#[test]
+fn cargo_shape(sh: Sh) -> Stream<Check> {
+    let producer = exec sh`-c "printf 'early\n'; sleep 0.3; printf 'late\n'"`;
+    let head = producer.stdout.take(6);
+    yield expect_eq(head.lines(), ["early"]);
+    yield expect_eq(producer.stdout.lines(), ["early", "late"]);
+}
+"#;
+    let module = vixen_runtime::default_compiler()
+        .compile(SOURCE)
+        .expect("the cargo-shape program compiles");
+    let partitioned = module.partition_test(&module.tests[0]);
+    let [projection] = partitioned.progressive_values.as_slice() else {
+        panic!("the early byte range is a progressive value island");
+    };
+    assert_eq!(
+        projection.projection,
+        vix::vir::ProgressiveProjection::StreamRange {
+            stream: "stdout".to_owned(),
+            start: 0,
+            end: 6,
+        },
+        "the take is a byte range addressed by offset, on the stdout stream"
+    );
+    let (producer_island, head_island) = (projection.producer, projection.id);
+
+    let report = run_source(SOURCE).expect("the cargo-shape program runs");
+    assert!(
+        passed(&report),
+        "the early bytes read `early` and the settled stream both lines: {report:#?}"
+    );
+
+    for lane in [&report.plain, &report.chaos] {
+        assert!(
+            lane.counters.progressive_effect_protocol_publications >= 1,
+            "the live stream frontier served the byte range while the process ran"
+        );
+        assert_eq!(
+            lane.counters.progressive_effect_completion_publications, 0,
+            "the completion fallback was never needed — the bytes were published in flight"
+        );
+        let producer_at = completed_at(lane, &value_identity(lane, producer_island));
+        let head_at = completed_at(lane, &value_identity(lane, head_island));
+        assert!(
+            head_at < producer_at,
+            "the early byte range resolved before the producer's aggregate outcome"
+        );
+        let dependent_at = lane
+            .events
+            .iter()
+            .filter_map(|event| match &event.kind {
+                EventKind::Completed { .. } if event.sequence > head_at => Some(event.sequence),
+                _ => None,
+            })
+            .min()
+            .expect("dependent work completed after the early bytes");
+        assert!(
+            dependent_at < producer_at,
+            "work depending on the early bytes completed before the producer terminated"
         );
     }
 }
@@ -268,8 +360,8 @@ fn a_different_plan_or_capability_is_a_different_demand() {
 fn distinct_plans(echo: Echo) -> Stream<Check> {
     let a = exec echo`"once"`;
     let b = exec echo`"twice"`;
-    yield expect_eq(a.stdout.collect().values(), ["once"]);
-    yield expect_eq(b.stdout.collect().values(), ["twice"]);
+    yield expect_eq(a.stdout.lines(), ["once"]);
+    yield expect_eq(b.stdout.lines(), ["twice"]);
     yield ran_processes(2);
 }
 "#;
@@ -290,7 +382,7 @@ fn distinct_plans(echo: Echo) -> Stream<Check> {
 fn distinct_capabilities(echo: Echo, sh: Sh) -> Stream<Check> {
     let a = exec echo`"once"`;
     let b = exec sh`-c "printf 'once\n'"`;
-    yield expect_eq(a.stdout.collect().values(), b.stdout.collect().values());
+    yield expect_eq(a.stdout.lines(), b.stdout.lines());
     yield ran_processes(2);
 }
 "#;
@@ -476,4 +568,155 @@ fn the_effect_demand_key_is_a_pure_function_of_plan_and_capability() {
     assert_ne!(base.arguments, preimage("sh", &["once"]).arguments);
     assert_ne!(base.closure, preimage("echo", &["twice"]).closure);
     assert_eq!(base.arguments, preimage("echo", &["twice"]).arguments);
+}
+
+/// Byte fidelity: **the completed stream is the exact bytes the process
+/// produced** — no lossy decoding, no line framing, no replacement
+/// characters. A producer emits two bytes that are not UTF-8 (`0xFF 0xFE`);
+/// the settled stream Blob and a demanded byte range both round-trip them
+/// exactly (the retired lossy line-map shape would have substituted two
+/// three-byte U+FFFD sequences), and stderr rides the same byte-true rail.
+///
+/// The range's published identity is asserted byte-for-byte Rust-side: the
+/// served value IS `FramedNode::leaf(Blob, [0xFF, 0xFE])`.
+///
+/// r[verify machine.primitive.exec-outcome]
+#[test]
+fn a_non_utf8_stream_round_trips_byte_for_byte() {
+    const SOURCE: &str = r#"
+#[test]
+fn fidelity(sh: Sh) -> Stream<Check> {
+    let out = exec sh`-c "printf '\377\376'; printf 'oops' 1>&2"`;
+    let head = out.stdout.take(2);
+    yield expect_eq(head.len(), 2);
+    yield expect_eq(out.stdout.len(), 2);
+    yield expect_eq(out.stderr.text(), "oops");
+}
+"#;
+    let module = vixen_runtime::default_compiler()
+        .compile(SOURCE)
+        .expect("the fidelity program compiles");
+    let partitioned = module.partition_test(&module.tests[0]);
+    let [projection] = partitioned.progressive_values.as_slice() else {
+        panic!("the byte range is a progressive value island");
+    };
+    let head_island = projection.id;
+
+    let report = run_source(SOURCE).expect("the fidelity program runs");
+    assert!(
+        passed(&report),
+        "two non-UTF-8 bytes survive as two bytes and stderr as text: {report:#?}"
+    );
+    let expected = vix::runtime::FramedNode::leaf(
+        vix::vir::Type::Extern(vix::vir::ExternKind::Blob).schema_ref(),
+        vec![0xFF, 0xFE],
+    )
+    .identity();
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(
+            value_identity(lane, head_island),
+            expected,
+            "the served range is byte-identical to what the process wrote"
+        );
+    }
+}
+
+/// The lines wrapper on invalid UTF-8 **fails typed**: decoding is an
+/// explicit lossless projection, so bytes that are not text raise the
+/// primitive's `DecodeError` — a `FailureValue::Raised` carrying the typed
+/// payload — never a lossy substitution and never a machine crash.
+///
+/// r[verify machine.primitive.exec-outcome]
+#[test]
+fn the_lines_wrapper_on_invalid_utf8_is_a_typed_failure() {
+    const SOURCE: &str = r#"
+#[test]
+fn undecodable(sh: Sh) -> Stream<Check> {
+    let out = exec sh`-c "printf '\377\376'"`;
+    yield expect_eq(out.stdout.lines().len(), 0);
+}
+"#;
+    let report = run_source(SOURCE).expect("an undecodable stream is a failure, never a crash");
+    assert!(
+        !passed(&report),
+        "framing non-text as lines fails the check: {report:#?}"
+    );
+    for lane in [&report.plain, &report.chaos] {
+        let failure = lane
+            .checks
+            .first()
+            .and_then(|check| check.failure.clone())
+            .expect("the check records its typed failure");
+        let vix::runtime::FailureValue::Raised { payload, .. } = failure else {
+            panic!("invalid UTF-8 raises the stdlib's typed DecodeError, got {failure:?}");
+        };
+        assert_eq!(
+            payload.schema,
+            vix::vir::decode_error_type().schema_ref(),
+            "the payload is the decode error, interned under its own schema"
+        );
+    }
+}
+
+/// Replay: **a memo-hit producer's streams and products are
+/// indistinguishable from live ones.** Two tests in one suite run the same
+/// plan under the same capability; the second is served from the demand
+/// record — no second process (spawn counter) — and demands projections the
+/// first run NEVER demanded: a byte range spanning both witnessed chunk
+/// publications, and a tree product. Both replay from the retained
+/// completion's witnessed publications with the same program-observable
+/// results (the checks' own expectations), closing the loud-fault deferral
+/// from stages 1–2. A range the first run DID demand is served by ordinary
+/// demand-record reuse — replay begins exactly where the demand space was
+/// never exercised.
+///
+/// Cross-PROCESS replay is deliberately out: exec receipts are
+/// `Unverifiable`, and persisted nondeterministic claims recompute
+/// (`persistent_journal_nondeterministic_claims_do_not_load_as_hits`).
+/// "Indistinguishable" is a fact about one scheduler's witnessed record.
+///
+/// r[verify machine.primitive.progressive-response]
+/// r[verify machine.primitive.exec-outcome]
+#[test]
+fn a_memo_hit_producer_replays_streams_and_products_from_the_witness() {
+    const SOURCE: &str = r#"
+#[test]
+fn first(sh: Sh) -> Stream<Check> {
+    let producer = exec sh`-c "mkdir -p out; printf ready > out/flag; printf 'early\n'; sleep 0.2; printf 'late\n'"`;
+    let head = producer.stdout.take(6);
+    yield expect_eq(head.lines(), ["early"]);
+}
+
+#[test]
+fn second(sh: Sh) -> Stream<Check> {
+    let producer = exec sh`-c "mkdir -p out; printf ready > out/flag; printf 'early\n'; sleep 0.2; printf 'late\n'"`;
+    let head = producer.stdout.take(6);
+    let all = producer.stdout.take(11);
+    let flag = (producer.tree / "out" / "flag").text();
+    yield expect_eq(head.lines(), ["early"]);
+    yield expect_eq(all.lines(), ["early", "late"]);
+    yield expect_eq(flag, "ready");
+}
+"#;
+    let report = run_source(SOURCE).expect("the replay suite runs");
+    assert!(
+        passed(&report),
+        "the replayed projections read identically to live ones: {report:#?}"
+    );
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(
+            lane.counters.effect_spawns, 1,
+            "the second test's producer is a memo hit — no second process"
+        );
+        assert!(
+            lane.counters.memo_hits_exact >= 1,
+            "the second producer demand was served from the record"
+        );
+        assert!(
+            lane.counters.progressive_effect_replay_publications >= 2,
+            "the never-demanded range and product replayed from the witnessed \
+             completion: {:#?}",
+            lane.counters
+        );
+    }
 }

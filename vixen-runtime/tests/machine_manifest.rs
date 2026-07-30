@@ -349,7 +349,7 @@ fn a_target_neutral_invocation_imposes_no_target_requirement() {
 #[test]
 fn neutral(sh: Sh) -> Stream<Check> {
     let out = exec sh`-c "printf done" ignored --target x86_64-pc-windows-msvc`;
-    yield expect_eq(out.stdout.collect().values(), ["done"]);
+    yield expect_eq(out.stdout.lines(), ["done"]);
 }
 "#;
     let report = run_source_with_manifest(NEUTRAL, MachineManifest::ratchet_default())

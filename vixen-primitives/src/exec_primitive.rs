@@ -30,7 +30,7 @@
 
 use std::sync::Arc;
 
-use vix::compiler::{byte_stream_type, capability_type, exec_outcome_type};
+use vix::compiler::{capability_type, exec_outcome_type};
 use vix::runtime::{
     ExecEvent, ExecInvocation, ProcessTermination, ReadProjection, archive_directory,
     canonical_resident_tree, exec_primitive_id, exec_request_type, tree_from_resident,
@@ -162,6 +162,19 @@ impl<Ctx> RawPrimitive<Ctx> for ExecPrimitive {
                             PrimitiveMachineError::Unavailable { detail },
                         );
                     }
+                    // A byte-stream extension: the exact bytes the process
+                    // produced, published as an immutable range addressed by
+                    // byte offset. The witness records the extension, so a
+                    // replayed stream is indistinguishable from this live one
+                    // (machine.primitive.progressive-response).
+                    Ok(ExecEvent::Stream {
+                        stream,
+                        offset,
+                        bytes,
+                    }) => match publish_stream_extension(&ctx, stream, offset, bytes) {
+                        Ok(()) => {}
+                        Err(error) => break PrimitiveCompletion::MachineError(error),
+                    },
                     Ok(ExecEvent::Terminated(Ok(output))) => {
                         break terminated(&ctx, workspace.path(), &output);
                     }
@@ -274,6 +287,32 @@ fn child_value(field: &PrimitiveField) -> Option<&PrimitiveValue> {
     }
 }
 
+/// Publish one byte-stream extension of a named response stream: intern the
+/// chunk as Blob-shaped bytes and publish it as an immutable range addressed
+/// by byte offset. The bytes are exactly what the process produced — not
+/// decoded, not line-framed; the chunk boundary is transport framing the
+/// scheduler erases on serving (`machine.primitive.exec-outcome`).
+///
+/// r[impl machine.primitive.progressive-response]
+fn publish_stream_extension(
+    ctx: &EffectCtx,
+    stream: &'static str,
+    offset: u64,
+    bytes: Vec<u8>,
+) -> Result<(), PrimitiveMachineError> {
+    let end = offset + bytes.len() as u64;
+    let value = ctx.intern(&Type::Extern(vix::vir::ExternKind::Blob).schema_ref(), &bytes)?;
+    ctx.publish_progress(ProgressivePublication {
+        projection: ReadProjection::StreamRange {
+            stream: stream.to_owned(),
+            start: offset,
+            end,
+        },
+        value,
+    });
+    Ok(())
+}
+
 /// Stage one immutable product snapshot and publish its readiness projection.
 /// The publication is recorded in the effect transaction FIRST (the completion
 /// witnesses it) and forwarded live second — the scheduler can serve a parked
@@ -360,76 +399,55 @@ fn successful_outcome(
     ctx.intern_value(outcome_value(&canonical, &output.stdout, &output.stderr))
 }
 
-/// Build the `ExecOutcome` value — `{ tree, stdout, stderr }`, stdout/stderr
-/// as lossy UTF-8 line maps settled at exit — framed exactly as the retired
-/// machine-op path framed it, so the outcome's identity survives the move.
-/// The settled byte-codata `ExecOutcome<A>` shape
-/// (`machine.primitive.exec-outcome`) remains an honest delta.
+/// Build the settled `ExecOutcome` value — `{ answer, tree, stdout, stderr }`
+/// (`machine.primitive.exec-outcome`): the termination grammar's explicit
+/// `answer` (unit, for the trivial grammar every current package declares),
+/// the canonical tree, and each stream's completed value as a byte-true Blob
+/// — the exact bytes the process produced, no UTF-8 decoding, no line
+/// framing. Text and lines are explicit stdlib projections over the Blob.
+///
+/// This is the shape upgrade the stage-2 relocation deliberately deferred: it
+/// CHANGES every exec outcome's value identity (the old lossy line-map record
+/// is gone), the accepted one-cold-run cost of leaving the dishonest shape.
+///
+/// r[impl machine.primitive.exec-outcome]
 fn outcome_value(canonical_tree: &[u8], stdout: &[u8], stderr: &[u8]) -> PrimitiveValue {
     let outcome_ty = exec_outcome_type();
-    let stream_ty = byte_stream_type();
     let Type::Record(outcome_record) = &outcome_ty else {
         unreachable!("the exec outcome is a record type");
     };
-    let tree_ty = outcome_record.fields[0].ty.clone();
-    let Type::Record(stream_record) = &stream_ty else {
-        unreachable!("a byte stream is a record type");
-    };
-    let lines_ty = stream_record.fields[0].ty.clone();
-    let int_schema = Type::Int.schema_ref();
-    let string_schema = Type::String.schema_ref();
+    let answer_schema = outcome_record.fields[0].ty.schema_ref();
+    let tree_schema = outcome_record.fields[1].ty.schema_ref();
+    let stream_schema = outcome_record.fields[2].ty.schema_ref();
 
-    let stream_value = |bytes: &[u8]| -> PrimitiveValue {
-        let text = String::from_utf8_lossy(bytes);
-        let rows = text
-            .lines()
-            .enumerate()
-            .map(|(index, line)| {
-                (
-                    PrimitiveValue::bytes(
-                        int_schema.clone(),
-                        (index as i64).to_le_bytes().to_vec(),
-                    ),
-                    PrimitiveValue::bytes(string_schema.clone(), line.as_bytes().to_vec()),
-                )
-            })
-            .collect::<Vec<_>>();
-        let map = PrimitiveValue {
-            schema: lines_ty.schema_ref(),
-            body: PrimitiveValueBody::OrderedMap(rows),
-        };
-        let full = PrimitiveValue::bytes(string_schema.clone(), text.as_bytes().to_vec());
-        PrimitiveValue {
-            schema: stream_ty.schema_ref(),
-            body: PrimitiveValueBody::Product(vec![
-                PrimitiveField {
-                    schema: lines_ty.schema_ref(),
-                    value: PrimitiveFieldValue::Child(Box::new(map)),
-                },
-                PrimitiveField {
-                    schema: string_schema.clone(),
-                    value: PrimitiveFieldValue::Child(Box::new(full)),
-                },
-            ]),
+    let blob = |bytes: &[u8]| -> PrimitiveField {
+        PrimitiveField {
+            schema: stream_schema.clone(),
+            value: PrimitiveFieldValue::Child(Box::new(PrimitiveValue::bytes(
+                stream_schema.clone(),
+                bytes.to_vec(),
+            ))),
         }
     };
-
-    let tree_value = PrimitiveValue::bytes(tree_ty.schema_ref(), canonical_tree.to_vec());
+    let tree_value = PrimitiveValue::bytes(tree_schema.clone(), canonical_tree.to_vec());
     PrimitiveValue {
         schema: outcome_ty.schema_ref(),
         body: PrimitiveValueBody::Product(vec![
+            // The unit answer: exit zero, mapped through the trivial
+            // termination grammar (`machine.primitive.exit-status-is-not-a-value`).
             PrimitiveField {
-                schema: tree_ty.schema_ref(),
+                schema: answer_schema.clone(),
+                value: PrimitiveFieldValue::Child(Box::new(PrimitiveValue {
+                    schema: answer_schema,
+                    body: PrimitiveValueBody::Product(Vec::new()),
+                })),
+            },
+            PrimitiveField {
+                schema: tree_schema,
                 value: PrimitiveFieldValue::Child(Box::new(tree_value)),
             },
-            PrimitiveField {
-                schema: stream_ty.schema_ref(),
-                value: PrimitiveFieldValue::Child(Box::new(stream_value(stdout))),
-            },
-            PrimitiveField {
-                schema: stream_ty.schema_ref(),
-                value: PrimitiveFieldValue::Child(Box::new(stream_value(stderr))),
-            },
+            blob(stdout),
+            blob(stderr),
         ]),
     }
 }

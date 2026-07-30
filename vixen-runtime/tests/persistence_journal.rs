@@ -56,7 +56,7 @@ const NONDETERMINISTIC_EXEC: &str = r#"
 #[test]
 fn nondeterministic_exec(sh: Sh) -> Stream<Check> {
     let out = exec sh`-c "date +%N"`;
-    yield expect_eq(out.stdout.collect().len(), 1);
+    yield expect_eq(out.stdout.lines().len(), 1);
 }
 "#;
 

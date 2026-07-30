@@ -182,13 +182,32 @@ core spells no name.
 
 Stated so the implementation cannot silently claim more than it ships:
 
-- Today's runtime `ExecOutcome` is `{ tree, stdout, stderr }` with stdout and
-  stderr as lossy UTF-8 line-maps settled at exit, and `answer` implicit.
-  `machine.primitive.exec-outcome` wants byte codata and an explicit `A`. The
-  rail move carries the *mechanism* for byte-stream projections; upgrading the
-  surface shape to the settled one is part of the move, but replay of a stream
-  from a memoized outcome must be indistinguishable from a live one, and the
-  witness records published extensions to make that so.
+- ~~Today's runtime `ExecOutcome` is `{ tree, stdout, stderr }` with stdout and
+  stderr as lossy UTF-8 line-maps settled at exit, and `answer` implicit.~~
+  **CLOSED (stage 3).** The runtime outcome is the settled
+  `{ answer, tree, stdout, stderr }`: `answer` is an explicit unit field (the
+  trivial termination grammar's verdict — generic `A` via `Command<A>`
+  templates remains future surface), and each stream's completed value is a
+  byte-true Blob. Text decoding and line framing are explicit stdlib
+  projections (`text`/`lines` over `Blob.try_text`), lossless — invalid UTF-8
+  is a typed `DecodeError`, a semantic improvement over the lossy line maps.
+  The shape change re-framed every exec outcome's value identity (one cold
+  run, the stage-2 precedent); demand keys did not change. In flight, both
+  streams publish byte-range extensions (`ReadProjection::StreamRange`,
+  offsets as the address, chunk boundaries erased on serving), and the
+  consumer surface is `out.stdout.take(n)` — the tree-projection rail twinned
+  for streams, EFFECT-gated on an effect-origin receiver and a compile-time
+  length. What is NOT yet expressible: a stream as a first-class codata
+  record member (`for chunk in out.stdout`) — the value model gives streams
+  no schema, no call-crossing, and no record residency, so the deepest honest
+  cut is streams demandable as byte-range projections of the outcome; and a
+  demanded range must name its offsets, so self-framing consumption ("the
+  next line, wherever it ends") stays stdlib-over-completed-values for now.
+  One readiness note the implementation surfaced: byte-range extensions
+  publish under EVERY output protocol, not only `ProgressiveLinesV1` — a
+  produced stream prefix is append-only immutable regardless of what the
+  tool promises, while PRODUCT readiness remains the declared protocol's
+  authority exactly as specified.
 - Tier-2 reuse (read-set-verified, the anti-Nix event) is specified
   (`machine.primitive.exec-identity`) and remains future work; the rail carries
   tier 1 exactly as today.
@@ -204,11 +223,22 @@ Three more the move itself surfaced:
   identity changes — while the settled shape is a change to what a program
   sees, with its own surface, replay, and identity consequences. Landing both
   at once would have made every parity failure ambiguous.
-- **Serving a projection from a memoized completion** is still not implemented
-  (deferred from stage 1 and not needed by the acceptance tests: a demanded
-  projection is either announced in flight or served from its producer's live
-  completion). It no longer hangs, though — demanding a projection of an
-  effect that is not in flight is now a loud typed fault.
+- ~~**Serving a projection from a memoized completion** is still not
+  implemented.~~ **CLOSED (stage 3).** Completion retains its witnessed
+  publications (materialized while the staged authority is live), and a
+  projection demanded of a producer no longer in flight — a memo-hit demand
+  in a later root batch — replays from that record: products by exact
+  projection, stream ranges by byte-offset assembly, program-observably
+  identical to live serving (a dedicated `Memo` authority counter is runner
+  observability only). The scope is stated exactly: retention is in-memory,
+  one scheduler. CROSS-PROCESS replay is deliberately out and stays out by
+  settled policy — exec receipts are `Unverifiable` and persisted
+  nondeterministic claims are rejected and recomputed
+  (`persistent_journal_nondeterministic_claims_do_not_load_as_hits`); a
+  confining backend that makes receipts verifiable is what would extend
+  "indistinguishable replay" across processes, not more retention. A
+  projection the witnessed record cannot serve, or an effect this scheduler
+  never completed, remains a loud typed fault, never a hang.
 - **Exec's lowering stays in the core compiler**, because `exec` is *syntax*
   (a keyword, a capability tag, a backtick template), and syntax is the
   language's. This is the `tree-read` precedent, not a violation of "core
@@ -277,4 +307,10 @@ are consequences of the rail rather than of exec:
   the snapshot path. Recomputing pure construction is free; the operands it
   consumes are still ordinary published values. Before the move, exec's argv
   was inline `CommandArgument` data rather than nodes, so this too had nothing
-  to state.
+  to state. **AMENDED (stage 3): a published array of HANDLE-BEARING elements
+  now freezes.** The "no consumer off the snapshot path" premise expired the
+  moment a hoisted stdlib call (`lines(out.stdout)`) published a `[String]`
+  that a check island then bound: an unfrozen handle-bearing array's resident
+  buffer carries producer-task molten handles no other task can resolve, so
+  the store-handle binding read dangling handles. Scalar-element arrays keep
+  the cheaper unfrozen publication, whose cells are the values themselves.

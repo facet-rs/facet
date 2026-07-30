@@ -1392,30 +1392,20 @@ pub fn is_capability_type(ty: &Type) -> bool {
     )
 }
 
-/// The completed view of one exec output stream under the ratchet capability
-/// packages' output protocol: line-framed text codata plus its complete decoded
-/// text. Both payload fields are not legal surface identifiers; typed methods
-/// are the only projections.
-#[must_use]
-pub fn byte_stream_type() -> Type {
-    Type::Record(RecordType::new(
-        "ByteStream",
-        vec![
-            RecordField {
-                name: "$lines".to_owned(),
-                ty: Type::map(Type::Int, Type::String),
-            },
-            RecordField {
-                name: "$text".to_owned(),
-                ty: Type::String,
-            },
-        ],
-    ))
-}
-
-/// `exec`'s result type. There is no exit-status field: termination becomes
-/// the typed answer or a typed failure. The completed tree is immutable; later
-/// slices expose protocol-authorized projections before whole-process exit.
+/// `exec`'s result type, the settled `ExecOutcome<A>` shape: an explicit
+/// `answer` (the termination grammar's typed verdict — unit for the current
+/// packages, whose grammar maps exit zero to unit and everything else to a
+/// typed failure), the immutable response `tree`, and `stdout`/`stderr` as
+/// byte streams whose COMPLETED values are Blobs — byte-true, never decoded,
+/// never line-framed. Text decoding and line framing are explicit projections
+/// (the stdlib `text`/`lines` wrappers over `Blob`), not machine vocabulary;
+/// in flight the streams publish byte-range extensions addressed by byte
+/// offset (`ReadProjection::StreamRange`). There is no exit-status field.
+///
+/// The generic `A` of `Command<A>` templates is future surface: today every
+/// package's answer is unit, so the field is the unit value — but it is a
+/// FIELD, not an implication, which is what makes "demanding the answer
+/// synchronizes" a fact about the record rather than about the whole outcome.
 ///
 /// r[impl machine.primitive.exec-outcome]
 /// r[impl machine.primitive.exit-status-is-not-a-value]
@@ -1425,20 +1415,29 @@ pub fn exec_outcome_type() -> Type {
         "ExecOutcome",
         vec![
             RecordField {
+                name: "answer".to_owned(),
+                ty: Type::Tuple(Vec::new()),
+            },
+            RecordField {
                 name: "tree".to_owned(),
                 ty: Type::Extern(ExternKind::Host(crate::binding::TREE)),
             },
             RecordField {
                 name: "stdout".to_owned(),
-                ty: byte_stream_type(),
+                ty: Type::Extern(ExternKind::Blob),
             },
             RecordField {
                 name: "stderr".to_owned(),
-                ty: byte_stream_type(),
+                ty: Type::Extern(ExternKind::Blob),
             },
         ],
     ))
 }
+
+/// The index of the exec outcome's `tree` field — the projection the
+/// progressive tree-read rail recognizes (`progressive_exec_tree_root`,
+/// `vir::progressive_exec_tree_path`).
+pub const EXEC_OUTCOME_TREE_FIELD: u32 = 1;
 
 fn lower_module(
     source: &ast::SourceFile,
@@ -4317,7 +4316,34 @@ fn progressive_exec_tree_root(nodes: &[Node], node: NodeId) -> bool {
     let Some(project) = nodes.get(node.0 as usize) else {
         return false;
     };
-    let Op::Project { index: 0 } = project.op else {
+    let Op::Project {
+        index: EXEC_OUTCOME_TREE_FIELD,
+    } = project.op
+    else {
+        return false;
+    };
+    let Some(producer) = project
+        .inputs
+        .first()
+        .and_then(|input| nodes.get(input.0 as usize))
+    else {
+        return false;
+    };
+    matches!(producer.op, Op::InvokePrimitive { .. }) && producer.effect.kind == EffectKind::Effect
+}
+
+/// Whether `node` projects a byte-stream field of a still-running registered
+/// effect invocation — the stream twin of [`progressive_exec_tree_root`]. Any
+/// Blob-typed field projection of an effect qualifies: WHICH field is a stream
+/// is the response record's own shape, never a name the machine matches on.
+fn progressive_exec_stream_root(nodes: &[Node], node: NodeId) -> bool {
+    let Some(project) = nodes.get(node.0 as usize) else {
+        return false;
+    };
+    if project.ty != Type::Extern(ExternKind::Blob) {
+        return false;
+    }
+    let Op::Project { .. } = project.op else {
         return false;
     };
     let Some(producer) = project
@@ -4464,6 +4490,76 @@ fn lower_method_call(
         return lower_tree_text_projection(nodes, bindings, context, call, base, &segments);
     }
     let receiver = lower_value(nodes, bindings, context, &call.receiver)?;
+    // `Blob.take(len)` — the byte-range projection, and the stream twin of the
+    // `.text()` tree projection above: one request spelling
+    // (`blob_slice_request_type`), two authorities. On a settled Blob it is an
+    // ordinary hermetic slice; on a projection of a still-running effect's
+    // response (an exec stream field) with a compile-time length it is marked
+    // `EFFECT`, and the partitioner realizes it as a byte-range projection
+    // demand served the moment the published frontier covers it — before the
+    // process exits (`machine.primitive.progressive-response`). Like the tree
+    // rail, a computed length cannot name its range ahead of time and falls
+    // back to the settled read. This gate and the partitioner's node-level
+    // twin (`vir::progressive_exec_stream_range`) must agree.
+    if call.name.value == "take"
+        && call.named_args.is_none()
+        && method_positional_args(call).len() == 1
+        && receiver.ty == Type::Extern(ExternKind::Blob)
+    {
+        let length = lower_value_expected(
+            nodes,
+            bindings,
+            context,
+            &method_positional_args(call)[0],
+            Some(&Type::Int),
+        )?;
+        require_type(
+            &length,
+            &Type::Int,
+            expr_span(&method_positional_args(call)[0]),
+        )?;
+        let progressive = progressive_exec_stream_root(nodes, receiver.node)
+            && matches!(
+                nodes.get(length.node.0 as usize).map(|node| &node.op),
+                Some(Op::Int(_))
+            );
+        let start = push_node(
+            nodes,
+            call.span,
+            Type::Int,
+            EffectFacts::PURE,
+            Vec::new(),
+            Op::Int(0),
+        );
+        let request_ty = crate::runtime::blob_slice_request_type();
+        let request = push_node(
+            nodes,
+            call.span,
+            request_ty,
+            EffectFacts::PURE,
+            vec![receiver.node, start, length.node],
+            Op::Record,
+        );
+        let facts = if progressive {
+            EffectFacts::EFFECT
+        } else {
+            EffectFacts::PURE
+        };
+        let ty = Type::Extern(ExternKind::Blob);
+        return Ok(LoweredValue {
+            node: push_node(
+                nodes,
+                call.span,
+                ty.clone(),
+                facts,
+                vec![request],
+                Op::InvokePrimitive {
+                    primitive: crate::runtime::blob_slice_primitive_id(),
+                },
+            ),
+            ty,
+        });
+    }
     // Axiom methods resolve against the builtin registry; the embedder's injected
     // host-type methods (`Tree.glob`, …) resolve against `config.methods`.
     let Some(entry) =
@@ -5229,45 +5325,6 @@ fn lower_method_call(
             ),
             ty: Type::String,
         }),
-        // Completing an exec output stream to its semantic content: under the
-        // ratchet capability packages' line-framed output protocol the
-        // completed value is the line-keyed map, physically the stream
-        // record's single payload field.
-        PreludeMethod::ByteStreamCollect => {
-            let ty = Type::map(Type::Int, Type::String);
-            Ok(LoweredValue {
-                node: push_node(
-                    nodes,
-                    call.span,
-                    ty.clone(),
-                    EffectFacts::PURE,
-                    vec![receiver.node],
-                    Op::Project { index: 0 },
-                ),
-                ty,
-            })
-        }
-        PreludeMethod::ByteStreamTrim => {
-            let text = push_node(
-                nodes,
-                call.span,
-                Type::String,
-                EffectFacts::PURE,
-                vec![receiver.node],
-                Op::Project { index: 1 },
-            );
-            Ok(LoweredValue {
-                node: push_node(
-                    nodes,
-                    call.span,
-                    Type::String,
-                    EffectFacts::PURE,
-                    vec![text],
-                    Op::StringTrim,
-                ),
-                ty: Type::String,
-            })
-        }
         PreludeMethod::IntToString => {
             require_type(&receiver, &Type::Int, expr_span(&call.receiver))?;
             Ok(LoweredValue {

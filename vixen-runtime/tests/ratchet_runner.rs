@@ -42,6 +42,10 @@ fn user_program_compiler() -> Compiler {
 fn decode_compiler() -> Compiler {
     Compiler::with_config(CompilerConfig {
         prelude: vixen_primitives::stdlib::PRELUDE_SOURCES,
+        // The stdlib's `text`/`lines` wrappers spell `Blob.try_text()`, an
+        // injected domain method — the prelude no longer compiles without the
+        // embedder's method declarations.
+        methods: vixen_primitives::DOMAIN_METHODS,
         ..CompilerConfig::default()
     })
 }
@@ -6072,12 +6076,18 @@ fn t() -> Stream<Check> {
         let module = decode_compiler()
             .compile(source)
             .expect("dynamic decode compiles");
+        // Count only DECODE invocations: the injected prelude now carries its
+        // own primitive-backed bodies (`text`/`lines` over `Blob.try_text`),
+        // so an unfiltered count would see the stdlib's nodes too.
         assert_eq!(
             module
                 .functions
                 .iter()
                 .flat_map(|function| &function.nodes)
-                .filter(|node| matches!(node.op, VirOp::InvokePrimitive { .. }))
+                .filter(|node| matches!(
+                    &node.op,
+                    VirOp::InvokePrimitive { primitive } if *primitive == vix::vir::decode_primitive_id()
+                ))
                 .count() as u64,
             expected_documents,
             "one generic primitive invocation for one dynamic document",
@@ -6372,7 +6382,11 @@ fn rung_067_exec_echo_runs_through_the_capability_effect_demand() {
 
     for lane in [&report.plain, &report.chaos] {
         assert_eq!(lane.counters.effect_spawns, 1);
-        assert_eq!(lane.receipt_count, 1);
+        // Two receipts: the exec effect's capability read, plus the check
+        // island's `Blob.try_text` decode (the stdlib `lines` wrapper) — text
+        // decoding is an explicit witnessed projection now, not a free ride
+        // on the outcome shape.
+        assert_eq!(lane.receipt_count, 2);
         assert!(lane.events.iter().any(|event| matches!(
             event.kind,
             EventKind::TaskTransition {

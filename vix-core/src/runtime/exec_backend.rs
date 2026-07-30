@@ -66,9 +66,27 @@ pub struct ExecProduct {
 pub enum ExecEvent {
     /// A progressive product announcement (or its per-product read failure).
     Product(Result<ExecProduct, String>),
+    /// One byte-stream extension: `bytes` begins at byte `offset` of the named
+    /// response stream, exactly as the process produced them (output-protocol
+    /// lines are carved out of the logical stream before offsets are
+    /// assigned). The chunking is transport framing — how the reader happened
+    /// to observe the bytes — never identity
+    /// (`machine.primitive.exec-outcome`).
+    Stream {
+        stream: &'static str,
+        offset: u64,
+        bytes: Vec<u8>,
+    },
     /// The process terminated (or the boundary failed before termination).
     Terminated(Result<std::process::Output, String>),
 }
+
+/// The exec response's stdout stream name, as both the outcome record field
+/// and the byte-stream extension address it.
+pub const EXEC_STDOUT_STREAM: &str = "stdout";
+
+/// The exec response's stderr stream name.
+pub const EXEC_STDERR_STREAM: &str = "stderr";
 
 /// The backend's one delivery authority: a `Send + Sync` sender the scheduler
 /// wraps around its unified completion inbox. The backend may call it from any
@@ -171,12 +189,24 @@ impl ExecBackend for HostExecBackend {
                 read_exec_stdout(stdout, protocol, &workspace_path, &progress_events)
             });
             let worker_program = program.clone();
+            let stderr_events = events.clone();
             let stderr_reader = std::thread::spawn(move || {
                 let mut bytes = Vec::new();
                 let mut stderr = stderr;
-                stderr
-                    .read_to_end(&mut bytes)
-                    .map_err(|error| format!("read `{worker_program}` stderr: {error}"))?;
+                let mut chunk = [0u8; 8192];
+                loop {
+                    let read = chunk_read(&mut stderr, &mut chunk)
+                        .map_err(|error| format!("read `{worker_program}` stderr: {error}"))?;
+                    if read == 0 {
+                        break;
+                    }
+                    (*stderr_events)(ExecEvent::Stream {
+                        stream: EXEC_STDERR_STREAM,
+                        offset: bytes.len() as u64,
+                        bytes: chunk[..read].to_vec(),
+                    });
+                    bytes.extend_from_slice(&chunk[..read]);
+                }
                 Ok::<_, String>(bytes)
             });
             let output = (|| {
@@ -238,10 +268,26 @@ fn read_exec_stdout(
                 bytes,
             })));
         } else {
+            (*events)(ExecEvent::Stream {
+                stream: EXEC_STDOUT_STREAM,
+                offset: output.len() as u64,
+                bytes: line.clone(),
+            });
             output.extend_from_slice(&line);
         }
     }
     Ok(output)
+}
+
+/// One `read` observation, retried through interruptions. Kept out of the
+/// reader loops so both streams share the identical transport discipline.
+fn chunk_read(source: &mut impl Read, chunk: &mut [u8]) -> std::io::Result<usize> {
+    loop {
+        match source.read(chunk) {
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            outcome => return outcome,
+        }
+    }
 }
 
 /// Capture a completed workspace as ustar archive bytes — the raw form the exec

@@ -6,6 +6,6 @@
 fn effects_overlap(sh: Sh) -> Stream<Check> {
     let a = exec sh`-c "sleep 0.4; echo a"`;
     let b = exec sh`-c "sleep 0.4; echo b"`;
-    yield expect_eq(a.stdout.trim() + b.stdout.trim(), "ab");
+    yield expect_eq(a.stdout.text().trim() + b.stdout.text().trim(), "ab");
     yield overlapped();
 }
