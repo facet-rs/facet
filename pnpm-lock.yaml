@@ -6,7 +6,7 @@ settings:
 
 overrides:
   esbuild: ^0.28.1
-  uuid: ^11.1.1
+  uuid: ^14.0.0
 
 importers:
 
@@ -1340,8 +1340,8 @@ packages:
   undici-types@6.21.0:
     resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
 
-  uuid@11.1.1:
-    resolution: {integrity: sha512-vIYxrBCC/N/K+Js3qSN88go7kIfNPssr/hHCesKCQNAjmgvYS2oqr69kIufEG+O4+PfezOH4EbIeHCfFov8ZgQ==}
+  uuid@14.0.1:
+    resolution: {integrity: sha512-6ZxzVpzDXDa3bJWaHilVayA+BH/1zmxCJoVgvmqJnid/gPoKHxUrS/aC/T6LGQtNHT+XHG9fXPJB4d+IrU30Ew==}
     hasBin: true
 
   vite-node@3.2.4:
@@ -2447,7 +2447,7 @@ snapshots:
 
   undici-types@6.21.0: {}
 
-  uuid@11.1.1: {}
+  uuid@14.0.1: {}
 
   vite-node@3.2.4(@types/node@20.19.43)(lightningcss@1.33.0):
     dependencies:
@@ -2475,7 +2475,7 @@ snapshots:
       '@rollup/plugin-virtual': 3.0.2(rollup@4.62.2)
       '@swc/core': 1.15.46
       '@swc/wasm': 1.15.46
-      uuid: 11.1.1
+      uuid: 14.0.1
       vite: 8.1.5(@types/node@20.19.43)(esbuild@0.28.1)
     transitivePeerDependencies:
       - '@swc/helpers'

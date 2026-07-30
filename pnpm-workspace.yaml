@@ -15,4 +15,4 @@ allowBuilds:
   esbuild: true
 overrides:
   esbuild: ^0.28.1
-  uuid: ^11.1.1
+  uuid: ^14.0.0
