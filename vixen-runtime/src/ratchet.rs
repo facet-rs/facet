@@ -277,6 +277,11 @@ pub enum RunError {
         context: Option<FailureContext>,
     },
     PersistentRuntime(Box<PersistentRuntimeJournalError>),
+    /// The machine manifest the invoker DECLARED (`VIX_MACHINE_MANIFEST`)
+    /// failed to load. Loud and typed by design: the harness default serves
+    /// only the undeclared case, never a declared file that cannot be read
+    /// or parsed (`vixen.machine.manifest`).
+    Manifest(crate::manifest::ManifestLoadError),
 }
 
 /// The stable provenance key of a published check: the yield site's selector
@@ -701,8 +706,11 @@ pub struct PreparedRun {
     compilation: vix::compiler::Compilation,
     cache: LoweringCache,
     /// The machine manifest the run binds root capability parameters against
-    /// (`vixen.machine.manifest`). Defaults to [`MachineManifest::ratchet_default`];
-    /// [`PreparedRun::with_manifest`] substitutes an explicit machine word.
+    /// (`vixen.machine.manifest`). Resolved at preparation through
+    /// [`crate::manifest::declared_manifest`]: the file `VIX_MACHINE_MANIFEST`
+    /// explicitly declares, or [`MachineManifest::ratchet_default`] when
+    /// nothing is declared. [`PreparedRun::with_manifest`] substitutes an
+    /// explicit machine word.
     manifest: crate::manifest::MachineManifest,
 }
 
@@ -1049,10 +1057,15 @@ fn prepare_modules_with_cache(
         }
     }
 
+    // The machine word this run binds against: the manifest the invoker
+    // DECLARED through `VIX_MACHINE_MANIFEST`, or the harness default when
+    // nothing is declared. A declared file that fails to load is a loud typed
+    // error here at the entrypoint — never a silent default.
+    // `PreparedRun::with_manifest` still substitutes an explicit Rust value.
     Ok(PreparedRun {
         compilation,
         cache,
-        manifest: crate::manifest::MachineManifest::ratchet_default(),
+        manifest: crate::manifest::declared_manifest().map_err(RunError::Manifest)?,
     })
 }
 

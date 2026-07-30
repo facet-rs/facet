@@ -223,6 +223,73 @@ impl MachineManifest {
     }
 }
 
+/// The environment variable through which an invoker DECLARES the machine
+/// manifest file: an explicit path, read once at the embedder entrypoint.
+/// This is a declaration, not discovery — no path is probed, no directory
+/// walked, no fallback location tried (`vixen.machine.manifest`: a machine's
+/// word is stated, never conjured from its surroundings).
+pub const MANIFEST_ENV: &str = "VIX_MACHINE_MANIFEST";
+
+/// A typed manifest-loading failure. A declared file that cannot be read or
+/// parsed is THIS error at the entrypoint — never a silent fall-back to the
+/// harness default, which would run the program under a machine word the
+/// invoker explicitly replaced.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ManifestLoadError {
+    /// The declared path could not be read.
+    Unreadable { path: String, detail: String },
+    /// The declared file read, but is not a valid manifest document.
+    Malformed { path: String, detail: String },
+}
+
+impl core::fmt::Display for ManifestLoadError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Unreadable { path, detail } => write!(
+                f,
+                "error[manifest]: declared machine manifest `{path}` cannot be read: {detail}"
+            ),
+            Self::Malformed { path, detail } => write!(
+                f,
+                "error[manifest]: declared machine manifest `{path}` is not a manifest document: {detail}"
+            ),
+        }
+    }
+}
+
+/// Load the manifest an explicit path declares: read the file, parse it as
+/// the [`MachineManifest::from_toml`] document. Both failure sides are loud
+/// and typed, naming the declared path.
+pub fn load_manifest(path: &str) -> Result<MachineManifest, ManifestLoadError> {
+    let source = std::fs::read_to_string(path).map_err(|error| ManifestLoadError::Unreadable {
+        path: path.to_owned(),
+        detail: error.to_string(),
+    })?;
+    MachineManifest::from_toml(&source).map_err(|detail| ManifestLoadError::Malformed {
+        path: path.to_owned(),
+        detail,
+    })
+}
+
+/// Resolve this process's machine word: the manifest file
+/// [`MANIFEST_ENV`] explicitly declares, or
+/// [`MachineManifest::ratchet_default`] when nothing is declared. A declared
+/// file that is missing, unreadable, malformed — or a declared path that is
+/// not even UTF-8 — is a loud typed error; the default serves only the
+/// UNDECLARED case.
+pub fn declared_manifest() -> Result<MachineManifest, ManifestLoadError> {
+    match std::env::var_os(MANIFEST_ENV) {
+        Some(path) => {
+            let path = path.to_str().ok_or_else(|| ManifestLoadError::Unreadable {
+                path: path.to_string_lossy().into_owned(),
+                detail: "the declared path is not valid UTF-8".to_owned(),
+            })?;
+            load_manifest(path)
+        }
+        None => Ok(MachineManifest::ratchet_default()),
+    }
+}
+
 /// One requirement a test's plans impose on a capability type, in the shared
 /// vocabulary — `Target` values, never tool strings.
 #[derive(Clone, Debug, PartialEq, Eq)]
