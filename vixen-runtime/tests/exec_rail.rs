@@ -305,6 +305,158 @@ fn cargo_shape(sh: Sh) -> Stream<Check> {
     }
 }
 
+/// `slice(start, len)` — the general spelling of the byte-range vocabulary
+/// `take(n)` opened, on the settled (hermetic) authority. A computed start
+/// cannot name its range ahead of time, so this slice is NOT a progressive
+/// island (the partition pins that): it is the ordinary hermetic
+/// `blob-slice` primitive over the completed stream Blob, and it reads the
+/// exact middle bytes.
+///
+/// r[verify machine.primitive.exec-outcome]
+#[test]
+fn a_settled_slice_reads_the_exact_middle_bytes() {
+    const SOURCE: &str = r#"
+#[test]
+fn settled_slice(sh: Sh) -> Stream<Check> {
+    let out = exec sh`-c "printf 'abcdef'"`;
+    let start = out.stdout.len() - 4;
+    yield expect_eq(out.stdout.slice(start, 3).text(), "cde");
+}
+"#;
+    let module = vixen_runtime::default_compiler()
+        .compile(SOURCE)
+        .expect("the settled-slice program compiles");
+    let partitioned = module.partition_test(&module.tests[0]);
+    assert!(
+        partitioned.progressive_values.is_empty(),
+        "a computed bound falls back to the settled read — no progressive island"
+    );
+    let report = run_source(SOURCE).expect("the settled-slice program runs");
+    assert!(
+        passed(&report),
+        "slice(2, 3) of the settled stream reads `cde`: {report:#?}"
+    );
+}
+
+/// The mid-stream twin of the `take` pipeline test: **a byte range at a
+/// NONZERO offset is served live**, while the process still runs. The range
+/// `slice(2, 4)` addresses bytes [2, 6) of the stream — inside the first
+/// line, printed before the sleep — so the live frontier covers it long
+/// before exit. Offsets are the address (`machine.primitive.exec-outcome`);
+/// nothing about the serving authority privileges offset zero.
+///
+/// r[verify machine.primitive.progressive-response]
+/// r[verify machine.primitive.exec-outcome]
+#[test]
+fn a_mid_stream_slice_is_served_while_the_process_runs() {
+    const SOURCE: &str = r#"
+#[test]
+fn mid_stream(sh: Sh) -> Stream<Check> {
+    let producer = exec sh`-c "printf 'early\n'; sleep 0.3; printf 'late\n'"`;
+    let mid = producer.stdout.slice(2, 4);
+    yield expect_eq(mid.text(), "rly\n");
+    yield expect_eq(producer.stdout.lines(), ["early", "late"]);
+}
+"#;
+    let module = vixen_runtime::default_compiler()
+        .compile(SOURCE)
+        .expect("the mid-stream program compiles");
+    let partitioned = module.partition_test(&module.tests[0]);
+    let [projection] = partitioned.progressive_values.as_slice() else {
+        panic!("the mid-stream byte range is a progressive value island");
+    };
+    assert_eq!(
+        projection.projection,
+        vix::vir::ProgressiveProjection::StreamRange {
+            stream: "stdout".to_owned(),
+            start: 2,
+            end: 6,
+        },
+        "the slice is a byte range addressed by its nonzero offset"
+    );
+    let (producer_island, mid_island) = (projection.producer, projection.id);
+
+    let report = run_source(SOURCE).expect("the mid-stream program runs");
+    assert!(
+        passed(&report),
+        "the mid-stream bytes read `rly\\n` and the settled stream both lines: {report:#?}"
+    );
+    for lane in [&report.plain, &report.chaos] {
+        assert!(
+            lane.counters.progressive_effect_protocol_publications >= 1,
+            "the live stream frontier served the mid-stream range while the process ran"
+        );
+        assert_eq!(
+            lane.counters.progressive_effect_completion_publications, 0,
+            "the completion fallback was never needed"
+        );
+        let producer_at = completed_at(lane, &value_identity(lane, producer_island));
+        let mid_at = completed_at(lane, &value_identity(lane, mid_island));
+        assert!(
+            mid_at < producer_at,
+            "the mid-stream range resolved before the producer's aggregate outcome"
+        );
+    }
+}
+
+/// Identity: **`slice(0, n)` IS `take(n)` — one demand key, pinned.** The
+/// lowering builds the same `[receiver, Int(0), n]` request nodes for both
+/// spellings, so they name one projection (the partition shows two islands
+/// with one identical `StreamRange`) and at runtime the second spelling joins
+/// the first's demand: exactly one projection publication serves both, and
+/// both islands publish the same value identity.
+///
+/// r[verify machine.primitive.exec-outcome]
+/// r[verify machine.primitive.progressive-response]
+#[test]
+fn slice_from_zero_and_take_share_one_demand_key() {
+    const SOURCE: &str = r#"
+#[test]
+fn alias(sh: Sh) -> Stream<Check> {
+    let producer = exec sh`-c "printf 'early\n'; sleep 0.2; printf 'late\n'"`;
+    let head = producer.stdout.take(6);
+    let same = producer.stdout.slice(0, 6);
+    yield expect_eq(head.lines(), ["early"]);
+    yield expect_eq(same.lines(), ["early"]);
+}
+"#;
+    let module = vixen_runtime::default_compiler()
+        .compile(SOURCE)
+        .expect("the alias program compiles");
+    let partitioned = module.partition_test(&module.tests[0]);
+    let [take, slice] = partitioned.progressive_values.as_slice() else {
+        panic!("both spellings are progressive value islands");
+    };
+    assert_eq!(
+        take.projection, slice.projection,
+        "slice(0, n) and take(n) name one identical projection"
+    );
+    assert_eq!(
+        take.producer, slice.producer,
+        "both address the same producer's stream"
+    );
+    let report = run_source(SOURCE).expect("the alias program runs");
+    assert!(passed(&report), "both spellings read `early`: {report:#?}");
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(
+            value_identity(lane, take.id),
+            value_identity(lane, slice.id),
+            "one demand published one value under both provenances"
+        );
+    }
+    // The sharp end of "one demand key": the plain lane serves exactly one
+    // projection publication for the two spellings — the second submission
+    // joined the first's demand rather than opening a second serving.
+    assert_eq!(
+        report.plain.counters.progressive_effect_protocol_publications
+            + report.plain.counters.progressive_effect_completion_publications
+            + report.plain.counters.progressive_effect_replay_publications,
+        1,
+        "two spellings, one served projection: {:#?}",
+        report.plain.counters
+    );
+}
+
 /// Acceptance 3: **nothing re-keys**, at the identity the move preserves.
 ///
 /// The rail derives the effect demand from the primitive's declaration rather

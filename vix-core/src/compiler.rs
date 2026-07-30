@@ -4515,54 +4515,104 @@ fn lower_method_call(
         return lower_tree_text_projection(nodes, bindings, context, call, base, &segments);
     }
     let receiver = lower_value(nodes, bindings, context, &call.receiver)?;
-    // `Blob.take(len)` — the byte-range projection, and the stream twin of the
-    // `.text()` tree projection above: one request spelling
-    // (`blob_slice_request_type`), two authorities. On a settled Blob it is an
-    // ordinary hermetic slice; on a projection of a still-running effect's
-    // response (an exec stream field) with a compile-time length it is marked
-    // `EFFECT`, and the partitioner realizes it as a byte-range projection
-    // demand served the moment the published frontier covers it — before the
-    // process exits (`machine.primitive.progressive-response`). Like the tree
-    // rail, a computed length cannot name its range ahead of time and falls
-    // back to the settled read. This gate and the partitioner's node-level
-    // twin (`vir::progressive_exec_stream_range`) must agree.
-    if call.name.value == "take"
-        && call.named_args.is_none()
-        && method_positional_args(call).len() == 1
-        && receiver.ty == Type::Extern(ExternKind::Blob)
-    {
-        let length = lower_value_expected(
-            nodes,
-            bindings,
-            context,
-            &method_positional_args(call)[0],
-            Some(&Type::Int),
-        )?;
-        require_type(
-            &length,
-            &Type::Int,
-            expr_span(&method_positional_args(call)[0]),
-        )?;
+    // `Blob.take(len)` / `Blob.slice(start, len)` — the byte-range projection,
+    // and the stream twin of the `.text()` tree projection above: one request
+    // spelling (`blob_slice_request_type`, fields `[blob, start, end)`), two
+    // authorities. On a settled Blob it is an ordinary hermetic slice; on a
+    // projection of a still-running effect's response (an exec stream field)
+    // with literal bounds it is marked `EFFECT`, and the partitioner realizes
+    // it as a byte-range projection demand served the moment the published
+    // frontier covers it — before the process exits
+    // (`machine.primitive.progressive-response`). Like the tree rail, a
+    // computed bound cannot name its range ahead of time and falls back to the
+    // settled read. This gate and the partitioner's node-level twin
+    // (`vir::progressive_exec_stream_range`) must agree.
+    //
+    // The two spellings are one vocabulary: `take(n)` IS `slice(0, n)`, and
+    // the lowering pins that as demand identity — a zero start lowers to the
+    // same `[receiver, Int(0), len]` request nodes either way (the end bound
+    // rides the length node directly; literal bounds fold to a literal end),
+    // so `slice(0, n)` and `take(n)` share one canonical recipe and one
+    // demand key.
+    let blob_slice_start = match call.name.value.as_str() {
+        "take"
+            if call.named_args.is_none()
+                && method_positional_args(call).len() == 1
+                && receiver.ty == Type::Extern(ExternKind::Blob) =>
+        {
+            Some(None)
+        }
+        "slice"
+            if call.named_args.is_none()
+                && method_positional_args(call).len() == 2
+                && receiver.ty == Type::Extern(ExternKind::Blob) =>
+        {
+            Some(Some(&method_positional_args(call)[0]))
+        }
+        _ => None,
+    };
+    if let Some(start_expr) = blob_slice_start {
+        let length_expr = method_positional_args(call)
+            .last()
+            .expect("the arity was checked above");
+        let start = match start_expr {
+            Some(expression) => {
+                let start =
+                    lower_value_expected(nodes, bindings, context, expression, Some(&Type::Int))?;
+                require_type(&start, &Type::Int, expr_span(expression))?;
+                start.node
+            }
+            None => push_node(
+                nodes,
+                call.span,
+                Type::Int,
+                EffectFacts::PURE,
+                Vec::new(),
+                Op::Int(0),
+            ),
+        };
+        let length = lower_value_expected(nodes, bindings, context, length_expr, Some(&Type::Int))?;
+        require_type(&length, &Type::Int, expr_span(length_expr))?;
+        let literal_int = |nodes: &[Node], node: NodeId| match nodes.get(node.0 as usize) {
+            Some(Node {
+                op: Op::Int(value), ..
+            }) => Some(*value),
+            _ => None,
+        };
+        // The exclusive end bound: a zero start rides the length node itself
+        // (the take shape, and slice(0, n)'s identity with it); two literals
+        // fold to a literal end so the progressive extraction reads constant
+        // bounds; anything else is an ordinary checked addition on the
+        // settled path.
+        let end = match (literal_int(nodes, start), literal_int(nodes, length.node)) {
+            (Some(0), _) => length.node,
+            (Some(from), Some(len)) if from.checked_add(len).is_some() => push_node(
+                nodes,
+                call.span,
+                Type::Int,
+                EffectFacts::PURE,
+                Vec::new(),
+                Op::Int(from + len),
+            ),
+            _ => push_node(
+                nodes,
+                call.span,
+                Type::Int,
+                EffectFacts::PURE,
+                vec![start, length.node],
+                Op::Add,
+            ),
+        };
         let progressive = progressive_exec_stream_root(nodes, receiver.node)
-            && matches!(
-                nodes.get(length.node.0 as usize).map(|node| &node.op),
-                Some(Op::Int(_))
-            );
-        let start = push_node(
-            nodes,
-            call.span,
-            Type::Int,
-            EffectFacts::PURE,
-            Vec::new(),
-            Op::Int(0),
-        );
+            && literal_int(nodes, start).is_some()
+            && literal_int(nodes, end).is_some();
         let request_ty = crate::runtime::blob_slice_request_type();
         let request = push_node(
             nodes,
             call.span,
             request_ty,
             EffectFacts::PURE,
-            vec![receiver.node, start, length.node],
+            vec![receiver.node, start, end],
             Op::Record,
         );
         let facts = if progressive {
