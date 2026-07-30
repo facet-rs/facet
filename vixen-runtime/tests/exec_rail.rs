@@ -520,3 +520,154 @@ fn the_effect_demand_key_is_a_pure_function_of_plan_and_capability() {
     assert_ne!(base.closure, preimage("echo", &["twice"]).closure);
     assert_eq!(base.arguments, preimage("echo", &["twice"]).arguments);
 }
+
+/// Byte fidelity: **the completed stream is the exact bytes the process
+/// produced** — no lossy decoding, no line framing, no replacement
+/// characters. A producer emits two bytes that are not UTF-8 (`0xFF 0xFE`);
+/// the settled stream Blob and a demanded byte range both round-trip them
+/// exactly (the retired lossy line-map shape would have substituted two
+/// three-byte U+FFFD sequences), and stderr rides the same byte-true rail.
+///
+/// The range's published identity is asserted byte-for-byte Rust-side: the
+/// served value IS `FramedNode::leaf(Blob, [0xFF, 0xFE])`.
+///
+/// r[verify machine.primitive.exec-outcome]
+#[test]
+fn a_non_utf8_stream_round_trips_byte_for_byte() {
+    const SOURCE: &str = r#"
+#[test]
+fn fidelity(sh: Sh) -> Stream<Check> {
+    let out = exec sh`-c "printf '\377\376'; printf 'oops' 1>&2"`;
+    let head = out.stdout.take(2);
+    yield expect_eq(head.len(), 2);
+    yield expect_eq(out.stdout.len(), 2);
+    yield expect_eq(out.stderr.text(), "oops");
+}
+"#;
+    let module = vixen_runtime::default_compiler()
+        .compile(SOURCE)
+        .expect("the fidelity program compiles");
+    let partitioned = module.partition_test(&module.tests[0]);
+    let [projection] = partitioned.progressive_values.as_slice() else {
+        panic!("the byte range is a progressive value island");
+    };
+    let head_island = projection.id;
+
+    let report = run_source(SOURCE).expect("the fidelity program runs");
+    assert!(
+        passed(&report),
+        "two non-UTF-8 bytes survive as two bytes and stderr as text: {report:#?}"
+    );
+    let expected = vix::runtime::FramedNode::leaf(
+        vix::vir::Type::Extern(vix::vir::ExternKind::Blob).schema_ref(),
+        vec![0xFF, 0xFE],
+    )
+    .identity();
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(
+            value_identity(lane, head_island),
+            expected,
+            "the served range is byte-identical to what the process wrote"
+        );
+    }
+}
+
+/// The lines wrapper on invalid UTF-8 **fails typed**: decoding is an
+/// explicit lossless projection, so bytes that are not text raise the
+/// primitive's `DecodeError` — a `FailureValue::Raised` carrying the typed
+/// payload — never a lossy substitution and never a machine crash.
+///
+/// r[verify machine.primitive.exec-outcome]
+#[test]
+fn the_lines_wrapper_on_invalid_utf8_is_a_typed_failure() {
+    const SOURCE: &str = r#"
+#[test]
+fn undecodable(sh: Sh) -> Stream<Check> {
+    let out = exec sh`-c "printf '\377\376'"`;
+    yield expect_eq(out.stdout.lines().len(), 0);
+}
+"#;
+    let report = run_source(SOURCE).expect("an undecodable stream is a failure, never a crash");
+    assert!(
+        !passed(&report),
+        "framing non-text as lines fails the check: {report:#?}"
+    );
+    for lane in [&report.plain, &report.chaos] {
+        let failure = lane
+            .checks
+            .first()
+            .and_then(|check| check.failure.clone())
+            .expect("the check records its typed failure");
+        let vix::runtime::FailureValue::Raised { payload, .. } = failure else {
+            panic!("invalid UTF-8 raises the stdlib's typed DecodeError, got {failure:?}");
+        };
+        assert_eq!(
+            payload.schema,
+            vix::vir::decode_error_type().schema_ref(),
+            "the payload is the decode error, interned under its own schema"
+        );
+    }
+}
+
+/// Replay: **a memo-hit producer's streams and products are
+/// indistinguishable from live ones.** Two tests in one suite run the same
+/// plan under the same capability; the second is served from the demand
+/// record — no second process (spawn counter) — and demands projections the
+/// first run NEVER demanded: a byte range spanning both witnessed chunk
+/// publications, and a tree product. Both replay from the retained
+/// completion's witnessed publications with the same program-observable
+/// results (the checks' own expectations), closing the loud-fault deferral
+/// from stages 1–2. A range the first run DID demand is served by ordinary
+/// demand-record reuse — replay begins exactly where the demand space was
+/// never exercised.
+///
+/// Cross-PROCESS replay is deliberately out: exec receipts are
+/// `Unverifiable`, and persisted nondeterministic claims recompute
+/// (`persistent_journal_nondeterministic_claims_do_not_load_as_hits`).
+/// "Indistinguishable" is a fact about one scheduler's witnessed record.
+///
+/// r[verify machine.primitive.progressive-response]
+/// r[verify machine.primitive.exec-outcome]
+#[test]
+fn a_memo_hit_producer_replays_streams_and_products_from_the_witness() {
+    const SOURCE: &str = r#"
+#[test]
+fn first(sh: Sh) -> Stream<Check> {
+    let producer = exec sh`-c "mkdir -p out; printf ready > out/flag; printf 'early\n'; sleep 0.2; printf 'late\n'"`;
+    let head = producer.stdout.take(6);
+    yield expect_eq(head.lines(), ["early"]);
+}
+
+#[test]
+fn second(sh: Sh) -> Stream<Check> {
+    let producer = exec sh`-c "mkdir -p out; printf ready > out/flag; printf 'early\n'; sleep 0.2; printf 'late\n'"`;
+    let head = producer.stdout.take(6);
+    let all = producer.stdout.take(11);
+    let flag = (producer.tree / "out" / "flag").text();
+    yield expect_eq(head.lines(), ["early"]);
+    yield expect_eq(all.lines(), ["early", "late"]);
+    yield expect_eq(flag, "ready");
+}
+"#;
+    let report = run_source(SOURCE).expect("the replay suite runs");
+    assert!(
+        passed(&report),
+        "the replayed projections read identically to live ones: {report:#?}"
+    );
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(
+            lane.counters.effect_spawns, 1,
+            "the second test's producer is a memo hit — no second process"
+        );
+        assert!(
+            lane.counters.memo_hits_exact >= 1,
+            "the second producer demand was served from the record"
+        );
+        assert!(
+            lane.counters.progressive_effect_replay_publications >= 2,
+            "the never-demanded range and product replayed from the witnessed \
+             completion: {:#?}",
+            lane.counters
+        );
+    }
+}
