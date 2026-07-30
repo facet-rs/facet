@@ -507,3 +507,209 @@ program = "/bin/sh"
     let sh = manifest.offer("Sh").expect("Sh is offered");
     assert!(sh.targets.is_empty() && sh.toolchain.is_none());
 }
+
+/// Write a manifest TOML file into a fresh directory and return its path.
+fn manifest_file(dir: &tempfile::TempDir, source: &str) -> String {
+    let path = dir.path().join("machine.toml");
+    std::fs::write(&path, source).expect("write manifest file");
+    path.to_str().expect("manifest path is UTF-8").to_owned()
+}
+
+/// A Linux-only manifest document — the exe case's refusing machine word,
+/// this time as a config file rather than a Rust value.
+const LINUX_ONLY_TOML: &str = r#"
+host = "x86_64-unknown-linux-gnu"
+
+[[capability]]
+ty = "Rustc"
+program = "rustc-must-never-spawn"
+targets = ["x86_64-unknown-linux-gnu"]
+"#;
+
+/// The file-loading path carries the machine's word with full force: a
+/// manifest LOADED from a config file refuses the exe case exactly as the
+/// directly-constructed value does — typed, pre-effect, naming both sides.
+///
+/// r[verify vixen.machine.manifest]
+/// r[verify vixen.machine.binding-fails-before-effects]
+#[test]
+fn a_manifest_loaded_from_a_config_file_refuses_the_exe_case() {
+    let dir = tempfile::tempdir().expect("manifest dir");
+    let path = manifest_file(&dir, LINUX_ONLY_TOML);
+    let manifest = vixen_runtime::manifest::load_manifest(&path).expect("the declared file loads");
+    let report = run_source_with_manifest(EXE_CASE, manifest)
+        .expect("a binding refusal is a report verdict, never a runner error");
+    let refusal = assert_refused(&report);
+    assert_eq!(refusal.required_type, "Rustc");
+    assert_eq!(
+        refusal.required_target.as_deref(),
+        Some("x86_64-pc-windows-msvc")
+    );
+    let offered = refusal.offered.as_deref().expect("the offer side is named");
+    assert!(
+        offered.contains("x86_64-unknown-linux-gnu"),
+        "the config file's facts reach the diagnostic: {offered}"
+    );
+}
+
+/// The runnable system reads the DECLARED manifest: with
+/// `VIX_MACHINE_MANIFEST` naming a Linux-only manifest file, the ordinary
+/// `run_source` entrypoint — no `with_manifest`, no Rust-side value — binds
+/// against the file's machine word and refuses the exe case pre-effect.
+///
+/// r[verify vixen.machine.manifest]
+#[test]
+fn the_environment_declared_manifest_reaches_the_runnable_system() {
+    let dir = tempfile::tempdir().expect("manifest dir");
+    let path = manifest_file(&dir, LINUX_ONLY_TOML);
+    // SAFETY: nextest runs each test in its own process, and the variable is
+    // set before any runtime thread exists.
+    unsafe { std::env::set_var(vixen_runtime::manifest::MANIFEST_ENV, &path) };
+    let report = vixen_runtime::ratchet::run_source(EXE_CASE)
+        .expect("a binding refusal is a report verdict, never a runner error");
+    unsafe { std::env::remove_var(vixen_runtime::manifest::MANIFEST_ENV) };
+    let refusal = assert_refused(&report);
+    assert_eq!(refusal.required_type, "Rustc");
+    assert_eq!(
+        refusal.required_target.as_deref(),
+        Some("x86_64-pc-windows-msvc"),
+        "the declared file's word governed the run"
+    );
+}
+
+/// A DECLARED manifest that is missing is a loud typed error at the
+/// entrypoint — never a silent fall-back to the harness default. Under the
+/// default this program would produce an ordinary refusal REPORT; the
+/// distinction between `Err` and `Ok(refusal)` is exactly the loudness this
+/// pins.
+///
+/// r[verify vixen.machine.manifest]
+#[test]
+fn a_missing_declared_manifest_is_a_loud_typed_error_never_a_silent_default() {
+    let dir = tempfile::tempdir().expect("manifest dir");
+    let missing = dir
+        .path()
+        .join("nowhere.toml")
+        .to_str()
+        .expect("path is UTF-8")
+        .to_owned();
+    // SAFETY: nextest runs each test in its own process, and the variable is
+    // set before any runtime thread exists.
+    unsafe { std::env::set_var(vixen_runtime::manifest::MANIFEST_ENV, &missing) };
+    let result = vixen_runtime::ratchet::run_source(EXE_CASE);
+    unsafe { std::env::remove_var(vixen_runtime::manifest::MANIFEST_ENV) };
+    let Err(vixen_runtime::ratchet::RunError::Manifest(
+        vixen_runtime::manifest::ManifestLoadError::Unreadable { path, .. },
+    )) = result
+    else {
+        panic!("a missing declared manifest errs typed, got {result:?}");
+    };
+    assert_eq!(path, missing, "the error names the declared path");
+}
+
+/// The explicit requirement fallback (`vixen.machine.requirements-from-use`):
+/// a fact the command grammar cannot extract — here the tool's own runtime
+/// self-report — is stated by the program itself through the stdlib
+/// `require(condition) where { message }`, over the ordinary `fail`
+/// mechanism. The failure is TYPED: a `RequirementFailure` record whose full
+/// value identity — schema and message content — is pinned Rust-side, so the
+/// author's message provably reaches the failure payload.
+///
+/// r[verify vixen.machine.requirements-from-use]
+#[test]
+fn an_unsatisfied_require_raises_the_typed_failure_with_the_message() {
+    const SOURCE: &str = r#"
+#[test]
+fn guarded(sh: Sh) -> Stream<Check> {
+    let probe = exec sh`-c "printf x86_64"`;
+    let arch = probe.stdout.text();
+    yield expect(require(arch == "aarch64") where { message: "this build step needs an aarch64 machine" });
+}
+"#;
+    let report = vixen_runtime::ratchet::run_source(SOURCE)
+        .expect("an unsatisfied requirement is a check verdict, never a runner error");
+    assert!(!report.passed(), "the requirement is unsatisfied: {report:#?}");
+    let message = "this build step needs an aarch64 machine";
+    let string_schema = vix::vir::Type::String.schema_ref();
+    let failure_ty = vix::vir::Type::Record(vix::vir::RecordType::new(
+        "RequirementFailure",
+        vec![vix::vir::RecordField {
+            name: "message".to_owned(),
+            ty: vix::vir::Type::String,
+        }],
+    ));
+    let expected = vix::runtime::FramedNode::Variant {
+        schema: failure_ty.schema_ref(),
+        tag: 0,
+        fields: vec![vix::runtime::FramedField {
+            schema: string_schema.clone(),
+            value: vix::runtime::FramedValue::Optional(Some(
+                vix::runtime::FramedNode::leaf(string_schema, message.as_bytes().to_vec())
+                    .identity(),
+            )),
+        }],
+    }
+    .identity();
+    for lane in [&report.plain, &report.chaos] {
+        let failure = lane
+            .checks
+            .first()
+            .and_then(|check| check.failure.clone())
+            .expect("the check records its typed failure");
+        let vix::runtime::FailureValue::Raised { payload, .. } = failure else {
+            panic!("require raises the typed RequirementFailure, got {failure:?}");
+        };
+        assert_eq!(
+            payload, expected,
+            "the payload is RequirementFailure with the author's message"
+        );
+    }
+}
+
+/// The satisfied half: the same guard over the fact the machine actually
+/// reports is an ordinary `true` — the program runs and passes, and the
+/// message wire is never demanded.
+///
+/// r[verify vixen.machine.requirements-from-use]
+#[test]
+fn a_satisfied_require_is_an_ordinary_passing_check() {
+    const SOURCE: &str = r#"
+#[test]
+fn guarded(sh: Sh) -> Stream<Check> {
+    let probe = exec sh`-c "printf x86_64"`;
+    let arch = probe.stdout.text();
+    yield expect(require(arch == "x86_64") where { message: "this build step needs an x86_64 machine" });
+}
+"#;
+    let report = vixen_runtime::ratchet::run_source(SOURCE)
+        .expect("a satisfied requirement runs ordinarily");
+    assert!(report.passed(), "the satisfied guard passes: {report:#?}");
+    assert!(report.agrees(), "lanes agree: {report:#?}");
+}
+
+/// A declared file that reads but does not parse is the other loud half:
+/// a typed `Malformed` error naming the path, with the parse detail carried,
+/// and a `Display` rendering that says what happened.
+///
+/// r[verify vixen.machine.manifest]
+#[test]
+fn a_malformed_declared_manifest_is_a_loud_typed_error() {
+    let dir = tempfile::tempdir().expect("manifest dir");
+    let path = manifest_file(&dir, "host = 7\nnot a manifest at all [");
+    let error = vixen_runtime::manifest::load_manifest(&path)
+        .expect_err("a malformed manifest cannot load");
+    let vixen_runtime::manifest::ManifestLoadError::Malformed {
+        path: named,
+        detail,
+    } = &error
+    else {
+        panic!("a malformed manifest is Malformed, got {error:?}");
+    };
+    assert_eq!(named, &path);
+    assert!(!detail.is_empty(), "the parse failure detail is carried");
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains("error[manifest]") && rendered.contains(&path),
+        "the rendering names the declared path: {rendered}"
+    );
+}

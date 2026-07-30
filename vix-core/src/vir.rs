@@ -490,6 +490,20 @@ pub enum TraceCheck {
     Fetched {
         times: i64,
     },
+    /// The first named binding's demand completed strictly before the
+    /// second's, by `Completed`-event sequence in the frozen run log — a
+    /// causal ordering claim, never a wall-clock inference. Each operand is
+    /// the authored node of a let-bound value the runner publishes as its own
+    /// demand (a shared publication, an effect island, or a progressive
+    /// projection); like a described wire it is held, not consumed — naming a
+    /// binding here demands nothing. The claim is strict: BOTH completions
+    /// must have been observed during the run, so an operand that never
+    /// completed (or was inlined rather than published) fails the check
+    /// loudly instead of passing vacuously.
+    FinishedBefore {
+        first: NodeId,
+        second: NodeId,
+    },
 }
 
 /// A held description of an unevaluated invocation: which user function is
@@ -3972,18 +3986,19 @@ fn remap_test_nodes(test: &Test, map: &BTreeMap<NodeId, NodeId>) -> Test {
 }
 
 fn remap_trace(trace: &mut TraceCheck, remap: &impl Fn(NodeId) -> NodeId) {
-    for wire in [match trace {
+    match trace {
         TraceCheck::Demanded { wire }
         | TraceCheck::NeverDemanded { wire }
-        | TraceCheck::DemandedOnce { wire } => Some(wire),
-        _ => None,
-    }]
-    .into_iter()
-    .flatten()
-    {
-        if let WireSelector::Binding(node) = &mut wire.selector {
-            *node = remap(*node);
+        | TraceCheck::DemandedOnce { wire } => {
+            if let WireSelector::Binding(node) = &mut wire.selector {
+                *node = remap(*node);
+            }
         }
+        TraceCheck::FinishedBefore { first, second } => {
+            *first = remap(*first);
+            *second = remap(*second);
+        }
+        _ => {}
     }
 }
 

@@ -1,6 +1,8 @@
 //! `blob-slice` — the byte-range projection of a `Blob`, settled side.
 //!
-//! `Blob.take(len)` lowers to this primitive's request
+//! `Blob.take(len)` and `Blob.slice(start, len)` — one vocabulary, two
+//! spellings (`take(n)` IS `slice(0, n)`, same request nodes, same demand
+//! key) — lower to this primitive's request
 //! (`vix::runtime::blob_slice_request_type`, contract in core beside
 //! `tree-read`'s, for the same reason: the progressive machinery names it).
 //! On a settled Blob this hermetic implementation serves the slice; on a

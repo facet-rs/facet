@@ -30,6 +30,7 @@ pub const STD_MODULE_SOURCE: &str = concat!(
     include_str!("stdlib/try_toml_decode.vix"),
     include_str!("stdlib/combinators.vix"),
     include_str!("stdlib/byte_text.vix"),
+    include_str!("stdlib/require.vix"),
     "}\n",
 );
 
@@ -44,6 +45,7 @@ pub const PRELUDE_SOURCES: &[&str] = &[
     include_str!("stdlib/try_toml_decode.vix"),
     include_str!("stdlib/combinators.vix"),
     include_str!("stdlib/byte_text.vix"),
+    include_str!("stdlib/require.vix"),
     STD_MODULE_SOURCE,
 ];
 

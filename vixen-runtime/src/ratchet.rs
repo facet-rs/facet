@@ -15,8 +15,8 @@ use vix::runtime::{
     ValueId, ValueRootRequest, WireDemand,
 };
 use vix::vir::{
-    DescribedWire, FunctionId, Island, Module, Op, PartitionedRecipe, PartitionedValue, TraceCheck,
-    ValueIslandId, WireArg, WireSelector,
+    DescribedWire, FunctionId, Island, Module, NodeId, Op, PartitionedRecipe, PartitionedValue,
+    TraceCheck, ValueIslandId, WireArg, WireSelector,
 };
 
 /// The user functions named by a test's described-wire trace checks. A bundled
@@ -56,6 +56,48 @@ fn binding_preimage(
         return None;
     };
     Some(module.invocation_preimage(test_function, node))
+}
+
+/// One trace check deferred to the post-run snapshot, with every per-test
+/// resolution performed at deferral time — while the test's published values
+/// are in scope — so snapshot evaluation needs no per-test state and still
+/// demands nothing.
+struct DeferredTrace {
+    provenance: ProvenanceKey,
+    check: TraceCheck,
+    /// The resolved canonical preimage of a binding-level described wire
+    /// ([`binding_preimage`]). Absent for every other trace shape.
+    binding: Option<String>,
+    /// The published value identities of a `finished_before` check's operands,
+    /// in operand order ([`completion_operands`]). Absent for every other
+    /// trace shape.
+    completions: Option<(Option<ValueId>, Option<ValueId>)>,
+}
+
+/// Resolve a `finished_before` trace check's operands to their published value
+/// identities. Each operand node names a value island the runner published
+/// under that [`ValueIslandId`] — a shared publication, an effect island, or a
+/// progressive projection — and the resolved identity is the provenance the
+/// snapshot's `Completed`-event log is searched by. An operand the run never
+/// published resolves to `None` and fails the check at evaluation; nothing is
+/// demanded here.
+fn completion_operands(
+    trace: &TraceCheck,
+    test_function: FunctionId,
+    published: &BTreeMap<ValueIslandId, Evaluation>,
+) -> Option<(Option<ValueId>, Option<ValueId>)> {
+    let TraceCheck::FinishedBefore { first, second } = trace else {
+        return None;
+    };
+    let resolve = |node: NodeId| {
+        published
+            .get(&ValueIslandId {
+                function: test_function,
+                node,
+            })
+            .map(|evaluation| evaluation.identity.clone())
+    };
+    Some((resolve(*first), resolve(*second)))
 }
 
 /// Record one realized demand per distinct executed invocation preimage that a
@@ -235,6 +277,11 @@ pub enum RunError {
         context: Option<FailureContext>,
     },
     PersistentRuntime(Box<PersistentRuntimeJournalError>),
+    /// The machine manifest the invoker DECLARED (`VIX_MACHINE_MANIFEST`)
+    /// failed to load. Loud and typed by design: the harness default serves
+    /// only the undeclared case, never a declared file that cannot be read
+    /// or parsed (`vixen.machine.manifest`).
+    Manifest(crate::manifest::ManifestLoadError),
 }
 
 /// The stable provenance key of a published check: the yield site's selector
@@ -360,6 +407,11 @@ struct TraceSnapshot {
     /// argument identities, and canonical preimage a trace descriptor can
     /// select on.
     wire_demands: Vec<RealizedWireDemand>,
+    /// Every `Completed` event's value identity and sequence, in event order.
+    /// `finished_before` reads completion causality from these: an identity's
+    /// completion sequence is its FIRST occurrence (a later demand completing
+    /// the same identity is a memo fact, not a new completion).
+    completions: Vec<(ValueId, u64)>,
 }
 
 /// The canonical identity of one described-wire scalar argument. Computed the
@@ -415,15 +467,28 @@ impl TraceSnapshot {
             .count() as u64
     }
 
-    /// Evaluate one trace check against the frozen snapshot. `binding` is the
-    /// resolved canonical preimage of a binding-level described wire, absent
-    /// for every other check shape.
-    fn evaluate(
-        &self,
-        provenance: ProvenanceKey,
-        check: TraceCheck,
-        binding: Option<&str>,
-    ) -> CheckRun {
+    /// Look up one `finished_before` operand's completion sequence: the FIRST
+    /// `Completed` event carrying the operand's published identity.
+    fn completion_sequence(&self, operand: Option<&ValueId>) -> Option<u64> {
+        let identity = operand?;
+        self.completions
+            .iter()
+            .find(|(candidate, _)| candidate == identity)
+            .map(|(_, sequence)| *sequence)
+    }
+
+    /// Evaluate one trace check against the frozen snapshot. The deferred
+    /// entry carries every binding resolution performed at deferral time (a
+    /// described wire's canonical preimage, a `finished_before` operand's
+    /// published identity), so nothing is demanded here.
+    fn evaluate(&self, deferred: DeferredTrace) -> CheckRun {
+        let DeferredTrace {
+            provenance,
+            check,
+            binding,
+            completions,
+        } = deferred;
+        let binding = binding.as_deref();
         let (observed, passed) = match &check {
             TraceCheck::SchedulerRequestsAtMost { bound } => {
                 at_most(self.scheduler_requests, *bound)
@@ -484,6 +549,27 @@ impl TraceSnapshot {
             TraceCheck::Fetched { times } => {
                 let observed = self.fetches_performed;
                 (observed, i128::from(observed) == i128::from(*times))
+            }
+            TraceCheck::FinishedBefore { .. } => {
+                let (first, second) = completions
+                    .as_ref()
+                    .map(|(first, second)| {
+                        (
+                            self.completion_sequence(first.as_ref()),
+                            self.completion_sequence(second.as_ref()),
+                        )
+                    })
+                    .unwrap_or((None, None));
+                // `observed` reports the first operand's completion sequence
+                // (0 when the run never observed one). The claim is strict:
+                // both completions must exist and the first must precede the
+                // second — an unpublished or never-completed operand is a red
+                // check, never a vacuous pass.
+                match (first, second) {
+                    (Some(first), Some(second)) => (first, first < second),
+                    (Some(first), None) => (first, false),
+                    (None, _) => (0, false),
+                }
             }
         };
         CheckRun {
@@ -620,8 +706,11 @@ pub struct PreparedRun {
     compilation: vix::compiler::Compilation,
     cache: LoweringCache,
     /// The machine manifest the run binds root capability parameters against
-    /// (`vixen.machine.manifest`). Defaults to [`MachineManifest::ratchet_default`];
-    /// [`PreparedRun::with_manifest`] substitutes an explicit machine word.
+    /// (`vixen.machine.manifest`). Resolved at preparation through
+    /// [`crate::manifest::declared_manifest`]: the file `VIX_MACHINE_MANIFEST`
+    /// explicitly declares, or [`MachineManifest::ratchet_default`] when
+    /// nothing is declared. [`PreparedRun::with_manifest`] substitutes an
+    /// explicit machine word.
     manifest: crate::manifest::MachineManifest,
 }
 
@@ -968,10 +1057,15 @@ fn prepare_modules_with_cache(
         }
     }
 
+    // The machine word this run binds against: the manifest the invoker
+    // DECLARED through `VIX_MACHINE_MANIFEST`, or the harness default when
+    // nothing is declared. A declared file that fails to load is a loud typed
+    // error here at the entrypoint — never a silent default.
+    // `PreparedRun::with_manifest` still substitutes an explicit Rust value.
     Ok(PreparedRun {
         compilation,
         cache,
-        manifest: crate::manifest::MachineManifest::ratchet_default(),
+        manifest: crate::manifest::declared_manifest().map_err(RunError::Manifest)?,
     })
 }
 
@@ -1521,10 +1615,11 @@ fn run_lane(
     let mut refusals = Vec::new();
     // Trace checks are deferred until every selected value check completes; they
     // are evaluated once, together, against the frozen completed-run snapshot.
-    // Each deferred trace carries the resolved canonical preimage of its
-    // binding-level described wire (when it has one), read from the authored
-    // graph at deferral time — nothing is demanded to resolve it.
-    let mut deferred_traces: Vec<(ProvenanceKey, TraceCheck, Option<String>)> = Vec::new();
+    // Each deferred trace carries its per-test binding resolutions — a
+    // described wire's canonical preimage from the authored graph, a
+    // `finished_before` operand's published identity — read at deferral time;
+    // nothing is demanded to resolve them.
+    let mut deferred_traces: Vec<DeferredTrace> = Vec::new();
     // Distinct executed invocation preimages already observed for a described-wire
     // observer, so equal preimages share one realized-demand entry.
     let mut observed_invocations: BTreeSet<String> = BTreeSet::new();
@@ -2042,11 +2137,16 @@ fn run_lane(
                         }
                         PartitionedRecipe::Trace(trace) => {
                             if evaluate_trace_checks {
-                                deferred_traces.push((
-                                    ProvenanceKey::site(site),
-                                    trace.clone(),
-                                    binding_preimage(module, test.function, trace),
-                                ));
+                                deferred_traces.push(DeferredTrace {
+                                    provenance: ProvenanceKey::site(site),
+                                    check: trace.clone(),
+                                    binding: binding_preimage(module, test.function, trace),
+                                    completions: completion_operands(
+                                        trace,
+                                        test.function,
+                                        &published_values,
+                                    ),
+                                });
                             }
                         }
                     }
@@ -2119,11 +2219,16 @@ fn run_lane(
                         }
                         PartitionedRecipe::Trace(trace) => {
                             if evaluate_trace_checks {
-                                deferred_traces.push((
-                                    ProvenanceKey::site(site),
-                                    trace.clone(),
-                                    binding_preimage(module, test.function, trace),
-                                ));
+                                deferred_traces.push(DeferredTrace {
+                                    provenance: ProvenanceKey::site(site),
+                                    check: trace.clone(),
+                                    binding: binding_preimage(module, test.function, trace),
+                                    completions: completion_operands(
+                                        trace,
+                                        test.function,
+                                        &published_values,
+                                    ),
+                                });
                             }
                         }
                     }
@@ -2155,9 +2260,16 @@ fn run_lane(
     // requests, memo entries, or store interns it inspects.
     let counters = runtime.counters();
     let mut function_calls = BTreeMap::new();
+    let mut completions = Vec::new();
     for event in runtime.sink().events() {
-        if let EventKind::WeavyFrameEntered { function, .. } = event.kind {
-            *function_calls.entry(function).or_insert(0) += 1;
+        match &event.kind {
+            EventKind::WeavyFrameEntered { function, .. } => {
+                *function_calls.entry(*function).or_insert(0) += 1;
+            }
+            EventKind::Completed { identity, .. } => {
+                completions.push((identity.clone(), event.sequence));
+            }
+            _ => {}
         }
     }
     let snapshot = TraceSnapshot {
@@ -2180,9 +2292,10 @@ fn run_lane(
         reads: runtime.performed_read_paths().map(str::to_owned).collect(),
         function_calls,
         wire_demands: runtime.realized_wire_demands().to_vec(),
+        completions,
     };
-    for (provenance, trace, binding) in deferred_traces {
-        checks.push(snapshot.evaluate(provenance, trace, binding.as_deref()));
+    for deferred in deferred_traces {
+        checks.push(snapshot.evaluate(deferred));
     }
 
     let receipt_count = runtime.receipts().count() as u64;
