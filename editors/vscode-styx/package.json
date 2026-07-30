@@ -120,7 +120,7 @@
     "package": "vsce package"
   },
   "devDependencies": {
-    "@types/node": "^20.19.43",
+    "@types/node": "^24.0.0",
     "@types/vscode": "^1.125.0",
     "typescript": "^5.9.3"
   },
