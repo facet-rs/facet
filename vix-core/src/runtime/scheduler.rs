@@ -3468,15 +3468,15 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             Ok(token)
         };
         let request_value = match ctx.task.with_value_resolver(|resolver| {
-            primitive_value_from_frame(
-                &request.frame,
-                plan.input,
-                &plan.request,
-                &self.store,
-                &resolver,
-                &plan.abi_schemas,
-                &mut export_callback,
-            )
+            PrimitiveFrameDecoder {
+                frame: &request.frame,
+                region: plan.input,
+                store: &self.store,
+                resolver: &resolver,
+                abi_schemas: &plan.abi_schemas,
+                export_callback: &mut export_callback,
+            }
+            .value(&plan.request)
         }) {
             Ok(value) => value,
             Err(detail) => {
@@ -7352,198 +7352,173 @@ pub fn declared_effect_preimage(
     }
 }
 
-fn primitive_value_from_frame(
-    frame: &[u8],
+/// One primitive request frame paired with everything that resolves its
+/// words: the store and task-value resolver behind reference handles, the
+/// ABI schema table, and the callback that mints function-export tokens.
+/// Every recursive step of a decode threads these invariants unchanged;
+/// only the cursor (`offset`, `ty`) varies per step.
+struct PrimitiveFrameDecoder<'a, 'task, F> {
+    frame: &'a [u8],
     region: super::FrameRegion,
-    ty: &Type,
-    store: &Store,
-    resolver: &TaskValueResolver<'_>,
-    abi_schemas: &[(Type, weavy::SchemaRef)],
-    export_callback: &mut impl FnMut(i64, i64, &Type, &Type) -> Result<i64, String>,
-) -> Result<PrimitiveValue, String> {
-    let expected = ty
-        .word_width()
-        .ok_or_else(|| format!("{} has no primitive frame representation", ty.name()))?;
-    if expected != region.words().as_usize() {
-        return Err(format!(
-            "primitive request region has {} words for {}-word type {}",
-            region.words().as_usize(),
-            expected,
-            ty.name()
-        ));
-    }
-    primitive_value_from_frame_at(
-        frame,
-        region,
-        0,
-        ty,
-        store,
-        resolver,
-        abi_schemas,
-        export_callback,
-    )
+    store: &'a Store,
+    resolver: &'a TaskValueResolver<'task>,
+    abi_schemas: &'a [(Type, weavy::SchemaRef)],
+    export_callback: &'a mut F,
 }
 
-fn primitive_value_from_frame_at(
-    frame: &[u8],
-    region: super::FrameRegion,
-    offset: usize,
-    ty: &Type,
-    store: &Store,
-    resolver: &TaskValueResolver<'_>,
-    abi_schemas: &[(Type, weavy::SchemaRef)],
-    export_callback: &mut impl FnMut(i64, i64, &Type, &Type) -> Result<i64, String>,
-) -> Result<PrimitiveValue, String> {
-    let schema = ty.schema_ref();
-    match ty {
-        Type::Bool | Type::Int | Type::Check => Ok(PrimitiveValue::bytes(
-            schema,
-            frame_word(frame, region, offset)?.to_le_bytes().to_vec(),
-        )),
-        Type::String | Type::Path | Type::Extern(_) => {
-            let word = frame_word(frame, region, offset)?;
-            let abi_schema = abi_schema_for_type(ty, abi_schemas)?;
-            let bytes = match resolver
-                .resolve_host_word(word, abi_schema)
-                .ok_or_else(|| "primitive reference handle is absent".to_owned())?
-            {
-                ResolvedTaskValue::Store(handle) => {
-                    let entry = store
-                        .entry_by_weavy_handle(handle)
-                        .ok_or_else(|| "primitive Store handle is absent".to_owned())?;
-                    if entry.identity.schema != schema {
-                        return Err(format!(
-                            "primitive Store handle schema {} disagrees with {}",
-                            entry.identity.schema, schema
-                        ));
+impl<F> PrimitiveFrameDecoder<'_, '_, F>
+where
+    F: FnMut(i64, i64, &Type, &Type) -> Result<i64, String>,
+{
+    /// Decode the whole region as one value of `ty`, checking its width.
+    fn value(&mut self, ty: &Type) -> Result<PrimitiveValue, String> {
+        let expected = ty
+            .word_width()
+            .ok_or_else(|| format!("{} has no primitive frame representation", ty.name()))?;
+        if expected != self.region.words().as_usize() {
+            return Err(format!(
+                "primitive request region has {} words for {}-word type {}",
+                self.region.words().as_usize(),
+                expected,
+                ty.name()
+            ));
+        }
+        self.value_at(0, ty)
+    }
+
+    /// Decode one value of `ty` starting `offset` words into the region.
+    fn value_at(&mut self, offset: usize, ty: &Type) -> Result<PrimitiveValue, String> {
+        let schema = ty.schema_ref();
+        match ty {
+            Type::Bool | Type::Int | Type::Check => Ok(PrimitiveValue::bytes(
+                schema,
+                frame_word(self.frame, self.region, offset)?
+                    .to_le_bytes()
+                    .to_vec(),
+            )),
+            Type::String | Type::Path | Type::Extern(_) => {
+                let word = frame_word(self.frame, self.region, offset)?;
+                let abi_schema = abi_schema_for_type(ty, self.abi_schemas)?;
+                let bytes = match self
+                    .resolver
+                    .resolve_host_word(word, abi_schema)
+                    .ok_or_else(|| "primitive reference handle is absent".to_owned())?
+                {
+                    ResolvedTaskValue::Store(handle) => {
+                        let entry = self
+                            .store
+                            .entry_by_weavy_handle(handle)
+                            .ok_or_else(|| "primitive Store handle is absent".to_owned())?;
+                        if entry.identity.schema != schema {
+                            return Err(format!(
+                                "primitive Store handle schema {} disagrees with {}",
+                                entry.identity.schema, schema
+                            ));
+                        }
+                        entry
+                            .resident_bytes()
+                            .ok_or_else(|| "primitive Store handle is not resident".to_owned())?
+                            .to_vec()
                     }
-                    entry
-                        .resident_bytes()
-                        .ok_or_else(|| "primitive Store handle is not resident".to_owned())?
-                        .to_vec()
+                    ResolvedTaskValue::TaskMolten(bytes) => bytes.to_vec(),
+                    ResolvedTaskValue::LentMolten { .. } => {
+                        return Err("primitive request cannot retain lent molten bytes".to_owned());
+                    }
+                };
+                Ok(PrimitiveValue::bytes(schema, bytes))
+            }
+            Type::Tuple(elements) => {
+                let mut cursor = offset;
+                let mut fields = Vec::with_capacity(elements.len());
+                for element in elements {
+                    let value = self.value_at(cursor, element)?;
+                    fields.push(primitive_field(element, value)?);
+                    cursor += primitive_type_words(element)?;
                 }
-                ResolvedTaskValue::TaskMolten(bytes) => bytes.to_vec(),
-                ResolvedTaskValue::LentMolten { .. } => {
-                    return Err("primitive request cannot retain lent molten bytes".to_owned());
+                Ok(PrimitiveValue {
+                    schema,
+                    body: PrimitiveValueBody::Product(fields),
+                })
+            }
+            Type::Record(record) => {
+                let mut cursor = offset;
+                let mut fields = Vec::with_capacity(record.fields.len());
+                for field in &record.fields {
+                    let value = self.value_at(cursor, &field.ty)?;
+                    fields.push(primitive_field(&field.ty, value)?);
+                    cursor += primitive_type_words(&field.ty)?;
                 }
-            };
-            Ok(PrimitiveValue::bytes(schema, bytes))
-        }
-        Type::Tuple(elements) => {
-            let mut cursor = offset;
-            let mut fields = Vec::with_capacity(elements.len());
-            for element in elements {
-                let value = primitive_value_from_frame_at(
-                    frame,
-                    region,
-                    cursor,
-                    element,
-                    store,
-                    resolver,
-                    abi_schemas,
-                    export_callback,
-                )?;
-                fields.push(primitive_field(element, value)?);
-                cursor += primitive_type_words(element)?;
+                Ok(PrimitiveValue {
+                    schema,
+                    body: PrimitiveValueBody::Product(fields),
+                })
             }
-            Ok(PrimitiveValue {
-                schema,
-                body: PrimitiveValueBody::Product(fields),
-            })
-        }
-        Type::Record(record) => {
-            let mut cursor = offset;
-            let mut fields = Vec::with_capacity(record.fields.len());
-            for field in &record.fields {
-                let value = primitive_value_from_frame_at(
-                    frame,
-                    region,
-                    cursor,
-                    &field.ty,
-                    store,
-                    resolver,
-                    abi_schemas,
-                    export_callback,
-                )?;
-                fields.push(primitive_field(&field.ty, value)?);
-                cursor += primitive_type_words(&field.ty)?;
+            Type::Enum(enumeration) => {
+                let tag_word = frame_word(self.frame, self.region, offset)?;
+                let tag = u32::try_from(tag_word)
+                    .map_err(|_| format!("primitive enum tag {tag_word} is invalid"))?;
+                let variant = enumeration
+                    .variants
+                    .get(tag as usize)
+                    .ok_or_else(|| format!("primitive enum tag {tag} is out of range"))?;
+                let field_types = variant_field_types(&variant.payload);
+                let mut cursor = offset + 1;
+                let mut fields = Vec::with_capacity(field_types.len());
+                for field_ty in field_types {
+                    let value = self.value_at(cursor, field_ty)?;
+                    fields.push(primitive_field(field_ty, value)?);
+                    cursor += primitive_type_words(field_ty)?;
+                }
+                Ok(PrimitiveValue {
+                    schema,
+                    body: PrimitiveValueBody::Variant { tag, fields },
+                })
             }
-            Ok(PrimitiveValue {
-                schema,
-                body: PrimitiveValueBody::Product(fields),
-            })
-        }
-        Type::Enum(enumeration) => {
-            let tag_word = frame_word(frame, region, offset)?;
-            let tag = u32::try_from(tag_word)
-                .map_err(|_| format!("primitive enum tag {tag_word} is invalid"))?;
-            let variant = enumeration
-                .variants
-                .get(tag as usize)
-                .ok_or_else(|| format!("primitive enum tag {tag} is out of range"))?;
-            let field_types = variant_field_types(&variant.payload);
-            let mut cursor = offset + 1;
-            let mut fields = Vec::with_capacity(field_types.len());
-            for field_ty in field_types {
-                let value = primitive_value_from_frame_at(
-                    frame,
-                    region,
-                    cursor,
-                    field_ty,
-                    store,
-                    resolver,
-                    abi_schemas,
-                    export_callback,
-                )?;
-                fields.push(primitive_field(field_ty, value)?);
-                cursor += primitive_type_words(field_ty)?;
+            Type::Array(element) => {
+                let word = frame_word(self.frame, self.region, offset)?;
+                let schema = abi_schema_for_type(ty, self.abi_schemas)?;
+                let dense = self
+                    .resolver
+                    .resolve_dense_host_word(word, schema)
+                    .map_err(|fault| format!("primitive array resolution failed: {fault:?}"))?;
+                let elements = dense
+                    .elements()
+                    .iter()
+                    .copied()
+                    .map(|value| {
+                        primitive_value_from_task(value, element, self.store, self.resolver)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(PrimitiveValue {
+                    schema: ty.schema_ref(),
+                    body: PrimitiveValueBody::Sequence {
+                        element_schema: element.schema_ref(),
+                        elements,
+                    },
+                })
             }
-            Ok(PrimitiveValue {
-                schema,
-                body: PrimitiveValueBody::Variant { tag, fields },
-            })
+            Type::Function { parameter, result } => {
+                let callee = frame_word(self.frame, self.region, offset)?;
+                let environment = frame_word(self.frame, self.region, offset + 1)?;
+                let token = (self.export_callback)(callee, environment, parameter, result)?;
+                Ok(PrimitiveValue {
+                    schema,
+                    body: PrimitiveValueBody::Product(vec![PrimitiveField {
+                        schema: Type::Int.schema_ref(),
+                        value: PrimitiveFieldValue::Inline(token.to_le_bytes().to_vec()),
+                    }]),
+                })
+            }
+            Type::Map { .. }
+            | Type::Set(_)
+            | Type::Stream { .. }
+            | Type::Order(_)
+            | Type::StreamCheck
+            | Type::Never => Err(format!(
+                "primitive frame codec does not admit {}",
+                ty.name()
+            )),
         }
-        Type::Array(element) => {
-            let word = frame_word(frame, region, offset)?;
-            let schema = abi_schema_for_type(ty, abi_schemas)?;
-            let dense = resolver
-                .resolve_dense_host_word(word, schema)
-                .map_err(|fault| format!("primitive array resolution failed: {fault:?}"))?;
-            let elements = dense
-                .elements()
-                .iter()
-                .copied()
-                .map(|value| primitive_value_from_task(value, element, store, resolver))
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(PrimitiveValue {
-                schema: ty.schema_ref(),
-                body: PrimitiveValueBody::Sequence {
-                    element_schema: element.schema_ref(),
-                    elements,
-                },
-            })
-        }
-        Type::Function { parameter, result } => {
-            let callee = frame_word(frame, region, offset)?;
-            let environment = frame_word(frame, region, offset + 1)?;
-            let token = export_callback(callee, environment, parameter, result)?;
-            Ok(PrimitiveValue {
-                schema,
-                body: PrimitiveValueBody::Product(vec![PrimitiveField {
-                    schema: Type::Int.schema_ref(),
-                    value: PrimitiveFieldValue::Inline(token.to_le_bytes().to_vec()),
-                }]),
-            })
-        }
-        Type::Map { .. }
-        | Type::Set(_)
-        | Type::Stream { .. }
-        | Type::Order(_)
-        | Type::StreamCheck
-        | Type::Never => Err(format!(
-            "primitive frame codec does not admit {}",
-            ty.name()
-        )),
     }
 }
 
