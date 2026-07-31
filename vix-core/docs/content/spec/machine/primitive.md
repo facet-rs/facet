@@ -169,6 +169,39 @@ primitives reference by identity.
 > ticket; a replayed stream is indistinguishable from a live one because the
 > witness records what was published.
 
+> r[machine.primitive.origin-routing]
+>
+> [DESIGN] Origin adapters install as a declared set: each entry states the
+> coordinate schemes it serves and the capability schema it admits, as data.
+> Selection is a lookup over declarations — adapters do not sniff and refuse,
+> and the machine holds no default backend. An unroutable coordinate or an
+> unconfigured origin is a loud typed refusal naming what was asked and what
+> is installed; a silent fallback to any backend (today: the fixture store) is
+> the conjuring failure mode and is banned.
+
+> r[machine.primitive.origin-verbs]
+>
+> [DESIGN] The origin seam speaks two verbs: a coordinate read (bytes by
+> coordinate, with a structured failure taxonomy — a miss that may fall
+> through, a refusal that routes elsewhere, and a corruption that stops are
+> different answers), and a tree projection (entry kind, file bytes, directory
+> listing for a lazily-backed tree, in `TreeEntry` vocabulary). No core trait
+> or type names a particular backend; `CodataDrainCtx::fixture_directory` and
+> `FixtureEntryKind` are the counterexamples this rule retires.
+
+> r[machine.primitive.witness-reverification]
+>
+> [DESIGN] The seam that produced a witness re-verifies it: the rerun audit
+> resolves a receipt's projections through the installed adapter set exactly
+> as the original read did, and the scheduler compares observations without
+> naming any backend (`Runtime::reverify_read_witness`'s direct fixture calls
+> are the counterexample). Misses are witnessed — a failed origin candidate
+> records a `ReadObservation::Missing` witness per tried coordinate, so a
+> multi-origin fallthrough is in the receipt, not forgotten — and a foreign
+> upstream digest verified on arrival is recorded beside the vix identity
+> (`machine.primitive.fetch-integrity-vs-identity`'s "both digests" made
+> real).
+
 > r[machine.primitive.fetch-is-an-invocation]
 >
 > [DESIGN] Fetch is a memoized invocation with stable closure identity flowing
