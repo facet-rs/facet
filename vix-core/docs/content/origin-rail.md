@@ -70,6 +70,21 @@ installs, with a declared root — never a compile-time `CARGO_MANIFEST_DIR`
 default resident in every `Runtime`. `machine.primitive.origin-routing` pins
 this.
 
+**AMENDED (review): the routing key for tree projections.** Coordinate reads
+route by scheme, but a tree projection carries no coordinate — its witness
+holds an opaque source `ValueId` and a `TreePath`. So an adapter's declaration
+has a third field: its **tree-handle namespace**, a byte prefix of the handle
+values it owns (`fixture-tree\0` becomes the fixture adapter's declared
+namespace instead of a sentinel spelled in four places). Routing a tree read
+or re-verifying a tree witness resolves the source value's resident bytes from
+the store and matches the declared namespaces; a handle no namespace claims is
+the loud refusal; **overlapping declarations — two adapters claiming
+prefix-related namespaces, or a scheme claimed twice — are rejected at
+install time**, so "exactly as the original read did" is a property of the
+declaration set, not a hope. Content-identified trees (carrier, canonical,
+ustar residents) are recognized before namespace matching and never route to
+any adapter.
+
 ### 2. The seam gains the tree verbs, structured
 
 `OriginAdapter::read(capability, coordinate) -> Vec<u8>` is a transport, and
@@ -82,9 +97,17 @@ origin seam speaks two verbs —
 - **coordinate read**: bytes by coordinate, as today, plus a structured
   failure taxonomy (miss / refusal / corruption are different answers);
 - **tree projection**: entry kind, file bytes, and directory listing for a
-  lazily-backed tree, in `TreeEntry` vocabulary — `FixtureEntryKind` (a
-  duplicate of `TreeEntry`'s kinds) and `CodataDrainCtx::fixture_directory`
-  (the fixture-named core method) both retire.
+  lazily-backed tree — `CodataDrainCtx::fixture_directory` (the fixture-named
+  core method) retires.
+
+**AMENDED (review): the listing vocabulary is `TreeEntryKind`, not
+`TreeEntry`.** A `TreeEntry` carries full file content, recursive subtrees,
+or symlink targets — returning it from an enumeration would force eager
+materialization and defeat the lazy projection this verb exists for. The seam
+speaks a neutral `TreeEntryKind { File, Dir, Symlink }` (which is exactly what
+`FixtureEntryKind` already is, minus the backend's name): listings are
+`(name, TreeEntryKind)` rows, file bytes come from the file-bytes verb, and
+nothing is materialized that was not asked for.
 
 `machine.primitive.origin-verbs` pins this. The `tree-read`/`tree-glob`
 primitives then serve *any* lazily-backed tree through the seam — fixture
@@ -100,16 +123,31 @@ and the scheduler compares observations without knowing any backend.
 `machine.primitive.witness-reverification` pins this, together with two
 receipt gaps the survey found:
 
-- **Misses are witnessed.** `ReadObservation::Missing` exists and `TreePath`
-  reads use it; origin reads never emit it — a failed origin candidate leaves
-  no witness at all, and a multi-origin fallthrough forgets every attempt but
-  the last error string. The spec already requires better ("reads are
-  witnessed, and so are misses"); the seam's failure taxonomy is what makes it
-  expressible.
+- **Misses are witnessed — and today NONE are.** ~~`ReadObservation::Missing`
+  exists and `TreePath` reads use it~~ **AMENDED (review): that claim was
+  false.** `Missing` has re-verification support but *no production site*: a
+  missing tree path becomes `PrimitiveMachineError::Unavailable` with no
+  witness, exactly as a failed origin candidate does. Stage 2 therefore
+  *introduces* miss witnessing for both verbs: a failed origin candidate
+  records one `Missing` witness per tried coordinate (a multi-origin
+  fallthrough is in the receipt, not forgotten), and a tree read that finds
+  nothing records a `Missing` witness for its path — including directory
+  absence. A wrong-kind outcome (`NotAFile`/`NotADir`) is not a miss: the
+  entry exists with a different shape, so it is witnessed as the *kind
+  observation* that contradicts the request, which is what lets the rerun
+  audit distinguish "file appeared" from "file became a directory".
 - **The upstream digest enters the receipt.**
   `machine.primitive.fetch-integrity-vs-identity` says both digests are
-  recorded; today only the blake3 is. Closing this rides the same receipt
-  touch.
+  recorded; today only the blake3 is. **AMENDED (review): the representation
+  and its journal consequences, pinned.** The digest rides the witness as an
+  additive field (`ReadWitness.provenance: Option<self-describing digest>`),
+  not a new observation variant. Its re-verification meaning is *none*:
+  provenance is a record of what the transfer was checked against, never a
+  claim the audit re-checks — the vix identity is the claim. `ReadWitness` is
+  persisted inside the runtime journal, which has **no format version**;
+  stage 2 adds one, and old journals are **intentionally invalidated** (a
+  journal is a cache: rejection costs one recompute, never correctness — the
+  arc's standing precedent).
 
 ### 4. Fixture trees keep their coordinate identity — declared, not accidental
 
@@ -174,6 +212,18 @@ only the two fixture ones leave).
   state, but data-driving `ExternKind` is a declared non-goal and this arc
   does not need it — after the move `Registry` keeps exactly one core naming
   site (the extern kind itself), noted as follow-up.
+- **`fixture_tree` stays literal-only, and the constraint becomes declared.**
+  **AMENDED (review):** today the compiler rejects a computed fixture name (a
+  hard diagnostic on non-`Str` arguments); a naive move to the injected
+  surface would silently begin accepting arbitrary `String` expressions —
+  a language behavior change nobody asked for, and one that would make a
+  harness's fixture requirement set non-static (against the spirit of
+  `vixen.machine.requirements-are-static`). Dynamic fixture coordinates are
+  *not* intended: the injected-surface mechanism gains a declared
+  literal-argument constraint, checked at lowering with the same diagnostic
+  quality as today's, and `fixture_tree` declares it. (The constraint is
+  general vocabulary — any injected surface with coordinate-like arguments
+  may want it.)
 - **A stale verdict falls.** `data-driven-primitives.md` records that
   promoting `fixture_tree`/`fixture_registry` to primitives was "considered
   and rejected: they don't cross an authority boundary". `untar` has since
@@ -205,7 +255,13 @@ only the two fixture ones leave).
 
 1. **Mechanical pre-work** — split the Tree layer out of `fixture.rs`; delete
    dead vocabulary (`Document`, `url_projection`); replace the silent origin
-   fallback with the loud refusal. No design commitment; green on its own.
+   fallback with the loud refusal. **AMENDED (review), the transition stated:**
+   removing the fallback alone breaks every fixture fetch, because the normal
+   ratchet path installs no origin adapter — so the same commit makes the
+   *harness* install the existing `FixtureStore` as its origin adapter
+   explicitly. The conjuring moves from the machine to the harness in stage 1;
+   stage 3 then moves the implementation. No design commitment; green on its
+   own.
 2. **The seam** — the two-verb origin surface with declared routing and the
    structured failure taxonomy; re-verification through it; witnessed misses
    and the digest receipt. Fixtures still on their ops, served by the seam.
