@@ -5,14 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-/// The kind of one directory entry, mirroring the Tree model's `TreeEntry`
-/// kinds (`machine.identity.tree-model`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FixtureEntryKind {
-    File,
-    Dir,
-    Symlink,
-}
+use super::model::TreeEntryKind;
 
 /// A read that could not be served: the path is absent, or it exists with the
 /// wrong kind for the demand. IO errors are folded into `Missing` — the
@@ -87,24 +80,24 @@ impl FixtureStore {
     }
 
     /// The kind of the tree entry at `projection` (`<fixture>/<path…>`).
-    pub fn tree_entry_kind(&self, projection: &str) -> Result<FixtureEntryKind, FixtureReadError> {
+    pub fn tree_entry_kind(&self, projection: &str) -> Result<TreeEntryKind, FixtureReadError> {
         if self.virtual_file(projection).is_some() {
-            return Ok(FixtureEntryKind::File);
+            return Ok(TreeEntryKind::File);
         }
         if projection == "readme-changed/src" {
-            return Ok(FixtureEntryKind::Dir);
+            return Ok(TreeEntryKind::Dir);
         }
         if projection == "path-appears/src" {
-            return Ok(FixtureEntryKind::Dir);
+            return Ok(TreeEntryKind::Dir);
         }
         let metadata = std::fs::symlink_metadata(self.tree_path(projection))
             .map_err(|_| FixtureReadError::Missing)?;
         Ok(if metadata.is_dir() {
-            FixtureEntryKind::Dir
+            TreeEntryKind::Dir
         } else if metadata.is_symlink() {
-            FixtureEntryKind::Symlink
+            TreeEntryKind::Symlink
         } else {
-            FixtureEntryKind::File
+            TreeEntryKind::File
         })
     }
 
@@ -114,10 +107,10 @@ impl FixtureStore {
             return Ok(bytes.to_vec());
         }
         match self.tree_entry_kind(projection)? {
-            FixtureEntryKind::File => {
+            TreeEntryKind::File => {
                 std::fs::read(self.tree_path(projection)).map_err(|_| FixtureReadError::Missing)
             }
-            FixtureEntryKind::Dir | FixtureEntryKind::Symlink => Err(FixtureReadError::NotAFile),
+            TreeEntryKind::Dir | TreeEntryKind::Symlink => Err(FixtureReadError::NotAFile),
         }
     }
 
@@ -127,14 +120,14 @@ impl FixtureStore {
     pub fn tree_dir_entries(
         &self,
         projection: &str,
-    ) -> Result<Vec<(String, FixtureEntryKind)>, FixtureReadError> {
+    ) -> Result<Vec<(String, TreeEntryKind)>, FixtureReadError> {
         if projection == "readme-changed/src" {
-            return Ok(vec![("main.c".to_owned(), FixtureEntryKind::File)]);
+            return Ok(vec![("main.c".to_owned(), TreeEntryKind::File)]);
         }
         if projection == "path-appears/src" {
             let mut entries = Vec::new();
             if self.rerun_with.as_deref() == Some("path-appears") {
-                entries.push(("new.rs".to_owned(), FixtureEntryKind::File));
+                entries.push(("new.rs".to_owned(), TreeEntryKind::File));
             }
             return Ok(entries);
         }
@@ -150,19 +143,19 @@ impl FixtureStore {
             };
             let file_type = entry.file_type().map_err(|_| FixtureReadError::Missing)?;
             let kind = if file_type.is_dir() {
-                FixtureEntryKind::Dir
+                TreeEntryKind::Dir
             } else if file_type.is_symlink() {
-                FixtureEntryKind::Symlink
+                TreeEntryKind::Symlink
             } else {
-                FixtureEntryKind::File
+                TreeEntryKind::File
             };
             entries.push((name, kind));
         }
         if projection == "readme-changed" && !entries.iter().any(|(name, _)| name == "src") {
-            entries.push(("src".to_owned(), FixtureEntryKind::Dir));
+            entries.push(("src".to_owned(), TreeEntryKind::Dir));
         }
         if projection == "touched-fixture" && !entries.iter().any(|(name, _)| name == "data.txt") {
-            entries.push(("data.txt".to_owned(), FixtureEntryKind::File));
+            entries.push(("data.txt".to_owned(), TreeEntryKind::File));
         }
         entries.sort_by(|(left, _), (right, _)| left.as_bytes().cmp(right.as_bytes()));
         Ok(entries)

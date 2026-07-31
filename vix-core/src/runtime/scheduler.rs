@@ -18,7 +18,8 @@ use crate::vir::{
     ExternKind, Function, FunctionId, Island, IslandId, NodeId, Op, Type, VariantPayload,
 };
 
-use super::fixture::{FixtureEntryKind, FixtureReadError, FixtureStore};
+use super::fixture::{FixtureReadError, FixtureStore};
+use super::model::TreeEntryKind;
 use super::tree_resident::canonical_resident_tree;
 use super::identity::{
     DemandKey, DemandPreimage, Digest, Location, LocationId, RecipeId, ValueId, hash_framed,
@@ -92,10 +93,10 @@ impl super::CodataDrainCtx for GlobDrainCtx<'_> {
         &self.source.resident
     }
 
-    fn fixture_directory(
+    fn directory(
         &mut self,
         projection: &str,
-    ) -> Result<Vec<(String, super::FixtureEntryKind)>, super::PrimitiveMachineError> {
+    ) -> Result<Vec<(String, super::TreeEntryKind)>, super::PrimitiveMachineError> {
         let entries = self
             .fixture_store
             .tree_dir_entries(projection)
@@ -6098,14 +6099,14 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
     }
 }
 
-fn directory_observation_digest(entries: &[(String, FixtureEntryKind)]) -> Digest {
+fn directory_observation_digest(entries: &[(String, TreeEntryKind)]) -> Digest {
     let mut fields = Vec::with_capacity(entries.len() * 2);
     for (name, kind) in entries {
         fields.push(name.as_bytes());
         fields.push(match kind {
-            FixtureEntryKind::File => b"file".as_slice(),
-            FixtureEntryKind::Dir => b"dir".as_slice(),
-            FixtureEntryKind::Symlink => b"symlink".as_slice(),
+            TreeEntryKind::File => b"file".as_slice(),
+            TreeEntryKind::Dir => b"dir".as_slice(),
+            TreeEntryKind::Symlink => b"symlink".as_slice(),
         });
     }
     hash_framed(b"vix.fixture.directory-observation.v1", &fields)

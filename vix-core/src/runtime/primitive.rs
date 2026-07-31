@@ -1341,25 +1341,29 @@ pub enum PrimitiveDispatchError {
 // (pattern matching, directory/archive enumeration).
 
 /// The context a [`CodataPrimitive`] drains through: it exposes the stream's
-/// source value and enumerates fixture-backed tree directories, recording each
-/// listing as a witnessed read. It is the codata analogue of [`EffectCtx`],
-/// scoped to the synchronous effect-island interpreter. The scheduler owns the
-/// concrete implementation (it holds the fixture store and the read log); the
-/// primitive sees only this trait.
+/// source value and enumerates a lazily-backed tree's directories, recording
+/// each listing as a witnessed read. It is the codata analogue of
+/// [`EffectCtx`], scoped to the synchronous effect-island interpreter. The
+/// scheduler owns the concrete implementation (it holds the installed origin
+/// backends and the read log); the primitive sees only this trait, and the
+/// trait names no backend (`machine.primitive.origin-verbs` retires the
+/// fixture-named method this one replaces).
 pub trait CodataDrainCtx {
     /// The resident bytes of the stream's source value (e.g. the `Tree` a glob
-    /// matches against). For a fixture-backed tree these are the
-    /// `fixture-tree\0<name>` handle; for an archive tree they are the ustar
-    /// bytes the drain enumerates directly.
+    /// matches against). For a lazily-backed tree these are its opaque handle
+    /// bytes; for a content-identified tree they are the archive/carrier/
+    /// canonical bytes the drain enumerates directly.
     fn source_bytes(&self) -> &[u8];
 
-    /// List a directory within a fixture-backed source, recording the listing as
-    /// a witnessed `Directory` read against [`Self::source_id`]. `projection` is
-    /// the fixture-relative directory path (`<fixture-name>/<dir>`).
-    fn fixture_directory(
+    /// List a directory of a lazily-backed source, recording the listing as a
+    /// witnessed `Directory` read against the source. Listings are
+    /// `(name, TreeEntryKind)` rows — kinds, never contents.
+    ///
+    /// r[impl machine.primitive.origin-verbs]
+    fn directory(
         &mut self,
         projection: &str,
-    ) -> Result<Vec<(String, super::FixtureEntryKind)>, PrimitiveMachineError>;
+    ) -> Result<Vec<(String, super::TreeEntryKind)>, PrimitiveMachineError>;
 }
 
 /// A registered producer of effect codata. Unlike [`RawPrimitive`], a codata

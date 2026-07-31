@@ -210,6 +210,22 @@ pub enum MemoVerdict {
     Semantic,
 }
 
+/// The kind of one entry of a lazily-backed tree, mirroring the Tree model's
+/// `TreeEntry` kinds (`machine.identity.tree-model`) without carrying any
+/// content: directory listings are `(name, TreeEntryKind)` rows, never full
+/// `TreeEntry`s, which would force eager materialization and defeat the lazy
+/// projection the origin seam exists for. Backend-neutral on purpose — this is
+/// the type that retires the fixture-named `FixtureEntryKind`.
+///
+/// r[impl machine.primitive.origin-verbs]
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum TreeEntryKind {
+    File,
+    Dir,
+    Symlink,
+}
+
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct ReadWitness {
     pub source: ValueId,
