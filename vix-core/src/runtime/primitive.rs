@@ -810,17 +810,50 @@ impl EffectCtx {
         source: &ValueId,
         projection: ReadProjection,
     ) -> Result<WitnessedValue, PrimitiveMachineError> {
-        let witnessed = self.authority.read(source, &projection)?;
-        self.transaction
-            .lock()
-            .expect("effect transaction mutex poisoned")
-            .reads
-            .push(ReadWitness {
-                source: source.clone(),
-                projection,
-                observation: witnessed.observation.clone(),
-            });
-        Ok(witnessed)
+        match self.authority.read(source, &projection) {
+            Ok(witnessed) => {
+                self.transaction
+                    .lock()
+                    .expect("effect transaction mutex poisoned")
+                    .reads
+                    .push(ReadWitness {
+                        source: source.clone(),
+                        projection,
+                        observation: witnessed.observation.clone(),
+                    });
+                Ok(witnessed)
+            }
+            Err(error) => {
+                // Misses are witnessed: a projection that found nothing (or
+                // found the wrong kind) is an OBSERVATION in the receipt, not
+                // a silent absence — the rerun audit re-verifies "it was not
+                // there" like any other claim. Refusals and machine faults
+                // are not observations: nobody looked.
+                //
+                // r[impl machine.primitive.witness-reverification]
+                let observation = match &error {
+                    PrimitiveMachineError::ProjectionMissing { .. } => {
+                        Some(ReadObservation::Missing)
+                    }
+                    PrimitiveMachineError::ProjectionWrongKind { found, .. } => {
+                        Some(ReadObservation::Kind(*found))
+                    }
+                    _ => None,
+                };
+                if let Some(observation) = observation {
+                    self.transaction
+                        .lock()
+                        .expect("effect transaction mutex poisoned")
+                        .reads
+                        .push(ReadWitness {
+                            source: source.clone(),
+                            projection,
+                            observation,
+                        });
+                }
+                Err(error)
+            }
+        }
     }
 
     pub fn intern(
@@ -868,7 +901,31 @@ impl EffectCtx {
         coordinate: &str,
         expected: &ValueId,
     ) -> Result<Vec<u8>, PrimitiveMachineError> {
-        let bytes = self.authority.origin_candidate(capability, coordinate)?;
+        let bytes = match self.authority.origin_candidate(capability, coordinate) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                // A failed origin candidate is witnessed as one Missing
+                // observation for its tried coordinate — a multi-origin fetch
+                // that falls through has every attempt in the receipt, not
+                // forgotten. Refusals are not witnessed: nobody looked.
+                //
+                // r[impl machine.primitive.witness-reverification]
+                if matches!(error, PrimitiveMachineError::ProjectionMissing { .. }) {
+                    self.transaction
+                        .lock()
+                        .expect("effect transaction mutex poisoned")
+                        .reads
+                        .push(ReadWitness {
+                            source: capability.clone(),
+                            projection: ReadProjection::Origin {
+                                coordinate: coordinate.to_owned(),
+                            },
+                            observation: ReadObservation::Missing,
+                        });
+                }
+                return Err(error);
+            }
+        };
         let observed = FramedNode::leaf(expected.schema.clone(), bytes.clone()).identity();
         if &observed != expected {
             return Err(PrimitiveMachineError::CorruptCandidate { source: observed });

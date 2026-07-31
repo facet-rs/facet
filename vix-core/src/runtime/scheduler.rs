@@ -106,10 +106,39 @@ impl super::CodataDrainCtx for GlobDrainCtx<'_> {
                         .to_owned(),
                 });
             }
-            super::TreeRouting::Origin(installation) => installation
-                .adapter
-                .tree_directory(&self.source.resident, projection)
-                .map_err(|error| super::origin_tree_machine_error(error, projection))?,
+            super::TreeRouting::Origin(installation) => {
+                match installation
+                    .adapter
+                    .tree_directory(&self.source.resident, projection)
+                {
+                    Ok(entries) => entries,
+                    Err(error) => {
+                        // Misses are witnessed — an absent directory is an
+                        // observation, and a wrong-kind entry is witnessed as
+                        // the kind that contradicts the listing request.
+                        // r[impl machine.primitive.witness-reverification]
+                        let observation = match &error {
+                            super::OriginTreeError::Missing => {
+                                Some(ReadObservation::Missing)
+                            }
+                            super::OriginTreeError::WrongKind { found } => {
+                                Some(ReadObservation::Kind(*found))
+                            }
+                            super::OriginTreeError::Corruption { .. } => None,
+                        };
+                        if let Some(observation) = observation {
+                            self.reads.push(super::model::ReadWitness {
+                                source: self.source.identity.clone(),
+                                projection: ReadProjection::TreePath {
+                                    path: projection.to_owned(),
+                                },
+                                observation,
+                            });
+                        }
+                        return Err(super::origin_tree_machine_error(error, projection));
+                    }
+                }
+            }
             super::TreeRouting::Unclaimed(refusal) => return Err(refusal),
         };
         self.reads.push(super::model::ReadWitness {
@@ -1210,6 +1239,13 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                                         ) == *digest
                                 )
                             }
+                            // The kind observation re-verifies against the
+                            // entry's CURRENT kind: "still a directory" holds,
+                            // "became a file" or "disappeared" breaks.
+                            ReadObservation::Kind(kind) => matches!(
+                                tree.project(path),
+                                Some(entry) if content_entry_kind(entry) == *kind
+                            ),
                             ReadObservation::Unverifiable => false,
                         }
                     }
@@ -1232,6 +1268,13 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                             .is_ok_and(|entries| {
                                 directory_observation_digest(&entries) == *digest
                             }),
+                        // "Still the contradicting kind" holds; any change —
+                        // to the requested kind, another kind, or absence —
+                        // breaks the witness and recomputes.
+                        ReadObservation::Kind(kind) => installation
+                            .adapter
+                            .tree_kind(&resident, path)
+                            .is_ok_and(|found| found == *kind),
                         ReadObservation::Unverifiable => false,
                     },
                     super::TreeRouting::Unclaimed(_) => false,
@@ -1266,7 +1309,9 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             ReadObservation::Missing => {
                 matches!(resolved, Err(super::OriginReadError::Miss { .. }))
             }
-            ReadObservation::Directory { .. } | ReadObservation::Unverifiable => false,
+            ReadObservation::Directory { .. }
+            | ReadObservation::Kind(_)
+            | ReadObservation::Unverifiable => false,
         }
     }
 
@@ -6171,15 +6216,17 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
 /// through one function.
 fn content_tree_listing(dir: &super::Tree) -> Vec<(String, TreeEntryKind)> {
     dir.iter()
-        .map(|(name, entry)| {
-            let kind = match entry {
-                super::TreeEntry::File { .. } => TreeEntryKind::File,
-                super::TreeEntry::Dir(_) => TreeEntryKind::Dir,
-                super::TreeEntry::Symlink { .. } => TreeEntryKind::Symlink,
-            };
-            (name.as_str().to_owned(), kind)
-        })
+        .map(|(name, entry)| (name.as_str().to_owned(), content_entry_kind(entry)))
         .collect()
+}
+
+/// The seam-vocabulary kind of one content-tree entry.
+fn content_entry_kind(entry: &super::TreeEntry) -> TreeEntryKind {
+    match entry {
+        super::TreeEntry::File { .. } => TreeEntryKind::File,
+        super::TreeEntry::Dir(_) => TreeEntryKind::Dir,
+        super::TreeEntry::Symlink { .. } => TreeEntryKind::Symlink,
+    }
 }
 
 fn directory_observation_digest(entries: &[(String, TreeEntryKind)]) -> Digest {
@@ -10458,5 +10505,237 @@ fn passing() -> Stream<Check> {
             .entry(evaluation.handle)
             .expect("realized value is resident");
         assert_eq!(entry.identity, expected);
+    }
+
+    mod origin_witness_reverification {
+        //! Miss and wrong-kind witnesses re-verify through the seam
+        //! (`machine.primitive.witness-reverification`): a recorded miss
+        //! holds exactly while nothing is there, and a recorded kind holds
+        //! exactly while the contradicting kind persists.
+
+        use super::*;
+        use crate::runtime::{
+            FixtureStore, OriginAdapter, OriginAdapterDecl, OriginReadError, PrimitiveServices,
+            ReadWitness, TreeEntryKind,
+        };
+        use crate::schema::SchemaPattern;
+
+        struct ToggleOrigin {
+            bytes: Mutex<Option<Vec<u8>>>,
+        }
+
+        impl OriginAdapter for ToggleOrigin {
+            fn read(
+                &self,
+                _capability: &ValueId,
+                coordinate: &str,
+            ) -> Result<Vec<u8>, OriginReadError> {
+                self.bytes
+                    .lock()
+                    .expect("toggle origin mutex poisoned")
+                    .clone()
+                    .ok_or_else(|| OriginReadError::Miss {
+                        detail: format!("{coordinate} is absent"),
+                    })
+            }
+        }
+
+        fn registry_capability() -> ValueId {
+            effect_leaf(&Type::Extern(ExternKind::Registry), b"registry".to_vec()).identity
+        }
+
+        /// The `Tree` host extern's schema, registered first: these tests run
+        /// on the bare language, where no embedder has injected host types.
+        fn tree_schema() -> SchemaRef {
+            crate::schema::register_host_externs(&[crate::binding::TREE]);
+            Type::Extern(ExternKind::Host(crate::binding::TREE)).schema_ref()
+        }
+
+        fn fixture_services(rerun_with: Option<&str>) -> PrimitiveServices {
+            PrimitiveServices::default()
+                .with_origin(
+                    FixtureStore::origin_decl(),
+                    Arc::new(
+                        FixtureStore::default()
+                            .with_rerun_overlay(rerun_with.map(str::to_owned)),
+                    ),
+                )
+                .expect("the fixture declaration overlaps nothing")
+        }
+
+        /// r[verify machine.primitive.witness-reverification]
+        #[test]
+        fn a_missing_origin_witness_holds_until_the_coordinate_appears() {
+            let adapter = Arc::new(ToggleOrigin {
+                bytes: Mutex::new(None),
+            });
+            let mut runtime = Runtime::new(EventLog::default());
+            runtime.set_primitive_services(
+                PrimitiveServices::default()
+                    .with_origin(
+                        OriginAdapterDecl {
+                            name: "toggle".to_owned(),
+                            schemes: vec!["stub".to_owned()],
+                            capability: SchemaPattern::exact(
+                                &Type::Extern(ExternKind::Registry).schema_ref(),
+                            ),
+                            tree_namespace: None,
+                        },
+                        adapter.clone(),
+                    )
+                    .expect("the toggle declaration overlaps nothing"),
+            );
+            let witness = ReadWitness {
+                source: registry_capability(),
+                projection: ReadProjection::Origin {
+                    coordinate: "stub://blob".to_owned(),
+                },
+                observation: ReadObservation::Missing,
+            };
+            assert!(
+                runtime.reverify_read_witness(&witness),
+                "a recorded miss re-verifies true while the coordinate is still missing"
+            );
+            *adapter.bytes.lock().expect("toggle origin mutex poisoned") =
+                Some(b"appeared".to_vec());
+            assert!(
+                !runtime.reverify_read_witness(&witness),
+                "an appearing coordinate breaks the recorded miss"
+            );
+        }
+
+        /// The world changing under an unchanged name is exactly what the
+        /// fixture rerun overlay simulates: without the overlay the path is
+        /// missing (the recorded miss holds), with it the path exists (the
+        /// miss breaks and the claim recomputes).
+        ///
+        /// r[verify machine.primitive.witness-reverification]
+        #[test]
+        fn a_missing_tree_witness_holds_until_the_path_appears() {
+            let mut runtime = Runtime::new(EventLog::default());
+            runtime.set_primitive_services(fixture_services(None));
+            let handle = b"fixture-tree\0path-appears".to_vec();
+            let node = FramedNode::leaf(tree_schema(), handle.clone());
+            runtime.store.intern_tree(&node, &handle);
+            let witness = ReadWitness {
+                source: node.identity(),
+                projection: ReadProjection::TreePath {
+                    path: "path-appears/src/new.rs".to_owned(),
+                },
+                observation: ReadObservation::Missing,
+            };
+            assert!(
+                runtime.reverify_read_witness(&witness),
+                "a recorded tree miss re-verifies true while the path is still missing"
+            );
+            runtime.set_primitive_services(fixture_services(Some("path-appears")));
+            assert!(
+                !runtime.reverify_read_witness(&witness),
+                "the path appearing under the overlay breaks the recorded miss"
+            );
+        }
+
+        /// The kind observation is what distinguishes "the file appeared"
+        /// from "the file became a directory": a recorded Dir holds while
+        /// the entry is still a directory, and neither a miss nor another
+        /// kind satisfies it.
+        ///
+        /// r[verify machine.primitive.witness-reverification]
+        #[test]
+        fn a_kind_witness_holds_exactly_for_the_recorded_kind() {
+            let mut runtime = Runtime::new(EventLog::default());
+            runtime.set_primitive_services(fixture_services(None));
+            let handle = b"fixture-tree\0readme-changed".to_vec();
+            let node = FramedNode::leaf(tree_schema(), handle.clone());
+            runtime.store.intern_tree(&node, &handle);
+            let projection = ReadProjection::TreePath {
+                path: "readme-changed/src".to_owned(),
+            };
+            let kind_witness = |observation: ReadObservation| ReadWitness {
+                source: node.identity(),
+                projection: projection.clone(),
+                observation,
+            };
+            assert!(
+                runtime.reverify_read_witness(&kind_witness(ReadObservation::Kind(
+                    TreeEntryKind::Dir
+                ))),
+                "the entry is still a directory, so the recorded kind holds"
+            );
+            assert!(
+                !runtime.reverify_read_witness(&kind_witness(ReadObservation::Kind(
+                    TreeEntryKind::File
+                ))),
+                "a different recorded kind does not hold"
+            );
+            assert!(
+                !runtime.reverify_read_witness(&kind_witness(ReadObservation::Missing)),
+                "an existing entry breaks a recorded miss regardless of kind"
+            );
+        }
+
+        /// A wrong-kind tree read is witnessed as the KIND observation
+        /// contradicting the request — never as a miss — and a plain miss is
+        /// witnessed as Missing: the receipt records what was seen.
+        ///
+        /// r[verify machine.primitive.witness-reverification]
+        #[test]
+        fn tree_read_failures_are_witnessed_as_what_was_seen() {
+            let source =
+                PrimitiveValue::bytes(tree_schema(), b"fixture-tree\0readme-changed".to_vec());
+            let source_id = source.identity();
+            let authority = Arc::new(
+                StagedEffectAuthority::new([(source_id.clone(), source)])
+                    .with_origins(fixture_services(None).origins()),
+            );
+            let demand = DemandKey::from_preimage(&DemandPreimage {
+                closure: RecipeId::from_canonical_vir(b"witnessed-miss-test"),
+                arguments: Vec::new(),
+            });
+            let ctx = EffectCtx::new(demand, authority);
+
+            let wrong_kind = ctx
+                .read(
+                    &source_id,
+                    ReadProjection::TreePath {
+                        path: "readme-changed/src".to_owned(),
+                    },
+                )
+                .expect_err("a directory does not serve a file read");
+            assert!(
+                matches!(
+                    wrong_kind,
+                    PrimitiveMachineError::ProjectionWrongKind {
+                        found: TreeEntryKind::Dir,
+                        ..
+                    }
+                ),
+                "the error names the found kind: {wrong_kind:?}"
+            );
+            let miss = ctx
+                .read(
+                    &source_id,
+                    ReadProjection::TreePath {
+                        path: "readme-changed/no-such-entry".to_owned(),
+                    },
+                )
+                .expect_err("an absent path misses");
+            assert!(
+                matches!(miss, PrimitiveMachineError::ProjectionMissing { .. }),
+                "the miss is typed: {miss:?}"
+            );
+
+            let publication = ctx
+                .finish(PrimitiveCompletion::MachineError(miss))
+                .expect("single completion transaction");
+            let reads = &publication.receipt.reads;
+            assert_eq!(reads.len(), 2, "both failures are witnessed: {reads:#?}");
+            assert_eq!(
+                reads[0].observation,
+                ReadObservation::Kind(TreeEntryKind::Dir),
+                "the wrong-kind read is witnessed as the contradicting kind, not a miss"
+            );
+            assert_eq!(reads[1].observation, ReadObservation::Missing);
+        }
     }
 }

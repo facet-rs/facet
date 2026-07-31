@@ -82,7 +82,18 @@ fn serve(pin: PinnedBlobRef, ctx: &EffectCtx) -> Result<ValueId, PrimitiveMachin
                 ctx.persist_value(&admitted, &bytes)?;
                 return Ok(admitted);
             }
-            Err(error) => last_error = Some(error),
+            // The origin taxonomy, enacted (machine.primitive.origin-verbs):
+            // a MISS falls through to the next origin — and the ctx has
+            // already witnessed it as a Missing observation, so a
+            // multi-origin fallthrough has every attempt in the receipt; a
+            // REFUSAL (unroutable coordinate) routes on unwitnessed, nobody
+            // looked; anything else — corruption above all — stops the
+            // demand instead of shopping for an origin that lies better.
+            Err(
+                error @ (PrimitiveMachineError::ProjectionMissing { .. }
+                | PrimitiveMachineError::OriginUnroutable { .. }),
+            ) => last_error = Some(error),
+            Err(error) => return Err(error),
         }
     }
     Err(
@@ -290,6 +301,205 @@ fn bytes(value: &PrimitiveValue) -> Result<&[u8], PrimitiveMachineError> {
 fn invalid_value() -> PrimitiveMachineError {
     PrimitiveMachineError::AuthorityViolation {
         detail: "pinned fetch request disagrees with its declared schema".to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod origin_fallthrough {
+    //! The fetch loop enacting the origin taxonomy over a scripted adapter
+    //! set: misses fall through and every attempt lands in the receipt;
+    //! corruption stops.
+
+    use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use vix::schema::SchemaPattern;
+    use vix::vir::{ExternKind, Type};
+
+    use super::PinnedFetchPrimitive;
+    use crate::rt::{
+        BlobId, DemandKey, DemandPreimage, EffectCtx, FramedNode, OriginAdapter,
+        OriginAdapterDecl, OriginAdapterSet, OriginHint, OriginReadError, PinnedBlobRef,
+        PinnedFetchRequest, PrimitiveCompletion, PrimitiveMachineError, PrimitivePublication,
+        ReadObservation, ReadProjection, RecipeId, RegistryHandle, StagedEffectAuthority,
+        ValueId,
+    };
+    struct ScriptedOrigin {
+        serving: BTreeMap<String, Vec<u8>>,
+        asked: Mutex<Vec<String>>,
+    }
+
+    impl OriginAdapter for ScriptedOrigin {
+        fn read(
+            &self,
+            _capability: &ValueId,
+            coordinate: &str,
+        ) -> Result<Vec<u8>, OriginReadError> {
+            self.asked
+                .lock()
+                .expect("scripted origin mutex poisoned")
+                .push(coordinate.to_owned());
+            self.serving
+                .get(coordinate)
+                .cloned()
+                .ok_or_else(|| OriginReadError::Miss {
+                    detail: format!("{coordinate} is not scripted"),
+                })
+        }
+    }
+
+    fn scripted_set(
+        serving: impl IntoIterator<Item = (&'static str, Vec<u8>)>,
+    ) -> (OriginAdapterSet, Arc<ScriptedOrigin>) {
+        let adapter = Arc::new(ScriptedOrigin {
+            serving: serving
+                .into_iter()
+                .map(|(coordinate, bytes)| (coordinate.to_owned(), bytes))
+                .collect(),
+            asked: Mutex::new(Vec::new()),
+        });
+        let mut set = OriginAdapterSet::default();
+        set.install(
+            OriginAdapterDecl {
+                name: "scripted".to_owned(),
+                schemes: vec!["stub".to_owned()],
+                capability: SchemaPattern::exact(
+                    &Type::Extern(ExternKind::Registry).schema_ref(),
+                ),
+                tree_namespace: None,
+            },
+            adapter.clone(),
+        )
+        .expect("the scripted declaration overlaps nothing");
+        (set, adapter)
+    }
+
+    fn registry_capability() -> ValueId {
+        FramedNode::leaf(
+            Type::Extern(ExternKind::Registry).schema_ref(),
+            b"scripted-registry".to_vec(),
+        )
+        .identity()
+    }
+
+    fn run_fetch(
+        origins: OriginAdapterSet,
+        coordinates: &[&str],
+        payload: &[u8],
+    ) -> (PrimitivePublication, ValueId, ValueId) {
+        let target =
+            FramedNode::leaf(Type::Extern(ExternKind::Blob).schema_ref(), payload.to_vec())
+                .identity();
+        let capability = registry_capability();
+        let request = PinnedFetchRequest {
+            pin: PinnedBlobRef {
+                value: BlobId::new(target.clone()).expect("a Blob-schema pin"),
+                origins: coordinates
+                    .iter()
+                    .map(|coordinate| OriginHint {
+                        capability: RegistryHandle(capability.clone()),
+                        coordinate: (*coordinate).to_owned(),
+                    })
+                    .collect(),
+                upstream: None,
+            },
+        };
+        let demand = DemandKey::from_preimage(&DemandPreimage {
+            closure: RecipeId::from_canonical_vir(b"fetch-fallthrough-test"),
+            arguments: Vec::new(),
+        });
+        let authority =
+            Arc::new(StagedEffectAuthority::new(std::iter::empty()).with_origins(origins));
+        let ctx = EffectCtx::new(demand, authority);
+        let ticket =
+            crate::typed_primitive::Primitive::<()>::begin(&PinnedFetchPrimitive, request, ctx, ())
+                .into_raw();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let _subscription = ticket.join(move |publication| {
+            let _ = sender.send(publication);
+        });
+        let publication = receiver
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the fetch completes");
+        (publication, target, capability)
+    }
+
+    /// A multi-origin fetch that falls through has EVERY attempt in the
+    /// receipt: one Missing-observed witness per tried coordinate, then the
+    /// Value witness of the origin that served — not just the winner.
+    ///
+    /// r[verify machine.primitive.witness-reverification]
+    #[test]
+    fn a_multi_origin_fallthrough_witnesses_every_tried_coordinate() {
+        let (origins, adapter) = scripted_set([("stub://serves", b"payload".to_vec())]);
+        let (publication, target, capability) = run_fetch(
+            origins,
+            &["stub://miss-a", "stub://miss-b", "stub://serves"],
+            b"payload",
+        );
+
+        assert_eq!(
+            publication.completion,
+            PrimitiveCompletion::Ok(target.clone())
+        );
+        assert_eq!(
+            *adapter.asked.lock().expect("scripted origin mutex poisoned"),
+            ["stub://miss-a", "stub://miss-b", "stub://serves"],
+            "each origin is tried in declaration order"
+        );
+        let reads = &publication.receipt.reads;
+        assert_eq!(reads.len(), 3, "every attempt is in the receipt: {reads:#?}");
+        for (read, coordinate) in reads.iter().zip(["stub://miss-a", "stub://miss-b"]) {
+            assert_eq!(read.source, capability);
+            assert_eq!(
+                read.projection,
+                ReadProjection::Origin {
+                    coordinate: coordinate.to_owned(),
+                }
+            );
+            assert_eq!(read.observation, ReadObservation::Missing);
+        }
+        assert_eq!(
+            reads[2].projection,
+            ReadProjection::Origin {
+                coordinate: "stub://serves".to_owned(),
+            }
+        );
+        assert_eq!(reads[2].observation, ReadObservation::Value(target));
+    }
+
+    /// Corruption stops: an origin serving bytes that contradict the pin is
+    /// not "not found here, try the next" — the loop returns the corruption
+    /// instead of shopping for an origin that lies better, and later origins
+    /// are never contacted.
+    ///
+    /// r[verify machine.primitive.origin-verbs]
+    #[test]
+    fn a_corrupt_candidate_stops_the_fallthrough_loop() {
+        let (origins, adapter) = scripted_set([
+            ("stub://corrupt", b"not the pinned bytes".to_vec()),
+            ("stub://never-reached", b"payload".to_vec()),
+        ]);
+        let (publication, _target, _capability) = run_fetch(
+            origins,
+            &["stub://corrupt", "stub://never-reached"],
+            b"payload",
+        );
+
+        assert!(
+            matches!(
+                publication.completion,
+                PrimitiveCompletion::MachineError(PrimitiveMachineError::CorruptCandidate { .. })
+            ),
+            "corruption surfaces typed: {:#?}",
+            publication.completion
+        );
+        assert_eq!(
+            *adapter.asked.lock().expect("scripted origin mutex poisoned"),
+            ["stub://corrupt"],
+            "the loop stops at the corruption; later origins are never asked"
+        );
     }
 }
 

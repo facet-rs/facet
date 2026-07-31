@@ -285,13 +285,32 @@ impl ReadProjection {
     }
 }
 
+// Discriminants are explicit for the same reason `ReadProjection`'s are:
+// observations are persisted receipt vocabulary, so every variant keeps its
+// number forever — retire-and-reserve, never renumber — and new variants are
+// appended with the next number.
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ReadObservation {
-    Value(ValueId),
-    Missing,
-    Directory { digest: super::identity::Digest },
-    Unverifiable,
+    Value(ValueId) = 0,
+    /// Nothing existed where the projection looked. Misses are witnessed —
+    /// a failed origin candidate records one of these per tried coordinate,
+    /// and a tree read that finds nothing (including an absent directory)
+    /// records one for its path — so the rerun audit can hold "it was not
+    /// there" to the same standard as "it was this".
+    ///
+    /// r[impl machine.primitive.witness-reverification]
+    Missing = 1,
+    Directory { digest: super::identity::Digest } = 2,
+    Unverifiable = 3,
+    /// The entry exists with this kind, contradicting the projection's
+    /// request — a file read that found a directory. Deliberately not a
+    /// [`Self::Missing`]: recording the found kind is what lets the rerun
+    /// audit distinguish "the file appeared" from "the file became a
+    /// directory".
+    ///
+    /// r[impl machine.primitive.witness-reverification]
+    Kind(TreeEntryKind) = 4,
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
