@@ -843,13 +843,12 @@ mod tests {
 
         // fetch is harvested from the registered primitives, one name, and
         // `prelude_primitive` maps it to its `PrimitiveId`.
-        for (name, id) in [("fetch", pinned_fetch_primitive_id())] {
-            let binding = reg.prelude(name).expect("prelude primitive");
-            assert!(matches!(binding.target, BindingTarget::Primitive(_)));
-            assert_eq!(prelude_primitive(name), Some(id.clone()));
-            assert!(reg.qualified(&std, name).is_some());
-            assert_eq!(surface_primitive(&format!("std::{name}")), Some(id));
-        }
+        let (name, id) = ("fetch", pinned_fetch_primitive_id());
+        let binding = reg.prelude(name).expect("prelude primitive");
+        assert!(matches!(binding.target, BindingTarget::Primitive(_)));
+        assert_eq!(prelude_primitive(name), Some(id.clone()));
+        assert!(reg.qualified(&std, name).is_some());
+        assert_eq!(surface_primitive(&format!("std::{name}")), Some(id));
 
         // decode/try_decode are hand-registered onto the same shared id.
         for name in ["decode", "try_decode"] {
