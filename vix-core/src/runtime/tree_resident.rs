@@ -3,9 +3,9 @@
 //! or the canonical form; everything here decodes any of them to the one
 //! semantic value, so identity is representation-independent
 //! (`machine.identity.tree-model`). Consumed by the untar/tree-glob/exec
-//! primitives and the scheduler — this is value-model machinery, not harness
-//! fixture code, which is why it lives beside `tree.rs` rather than in
-//! `fixture.rs`.
+//! primitives and the scheduler — this is value-model machinery, not any
+//! backend's code, which is why it lives beside `tree.rs` rather than with
+//! the harness's store.
 
 use super::tree::{Tree, TreeEntry, TreeError};
 

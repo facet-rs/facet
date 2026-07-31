@@ -1569,7 +1569,7 @@ fn evaluate_snapshot_site(
 /// The offline harness's default service set: the fixture store installed AS
 /// the origin adapter, explicitly and under its declaration
 /// (`FixtureStore::origin_decl`: `fixture://` coordinates, Registry
-/// capabilities, the `fixture-tree\0` handle namespace). The machine holds no
+/// capabilities, its declared tree-handle namespace). The machine holds no
 /// default origin backend — with no adapter installed an origin read is a
 /// loud typed refusal (`machine.primitive.origin-routing`) — so the conjuring
 /// that used to live in the scheduler's silent fixture fallback lives here

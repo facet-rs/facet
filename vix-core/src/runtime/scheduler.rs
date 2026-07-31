@@ -773,10 +773,13 @@ pub struct PersistentRuntimeState {
 /// instead of attempting migration. Version 1 covers the origin-rail stage-2
 /// receipt vocabulary (witnessed misses, kind observations, the provenance
 /// field); journals written before versioning existed carry no field at all
-/// and are rejected the same way.
+/// and are rejected the same way. Version 2 covers stage 3's witness
+/// vocabulary: `ReadProjection::RegistryManifest` retired (the manifest is an
+/// ordinary `Origin` coordinate read) and the directory-observation hash
+/// domain moved off its backend-named v1 tag.
 ///
 /// r[impl machine.primitive.witness-reverification]
-pub const PERSISTENT_RUNTIME_JOURNAL_FORMAT: u32 = 1;
+pub const PERSISTENT_RUNTIME_JOURNAL_FORMAT: u32 = 2;
 
 impl PersistentRuntimeState {
     #[must_use]
@@ -1244,21 +1247,10 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 &read.observation,
                 ReadObservation::Value(observed) if observed == &read.source
             ),
-            // An ordinary coordinate read at the manifest's one transitional
-            // spelling; the Registry source is its own capability. The
-            // projection variant retires in stage 3 of the origin rail.
-            ReadProjection::RegistryManifest => self.reverify_coordinate_observation(
-                &origins,
-                &read.source,
-                super::REGISTRY_MANIFEST_COORDINATE,
-                &Type::String,
-                &read.observation,
-            ),
             ReadProjection::Origin { coordinate } => self.reverify_coordinate_observation(
                 &origins,
                 &read.source,
                 coordinate,
-                &Type::Extern(ExternKind::Blob),
                 &read.observation,
             ),
             ReadProjection::TreePath { path } => {
@@ -1344,12 +1336,17 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
     /// `Value` observation must resolve to the same identity, a `Missing`
     /// observation must still miss (an unroutable coordinate verifies
     /// nothing — including a recorded miss, since nobody can look).
+    ///
+    /// The served bytes are framed by the recorded observation's OWN schema:
+    /// the witness's identity is the claim, and it defines its own framing —
+    /// a pinned fetch's Blob-framed candidate and an unpinned read's
+    /// String-framed text re-verify through this one arm without the audit
+    /// knowing which producer wrote the witness.
     fn reverify_coordinate_observation(
         &self,
         origins: &super::OriginAdapterSet,
         capability: &ValueId,
         coordinate: &str,
-        leaf_ty: &Type,
         observation: &ReadObservation,
     ) -> bool {
         let Ok(installation) = origins.route_coordinate(capability, coordinate) else {
@@ -1357,8 +1354,9 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
         };
         let resolved = installation.adapter.read(capability, coordinate);
         match observation {
-            ReadObservation::Value(observed) => resolved
-                .is_ok_and(|bytes| effect_leaf(leaf_ty, bytes).identity == *observed),
+            ReadObservation::Value(observed) => resolved.is_ok_and(|bytes| {
+                FramedNode::leaf(observed.schema.clone(), bytes).identity() == *observed
+            }),
             ReadObservation::Missing => {
                 matches!(resolved, Err(super::OriginReadError::Miss { .. }))
             }
@@ -4139,12 +4137,18 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
         }
         drop(subscription);
         self.primitive_dispatcher.retire(demand);
-        self.counters.fetches_performed += publication
-            .receipt
-            .reads
-            .iter()
-            .filter(|read| matches!(read.projection, ReadProjection::Origin { .. }))
-            .count() as u64;
+        // A "fetch performed" is a PINNED transfer against an origin: only
+        // pinned-policy publications count their coordinate witnesses.
+        // Unpinned coordinate reads (the registry manifest) share the
+        // `Origin` projection vocabulary but are not fetches.
+        if memo_policy == PrimitiveMemoPolicy::Pinned {
+            self.counters.fetches_performed += publication
+                .receipt
+                .reads
+                .iter()
+                .filter(|read| matches!(read.projection, ReadProjection::Origin { .. }))
+                .count() as u64;
+        }
         if let Some(root) = root {
             // An EFFECT-marked invocation is hoisted into its own island and
             // never lowered into a Weavy frame, so a root-submitted effect can
@@ -6283,6 +6287,10 @@ fn content_entry_kind(entry: &super::TreeEntry) -> TreeEntryKind {
     }
 }
 
+// The hash domain moved off its backend-named `vix.fixture.…` v1 tag when the
+// fixture store left core: directory observations are seam vocabulary, served
+// by any adapter's directory verb. Journals recording v1 digests are
+// intentionally invalidated (`PERSISTENT_RUNTIME_JOURNAL_FORMAT` 2).
 fn directory_observation_digest(entries: &[(String, TreeEntryKind)]) -> Digest {
     let mut fields = Vec::with_capacity(entries.len() * 2);
     for (name, kind) in entries {
@@ -6293,7 +6301,7 @@ fn directory_observation_digest(entries: &[(String, TreeEntryKind)]) -> Digest {
             TreeEntryKind::Symlink => b"symlink".as_slice(),
         });
     }
-    hash_framed(b"vix.fixture.directory-observation.v1", &fields)
+    hash_framed(b"vix.origin.directory-observation.v2", &fields)
 }
 
 /// Type-directed structural rendering of a published snapshot value. It mirrors
@@ -7364,8 +7372,8 @@ fn primitive_demand_preimage(primitive: &super::PrimitiveId, request: &ValueId) 
 fn projection_fingerprint(projection: &ReadProjection) -> String {
     match projection {
         ReadProjection::Whole => "whole".to_owned(),
-        // "document" is the retired `Document` variant's reserved spelling.
-        ReadProjection::RegistryManifest => "registry-manifest".to_owned(),
+        // "document" and "registry-manifest" are the retired `Document` and
+        // `RegistryManifest` variants' reserved spellings — never reused.
         ReadProjection::CapabilityProgram => "capability-program".to_owned(),
         ReadProjection::TreePath { path } => format!("tree-path:{path}"),
         ReadProjection::Origin { coordinate } => format!("origin:{coordinate}"),

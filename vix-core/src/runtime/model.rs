@@ -264,7 +264,13 @@ pub enum ReadProjection {
     // (`PersistentRuntimeJournal::to_json`) and demand fingerprints spell
     // each projection explicitly, so nothing reads these numbers today — the
     // pinning is what keeps that true for any future binary format too.
-    RegistryManifest = 2,
+    //
+    // `RegistryManifest` lived at discriminant 2; it retired when the offline
+    // registry manifest became an ordinary declared-set coordinate read
+    // (`Origin`, at the serving adapter's `registry://manifest` coordinate).
+    // Slot 2 and the fingerprint spelling "registry-manifest" stay reserved.
+    // Journals recording it are intentionally invalidated
+    // (`PERSISTENT_RUNTIME_JOURNAL_FORMAT` bumped — a journal is a cache).
     CapabilityProgram = 3,
     TreePath {
         path: String,
@@ -291,10 +297,7 @@ impl ReadProjection {
         match self {
             Self::TreePath { path } => Some(path),
             Self::Origin { coordinate } => Some(coordinate),
-            Self::Whole
-            | Self::RegistryManifest
-            | Self::CapabilityProgram
-            | Self::StreamRange { .. } => None,
+            Self::Whole | Self::CapabilityProgram | Self::StreamRange { .. } => None,
         }
     }
 }

@@ -654,16 +654,14 @@ impl EffectAuthority for StagedEffectAuthority {
                 observation: ReadObservation::Value(identity),
             });
         }
-        if let ReadProjection::RegistryManifest = projection {
-            if value.schema != Type::Extern(crate::vir::ExternKind::Registry).schema_ref() {
-                return Err(PrimitiveMachineError::AuthorityViolation {
-                    detail: "registry-manifest read source was not a Registry".to_owned(),
-                });
-            }
-            // The manifest is an ordinary coordinate read through the declared
-            // set (the projection variant retires in stage 3 of the origin
-            // rail); the Registry source is its own capability.
-            let coordinate = super::REGISTRY_MANIFEST_COORDINATE;
+        if let ReadProjection::Origin { coordinate } = projection {
+            // An unpinned coordinate read: the source value is its own
+            // capability, routing is a lookup over the declared set, and the
+            // served text is witnessed as a String-framed observation (the
+            // registry manifest is today's one consumer). Pinned binary
+            // transfers ride `origin_candidate`, which frames by the pin;
+            // re-verification frames by the recorded observation's own
+            // schema, so the two coexist on one projection vocabulary.
             let bytes = self
                 .origins
                 .route_coordinate(source, coordinate)?

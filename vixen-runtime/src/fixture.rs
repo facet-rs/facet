@@ -263,16 +263,23 @@ impl FixtureStore {
         std::fs::read(self.root.join(relative)).map_err(|_| FixtureReadError::Missing)
     }
 
-    /// The fixture adapter's declaration: `fixture://` coordinates, Registry
-    /// capabilities, and the `fixture-tree\0` handle namespace, as data. The
-    /// machine routes by this declaration; the adapter re-checks none of it.
+    /// The fixture adapter's declaration: `fixture://` coordinates, the
+    /// `registry://` manifest coordinate, Registry capabilities, and the
+    /// `fixture-tree\0` handle namespace, as data. The machine routes by this
+    /// declaration; the adapter re-checks none of it.
+    ///
+    /// Claiming `registry` is what folds the retired
+    /// `ReadProjection::RegistryManifest` into this declaration: the offline
+    /// registry's manifest is served at
+    /// [`vixen_primitives::REGISTRY_MANIFEST_COORDINATE`] like any other
+    /// coordinate, and the machine no longer knows a manifest exists.
     ///
     /// r[impl machine.primitive.origin-routing]
     #[must_use]
     pub fn origin_decl() -> OriginAdapterDecl {
         OriginAdapterDecl {
             name: "fixture".to_owned(),
-            schemes: vec!["fixture".to_owned()],
+            schemes: vec!["fixture".to_owned(), "registry".to_owned()],
             capability: SchemaPattern::exact(&Type::Extern(ExternKind::Registry).schema_ref()),
             tree_namespace: Some(FIXTURE_TREE_NAMESPACE.to_vec()),
         }
@@ -281,6 +288,16 @@ impl FixtureStore {
 
 impl OriginAdapter for FixtureStore {
     fn read(&self, _capability: &ValueId, coordinate: &str) -> Result<Vec<u8>, OriginReadError> {
+        // The one `registry://` coordinate this adapter declares maps to the
+        // manifest file inside the fixture root.
+        if coordinate == vixen_primitives::REGISTRY_MANIFEST_COORDINATE {
+            return self
+                .registry_manifest()
+                .map(String::into_bytes)
+                .map_err(|_| OriginReadError::Miss {
+                    detail: "the fixture registry manifest is unavailable".to_owned(),
+                });
+        }
         self.fetch_url(coordinate)
             .map_err(|_| OriginReadError::Miss {
                 detail: format!("fixture origin {coordinate} is unavailable"),

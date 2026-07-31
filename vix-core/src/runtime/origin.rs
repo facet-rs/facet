@@ -25,15 +25,6 @@ use crate::schema::SchemaPattern;
 use super::model::TreeEntryKind;
 use super::{PrimitiveMachineError, ValueId};
 
-/// The transitional coordinate the offline registry manifest is served at.
-///
-/// `ReadProjection::RegistryManifest` predates the seam; until it
-/// retires-and-reserves (stage 3 of the origin rail), the machine resolves it
-/// as an ordinary coordinate read at this one spelling, routed through the
-/// declared adapter set like any other coordinate. This constant is the only
-/// place the machine spells it.
-pub(crate) const REGISTRY_MANIFEST_COORDINATE: &str = "fixture://registry/manifest";
-
 /// Why a coordinate read could not be served. The three answers are the
 /// origin taxonomy and they are deliberately different: a miss may fall
 /// through to another origin, a refusal routes elsewhere (or surfaces as a
@@ -446,15 +437,15 @@ mod tests {
     #[test]
     fn a_scheme_claimed_twice_is_rejected_at_install_time() {
         let mut set = OriginAdapterSet::default();
-        set.install(decl("first", &["fixture"], None), Arc::new(NullAdapter))
+        set.install(decl("first", &["offline"], None), Arc::new(NullAdapter))
             .expect("first install succeeds");
         assert_eq!(
             set.install(
-                decl("second", &["https", "fixture"], None),
+                decl("second", &["https", "offline"], None),
                 Arc::new(NullAdapter)
             ),
             Err(OriginInstallError::SchemeClaimedTwice {
-                scheme: "fixture".to_owned(),
+                scheme: "offline".to_owned(),
                 first: "first".to_owned(),
                 second: "second".to_owned(),
             })
@@ -466,14 +457,14 @@ mod tests {
     fn prefix_related_namespaces_are_rejected_at_install_time() {
         let mut set = OriginAdapterSet::default();
         set.install(
-            decl("first", &["a"], Some(b"fixture-tree\0")),
+            decl("first", &["a"], Some(b"sample-tree\0")),
             Arc::new(NullAdapter),
         )
         .expect("first install succeeds");
         // A strict prefix of an installed namespace: every handle the
         // installed adapter owns would also be claimed by this one.
         assert_eq!(
-            set.install(decl("second", &["b"], Some(b"fixture")), Arc::new(NullAdapter)),
+            set.install(decl("second", &["b"], Some(b"sample")), Arc::new(NullAdapter)),
             Err(OriginInstallError::NamespaceOverlap {
                 first: "first".to_owned(),
                 second: "second".to_owned(),
@@ -491,7 +482,7 @@ mod tests {
     #[test]
     fn an_unclaimed_scheme_is_a_loud_refusal_naming_the_installed_set() {
         let mut set = OriginAdapterSet::default();
-        set.install(decl("fixture", &["fixture"], None), Arc::new(NullAdapter))
+        set.install(decl("offline", &["offline"], None), Arc::new(NullAdapter))
             .expect("install succeeds");
         let capability =
             super::super::FramedNode::leaf(Type::String.schema_ref(), b"cap".to_vec()).identity();
@@ -502,20 +493,20 @@ mod tests {
             panic!("expected a typed unroutable refusal, got {error:?}");
         };
         assert!(detail.contains("https://example.test/blob"), "{detail}");
-        assert!(detail.contains("\"fixture\""), "{detail}");
+        assert!(detail.contains("\"offline\""), "{detail}");
     }
 
     /// r[verify machine.primitive.origin-routing]
     #[test]
     fn an_inadmissible_capability_is_a_refusal_produced_by_routing() {
         let mut set = OriginAdapterSet::default();
-        set.install(decl("fixture", &["fixture"], None), Arc::new(NullAdapter))
+        set.install(decl("offline", &["offline"], None), Arc::new(NullAdapter))
             .expect("install succeeds");
         // The declaration admits String; route with an Int-schema capability.
         let capability =
             super::super::FramedNode::leaf(Type::Int.schema_ref(), b"cap".to_vec()).identity();
         let error = set
-            .route_coordinate(&capability, "fixture://registry/x")
+            .route_coordinate(&capability, "offline://registry/x")
             .expect_err("inadmissible capability refuses");
         assert!(matches!(
             error,
