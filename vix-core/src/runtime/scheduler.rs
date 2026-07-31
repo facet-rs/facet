@@ -18,7 +18,8 @@ use crate::vir::{
     ExternKind, Function, FunctionId, Island, IslandId, NodeId, Op, Type, VariantPayload,
 };
 
-use super::fixture::{FixtureEntryKind, FixtureReadError, FixtureStore, canonical_resident_tree};
+use super::fixture::{FixtureEntryKind, FixtureReadError, FixtureStore};
+use super::tree_resident::canonical_resident_tree;
 use super::identity::{
     DemandKey, DemandPreimage, Digest, Location, LocationId, RecipeId, ValueId, hash_framed,
 };
