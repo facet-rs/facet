@@ -820,6 +820,7 @@ impl EffectCtx {
                         source: source.clone(),
                         projection,
                         observation: witnessed.observation.clone(),
+                        provenance: None,
                     });
                 Ok(witnessed)
             }
@@ -849,6 +850,7 @@ impl EffectCtx {
                             source: source.clone(),
                             projection,
                             observation,
+                            provenance: None,
                         });
                 }
                 Err(error)
@@ -895,11 +897,18 @@ impl EffectCtx {
         self.authority.persist_value(value, bytes)
     }
 
+    /// Resolve one origin candidate: route the coordinate read, verify the
+    /// served bytes against the pinned identity, and witness the outcome —
+    /// a `Value` observation carrying `provenance` (the upstream digest the
+    /// caller is verifying the transfer against, recorded beside the vix
+    /// identity per `machine.primitive.fetch-integrity-vs-identity`), or a
+    /// `Missing` observation for a tried coordinate that had nothing.
     pub fn origin_candidate(
         &self,
         capability: &ValueId,
         coordinate: &str,
         expected: &ValueId,
+        provenance: Option<super::UpstreamDigest>,
     ) -> Result<Vec<u8>, PrimitiveMachineError> {
         let bytes = match self.authority.origin_candidate(capability, coordinate) {
             Ok(bytes) => bytes,
@@ -921,6 +930,9 @@ impl EffectCtx {
                                 coordinate: coordinate.to_owned(),
                             },
                             observation: ReadObservation::Missing,
+                            // Nothing arrived, so nothing was checked
+                            // against the pin: a miss has no provenance.
+                            provenance: None,
                         });
                 }
                 return Err(error);
@@ -940,6 +952,7 @@ impl EffectCtx {
                     coordinate: coordinate.to_owned(),
                 },
                 observation: ReadObservation::Value(observed),
+                provenance,
             });
         Ok(bytes)
     }

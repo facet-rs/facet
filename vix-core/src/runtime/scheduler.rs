@@ -133,6 +133,7 @@ impl super::CodataDrainCtx for GlobDrainCtx<'_> {
                                     path: projection.to_owned(),
                                 },
                                 observation,
+                                provenance: None,
                             });
                         }
                         return Err(super::origin_tree_machine_error(error, projection));
@@ -149,6 +150,7 @@ impl super::CodataDrainCtx for GlobDrainCtx<'_> {
             observation: ReadObservation::Directory {
                 digest: directory_observation_digest(&entries),
             },
+            provenance: None,
         });
         Ok(entries)
     }
@@ -759,10 +761,24 @@ pub struct PersistentRuntimeState {
     memo: BTreeMap<LocationId, MemoEntry>,
 }
 
+/// The persistent runtime journal's format version.
+///
+/// A journal is a CACHE: rejecting one costs a recompute, never correctness —
+/// so witness-vocabulary changes (a new observation variant, a new witness
+/// field) bump this number and intentionally invalidate every older journal
+/// instead of attempting migration. Version 1 covers the origin-rail stage-2
+/// receipt vocabulary (witnessed misses, kind observations, the provenance
+/// field); journals written before versioning existed carry no field at all
+/// and are rejected the same way.
+///
+/// r[impl machine.primitive.witness-reverification]
+pub const PERSISTENT_RUNTIME_JOURNAL_FORMAT: u32 = 1;
+
 impl PersistentRuntimeState {
     #[must_use]
     pub fn to_journal(&self) -> PersistentRuntimeJournal {
         PersistentRuntimeJournal {
+            format: PERSISTENT_RUNTIME_JOURNAL_FORMAT,
             store: self.store.to_journal(),
             claims: self
                 .memo
@@ -787,8 +803,19 @@ impl PersistentRuntimeState {
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct PersistentRuntimeJournal {
+    /// See [`PERSISTENT_RUNTIME_JOURNAL_FORMAT`].
+    pub format: u32,
     pub store: StoreJournal,
     pub claims: Vec<PersistentMemoClaim>,
+}
+
+/// The version probe [`PersistentRuntimeJournal::from_json`] reads before the
+/// full parse: format rejection must be TYPED, not a parse error, and must
+/// fire for a versionless journal too — so the probe's field is optional and
+/// every other field is skipped.
+#[derive(facet::Facet)]
+struct JournalFormatProbe {
+    format: Option<u32>,
 }
 
 impl PersistentRuntimeJournal {
@@ -798,7 +825,22 @@ impl PersistentRuntimeJournal {
         })
     }
 
+    /// Parse a persisted journal, rejecting any format but the current one —
+    /// including the versionless past — as a typed
+    /// [`PersistentRuntimeJournalError::FormatUnsupported`]. Intentional
+    /// invalidation: the journal is a cache, and one recompute is the whole
+    /// price of never migrating witness vocabulary.
     pub fn from_json(text: &str) -> Result<Self, PersistentRuntimeJournalError> {
+        let probe: JournalFormatProbe =
+            facet_json::from_str(text).map_err(|error| PersistentRuntimeJournalError::Json {
+                detail: error.to_string(),
+            })?;
+        if probe.format != Some(PERSISTENT_RUNTIME_JOURNAL_FORMAT) {
+            return Err(PersistentRuntimeJournalError::FormatUnsupported {
+                found: probe.format,
+                supported: PERSISTENT_RUNTIME_JOURNAL_FORMAT,
+            });
+        }
         facet_json::from_str(text).map_err(|error| PersistentRuntimeJournalError::Json {
             detail: error.to_string(),
         })
@@ -846,6 +888,13 @@ pub enum PersistentClaimRejectionReason {
 pub enum PersistentRuntimeJournalError {
     Json { detail: String },
     Store(Box<StoreJournalError>),
+    /// The journal predates the current format (a `None` is the versionless
+    /// past) or postdates it. Rejection is intentional invalidation, never a
+    /// migration attempt: recompute and rewrite.
+    FormatUnsupported {
+        found: Option<u32>,
+        supported: u32,
+    },
 }
 
 impl From<StoreJournalError> for PersistentRuntimeJournalError {
@@ -5483,6 +5532,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                     source: identity.clone(),
                     projection: ReadProjection::CapabilityProgram,
                     observation: ReadObservation::Unverifiable,
+                    provenance: None,
                 })
                 .collect(),
         };
@@ -5936,6 +5986,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 source: pending.source,
                 projection: pending.projection,
                 observation: ReadObservation::Value(interned.identity.clone()),
+                provenance: None,
             }],
         };
         self.record_performed_reads(&receipt);
@@ -10591,6 +10642,7 @@ fn passing() -> Stream<Check> {
                     coordinate: "stub://blob".to_owned(),
                 },
                 observation: ReadObservation::Missing,
+                provenance: None,
             };
             assert!(
                 runtime.reverify_read_witness(&witness),
@@ -10601,6 +10653,52 @@ fn passing() -> Stream<Check> {
             assert!(
                 !runtime.reverify_read_witness(&witness),
                 "an appearing coordinate breaks the recorded miss"
+            );
+        }
+
+        /// Provenance is a record, the identity is the claim: re-verification
+        /// never consults the witness's provenance field, so a receipt whose
+        /// recorded transfer digest is nonsense still verifies as long as the
+        /// observed identity holds.
+        ///
+        /// r[verify machine.primitive.witness-reverification]
+        #[test]
+        fn reverification_ignores_the_provenance_record() {
+            let adapter = Arc::new(ToggleOrigin {
+                bytes: Mutex::new(Some(b"served".to_vec())),
+            });
+            let mut runtime = Runtime::new(EventLog::default());
+            runtime.set_primitive_services(
+                crate::runtime::PrimitiveServices::default()
+                    .with_origin(
+                        OriginAdapterDecl {
+                            name: "toggle".to_owned(),
+                            schemes: vec!["stub".to_owned()],
+                            capability: SchemaPattern::exact(
+                                &Type::Extern(ExternKind::Registry).schema_ref(),
+                            ),
+                            tree_namespace: None,
+                        },
+                        adapter,
+                    )
+                    .expect("the toggle declaration overlaps nothing"),
+            );
+            let observed =
+                effect_leaf(&Type::Extern(ExternKind::Blob), b"served".to_vec()).identity;
+            let witness = ReadWitness {
+                source: registry_capability(),
+                projection: ReadProjection::Origin {
+                    coordinate: "stub://blob".to_owned(),
+                },
+                observation: ReadObservation::Value(observed),
+                provenance: Some(crate::runtime::UpstreamDigest {
+                    algorithm: crate::runtime::DigestAlgorithm::Sha256,
+                    bytes: vec![0; 32],
+                }),
+            };
+            assert!(
+                runtime.reverify_read_witness(&witness),
+                "a nonsense provenance record does not fail an identity that holds"
             );
         }
 
@@ -10623,6 +10721,7 @@ fn passing() -> Stream<Check> {
                     path: "path-appears/src/new.rs".to_owned(),
                 },
                 observation: ReadObservation::Missing,
+                provenance: None,
             };
             assert!(
                 runtime.reverify_read_witness(&witness),
@@ -10655,6 +10754,7 @@ fn passing() -> Stream<Check> {
                 source: node.identity(),
                 projection: projection.clone(),
                 observation,
+                provenance: None,
             };
             assert!(
                 runtime.reverify_read_witness(&kind_witness(ReadObservation::Kind(
@@ -10736,6 +10836,55 @@ fn passing() -> Stream<Check> {
                 "the wrong-kind read is witnessed as the contradicting kind, not a miss"
             );
             assert_eq!(reads[1].observation, ReadObservation::Missing);
+        }
+    }
+
+    mod journal_format {
+        //! The persistent journal's format version: a journal is a cache, so
+        //! a versionless or mismatched journal is a TYPED rejection —
+        //! intentional invalidation costing one recompute, never a migration.
+
+        use crate::runtime::{
+            PERSISTENT_RUNTIME_JOURNAL_FORMAT, PersistentRuntimeJournal,
+            PersistentRuntimeJournalError, PersistentRuntimeState,
+        };
+
+        /// r[verify machine.primitive.witness-reverification]
+        #[test]
+        fn a_versionless_journal_is_rejected_typed() {
+            let error = PersistentRuntimeJournal::from_json(r#"{"claims":[]}"#)
+                .expect_err("a journal from before versioning is rejected");
+            assert_eq!(
+                error,
+                PersistentRuntimeJournalError::FormatUnsupported {
+                    found: None,
+                    supported: PERSISTENT_RUNTIME_JOURNAL_FORMAT,
+                }
+            );
+        }
+
+        /// r[verify machine.primitive.witness-reverification]
+        #[test]
+        fn a_mismatched_format_is_rejected_typed() {
+            let error = PersistentRuntimeJournal::from_json(r#"{"format":999,"claims":[]}"#)
+                .expect_err("an unknown future format is rejected, not guessed at");
+            assert_eq!(
+                error,
+                PersistentRuntimeJournalError::FormatUnsupported {
+                    found: Some(999),
+                    supported: PERSISTENT_RUNTIME_JOURNAL_FORMAT,
+                }
+            );
+        }
+
+        #[test]
+        fn the_current_format_round_trips() {
+            let journal = PersistentRuntimeState::default().to_journal();
+            assert_eq!(journal.format, PERSISTENT_RUNTIME_JOURNAL_FORMAT);
+            let json = journal.to_json().expect("the journal serializes");
+            let loaded =
+                PersistentRuntimeJournal::from_json(&json).expect("the journal loads back");
+            assert_eq!(loaded, journal);
         }
     }
 }

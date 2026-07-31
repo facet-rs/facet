@@ -231,6 +231,20 @@ pub struct ReadWitness {
     pub source: ValueId,
     pub projection: ReadProjection,
     pub observation: ReadObservation,
+    /// Transfer provenance: the foreign upstream digest the arriving bytes
+    /// were verified against, recorded beside the vix identity — this is
+    /// `machine.primitive.fetch-integrity-vs-identity`'s "both digests are
+    /// recorded in the receipt" made real. The repr is [`UpstreamDigest`]
+    /// (self-describing: the algorithm is data, not schema), which already
+    /// lives in core as the pin vocabulary the fetch request carries.
+    ///
+    /// Its re-verification meaning is NONE, deliberately: provenance is a
+    /// record of what the transfer was checked against, never a claim the
+    /// rerun audit re-checks — the vix identity in `observation` is the
+    /// claim. `Runtime::reverify_read_witness` does not read this field.
+    ///
+    /// r[impl machine.primitive.witness-reverification]
+    pub provenance: Option<super::identity::UpstreamDigest>,
 }
 
 // `Ord` because a projection is half of a progressive-readiness key: the

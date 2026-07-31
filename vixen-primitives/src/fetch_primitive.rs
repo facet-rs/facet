@@ -75,7 +75,16 @@ fn serve(pin: PinnedBlobRef, ctx: &EffectCtx) -> Result<ValueId, PrimitiveMachin
     }
 
     for origin in &pin.origins {
-        match ctx.origin_candidate(&origin.capability.0, &origin.coordinate, &target) {
+        // The pin's upstream digest rides the witness as provenance: a record
+        // of what the transfer is checked against (verify_upstream below),
+        // recorded beside the vix identity. If the check then fails, the
+        // demand fails and the receipt never publishes.
+        match ctx.origin_candidate(
+            &origin.capability.0,
+            &origin.coordinate,
+            &target,
+            pin.upstream.clone(),
+        ) {
             Ok(bytes) => {
                 verify_upstream(&bytes, pin.upstream.as_ref())?;
                 let admitted = admit(&bytes, &target, ctx)?;
@@ -319,11 +328,11 @@ mod origin_fallthrough {
 
     use super::PinnedFetchPrimitive;
     use crate::rt::{
-        BlobId, DemandKey, DemandPreimage, EffectCtx, FramedNode, OriginAdapter,
+        BlobId, DemandKey, DemandPreimage, DigestAlgorithm, EffectCtx, FramedNode, OriginAdapter,
         OriginAdapterDecl, OriginAdapterSet, OriginHint, OriginReadError, PinnedBlobRef,
         PinnedFetchRequest, PrimitiveCompletion, PrimitiveMachineError, PrimitivePublication,
         ReadObservation, ReadProjection, RecipeId, RegistryHandle, StagedEffectAuthority,
-        ValueId,
+        UpstreamDigest, ValueId,
     };
     struct ScriptedOrigin {
         serving: BTreeMap<String, Vec<u8>>,
@@ -387,6 +396,7 @@ mod origin_fallthrough {
         origins: OriginAdapterSet,
         coordinates: &[&str],
         payload: &[u8],
+        upstream: Option<UpstreamDigest>,
     ) -> (PrimitivePublication, ValueId, ValueId) {
         let target =
             FramedNode::leaf(Type::Extern(ExternKind::Blob).schema_ref(), payload.to_vec())
@@ -402,7 +412,7 @@ mod origin_fallthrough {
                         coordinate: (*coordinate).to_owned(),
                     })
                     .collect(),
-                upstream: None,
+                upstream,
             },
         };
         let demand = DemandKey::from_preimage(&DemandPreimage {
@@ -437,6 +447,8 @@ mod origin_fallthrough {
             origins,
             &["stub://miss-a", "stub://miss-b", "stub://serves"],
             b"payload",
+        
+            None,
         );
 
         assert_eq!(
@@ -485,6 +497,8 @@ mod origin_fallthrough {
             origins,
             &["stub://corrupt", "stub://never-reached"],
             b"payload",
+        
+            None,
         );
 
         assert!(
@@ -499,6 +513,47 @@ mod origin_fallthrough {
             *adapter.asked.lock().expect("scripted origin mutex poisoned"),
             ["stub://corrupt"],
             "the loop stops at the corruption; later origins are never asked"
+        );
+    }
+
+    /// The verified upstream digest enters the receipt beside the vix
+    /// identity: the origin transfer's Value witness carries it as
+    /// provenance, and a tried-and-missed coordinate carries none (nothing
+    /// arrived to check).
+    ///
+    /// r[verify machine.primitive.fetch-integrity-vs-identity]
+    /// r[verify machine.primitive.witness-reverification]
+    #[test]
+    fn the_verified_upstream_digest_rides_the_receipt_as_provenance() {
+        use sha2::{Digest as _, Sha256};
+
+        let payload = b"payload";
+        let upstream = UpstreamDigest {
+            algorithm: DigestAlgorithm::Sha256,
+            bytes: Sha256::digest(payload).to_vec(),
+        };
+        let (origins, _adapter) = scripted_set([("stub://serves", payload.to_vec())]);
+        let (publication, target, _capability) = run_fetch(
+            origins,
+            &["stub://miss", "stub://serves"],
+            payload,
+            Some(upstream.clone()),
+        );
+
+        assert_eq!(publication.completion, PrimitiveCompletion::Ok(target));
+        let reads = &publication.receipt.reads;
+        assert_eq!(reads.len(), 2, "{reads:#?}");
+        assert_eq!(reads[0].observation, ReadObservation::Missing);
+        assert_eq!(
+            reads[0].provenance, None,
+            "a miss has no provenance: nothing arrived to check"
+        );
+        assert!(matches!(reads[1].observation, ReadObservation::Value(_)));
+        assert_eq!(
+            reads[1].provenance,
+            Some(upstream),
+            "both digests are in the receipt: the vix identity as the \
+             observation, the verified upstream digest as provenance"
         );
     }
 }
