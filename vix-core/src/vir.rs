@@ -548,6 +548,15 @@ pub enum WireArg {
     Int(i64),
     Bool(bool),
     FixtureTree(String),
+    /// A declared-constant literal (a call to an injected constant surface
+    /// with literal arguments, `fixture_tree("name")`-shaped): the surface's
+    /// encoded resident bytes and the framing schema of its declared type,
+    /// carried so a described selector computes the exact realized argument
+    /// identity without demanding anything.
+    Constant {
+        schema: crate::schema::SchemaRef,
+        bytes: Vec<u8>,
+    },
 }
 
 /// One arm of a generator [`GeneratorStep::Match`]. The arm body is itself a
@@ -1595,6 +1604,15 @@ pub enum Op {
     FixtureTree(String),
     /// Open the offline harness fixture registry (the lock-time manifest).
     FixtureRegistry,
+    /// A declared typed byte-leaf constant, lowered from an embedder-injected
+    /// constant surface ([`crate::binding::ConstantSurfaceDecl`]): `bytes` is
+    /// the surface's encoding of its literal arguments, and the node's type
+    /// frames the value identity. Effect-marked, because a declared constant
+    /// names a value an installed authority stands behind (the stable name of
+    /// an unpinned observation), never one the program computed. `root`
+    /// declares the publication shape: a root is its own scheduler-published
+    /// effect island; a non-root realizes in-frame as a lowered constant.
+    DeclaredConst { bytes: Vec<u8>, root: bool },
 }
 
 /// One SSA-like operation. Dependencies are explicit node ids; no Rust
@@ -4329,6 +4347,7 @@ fn structural_fingerprint(
 /// type `Stream<..>`) is not itself a root — the collection realizing it is.
 fn is_effect_root(node: &Node) -> bool {
     matches!(node.op, Op::FixtureRegistry)
+        || matches!(node.op, Op::DeclaredConst { root: true, .. })
         || (node.effect.kind == EffectKind::Effect
             && matches!(node.op, Op::StreamCollect)
             && !matches!(node.ty, Type::Stream { .. }))
@@ -4889,6 +4908,11 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
             frame(&mut op, name.as_bytes());
         }
         Op::FixtureRegistry => op.push(94),
+        Op::DeclaredConst { bytes: constant, root } => {
+            op.push(103);
+            op.push(u8::from(*root));
+            frame(&mut op, constant);
+        }
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());

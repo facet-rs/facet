@@ -188,6 +188,44 @@ pub struct CapabilityTypeDecl {
     pub name: &'static str,
 }
 
+/// A constant-surface declaration the embedder injects into the compiler
+/// ([`crate::compiler::CompilerConfig::constants`]): a free-function surface
+/// name whose call lowers to a declared typed byte-leaf constant
+/// ([`crate::vir::Op::DeclaredConst`]) rather than a primitive invocation.
+/// This is how an embedder or harness names its own well-known values — a
+/// harness fixture tree, its offline registry — without the machine carrying
+/// a dedicated op (or any vocabulary) per name.
+///
+/// Every parameter is a **declared literal**: each call-site argument must be
+/// spelled as a string literal, checked at lowering with a diagnostic that
+/// names the surface. The constraint is deliberate vocabulary, not an
+/// implementation shortcut — the constant folds at compile time, and a
+/// surface with coordinate-like arguments keeps a program's requirement set
+/// static (`vixen.machine.requirements-are-static`): a computed coordinate is
+/// rejected at compile time, never evaluated.
+// Equality on the thunks is pointer identity — good enough for its one use
+// (`CompilerConfig` equality; see `PrimitiveMethodDecl`).
+#[allow(unpredictable_function_pointer_comparisons)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ConstantSurfaceDecl {
+    pub name: &'static str,
+    /// The surface's arity; every argument is a declared string literal.
+    pub literal_params: usize,
+    /// The constant's vix type. Its schema frames the value identity, so the
+    /// declared type is identity-bearing.
+    pub result: fn() -> crate::vir::Type,
+    /// Encode the call's literal arguments, in order, into the constant's
+    /// resident bytes. Identity-bearing: the encoding IS the value.
+    pub encode: fn(&[&str]) -> Vec<u8>,
+    /// The constant's publication shape. A root (`true`) is its own
+    /// scheduler-published effect island — downstream islands consume its
+    /// value as a published input (the registry-constant shape). A non-root
+    /// (`false`) realizes in-frame as a lowered constant (the tree-handle
+    /// shape). Identity-bearing at the recipe level, so a surface may not
+    /// change it silently.
+    pub root: bool,
+}
+
 impl ReceiverType {
     /// Classify a lowered receiver's [`crate::vir::Type`] into the method
     /// dispatch key, or `None` if the type carries no builtin methods.
@@ -712,6 +750,7 @@ fn injected_surface_module() -> ModulePath {
 #[must_use]
 pub fn is_qualified_binding_with(
     surfaces: &[runtime::PrimitiveSurface],
+    constants: &[ConstantSurfaceDecl],
     module: &str,
     name: &str,
 ) -> bool {
@@ -720,7 +759,8 @@ pub fn is_qualified_binding_with(
     }
     ModulePath::new([module]).is_some_and(|path| {
         path == injected_surface_module()
-            && surfaces.iter().any(|surface| surface.surface_name == name)
+            && (surfaces.iter().any(|surface| surface.surface_name == name)
+                || constants.iter().any(|constant| constant.name == name))
     })
 }
 
@@ -734,17 +774,34 @@ pub fn injected_surface<'a>(
     surfaces: &'a [runtime::PrimitiveSurface],
     name: &str,
 ) -> Option<&'a runtime::PrimitiveSurface> {
-    let leaf = match name.rsplit_once("::") {
+    let leaf = injected_leaf(name)?;
+    surfaces.iter().find(|surface| surface.surface_name == leaf)
+}
+
+/// Resolve a possibly-qualified surface `name` against the embedder-injected
+/// constant-surface declarations ([`ConstantSurfaceDecl`]). Mirrors
+/// [`injected_surface`]'s dual spelling: a declared constant answers to both
+/// its bare prelude name and its canonical `std::` spelling, and to nothing
+/// under any other module.
+#[must_use]
+pub fn injected_constant<'a>(
+    constants: &'a [ConstantSurfaceDecl],
+    name: &str,
+) -> Option<&'a ConstantSurfaceDecl> {
+    let leaf = injected_leaf(name)?;
+    constants.iter().find(|constant| constant.name == leaf)
+}
+
+/// The leaf an injected surface answers under: the bare spelling itself, or
+/// the leaf of a `std::`-qualified spelling; `None` under any other module.
+fn injected_leaf(name: &str) -> Option<&str> {
+    match name.rsplit_once("::") {
         Some((module, leaf)) => {
             let path = ModulePath::new(module.split("::"))?;
-            if path != injected_surface_module() {
-                return None;
-            }
-            leaf
+            (path == injected_surface_module()).then_some(leaf)
         }
-        None => name,
-    };
-    surfaces.iter().find(|surface| surface.surface_name == leaf)
+        None => Some(name),
+    }
 }
 
 /// Resolve a primitive by either its compatibility prelude name or its
@@ -949,12 +1006,12 @@ mod tests {
         // never sees it…
         assert!(!is_qualified_binding("std", "grab"));
         // …but the injected-aware seam resolves it under `std`, and only there.
-        assert!(is_qualified_binding_with(&surfaces, "std", "grab"));
-        assert!(!is_qualified_binding_with(&surfaces, "other", "grab"));
-        assert!(!is_qualified_binding_with(&surfaces, "std", "not_injected"));
+        assert!(is_qualified_binding_with(&surfaces, &[], "std", "grab"));
+        assert!(!is_qualified_binding_with(&surfaces, &[], "other", "grab"));
+        assert!(!is_qualified_binding_with(&surfaces, &[], "std", "not_injected"));
 
         // The static bundled names still resolve through the same seam.
-        assert!(is_qualified_binding_with(&surfaces, "std", "fetch"));
+        assert!(is_qualified_binding_with(&surfaces, &[], "std", "fetch"));
     }
 
     #[test]
@@ -970,5 +1027,36 @@ mod tests {
         assert!(injected_surface(&surfaces, "other::grab").is_none());
         // An unknown leaf does not.
         assert!(injected_surface(&surfaces, "std::nope").is_none());
+    }
+
+    /// A constant-surface declaration standing in for one a harness injects:
+    /// a `String`-typed constant whose bytes tag its one literal argument.
+    const NOTE_CONSTANT: ConstantSurfaceDecl = ConstantSurfaceDecl {
+        name: "pinned_note",
+        literal_params: 1,
+        result: || crate::vir::Type::String,
+        encode: |args| {
+            let mut bytes = b"note\0".to_vec();
+            bytes.extend(args[0].as_bytes());
+            bytes
+        },
+        root: false,
+    };
+
+    #[test]
+    fn injected_constant_answers_bare_and_std_spellings() {
+        let constants = [NOTE_CONSTANT];
+
+        assert!(injected_constant(&constants, "pinned_note").is_some());
+        assert!(injected_constant(&constants, "std::pinned_note").is_some());
+
+        assert!(injected_constant(&constants, "other::pinned_note").is_none());
+        assert!(injected_constant(&constants, "std::nope").is_none());
+
+        // The qualified-binding seam resolves a declared constant under
+        // `std`, and only there — `use std::pinned_note` works like any
+        // injected surface's import.
+        assert!(is_qualified_binding_with(&[], &constants, "std", "pinned_note"));
+        assert!(!is_qualified_binding_with(&[], &constants, "other", "pinned_note"));
     }
 }

@@ -82,6 +82,14 @@ pub struct CompilerConfig {
     /// a tool name is a capability package's, never the machine's
     /// (`machine.capability.no-argv-dialect`).
     pub capabilities: &'static [crate::binding::CapabilityTypeDecl],
+    /// Constant-surface declarations the embedder injects: free-function
+    /// names that lower to declared typed byte-leaf constants
+    /// ([`crate::binding::ConstantSurfaceDecl`] — the harness's
+    /// `fixture_tree`/`fixture_registry` spellings ride this). Every argument
+    /// of such a surface is a declared string literal, checked at lowering.
+    /// `vix-core` alone ships **none** — the bare language names no
+    /// backend's constants.
+    pub constants: &'static [crate::binding::ConstantSurfaceDecl],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -165,7 +173,12 @@ impl Compiler {
         for module in modules {
             parsed.push((module.name.to_owned(), self.parser.parse(module.source)?));
         }
-        let merged = crate::modules::merge_module_set(root, &parsed, &self.primitive_surfaces)?;
+        let merged = crate::modules::merge_module_set(
+            root,
+            &parsed,
+            &self.primitive_surfaces,
+            self.config.constants,
+        )?;
         let module = lower_module(&merged, self.config, &self.primitive_surfaces)?;
         let warnings = lint_module(&module);
         Ok(Compilation { module, warnings })
@@ -263,6 +276,12 @@ impl ModuleContext<'_> {
                 crate::binding::surface_primitive(name)
                     .and_then(|primitive| crate::binding::request_shape(&primitive))
             })
+    }
+
+    /// The injected constant-surface declaration a callee name resolves to,
+    /// under the same bare/`std::` dual spelling as [`Self::primitive_shape`].
+    fn constant_surface(&self, name: &str) -> Option<&'static crate::binding::ConstantSurfaceDecl> {
+        crate::binding::injected_constant(self.config.constants, name)
     }
 }
 
@@ -3233,7 +3252,7 @@ fn described_wire(
         .args
         .args
         .iter()
-        .map(wire_argument_literal)
+        .map(|argument| wire_argument_literal(context, argument))
         .collect::<Result<Vec<_>, _>>();
     let selector = match arguments {
         Ok(arguments) => {
@@ -3263,7 +3282,10 @@ fn described_wire(
 /// One closed scalar literal in a described-wire selector. A described selector
 /// only names literal arguments; it never evaluates a sub-expression to obtain
 /// an argument identity.
-fn wire_argument_literal(argument: &ast::Expr) -> Result<WireArg, Diagnostics> {
+fn wire_argument_literal(
+    context: &ModuleContext<'_>,
+    argument: &ast::Expr,
+) -> Result<WireArg, Diagnostics> {
     match argument {
         ast::Expr::Number(number) => number.value.parse::<i64>().map(WireArg::Int).map_err(|_| {
             type_mismatch(
@@ -3283,6 +3305,30 @@ fn wire_argument_literal(argument: &ast::Expr) -> Result<WireArg, Diagnostics> {
                 ));
             };
             Ok(WireArg::FixtureTree(name.value.clone()))
+        }
+        // A call to an injected constant surface with literal arguments is a
+        // closed scalar literal: its bytes and framing schema are declared
+        // data, so the selector identity is computable without demanding.
+        ast::Expr::Call(call) if context.constant_surface(&call.callee.value).is_some() => {
+            let decl = context
+                .constant_surface(&call.callee.value)
+                .expect("guard confirmed the callee is an injected constant surface");
+            check_arity(call, decl.literal_params)?;
+            let mut literals = Vec::with_capacity(decl.literal_params);
+            for argument in &call.args.args {
+                let ast::Expr::Str(literal) = argument else {
+                    return Err(type_mismatch(
+                        expr_span(argument),
+                        format!("a {} string literal", decl.name),
+                        "expression",
+                    ));
+                };
+                literals.push(literal.value.as_str());
+            }
+            Ok(WireArg::Constant {
+                schema: (decl.result)().schema_ref(),
+                bytes: (decl.encode)(&literals),
+            })
         }
         other => Err(Diagnostics::one(Diagnostic::unsupported(
             expr_span(other),
@@ -3417,6 +3463,12 @@ fn lower_value_expected(
             let intrinsic = crate::binding::surface_intrinsic(&call.callee.value)
                 .expect("guard confirmed the callee is a built-in intrinsic");
             lower_effect_intrinsic(nodes, call, intrinsic)
+        }
+        ast::Expr::Call(call) if context.constant_surface(&call.callee.value).is_some() => {
+            let decl = context
+                .constant_surface(&call.callee.value)
+                .expect("guard confirmed the callee is an injected constant surface");
+            lower_constant_surface(nodes, call, decl)
         }
         ast::Expr::Call(call) if context.primitive_shape(&call.callee.value).is_some() => {
             let shape = context
@@ -5586,6 +5638,55 @@ fn lower_request_shape(
 /// yet and stay hand-lowered here. Both take a literal or no argument, which is
 /// why no lowering environment reaches this far: `untar` was the one intrinsic
 /// with a value operand, and it is a primitive in `vixen-primitives` now.
+/// Lower a call to an embedder-injected constant surface
+/// ([`crate::binding::ConstantSurfaceDecl`]): check the declared
+/// literal-argument constraint, encode the literals into the constant's
+/// resident bytes, and push the effect-marked [`Op::DeclaredConst`] node.
+///
+/// The literal constraint is checked here, with a diagnostic naming the
+/// surface: a computed argument is rejected at compile time, never
+/// evaluated — a surface with coordinate-like arguments keeps a program's
+/// requirement set static (`vixen.machine.requirements-are-static`).
+fn lower_constant_surface(
+    nodes: &mut Vec<Node>,
+    call: &ast::Call,
+    decl: &crate::binding::ConstantSurfaceDecl,
+) -> Result<LoweredValue, Diagnostics> {
+    if call.named_args.is_some() {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            call.span,
+            "named arguments on a primitive constructor",
+        )));
+    }
+    check_arity(call, decl.literal_params)?;
+    let mut literals = Vec::with_capacity(decl.literal_params);
+    for argument in &call.args.args {
+        let ast::Expr::Str(literal) = argument else {
+            return Err(Diagnostics::one(Diagnostic::unsupported(
+                expr_span(argument),
+                format!("a {} string literal", decl.name),
+            )));
+        };
+        literals.push(literal.value.as_str());
+    }
+    let bytes = (decl.encode)(&literals);
+    let ty = (decl.result)();
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            call.span,
+            ty.clone(),
+            EffectFacts::EFFECT,
+            Vec::new(),
+            Op::DeclaredConst {
+                bytes,
+                root: decl.root,
+            },
+        ),
+        ty,
+    })
+}
+
 fn lower_effect_intrinsic(
     nodes: &mut Vec<Node>,
     call: &ast::Call,

@@ -419,22 +419,29 @@ struct TraceSnapshot {
 /// same way an evaluated scalar value interns, so a described literal selects
 /// the exact realized argument identity without demanding anything.
 fn wire_arg_identity(arg: &WireArg) -> ValueId {
-    let (ty, bytes) = match arg {
-        WireArg::Int(value) => (vix::vir::Type::Int, value.to_le_bytes().to_vec()),
+    let (schema, bytes) = match arg {
+        WireArg::Int(value) => (
+            vix::vir::Type::Int.schema_ref(),
+            value.to_le_bytes().to_vec(),
+        ),
         WireArg::Bool(value) => (
-            vix::vir::Type::Bool,
+            vix::vir::Type::Bool.schema_ref(),
             i64::from(*value).to_le_bytes().to_vec(),
         ),
         WireArg::FixtureTree(name) => {
             let mut bytes = b"fixture-tree\0".to_vec();
             bytes.extend(name.as_bytes());
             (
-                vix::vir::Type::Extern(vix::vir::ExternKind::Host(vix::binding::TREE)),
+                vix::vir::Type::Extern(vix::vir::ExternKind::Host(vix::binding::TREE)).schema_ref(),
                 bytes,
             )
         }
+        // A declared-constant literal carries its own framing: the schema and
+        // bytes are the injected surface's declaration, so the selector
+        // identity is exactly the realized constant's.
+        WireArg::Constant { schema, bytes } => (schema.clone(), bytes.clone()),
     };
-    FramedNode::leaf(ty.schema_ref(), bytes).identity()
+    FramedNode::leaf(schema, bytes).identity()
 }
 
 /// An at-most trace comparison: the observed counter and whether it stays

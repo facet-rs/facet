@@ -3194,6 +3194,14 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 resident.extend(name.as_bytes());
                 Ok(EffectTerm::Value(effect_leaf(&node.ty, resident)))
             }
+            // A declared constant is pure construction: the bytes were encoded
+            // at lowering from the surface's literal arguments, and the node's
+            // type frames the identity. No authority is consulted here — the
+            // value is the stable NAME an installed backend re-verifies
+            // against, not a read of it.
+            Op::DeclaredConst { bytes, .. } => {
+                Ok(EffectTerm::Value(effect_leaf(&node.ty, bytes.clone())))
+            }
             Op::Call(callee) => {
                 let (_, _, output) = Self::effect_function(island, *callee).ok_or_else(|| {
                     Box::new(MachineError::runtime(

@@ -142,6 +142,7 @@ fn resolve_imports(
     file: &ast::SourceFile,
     set: &BTreeMap<String, BTreeMap<String, DeclaredItem>>,
     surfaces: &[PrimitiveSurface],
+    constants: &[crate::binding::ConstantSurfaceDecl],
 ) -> Result<BTreeMap<String, String>, Diagnostics> {
     let mut bound: BTreeSet<String> = BTreeSet::new();
     // Function shapes bound in this file, keyed by (name, is-generic-template). A
@@ -165,6 +166,7 @@ fn resolve_imports(
                     if declared.is_none()
                         && !crate::binding::is_qualified_binding_with(
                             surfaces,
+                            constants,
                             &module.value,
                             &leaf.value,
                         )
@@ -277,8 +279,9 @@ fn rewrite_module_items(
     set: &BTreeMap<String, BTreeMap<String, DeclaredItem>>,
     module_names: &BTreeSet<String>,
     surfaces: &[PrimitiveSurface],
+    constants: &[crate::binding::ConstantSurfaceDecl],
 ) -> Result<Vec<ast::Item>, Diagnostics> {
-    let aliases = resolve_imports(Some(name), file, set, surfaces)?;
+    let aliases = resolve_imports(Some(name), file, set, surfaces, constants)?;
     let mut renames: BTreeMap<String, String> = declared_items(file)
         .into_keys()
         .map(|item| (item.clone(), format!("{name}::{item}")))
@@ -290,6 +293,7 @@ fn rewrite_module_items(
         module_set: set,
         own_module: Some(name),
         surfaces,
+        constants,
         scopes: Vec::new(),
     };
     let mut rewritten = Vec::new();
@@ -316,6 +320,7 @@ pub(crate) fn merge_module_set(
     root: ast::SourceFile,
     modules: &[(String, ast::SourceFile)],
     surfaces: &[PrimitiveSurface],
+    constants: &[crate::binding::ConstantSurfaceDecl],
 ) -> Result<ast::SourceFile, Diagnostics> {
     let mut module_names = BTreeSet::new();
     for (name, file) in modules {
@@ -350,16 +355,18 @@ pub(crate) fn merge_module_set(
             &set,
             &module_names,
             surfaces,
+            constants,
         )?);
     }
 
-    let aliases = resolve_imports(None, &root, &set, surfaces)?;
+    let aliases = resolve_imports(None, &root, &set, surfaces, constants)?;
     let mut rewriter = Rewriter {
         renames: &aliases,
         available_modules: &module_names,
         module_set: &set,
         own_module: None,
         surfaces,
+        constants,
         scopes: Vec::new(),
     };
     let span = root.span;
@@ -379,6 +386,7 @@ pub(crate) fn merge_module_set(
             &set,
             &module_names,
             surfaces,
+            constants,
         )?);
     }
 
@@ -402,6 +410,9 @@ struct Rewriter<'a> {
     /// Embedder-injected primitive surfaces, consulted alongside the static
     /// binding table so an injected surface resolves through its `std::` path.
     surfaces: &'a [PrimitiveSurface],
+    /// Embedder-injected constant-surface declarations, consulted the same
+    /// way so a declared constant resolves through its `std::` path.
+    constants: &'a [crate::binding::ConstantSurfaceDecl],
     scopes: Vec<BTreeSet<String>>,
 }
 
@@ -419,6 +430,7 @@ impl Rewriter<'_> {
         if declared.is_none()
             && crate::binding::is_qualified_binding_with(
                 self.surfaces,
+                self.constants,
                 &module.value,
                 &item.value,
             )
