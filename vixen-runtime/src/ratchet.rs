@@ -1384,7 +1384,7 @@ fn evaluate_value_site(
 ) -> Result<CheckRun, RunError> {
     let (submission, pending) = submit_value_site(runtime, cache, context, island, site, chaos)?;
     let evaluation = match submission {
-        RootSubmission::Ready(evaluation) => evaluation,
+        RootSubmission::Ready(evaluation) => *evaluation,
         RootSubmission::Pending(root) => runtime.run_until_any(&[root])?.1,
     };
     runtime.finish_root_batch();
@@ -1811,7 +1811,7 @@ fn run_lane(
                                 &arguments,
                                 chaos,
                             )?;
-                            RootSubmission::Ready(evaluation)
+                            RootSubmission::ready(evaluation)
                         }
                     } else {
                         runtime.submit_value(ValueRootRequest {
@@ -1829,6 +1829,7 @@ fn run_lane(
                     };
                     match submission {
                         RootSubmission::Ready(evaluation) => {
+                            let evaluation = *evaluation;
                             published_values.insert(value.id, evaluation.clone());
                             completed[index] = Some(evaluation);
                         }
@@ -1875,6 +1876,7 @@ fn run_lane(
                     })?;
                     match submission {
                         RootSubmission::Ready(evaluation) => {
+                            let evaluation = *evaluation;
                             published_values.insert(value.id, evaluation.clone());
                             completed_progressive[index] = Some(evaluation);
                         }
@@ -1918,7 +1920,7 @@ fn run_lane(
                                 evaluated_islands.push(island);
                             }
                             completed_flat_checks
-                                .insert(site, finish_value_check(pending, evaluation));
+                                .insert(site, finish_value_check(pending, *evaluation));
                         }
                         RootSubmission::Pending(demand) => {
                             in_flight

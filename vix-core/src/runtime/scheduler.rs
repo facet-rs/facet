@@ -552,7 +552,8 @@ struct SubmitRequest {
 /// The outcome of submitting a demand (a root evaluation or a forced wire).
 enum SubmitOutcome {
     /// Resolved without a task: a memo hit or an argument-failure cascade.
-    Ready(Evaluation),
+    /// Boxed so the enum stays near the size of its key-only variants.
+    Ready(Box<Evaluation>),
     /// A fresh task was spawned and pushed runnable under this demand key.
     Spawned(DemandKey),
     /// The demand is already in flight (a `Running`/`Queued` non-ancestor); the
@@ -592,8 +593,16 @@ pub struct Evaluation {
 /// owned by the scheduler until a shared harvest call observes its publication.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RootSubmission {
-    Ready(Evaluation),
+    /// Boxed so the enum stays near the size of its key-only variant.
+    Ready(Box<Evaluation>),
     Pending(DemandKey),
+}
+
+impl RootSubmission {
+    /// Wrap an already-resolved evaluation, boxing it behind the variant.
+    pub fn ready(evaluation: Evaluation) -> Self {
+        Self::Ready(Box::new(evaluation))
+    }
 }
 
 /// One top-level pure/value demand submitted by the runner. The request owns
@@ -1314,7 +1323,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             realized_as: None,
         })?;
         let evaluation = match outcome {
-            RootSubmission::Ready(evaluation) => evaluation,
+            RootSubmission::Ready(evaluation) => *evaluation,
             RootSubmission::Pending(root) => self.run_until_root(root)?,
         };
         self.finish_root_batch();
@@ -1376,7 +1385,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 &invocation,
                 attribution.as_ref(),
             )? {
-                return Ok(SubmitOutcome::Ready(evaluation));
+                return Ok(SubmitOutcome::Ready(Box::new(evaluation)));
             }
 
             // A wire that forces a demand already in flight is either a cyclic
@@ -1441,7 +1450,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 if let Some(realized) = realized_as {
                     self.wire_demands.push(realized);
                 }
-                return Ok(SubmitOutcome::Ready(Evaluation {
+                return Ok(SubmitOutcome::Ready(Box::new(Evaluation {
                     handle: argument.handle,
                     identity: argument.identity.clone(),
                     passed: false,
@@ -1455,7 +1464,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                             span: source.span,
                             demand_chain: vec![demand_key],
                         }),
-                }));
+                })));
             }
 
             if lowered.value_inputs.len() != arguments.len() {
@@ -2223,7 +2232,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
         })?;
         match outcome {
             SubmitOutcome::Ready(resolved) => {
-                self.resume_parent(ctx, index, resolved)?;
+                self.resume_parent(ctx, index, *resolved)?;
             }
             SubmitOutcome::Spawned(child) | SubmitOutcome::Joined(child) => {
                 self.wire_waiters
@@ -5385,7 +5394,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             return Ok(RegisteredEffectSubmission {
                 demand: demand_key,
                 capability,
-                root: RootSubmission::Ready(self.effect_memo_hit(
+                root: RootSubmission::ready(self.effect_memo_hit(
                     location.id,
                     handle,
                     &effect_context,
@@ -5417,7 +5426,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                         return Ok(RegisteredEffectSubmission {
                             demand: demand_key,
                             capability,
-                            root: RootSubmission::Ready(evaluation),
+                            root: RootSubmission::ready(evaluation),
                         });
                     }
                 }
@@ -5619,7 +5628,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             && entry.preimage == demand_preimage
             && self.exact_memo_replayable(entry)
         {
-            return Ok(RootSubmission::Ready(self.effect_memo_hit(
+            return Ok(RootSubmission::ready(self.effect_memo_hit(
                 location.id,
                 entry.result,
                 &|_| None,
@@ -5629,7 +5638,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             match record.state {
                 DemandState::Ready | DemandState::Failed => {
                     if let Some(handle) = record.result {
-                        return Ok(RootSubmission::Ready(self.effect_memo_hit(
+                        return Ok(RootSubmission::ready(self.effect_memo_hit(
                             location.id,
                             handle,
                             &|_| None,
@@ -5685,7 +5694,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             .remove(&(execution, projection.clone()))
         {
             self.publish_effect_projection(demand, &value, EffectProjectionAuthority::Protocol)?;
-            return Ok(RootSubmission::Ready(
+            return Ok(RootSubmission::ready(
                 self.root_results
                     .remove(&demand)
                     .expect("published progressive root has a result"),
@@ -5706,7 +5715,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                     .to_vec(),
             );
             self.publish_effect_projection(demand, &ranged, EffectProjectionAuthority::Protocol)?;
-            return Ok(RootSubmission::Ready(
+            return Ok(RootSubmission::ready(
                 self.root_results
                     .remove(&demand)
                     .expect("published progressive root has a result"),
@@ -5733,7 +5742,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                         &published,
                         EffectProjectionAuthority::Memo,
                     )?;
-                    return Ok(RootSubmission::Ready(
+                    return Ok(RootSubmission::ready(
                         self.root_results
                             .remove(&demand)
                             .expect("published progressive root has a result"),
