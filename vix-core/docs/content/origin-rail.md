@@ -231,6 +231,26 @@ only the two fixture ones leave).
   store demonstrably *is* an authority (the rerun oracle re-reads the
   filesystem). The verdict is superseded by this document.
 
+**AMENDED (stage 2 implementation), three precisions:**
+
+- The provenance field's "minimal self-describing digest repr in core" was a
+  stale premise — `UpstreamDigest`/`DigestAlgorithm` have lived in core's
+  identity module since the pins arc; the witness cites the existing type.
+  The constraint that falls out is right: provenance can only record
+  algorithms the machine can verify, and an unverifiable digest is provenance
+  of nothing.
+- Routing the registry manifest as "an ordinary coordinate read" needs core
+  to spell the coordinate somewhere while `ReadProjection::RegistryManifest`
+  still exists: one transitional `pub(crate)` constant, documented as
+  retiring with the projection in stage 3.
+- Tree witness paths remain `<fixture-name>/<path>` in stage 2 — re-spelling
+  them handle-relative would churn recorded paths and trace vocabulary for no
+  seam gain. Stage 3, which owns the sentinel-in-one-place goal, decides
+  whether projection paths become handle-relative. Likewise stage 3 should
+  expect downstream tests that relied on the implicit default store to need
+  explicit harness installs (`harness_services()` is public for exactly
+  that).
+
 ## Acceptance
 
 1. **Identities survive.** Every existing fixture-using test (the ratchet
