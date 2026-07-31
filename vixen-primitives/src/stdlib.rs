@@ -53,12 +53,26 @@ pub const PRELUDE_SOURCES: &[&str] = &[
 mod tests {
     use vix::compiler::{Compiler, CompilerConfig};
 
+    /// A `Registry`-typed constant surface standing in for the harness's
+    /// `fixture_registry` declaration (which lives in `vixen-runtime`): these
+    /// tests need *a* Registry source for `Registry.url`/`fetch` to consume,
+    /// and the injected constant rail is how an embedder provides one.
+    const TEST_REGISTRY: &[vix::binding::ConstantSurfaceDecl] =
+        &[vix::binding::ConstantSurfaceDecl {
+            name: "test_registry",
+            literal_params: 0,
+            result: || vix::vir::Type::Extern(vix::vir::ExternKind::Registry),
+            encode: |_| b"test-registry".to_vec(),
+            root: true,
+        }];
+
     fn with_stdlib() -> Compiler {
         crate::register_host_types();
         Compiler::with_config(CompilerConfig {
             prelude: super::PRELUDE_SOURCES,
             methods: crate::DOMAIN_METHODS,
             host_types: crate::HOST_TYPES,
+            constants: TEST_REGISTRY,
             ..CompilerConfig::default()
         })
     }
@@ -120,10 +134,10 @@ mod tests {
     #[test]
     fn std_items_can_be_imported() {
         let program = r#"
-import std::{fetch, fixture_registry};
+import std::{fetch, test_registry};
 
-fn fetch_fixture() -> Blob {
-    fetch(fixture_registry().url("case.crate"))
+fn fetch_case() -> Blob {
+    fetch(test_registry().url("case.crate"))
 }
 
 "#;
@@ -138,8 +152,8 @@ fn fetch_fixture() -> Blob {
         let program = r#"
 struct Row { name: String }
 
-fn fetch_from_fixture() -> Blob {
-    std::fetch(std::fixture_registry().url("case.crate"))
+fn fetch_case() -> Blob {
+    std::fetch(std::test_registry().url("case.crate"))
 }
 
 fn decode_row() -> Row {

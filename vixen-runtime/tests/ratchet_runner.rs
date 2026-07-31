@@ -7391,6 +7391,9 @@ fn tree_fetch_band_compiles_to_typed_vir() {
         CompilerConfig {
             methods: vixen_primitives::DOMAIN_METHODS,
             host_types: vixen_primitives::HOST_TYPES,
+            // `fixture_tree`/`fixture_registry` are harness-declared constant
+            // surfaces now, not core bindings.
+            constants: vixen_runtime::fixture::FIXTURE_CONSTANTS,
             ..CompilerConfig::default()
         },
         // `untar` is an injected free-function primitive now, not an intrinsic

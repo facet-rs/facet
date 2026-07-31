@@ -545,9 +545,14 @@ pub enum WireSelector {
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
 pub enum WireArg {
-    Int(i64),
-    Bool(bool),
-    FixtureTree(String),
+    Int(i64) = 0,
+    Bool(bool) = 1,
+    // Discriminant 2 belonged to `FixtureTree(String)`, retired when the
+    // fixture spellings became injected constant surfaces. WireArg is
+    // identity-bearing (a described selector resolves it to a realized
+    // argument `ValueId`), so the slot retires-and-reserves like a
+    // `ReadProjection` variant: survivors keep their numbers, and no future
+    // variant may reuse 2 with a different meaning.
     /// A declared-constant literal (a call to an injected constant surface
     /// with literal arguments, `fixture_tree("name")`-shaped): the surface's
     /// encoded resident bytes and the framing schema of its declared type,
@@ -556,7 +561,7 @@ pub enum WireArg {
     Constant {
         schema: crate::schema::SchemaRef,
         bytes: Vec<u8>,
-    },
+    } = 3,
 }
 
 /// One arm of a generator [`GeneratorStep::Match`]. The arm body is itself a
@@ -1597,13 +1602,6 @@ pub enum Op {
     /// r[impl machine.error.failure-is-a-value]
     /// r[impl machine.error.failure-source-site-identity]
     Fail,
-    /// Open one compiler-validated harness fixture tree as a lazy `Tree`
-    /// constant. Reads nothing: the value's identity is the pending
-    /// fixture-tree reference; projections resolve — and record reads — only
-    /// where demanded.
-    FixtureTree(String),
-    /// Open the offline harness fixture registry (the lock-time manifest).
-    FixtureRegistry,
     /// A declared typed byte-leaf constant, lowered from an embedder-injected
     /// constant surface ([`crate::binding::ConstantSurfaceDecl`]): `bytes` is
     /// the surface's encoding of its literal arguments, and the node's type
@@ -4346,8 +4344,7 @@ fn structural_fingerprint(
 /// lower into a Weavy program. A codata effect recipe (`Op::InvokeCodataPrimitive`,
 /// type `Stream<..>`) is not itself a root — the collection realizing it is.
 fn is_effect_root(node: &Node) -> bool {
-    matches!(node.op, Op::FixtureRegistry)
-        || matches!(node.op, Op::DeclaredConst { root: true, .. })
+    matches!(node.op, Op::DeclaredConst { root: true, .. })
         || (node.effect.kind == EffectKind::Effect
             && matches!(node.op, Op::StreamCollect)
             && !matches!(node.ty, Type::Stream { .. }))
@@ -4903,11 +4900,11 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         // historical recipe identity is ever reused.
         Op::Try => op.push(86),
         Op::Fail => op.push(87),
-        Op::FixtureTree(name) => {
-            op.push(90);
-            frame(&mut op, name.as_bytes());
-        }
-        Op::FixtureRegistry => op.push(94),
+        // Ordinals 90 (`Op::FixtureTree`) and 94 (`Op::FixtureRegistry`)
+        // retired when the fixture spellings became harness-declared constant
+        // surfaces on `Op::DeclaredConst`; like exec's 85 they stay
+        // unassigned so no historical recipe identity is ever reused. (97,
+        // `Op::Untar`, is likewise reserved from its own retirement.)
         Op::DeclaredConst { bytes: constant, root } => {
             op.push(103);
             op.push(u8::from(*root));

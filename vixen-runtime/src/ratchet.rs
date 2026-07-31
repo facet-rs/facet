@@ -428,14 +428,6 @@ fn wire_arg_identity(arg: &WireArg) -> ValueId {
             vix::vir::Type::Bool.schema_ref(),
             i64::from(*value).to_le_bytes().to_vec(),
         ),
-        WireArg::FixtureTree(name) => {
-            let mut bytes = b"fixture-tree\0".to_vec();
-            bytes.extend(name.as_bytes());
-            (
-                vix::vir::Type::Extern(vix::vir::ExternKind::Host(vix::binding::TREE)).schema_ref(),
-                bytes,
-            )
-        }
         // A declared-constant literal carries its own framing: the schema and
         // bytes are the injected surface's declaration, so the selector
         // identity is exactly the realized constant's.

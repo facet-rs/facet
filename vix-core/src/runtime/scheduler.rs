@@ -3189,11 +3189,6 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 &node.ty,
                 reference.canonical_bytes(),
             ))),
-            Op::FixtureTree(name) => {
-                let mut resident = b"fixture-tree\0".to_vec();
-                resident.extend(name.as_bytes());
-                Ok(EffectTerm::Value(effect_leaf(&node.ty, resident)))
-            }
             // A declared constant is pure construction: the bytes were encoded
             // at lowering from the surface's literal arguments, and the node's
             // type frames the identity. No authority is consulted here — the
@@ -3334,10 +3329,6 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                     frozen.clone(),
                 )?))
             }
-            Op::FixtureRegistry => Ok(EffectTerm::Value(effect_leaf(
-                &node.ty,
-                b"fixture-registry".to_vec(),
-            ))),
             Op::InvokeCodataPrimitive { primitive } => {
                 let EffectTerm::Value(source) = input(0, self)? else {
                     return effect_fault("codata primitive receiver was codata");

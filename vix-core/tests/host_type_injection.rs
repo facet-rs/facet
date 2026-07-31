@@ -69,26 +69,50 @@ fn a_core_colliding_host_type_is_rejected() {
     );
 }
 
+/// A `Tree`-typed constant surface standing in for the harness's
+/// `fixture_tree` declaration (which lives in `vixen-runtime` now): the test
+/// needs *a* Tree source, and the injected constant rail is how an embedder
+/// provides one.
+const TEST_TREE: &[vix::binding::ConstantSurfaceDecl] = &[vix::binding::ConstantSurfaceDecl {
+    name: "test_tree",
+    literal_params: 1,
+    result: || vix::vir::Type::Extern(vix::vir::ExternKind::Host(vix::binding::TREE)),
+    encode: |args| {
+        let mut bytes = b"test-tree\0".to_vec();
+        bytes.extend(args[0].as_bytes());
+        bytes
+    },
+    root: false,
+}];
+
 /// The `(tree / seg).text()` projection read is domain surface syntax, active
 /// only when the embedder declares the `Tree` host type. The bare language
 /// ships the machinery but no spelling reaches it.
 const TREE_TEXT_PROGRAM: &str = concat!(
     "#[test]\n",
     "fn t() -> Stream<Check> {\n",
-    "    let tree = fixture_tree(\"small-crate\");\n",
+    "    let tree = test_tree(\"small-crate\");\n",
     "    yield expect(((tree / \"Cargo.toml\").text()).contains(\"[package]\"));\n",
     "}\n",
 );
 
 #[test]
 fn tree_text_projection_requires_the_declared_tree_host_type() {
+    vix::schema::register_host_externs(&[vix::binding::TREE]);
+    // The tree source resolves in both arms; only the host-type declaration
+    // differs — so the failure below is the projection read's gate, not a
+    // missing surface.
+    let bare = Compiler::with_config(CompilerConfig {
+        constants: TEST_TREE,
+        ..CompilerConfig::default()
+    });
     assert!(
-        Compiler::new().compile(TREE_TEXT_PROGRAM).is_err(),
+        bare.compile(TREE_TEXT_PROGRAM).is_err(),
         "the bare language does not spell the tree projection read"
     );
-    vix::schema::register_host_externs(&[vix::binding::TREE]);
     let compiler = Compiler::with_config(CompilerConfig {
         host_types: TREE,
+        constants: TEST_TREE,
         ..CompilerConfig::default()
     });
     compiler.compile(TREE_TEXT_PROGRAM).unwrap_or_else(|diagnostics| {

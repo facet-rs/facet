@@ -3095,7 +3095,6 @@ fn constant_closures(island: &Island) -> BTreeMap<FunctionId, BTreeSet<NodeRef>>
                         Op::String(_)
                             | Op::Path(_)
                             | Op::Schema(_)
-                            | Op::FixtureTree(_)
                             | Op::DeclaredConst { root: false, .. }
                     )
                 })
@@ -3976,7 +3975,6 @@ impl FunctionLayout {
                     Op::String(_)
                         | Op::Path(_)
                         | Op::Schema(_)
-                        | Op::FixtureTree(_)
                         | Op::DeclaredConst { root: false, .. }
                 ) {
                     return Err(lowering_diagnostic(
@@ -6325,7 +6323,7 @@ fn lower_node(
                  by the checked node path and never as a value",
             ));
         }
-        Op::InvokeCodataPrimitive { .. } | Op::FixtureRegistry => {
+        Op::InvokeCodataPrimitive { .. } => {
             return Err(lowering_diagnostic(
                 node.span,
                 "a machine-plane primitive is evaluated by the runtime effect plane, never lowered to a Weavy island",
@@ -6541,55 +6539,6 @@ fn lower_node(
                     || previous.owner_slot != dst_slot
                     || previous.store_schema != store_schema
                     || previous.bytes != *bytes)
-            {
-                return Err(lowering_diagnostic(
-                    node.span,
-                    "constant NodeRef was lowered with conflicting metadata",
-                ));
-            }
-            (Vec::new(), ValueRepresentation::RealizedHandle)
-        }
-        Op::FixtureTree(name) => {
-            require_input_count(node, 0)?;
-            let tree_ty = Type::Extern(crate::vir::ExternKind::Host(crate::binding::TREE));
-            require_node_type(node, tree_ty.clone())?;
-            let constant = NodeRef {
-                function: lowering.function.id,
-                node: node.id,
-            };
-            if lowering
-                .function
-                .layout
-                .constant_slot(constant, node.span)?
-                != dst_slot
-            {
-                return Err(lowering_diagnostic(
-                    node.span,
-                    "FixtureTree node does not occupy its local closure slot",
-                ));
-            }
-            let root_layout = lowering
-                .context
-                .layouts
-                .get(&lowering.context.root_function)
-                .ok_or_else(|| lowering_diagnostic(node.span, "missing island root layout"))?;
-            let root_slot = root_layout.constant_slot(constant, node.span)?;
-            let store_schema = tree_ty.schema_ref();
-            let mut bytes = b"fixture-tree\0".to_vec();
-            bytes.extend(name.as_bytes());
-            let pending = PendingValueConstant {
-                node: constant,
-                root_slot,
-                owner_slot: dst_slot,
-                store_schema: store_schema.clone(),
-                bytes: bytes.clone(),
-                span: node.span,
-            };
-            if let Some(previous) = lowering.constants.insert(constant, pending)
-                && (previous.root_slot != root_slot
-                    || previous.owner_slot != dst_slot
-                    || previous.store_schema != store_schema
-                    || previous.bytes != bytes)
             {
                 return Err(lowering_diagnostic(
                     node.span,

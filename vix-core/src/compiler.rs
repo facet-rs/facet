@@ -3295,17 +3295,6 @@ fn wire_argument_literal(
             )
         }),
         ast::Expr::Bool(boolean) => Ok(WireArg::Bool(boolean.value)),
-        ast::Expr::Call(call) if call.callee.value == "fixture_tree" => {
-            check_arity(call, 1)?;
-            let ast::Expr::Str(name) = &call.args.args[0] else {
-                return Err(type_mismatch(
-                    expr_span(&call.args.args[0]),
-                    "a fixture_tree string literal",
-                    "expression",
-                ));
-            };
-            Ok(WireArg::FixtureTree(name.value.clone()))
-        }
         // A call to an injected constant surface with literal arguments is a
         // closed scalar literal: its bytes and framing schema are declared
         // data, so the selector identity is computable without demanding.
@@ -3456,13 +3445,6 @@ fn lower_value_expected(
             if matches!(call.callee.value.as_str(), "try_decode" | "std::try_decode") =>
         {
             lower_try_decode_binding(nodes, bindings, context, call, expected)
-        }
-        ast::Expr::Call(call)
-            if crate::binding::surface_intrinsic(&call.callee.value).is_some() =>
-        {
-            let intrinsic = crate::binding::surface_intrinsic(&call.callee.value)
-                .expect("guard confirmed the callee is a built-in intrinsic");
-            lower_effect_intrinsic(nodes, call, intrinsic)
         }
         ast::Expr::Call(call) if context.constant_surface(&call.callee.value).is_some() => {
             let decl = context
@@ -4477,7 +4459,8 @@ fn lower_tree_text_projection(
     // `machine.primitive.progressive-response`) so one subfile can land before
     // the whole process exits — or, at the fallback authority, from the
     // publications the effect's completion witnessed. Every other tree
-    // (fixture, extracted archive, completed exec output) is a settled,
+    // (an origin-backed handle, an extracted archive, a completed exec
+    // output) is a settled,
     // interned value the store-backed `TreeReadPrimitive` reads directly. Both
     // spell the same tree-read request; only the effect facts differ —
     // `EFFECT` marks the effect-origin read as an effect root the partitioner
@@ -4487,7 +4470,7 @@ fn lower_tree_text_projection(
     // frontier subscribes to a named product (`out/early.txt`), which the
     // partitioner reads back off the request. A computed path cannot name a
     // product ahead of time, so it falls back to a settled read of the
-    // completed tree (identical to a fixture read). This gate and the
+    // completed tree (identical to a settled origin-backed read). This gate and the
     // partitioner's node-level twin (`vir::progressive_exec_tree_path`) must
     // agree: the partitioner asserts that every EFFECT-marked tree-read
     // extracts, so a drift fails loudly.
@@ -5560,15 +5543,15 @@ fn lower_some(
 /// Lower a call to a uniform registered primitive (`fetch`, `observe`)
 /// through the [`RequestShape`](crate::binding::RequestShape) it declares on
 /// itself (`RawPrimitive::request_shape`, harvested by `crate::binding`) — there
-/// is no per-primitive Rust arm here. `decode`/`try_decode` and the
-/// `fixture_*`/`untar` intrinsics are matched by callee name earlier and never
+/// is no per-primitive Rust arm here. `decode`/`try_decode` and the injected
+/// constant surfaces are matched by callee name earlier and never
 /// reach this function; see `lower_value_expected`'s `ast::Expr::Call` arms.
 /// Build a registered-primitive call from its [`RequestShape`](crate::binding::RequestShape):
 /// check arity, then lower each argument in order into the request record and
 /// invoke the primitive.
 ///
-/// This is the one generic replacement for the former per-primitive arms in
-/// `lower_effect_intrinsic`. The request record and the `InvokePrimitive` node are
+/// This is the one generic replacement for the former per-primitive arms of
+/// the retired intrinsic builder. The request record and the `InvokePrimitive` node are
 /// `PURE`: the effect-island the primitive runs in is keyed off the primitive
 /// itself, not these nodes' effect facts.
 fn lower_request_shape(
@@ -5629,15 +5612,6 @@ fn lower_request_shape(
     })
 }
 
-/// The dedicated-op fixture primitives (`fixture_tree`, `fixture_registry`).
-/// Each lowers to an [`EffectKind::Effect`] node the partitioner hoists into its
-/// own effect island; nothing here is a Weavy-lowerable pure operation.
-///
-/// Unlike `fetch`/`observe`, these are not `InvokePrimitive` requests — they are
-/// bespoke VIR ops, so they do not have a [`RequestShape`](crate::binding::RequestShape)
-/// yet and stay hand-lowered here. Both take a literal or no argument, which is
-/// why no lowering environment reaches this far: `untar` was the one intrinsic
-/// with a value operand, and it is a primitive in `vixen-primitives` now.
 /// Lower a call to an embedder-injected constant surface
 /// ([`crate::binding::ConstantSurfaceDecl`]): check the declared
 /// literal-argument constraint, encode the literals into the constant's
@@ -5687,54 +5661,6 @@ fn lower_constant_surface(
     })
 }
 
-fn lower_effect_intrinsic(
-    nodes: &mut Vec<Node>,
-    call: &ast::Call,
-    kind: crate::binding::Intrinsic,
-) -> Result<LoweredValue, Diagnostics> {
-    use crate::binding::Intrinsic;
-    if call.named_args.is_some() {
-        return Err(Diagnostics::one(Diagnostic::unsupported(
-            call.span,
-            "named arguments on a primitive constructor",
-        )));
-    }
-    let (ty, op, inputs) = match kind {
-        Intrinsic::FixtureTree => {
-            check_arity(call, 1)?;
-            let ast::Expr::Str(name) = &call.args.args[0] else {
-                return Err(Diagnostics::one(Diagnostic::unsupported(
-                    expr_span(&call.args.args[0]),
-                    "a fixture_tree string literal",
-                )));
-            };
-            (
-                Type::Extern(ExternKind::Host(crate::binding::TREE)),
-                Op::FixtureTree(name.value.clone()),
-                Vec::new(),
-            )
-        }
-        Intrinsic::FixtureRegistry => {
-            check_arity(call, 0)?;
-            (
-                Type::Extern(ExternKind::Registry),
-                Op::FixtureRegistry,
-                Vec::new(),
-            )
-        }
-    };
-    Ok(LoweredValue {
-        node: push_node(
-            nodes,
-            call.span,
-            ty.clone(),
-            EffectFacts::EFFECT,
-            inputs,
-            op,
-        ),
-        ty,
-    })
-}
 
 fn decode_format_label(format: DecodeFormat) -> &'static str {
     match format {
@@ -6001,8 +5927,8 @@ fn lower_try_decode_core(
 }
 
 /// The single decode binding: `decode(document, Format::Json)`. The format is a
-/// `Format` enum value read at lower time (like a fixture name — the selector
-/// never lowers to a runtime value); the target type comes from the expected
+/// `Format` enum value read at lower time (like a constant-surface literal —
+/// the selector never lowers to a runtime value); the target type comes from the expected
 /// type, so `fn json_decode<T>(s: String) -> T { decode(s, Format::Json) }`
 /// forwards `T` here via return-position inference. This is the primitive
 /// binding the json_decode/toml_decode vix functions wrap: json vs toml is a
