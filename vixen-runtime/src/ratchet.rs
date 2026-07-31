@@ -1650,17 +1650,18 @@ fn run_lane(
     let mut journal_claims_loaded = false;
 
     for test in &module.tests {
-        let overlay = use_rerun_overlays
-            .then(|| test.metadata.rerun_with.clone())
-            .flatten();
-        runtime.set_fixture_rerun_overlay(overlay.clone());
         // The rerun overlay is harness data riding the declared installation:
         // overlay lanes always run on the harness set (a caller-assembled set
         // is installed verbatim above and never runs the overlay lanes), so a
-        // per-test reinstall puts the overlaid store behind the same seam the
-        // live reads and the rerun audit both resolve through.
+        // per-test reinstall puts the overlaid store behind the one seam that
+        // serves live reads AND witness re-verification — the rerun audit
+        // sees exactly what the original read did.
         if primitive_services.is_none() {
-            runtime.set_primitive_services(harness_services_with_overlay(overlay));
+            runtime.set_primitive_services(harness_services_with_overlay(
+                use_rerun_overlays
+                    .then(|| test.metadata.rerun_with.clone())
+                    .flatten(),
+            ));
         }
         if let Some(journal) = persistent_journal_in
             && !journal_claims_loaded

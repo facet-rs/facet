@@ -18,7 +18,6 @@ use crate::vir::{
     ExternKind, Function, FunctionId, Island, IslandId, NodeId, Op, Type, VariantPayload,
 };
 
-use super::fixture::{FixtureReadError, FixtureStore};
 use super::model::TreeEntryKind;
 use super::tree_resident::canonical_resident_tree;
 use super::identity::{
@@ -668,7 +667,6 @@ pub struct Runtime<S, Ctx = ()> {
     /// callee/argument/preimage selectors a descriptor can name.
     wire_demands: Vec<RealizedWireDemand>,
     performed_read_paths: BTreeSet<String>,
-    fixture_store: FixtureStore,
     primitive_dispatcher: PrimitiveDispatcher<Ctx>,
     /// The registered codata primitives (`glob`) that realize effect streams.
     /// `vix-core` ships an empty registry — the bare language realizes no
@@ -864,7 +862,6 @@ impl<S: EventSink> Runtime<S, ()> {
             next_task: 0,
             wire_demands: Vec::new(),
             performed_read_paths: BTreeSet::new(),
-            fixture_store: FixtureStore::default(),
             codata_registry: super::CodataRegistry::default(),
             primitive_dispatcher: PrimitiveDispatcher::empty(),
             primitive_services: super::PrimitiveServices::default(),
@@ -906,7 +903,6 @@ impl<S: EventSink> Runtime<S, ()> {
             next_task: 0,
             wire_demands: Vec::new(),
             performed_read_paths: BTreeSet::new(),
-            fixture_store: FixtureStore::default(),
             codata_registry: super::CodataRegistry::default(),
             primitive_dispatcher: PrimitiveDispatcher::empty(),
             primitive_services: super::PrimitiveServices::default(),
@@ -943,7 +939,6 @@ impl<S: EventSink> Runtime<S, ()> {
                 next_task: 0,
                 wire_demands: Vec::new(),
                 performed_read_paths: BTreeSet::new(),
-                fixture_store: FixtureStore::default(),
                 codata_registry: super::CodataRegistry::default(),
                 primitive_dispatcher: PrimitiveDispatcher::empty(),
                 primitive_services: super::PrimitiveServices::default(),
@@ -983,7 +978,6 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             next_task: 0,
             wire_demands: Vec::new(),
             performed_read_paths: BTreeSet::new(),
-            fixture_store: FixtureStore::default(),
             codata_registry: super::CodataRegistry::default(),
             primitive_dispatcher: PrimitiveDispatcher::empty(),
             primitive_services: super::PrimitiveServices::default(),
@@ -1000,10 +994,6 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             effect_stream_ready: BTreeMap::new(),
             completed_effect_progress: BTreeMap::new(),
         }
-    }
-
-    pub fn set_fixture_rerun_overlay(&mut self, rerun_with: Option<String>) {
-        self.fixture_store = self.fixture_store.clone().with_rerun_overlay(rerun_with);
     }
 
     /// Install the primitive dispatcher the engine dispatches effects through.
@@ -1152,57 +1142,131 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             .all(|read| self.reverify_read_witness(read))
     }
 
+    /// Re-verify one receipt witness by resolving its projection through the
+    /// installed origin adapter set, exactly as the original read routed —
+    /// coordinate witnesses by declared scheme, tree witnesses by the source
+    /// handle's declared namespace (content-identified sources resolve
+    /// locally, as they were read) — and comparing observations without
+    /// naming any backend. A projection the set cannot resolve simply fails
+    /// to verify: the memo entry recomputes, which is a cost, never a lie.
+    ///
+    /// The witness's `provenance` is deliberately not consulted: it records
+    /// what a transfer was checked against, never a claim the audit
+    /// re-checks — the vix identity IS the claim.
+    ///
+    /// r[impl machine.primitive.witness-reverification]
     fn reverify_read_witness(&self, read: &ReadWitness) -> bool {
-        match &read.observation {
-            ReadObservation::Value(observed) => {
-                if matches!(read.projection, ReadProjection::Whole) {
-                    return observed == &read.source;
-                }
-                if matches!(read.projection, ReadProjection::RegistryManifest) {
-                    return self
-                        .fixture_store
-                        .registry_manifest()
-                        .is_ok_and(|manifest| {
-                            effect_leaf(&Type::String, manifest.into_bytes()).identity == *observed
-                        });
-                }
-                match &read.projection {
-                    ReadProjection::TreePath { path } => {
-                        if let Ok(bytes) = self.fixture_store.tree_file_bytes(path) {
-                            return effect_leaf(&Type::String, bytes).identity == *observed;
-                        }
-                    }
-                    ReadProjection::Origin { coordinate } => {
-                        if let Ok(bytes) = self.fixture_store.fetch_url(coordinate) {
-                            return effect_leaf(&Type::Extern(ExternKind::Blob), bytes).identity
-                                == *observed;
-                        }
-                    }
-                    // A stream-range witness names bytes only its producing
-                    // effect ever published; no fixture can re-verify it.
-                    ReadProjection::Whole
-                    | ReadProjection::RegistryManifest
-                    | ReadProjection::CapabilityProgram
-                    | ReadProjection::StreamRange { .. } => {}
-                }
-                false
-            }
-            ReadObservation::Missing => matches!(
-                &read.projection,
-                ReadProjection::TreePath { path }
-                    if matches!(
-                        self.fixture_store.tree_file_bytes(path),
-                        Err(FixtureReadError::Missing)
-                    )
+        let origins = self.primitive_services.origins();
+        match &read.projection {
+            ReadProjection::Whole => matches!(
+                &read.observation,
+                ReadObservation::Value(observed) if observed == &read.source
             ),
-            ReadObservation::Directory { digest } => match &read.projection {
-                ReadProjection::TreePath { path } => self
-                    .fixture_store
-                    .tree_dir_entries(path)
-                    .is_ok_and(|entries| directory_observation_digest(&entries) == *digest),
-                _ => false,
-            },
-            ReadObservation::Unverifiable => false,
+            // An ordinary coordinate read at the manifest's one transitional
+            // spelling; the Registry source is its own capability. The
+            // projection variant retires in stage 3 of the origin rail.
+            ReadProjection::RegistryManifest => self.reverify_coordinate_observation(
+                &origins,
+                &read.source,
+                super::REGISTRY_MANIFEST_COORDINATE,
+                &Type::String,
+                &read.observation,
+            ),
+            ReadProjection::Origin { coordinate } => self.reverify_coordinate_observation(
+                &origins,
+                &read.source,
+                coordinate,
+                &Type::Extern(ExternKind::Blob),
+                &read.observation,
+            ),
+            ReadProjection::TreePath { path } => {
+                let Some(resident) = self
+                    .store
+                    .handle_for_identity(&read.source)
+                    .and_then(|handle| self.store.entry(handle))
+                    .and_then(|entry| entry.resident_bytes().map(<[u8]>::to_vec))
+                else {
+                    return false;
+                };
+                match origins.route_tree(&resident) {
+                    super::TreeRouting::ContentIdentified => {
+                        let Ok(tree) = super::tree_from_resident(&resident) else {
+                            return false;
+                        };
+                        match &read.observation {
+                            ReadObservation::Value(observed) => matches!(
+                                tree.project(path),
+                                Some(super::TreeEntry::File { content, .. })
+                                    if effect_leaf(&Type::String, content.as_bytes().to_vec())
+                                        .identity == *observed
+                            ),
+                            ReadObservation::Missing => tree.project(path).is_none(),
+                            ReadObservation::Directory { digest } => {
+                                matches!(
+                                    tree.project_dir(path),
+                                    Some(dir)
+                                        if directory_observation_digest(
+                                            &content_tree_listing(dir)
+                                        ) == *digest
+                                )
+                            }
+                            ReadObservation::Unverifiable => false,
+                        }
+                    }
+                    super::TreeRouting::Origin(installation) => match &read.observation {
+                        ReadObservation::Value(observed) => installation
+                            .adapter
+                            .tree_bytes(&resident, path)
+                            .is_ok_and(|bytes| {
+                                effect_leaf(&Type::String, bytes).identity == *observed
+                            }),
+                        // A miss re-verifies true exactly while nothing is
+                        // there: an appearing entry (of any kind) breaks it.
+                        ReadObservation::Missing => matches!(
+                            installation.adapter.tree_kind(&resident, path),
+                            Err(super::OriginTreeError::Missing)
+                        ),
+                        ReadObservation::Directory { digest } => installation
+                            .adapter
+                            .tree_directory(&resident, path)
+                            .is_ok_and(|entries| {
+                                directory_observation_digest(&entries) == *digest
+                            }),
+                        ReadObservation::Unverifiable => false,
+                    },
+                    super::TreeRouting::Unclaimed(_) => false,
+                }
+            }
+            // A stream-range witness names bytes only its producing effect
+            // ever published; no origin can re-verify it. A capability
+            // program has no seam either.
+            ReadProjection::CapabilityProgram | ReadProjection::StreamRange { .. } => false,
+        }
+    }
+
+    /// Re-verify a coordinate-read observation through the declared set: a
+    /// `Value` observation must resolve to the same identity, a `Missing`
+    /// observation must still miss (an unroutable coordinate verifies
+    /// nothing — including a recorded miss, since nobody can look).
+    fn reverify_coordinate_observation(
+        &self,
+        origins: &super::OriginAdapterSet,
+        capability: &ValueId,
+        coordinate: &str,
+        leaf_ty: &Type,
+        observation: &ReadObservation,
+    ) -> bool {
+        let Ok(installation) = origins.route_coordinate(capability, coordinate) else {
+            return false;
+        };
+        let resolved = installation.adapter.read(capability, coordinate);
+        match observation {
+            ReadObservation::Value(observed) => resolved
+                .is_ok_and(|bytes| effect_leaf(leaf_ty, bytes).identity == *observed),
+            ReadObservation::Missing => {
+                matches!(resolved, Err(super::OriginReadError::Miss { .. }))
+            }
+            ReadObservation::Directory { .. } | ReadObservation::Unverifiable => false,
         }
     }
 
@@ -6099,6 +6163,23 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             },
         )
     }
+}
+
+/// The `(name, TreeEntryKind)` rows of one directory of a content-identified
+/// tree, in the Tree model's canonical name order — the same listing shape
+/// the origin seam's directory verb speaks, so re-verification digests both
+/// through one function.
+fn content_tree_listing(dir: &super::Tree) -> Vec<(String, TreeEntryKind)> {
+    dir.iter()
+        .map(|(name, entry)| {
+            let kind = match entry {
+                super::TreeEntry::File { .. } => TreeEntryKind::File,
+                super::TreeEntry::Dir(_) => TreeEntryKind::Dir,
+                super::TreeEntry::Symlink { .. } => TreeEntryKind::Symlink,
+            };
+            (name.as_str().to_owned(), kind)
+        })
+        .collect()
 }
 
 fn directory_observation_digest(entries: &[(String, TreeEntryKind)]) -> Digest {
