@@ -201,8 +201,11 @@ fn primitive_helper_result_remains_a_publication_boundary() {
     let attribution = attribution_for(&helper.island);
     let mut runtime = Runtime::new(EventLog::default());
     // vix-core builds runtimes with an empty dispatcher; install the vixen
-    // builtins so the helper's decode primitive dispatches.
+    // builtins so the helper's decode primitive dispatches, and the harness
+    // service set so the fixture tree the helper reads routes to a declared
+    // origin adapter (the machine holds no default backend).
     vixen_runtime::install_builtins(&mut runtime);
+    runtime.set_primitive_services(vixen_runtime::ratchet::harness_services());
     let result = runtime.evaluate(
         helper.island.id,
         &Location::for_test_value("primitive-helper", "result"),

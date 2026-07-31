@@ -22,7 +22,8 @@
 //! `ureq` out of this one; that is now an ordinary dependency here.
 
 use sha2::{Digest as _, Sha256};
-use vix::runtime::{OriginAdapter, PrimitiveMachineError, ValueId};
+use vix::runtime::{OriginAdapter, OriginAdapterDecl, OriginReadError, ValueId};
+use vix::schema::SchemaPattern;
 use vix::vir::{ExternKind, Type};
 
 /// Raw Blob transport over HTTP.
@@ -33,35 +34,38 @@ use vix::vir::{ExternKind, Type};
 #[derive(Clone, Copy, Debug, Default)]
 pub struct HttpBlobOriginAdapter;
 
+impl HttpBlobOriginAdapter {
+    /// This adapter's declaration: `http(s)` coordinates for Registry
+    /// capabilities, no tree namespace. The scheme sniff and the capability
+    /// check the adapter used to perform are these two data fields now —
+    /// routing admits before the adapter is reached
+    /// (`machine.primitive.origin-routing`).
+    #[must_use]
+    pub fn decl() -> OriginAdapterDecl {
+        OriginAdapterDecl {
+            name: "http-blob".to_owned(),
+            schemes: vec!["http".to_owned(), "https".to_owned()],
+            capability: SchemaPattern::exact(&Type::Extern(ExternKind::Registry).schema_ref()),
+            tree_namespace: None,
+        }
+    }
+}
+
 impl OriginAdapter for HttpBlobOriginAdapter {
-    fn read(
-        &self,
-        capability: &ValueId,
-        coordinate: &str,
-    ) -> Result<Vec<u8>, PrimitiveMachineError> {
-        // The only two non-transport checks: this adapter serves Registry
-        // capabilities over http(s), and rejects anything else rather than
-        // guessing what a coordinate might mean.
-        if capability.schema != Type::Extern(ExternKind::Registry).schema_ref() {
-            return Err(PrimitiveMachineError::PolicyRejected {
-                detail: "HTTP Blob origin requires a Registry capability".to_owned(),
-            });
-        }
-        if !(coordinate.starts_with("http://") || coordinate.starts_with("https://")) {
-            return Err(PrimitiveMachineError::PolicyRejected {
-                detail: format!("HTTP Blob origin rejects coordinate {coordinate}"),
-            });
-        }
-        let mut response =
-            ureq::get(coordinate)
-                .call()
-                .map_err(|error| PrimitiveMachineError::Unavailable {
-                    detail: format!("HTTP Blob origin {coordinate} failed: {error}"),
-                })?;
+    fn read(&self, _capability: &ValueId, coordinate: &str) -> Result<Vec<u8>, OriginReadError> {
+        // Pure transport: a failed request or body is a miss — "not served
+        // from here" — which a multi-origin fetch may fall through. This
+        // adapter cannot detect corruption (verification is the seam's job)
+        // and never refuses (its declaration already admitted the request).
+        let mut response = ureq::get(coordinate)
+            .call()
+            .map_err(|error| OriginReadError::Miss {
+                detail: format!("HTTP Blob origin {coordinate} failed: {error}"),
+            })?;
         response
             .body_mut()
             .read_to_vec()
-            .map_err(|error| PrimitiveMachineError::Unavailable {
+            .map_err(|error| OriginReadError::Miss {
                 detail: format!("HTTP Blob origin {coordinate} body failed: {error}"),
             })
     }

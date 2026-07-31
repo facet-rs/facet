@@ -219,6 +219,26 @@ fn fixture_store_with_manifest(temp: &TempDir, manifest: &str) -> FixtureStore {
     FixtureStore::with_root(temp.path().to_path_buf())
 }
 
+/// The two-adapter service set these tests run on: the temp-root fixture
+/// store (manifest + `fixture://` coordinates) and the HTTP Blob transport,
+/// each installed under its declaration
+/// (r[verify machine.primitive.origin-routing]).
+fn harness_origins(store: FixtureStore) -> PrimitiveServices {
+    fixture_only(store)
+        .with_origin(
+            HttpBlobOriginAdapter::decl(),
+            Arc::new(HttpBlobOriginAdapter),
+        )
+        .expect("the http adapter's declaration overlaps nothing")
+}
+
+/// The fixture adapter alone — no transport serves `http(s)`.
+fn fixture_only(store: FixtureStore) -> PrimitiveServices {
+    PrimitiveServices::default()
+        .with_origin(FixtureStore::origin_decl(), Arc::new(store))
+        .expect("the fixture adapter's declaration overlaps nothing")
+}
+
 fn blob_identity(bytes: &[u8]) -> vix::runtime::ValueId {
     FramedNode::leaf(Type::Extern(ExternKind::Blob).schema_ref(), bytes.to_vec()).identity()
 }
@@ -284,14 +304,12 @@ fn pinned_fetch_origin_returns_blob_and_separate_extraction() {
     let upstream = vixen_primitives::sha256_pin(&bytes);
     let server = BlobServer::start(bytes);
     let fixtures = TempDir::new().expect("create fixture root");
-    let services = PrimitiveServices::default()
-        .with_fixture_store(fixture_store(
-            &fixtures,
-            &server.url(),
-            &identity,
-            &upstream,
-        ))
-        .with_origin_adapter(Arc::new(HttpBlobOriginAdapter));
+    let services = harness_origins(fixture_store(
+        &fixtures,
+        &server.url(),
+        &identity,
+        &upstream,
+    ));
 
     let report = prepare_source(FETCH_AND_EXTRACT)
         .expect("prepare Vix fetch/extract source")
@@ -326,14 +344,12 @@ fn pinned_fetch_yielded_frame_survives_off_stack_and_crosses_the_inbox() {
     let upstream = vixen_primitives::sha256_pin(&bytes);
     let server = BlobServer::start(bytes);
     let fixtures = TempDir::new().expect("create fixture root");
-    let services = PrimitiveServices::default()
-        .with_fixture_store(fixture_store(
-            &fixtures,
-            &server.url(),
-            &identity,
-            &upstream,
-        ))
-        .with_origin_adapter(Arc::new(HttpBlobOriginAdapter));
+    let services = harness_origins(fixture_store(
+        &fixtures,
+        &server.url(),
+        &identity,
+        &upstream,
+    ));
 
     // A fresh origin fetch: the primitive actually runs (one transfer), so its
     // frame genuinely yields, parks off-stack, and resumes through the inbox.
@@ -378,15 +394,13 @@ fn pinned_fetch_provider_hit_precedes_origin() {
     persistence
         .put(&identity, &bytes)
         .expect("prepopulate canonical Blob persistence");
-    let services = PrimitiveServices::default()
-        .with_fixture_store(fixture_store(
-            &fixtures,
-            &server.url(),
-            &identity,
-            &upstream,
-        ))
-        .with_value_persistence(persistence)
-        .with_origin_adapter(Arc::new(HttpBlobOriginAdapter));
+    let services = harness_origins(fixture_store(
+        &fixtures,
+        &server.url(),
+        &identity,
+        &upstream,
+    ))
+    .with_value_persistence(persistence);
 
     let report = prepare_source(FETCH_ONLY)
         .expect("prepare Vix provider-hit source")
@@ -417,10 +431,8 @@ fn pinned_fetch_local_store_hit_never_contacts_provider_or_origin() {
         identity.content.hex(),
     );
     let persistence = Arc::new(RecordingMissPersistence::default());
-    let services = PrimitiveServices::default()
-        .with_fixture_store(fixture_store_with_manifest(&fixtures, &manifest))
-        .with_value_persistence(persistence.clone())
-        .with_origin_adapter(Arc::new(HttpBlobOriginAdapter));
+    let services = harness_origins(fixture_store_with_manifest(&fixtures, &manifest))
+        .with_value_persistence(persistence.clone());
 
     let report = prepare_source(FETCH_STORE_THEN_REDEMAND)
         .expect("prepare Vix Store-hit source")
@@ -455,12 +467,13 @@ fn pinned_fetch_local_store_hit_never_contacts_provider_or_origin() {
     }
 }
 
-/// No conjuring: with no origin adapter installed, nothing serves an origin
-/// read — not even the fixture store the services DO carry, because a store
-/// is not an installed origin backend. The refusal is loud and typed, it
-/// names the coordinate, and zero fetches are performed (the origin server
-/// is never contacted). This pins the death of the scheduler's silent
-/// fixture-store fallback.
+/// No conjuring: with no adapter claiming the coordinate's scheme, nothing
+/// serves an origin read — not even the fixture adapter the services DO
+/// carry, because routing is a lookup over declarations and `fixture://` is
+/// all it declares. The refusal is loud and typed, it names the coordinate
+/// AND the installed declaration set, and zero fetches are performed (the
+/// origin server is never contacted). This pins the death of the scheduler's
+/// silent fixture-store fallback.
 ///
 /// r[verify machine.primitive.origin-routing]
 #[test]
@@ -473,7 +486,7 @@ fn no_origin_adapter_refuses_the_origin_read_loudly() {
     // A fixture store, but NO origin adapter: the registry manifest resolves
     // (so the fetch has a real coordinate to ask for), and then the origin
     // read must refuse rather than fall back to anything.
-    let services = PrimitiveServices::default().with_fixture_store(fixture_store(
+    let services = fixture_only(fixture_store(
         &fixtures,
         &server.url(),
         &identity,
@@ -485,16 +498,20 @@ fn no_origin_adapter_refuses_the_origin_read_loudly() {
         .execute_with_primitive_services(services)
         .expect_err("an origin read with no origin adapter installed must refuse");
 
-    let PrimitiveMachineError::Unavailable { detail } = primitive_machine_error(error) else {
-        panic!("expected a typed Unavailable refusal");
+    let PrimitiveMachineError::OriginUnroutable { detail } = primitive_machine_error(error) else {
+        panic!("expected a typed unroutable refusal");
     };
     assert!(
-        detail.contains("no origin adapter is installed"),
-        "the refusal says nothing is installed: {detail}"
+        detail.contains("no installed origin adapter serves scheme \"http\""),
+        "the refusal names the unserved scheme: {detail}"
     );
     assert!(
         detail.contains(&server.url()),
         "the refusal names the coordinate: {detail}"
+    );
+    assert!(
+        detail.contains("\"fixture\""),
+        "the refusal names what IS installed: {detail}"
     );
     assert_eq!(server.requests(), 0, "zero fetches performed");
 }
@@ -507,9 +524,8 @@ fn pinned_fetch_rejects_vix_identity_mismatch() {
     let upstream = vixen_primitives::sha256_pin(&bytes);
     let server = BlobServer::start(bytes);
     let fixtures = TempDir::new().expect("create fixture root");
-    let services = PrimitiveServices::default()
-        .with_fixture_store(fixture_store(&fixtures, &server.url(), &claimed, &upstream))
-        .with_origin_adapter(Arc::new(HttpBlobOriginAdapter));
+    let services =
+        harness_origins(fixture_store(&fixtures, &server.url(), &claimed, &upstream));
 
     let error = prepare_source(FETCH_MUST_FAIL)
         .expect("prepare Vix identity-mismatch source")
@@ -541,12 +557,8 @@ fn pinned_fetch_rejects_upstream_digest_mismatch_at_every_tier() {
         store_server.url_for("/must-not-be-contacted"),
         identity.content.hex(),
     );
-    let store_services = PrimitiveServices::default()
-        .with_fixture_store(fixture_store_with_manifest(
-            &store_fixtures,
-            &store_manifest,
-        ))
-        .with_origin_adapter(Arc::new(HttpBlobOriginAdapter));
+    let store_services =
+        harness_origins(fixture_store_with_manifest(&store_fixtures, &store_manifest));
     let store_error = prepare_source(FETCH_STORE_THEN_UPSTREAM_CONTRADICTION)
         .expect("prepare Store-tier upstream source")
         .execute_with_primitive_services(store_services)
@@ -564,15 +576,13 @@ fn pinned_fetch_rejects_upstream_digest_mismatch_at_every_tier() {
     provider
         .put(&identity, &bytes)
         .expect("prepopulate provider-tier Blob");
-    let provider_services = PrimitiveServices::default()
-        .with_fixture_store(fixture_store(
-            &provider_fixtures,
-            &provider_server.url(),
-            &identity,
-            &wrong_upstream,
-        ))
-        .with_value_persistence(provider)
-        .with_origin_adapter(Arc::new(HttpBlobOriginAdapter));
+    let provider_services = harness_origins(fixture_store(
+        &provider_fixtures,
+        &provider_server.url(),
+        &identity,
+        &wrong_upstream,
+    ))
+    .with_value_persistence(provider);
     let provider_error = prepare_source(FETCH_MUST_FAIL)
         .expect("prepare provider-tier upstream source")
         .execute_with_primitive_services(provider_services)
@@ -585,14 +595,12 @@ fn pinned_fetch_rejects_upstream_digest_mismatch_at_every_tier() {
 
     let origin_server = BlobServer::start(bytes);
     let origin_fixtures = TempDir::new().expect("create origin-tier fixture root");
-    let origin_services = PrimitiveServices::default()
-        .with_fixture_store(fixture_store(
-            &origin_fixtures,
-            &origin_server.url(),
-            &identity,
-            &wrong_upstream,
-        ))
-        .with_origin_adapter(Arc::new(HttpBlobOriginAdapter));
+    let origin_services = harness_origins(fixture_store(
+        &origin_fixtures,
+        &origin_server.url(),
+        &identity,
+        &wrong_upstream,
+    ));
     let origin_error = prepare_source(FETCH_MUST_FAIL)
         .expect("prepare origin-tier upstream source")
         .execute_with_primitive_services(origin_services)
@@ -619,15 +627,13 @@ fn pinned_fetch_rejects_corrupt_provider_then_admits_verified_origin() {
     });
     let server = BlobServer::start(bytes.clone());
     let fixtures = TempDir::new().expect("create corrupt-provider fixture root");
-    let services = PrimitiveServices::default()
-        .with_fixture_store(fixture_store(
-            &fixtures,
-            &server.url(),
-            &identity,
-            &upstream,
-        ))
-        .with_value_persistence(provider.clone())
-        .with_origin_adapter(Arc::new(HttpBlobOriginAdapter));
+    let services = harness_origins(fixture_store(
+        &fixtures,
+        &server.url(),
+        &identity,
+        &upstream,
+    ))
+    .with_value_persistence(provider.clone());
 
     let report = prepare_source(FETCH_ONE_FROM_ORIGIN)
         .expect("prepare corrupt-provider source")
@@ -676,9 +682,8 @@ fn a_manifest_pin_that_is_not_a_pin_fails_at_the_manifest() {
     ] {
         let server = BlobServer::start(bytes.clone());
         let fixtures = TempDir::new().expect("create fixture root");
-        let services = PrimitiveServices::default()
-            .with_fixture_store(fixture_store(&fixtures, &server.url(), &identity, bad))
-            .with_origin_adapter(Arc::new(HttpBlobOriginAdapter));
+        let services =
+            harness_origins(fixture_store(&fixtures, &server.url(), &identity, bad));
         let error = prepare_source(FETCH_ONLY)
             .expect("prepare source")
             .execute_with_primitive_services(services)

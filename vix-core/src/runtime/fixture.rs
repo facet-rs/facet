@@ -184,28 +184,83 @@ impl FixtureStore {
     }
 }
 
+/// The byte prefix of fixture tree handles — the fixture adapter's declared
+/// tree-handle namespace ([`FixtureStore::origin_decl`]). The rail's goal is
+/// for this to be spelled in exactly one place; until stage 3 moves the store
+/// out of core, the compiler/scheduler constant-construction sites still
+/// share it through [`fixture_tree_name`].
+const FIXTURE_TREE_NAMESPACE: &[u8] = b"fixture-tree\0";
+
 #[must_use]
 pub fn fixture_tree_name(bytes: &[u8]) -> Option<&[u8]> {
-    let name = bytes.strip_prefix(b"fixture-tree\0")?;
+    let name = bytes.strip_prefix(FIXTURE_TREE_NAMESPACE)?;
     Some(name.split(|byte| *byte == 0).next().unwrap_or(name))
+}
+
+impl FixtureStore {
+    /// The fixture adapter's declaration: `fixture://` coordinates, Registry
+    /// capabilities, and the `fixture-tree\0` handle namespace, as data. The
+    /// scheme sniff and the capability-schema check the adapter used to
+    /// perform live here now — routing admits before the adapter is reached.
+    ///
+    /// r[impl machine.primitive.origin-routing]
+    #[must_use]
+    pub fn origin_decl() -> super::OriginAdapterDecl {
+        super::OriginAdapterDecl {
+            name: "fixture".to_owned(),
+            schemes: vec!["fixture".to_owned()],
+            capability: crate::schema::SchemaPattern::exact(
+                &crate::vir::Type::Extern(crate::vir::ExternKind::Registry).schema_ref(),
+            ),
+            tree_namespace: Some(FIXTURE_TREE_NAMESPACE.to_vec()),
+        }
+    }
 }
 
 impl super::OriginAdapter for FixtureStore {
     fn read(
         &self,
-        capability: &super::ValueId,
+        _capability: &super::ValueId,
         coordinate: &str,
-    ) -> Result<Vec<u8>, super::PrimitiveMachineError> {
-        if capability.schema
-            != crate::vir::Type::Extern(crate::vir::ExternKind::Registry).schema_ref()
-        {
-            return Err(super::PrimitiveMachineError::PolicyRejected {
-                detail: "fixture origin requires a Registry capability".to_owned(),
-            });
-        }
+    ) -> Result<Vec<u8>, super::OriginReadError> {
         self.fetch_url(coordinate)
-            .map_err(|_| super::PrimitiveMachineError::Unavailable {
+            .map_err(|_| super::OriginReadError::Miss {
                 detail: format!("fixture origin {coordinate} is unavailable"),
             })
+    }
+
+    fn tree_kind(
+        &self,
+        _handle: &[u8],
+        path: &str,
+    ) -> Result<super::TreeEntryKind, super::OriginTreeError> {
+        self.tree_entry_kind(path)
+            .map_err(|_| super::OriginTreeError::Missing)
+    }
+
+    fn tree_bytes(&self, handle: &[u8], path: &str) -> Result<Vec<u8>, super::OriginTreeError> {
+        match self.tree_kind(handle, path)? {
+            TreeEntryKind::File => self
+                .tree_file_bytes(path)
+                .map_err(|_| super::OriginTreeError::Missing),
+            found @ (TreeEntryKind::Dir | TreeEntryKind::Symlink) => {
+                Err(super::OriginTreeError::WrongKind { found })
+            }
+        }
+    }
+
+    fn tree_directory(
+        &self,
+        handle: &[u8],
+        path: &str,
+    ) -> Result<Vec<(String, TreeEntryKind)>, super::OriginTreeError> {
+        match self.tree_kind(handle, path)? {
+            TreeEntryKind::Dir => self
+                .tree_dir_entries(path)
+                .map_err(|_| super::OriginTreeError::Missing),
+            found @ (TreeEntryKind::File | TreeEntryKind::Symlink) => {
+                Err(super::OriginTreeError::WrongKind { found })
+            }
+        }
     }
 }

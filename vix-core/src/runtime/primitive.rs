@@ -50,6 +50,34 @@ pub enum PrimitiveMachineError {
     CorruptCandidate { source: ValueId },
     InvalidRequest { request: ValueId },
     AuthorityViolation { detail: String },
+    /// The origin taxonomy's miss: a coordinate or tree projection found
+    /// nothing. Distinct from [`Self::Unavailable`] because a miss is an
+    /// *observation* — a multi-origin fetch may fall through it, and
+    /// [`EffectCtx`] witnesses it as `ReadObservation::Missing`.
+    ///
+    /// r[impl machine.primitive.origin-verbs]
+    ProjectionMissing { detail: String },
+    /// A tree projection found the entry with a kind contradicting the
+    /// request (a file read that found a directory). Not a miss: the entry
+    /// exists, and the audit must be able to tell "appeared" from "changed
+    /// kind", so [`EffectCtx`] witnesses the found kind.
+    ///
+    /// r[impl machine.primitive.origin-verbs]
+    ProjectionWrongKind {
+        found: super::TreeEntryKind,
+        detail: String,
+    },
+    /// The origin taxonomy's refusal: no installed declaration serves the
+    /// request. Loud, typed, and it names what was asked and what is
+    /// installed — the anti-conjuring answer. Never witnessed: nobody looked.
+    ///
+    /// r[impl machine.primitive.origin-routing]
+    OriginUnroutable { detail: String },
+    /// The origin taxonomy's corruption: a backend served something it knows
+    /// is wrong. Stops the demand; never falls through.
+    ///
+    /// r[impl machine.primitive.origin-verbs]
+    OriginCorrupt { detail: String },
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -101,22 +129,13 @@ pub trait ValuePersistence: Send + Sync {
     fn put(&self, value: &ValueId, bytes: &[u8]) -> Result<(), PrimitiveMachineError>;
 }
 
-pub trait OriginAdapter: Send + Sync {
-    fn read(
-        &self,
-        capability: &ValueId,
-        coordinate: &str,
-    ) -> Result<Vec<u8>, PrimitiveMachineError>;
-}
-
 /// Runtime-installed services used by registered primitives. These are
 /// authorities, not semantic inputs: request values still carry every
 /// capability and coordinate that may affect admissibility or identity.
 #[derive(Clone, Default)]
 pub struct PrimitiveServices {
     value_persistence: Option<Arc<dyn ValuePersistence>>,
-    origin: Option<Arc<dyn OriginAdapter>>,
-    fixture_store: Option<super::FixtureStore>,
+    origins: super::OriginAdapterSet,
     exec_backend: Option<Arc<dyn super::ExecBackend>>,
 }
 
@@ -127,16 +146,19 @@ impl PrimitiveServices {
         self
     }
 
-    #[must_use]
-    pub fn with_origin_adapter(mut self, origin: Arc<dyn OriginAdapter>) -> Self {
-        self.origin = Some(origin);
-        self
-    }
-
-    #[must_use]
-    pub fn with_fixture_store(mut self, fixture_store: super::FixtureStore) -> Self {
-        self.fixture_store = Some(fixture_store);
-        self
+    /// Install one origin adapter under its declaration
+    /// (`machine.primitive.origin-routing`). Overlapping declarations — a
+    /// scheme claimed twice, prefix-related tree namespaces — are rejected
+    /// here, at install time, so routing stays a function of the declared set.
+    ///
+    /// r[impl machine.primitive.origin-routing]
+    pub fn with_origin(
+        mut self,
+        decl: super::OriginAdapterDecl,
+        adapter: Arc<dyn super::OriginAdapter>,
+    ) -> Result<Self, super::OriginInstallError> {
+        self.origins.install(decl, adapter)?;
+        Ok(self)
     }
 
     /// Install the exec process-boundary service
@@ -153,12 +175,8 @@ impl PrimitiveServices {
         self.value_persistence.clone()
     }
 
-    pub(crate) fn origin(&self) -> Option<Arc<dyn OriginAdapter>> {
-        self.origin.clone()
-    }
-
-    pub(crate) fn fixture_store(&self) -> Option<super::FixtureStore> {
-        self.fixture_store.clone()
+    pub(crate) fn origins(&self) -> super::OriginAdapterSet {
+        self.origins.clone()
     }
 
     /// The installed exec backend, or the host-trusting default — the current
@@ -425,7 +443,7 @@ pub trait EffectAuthority: Send + Sync {
         _capability: &ValueId,
         coordinate: &str,
     ) -> Result<Vec<u8>, PrimitiveMachineError> {
-        Err(PrimitiveMachineError::Unavailable {
+        Err(PrimitiveMachineError::OriginUnroutable {
             detail: format!(
                 "origin read {coordinate} refused: no origin adapter is installed \
                  for this effect snapshot"
@@ -449,8 +467,7 @@ pub struct StagedEffectAuthority {
     events: Mutex<Vec<PrimitiveEvent>>,
     schema_types: BTreeMap<SchemaRef, Type>,
     persistence: Option<Arc<dyn ValuePersistence>>,
-    origin: Option<Arc<dyn OriginAdapter>>,
-    fixture_store: Option<super::FixtureStore>,
+    origins: super::OriginAdapterSet,
     exec_backend: Option<Arc<dyn super::ExecBackend>>,
 }
 
@@ -479,15 +496,11 @@ impl StagedEffectAuthority {
         self
     }
 
+    /// Install the declared origin adapter set this snapshot routes through
+    /// (`machine.primitive.origin-routing`).
     #[must_use]
-    pub fn with_origin_adapter(mut self, origin: Arc<dyn OriginAdapter>) -> Self {
-        self.origin = Some(origin);
-        self
-    }
-
-    #[must_use]
-    pub fn with_fixture_store(mut self, fixture_store: super::FixtureStore) -> Self {
-        self.fixture_store = Some(fixture_store);
+    pub fn with_origins(mut self, origins: super::OriginAdapterSet) -> Self {
+        self.origins = origins;
         self
     }
 
@@ -578,30 +591,49 @@ impl EffectAuthority for StagedEffectAuthority {
                     detail: "tree-path read source was not a Tree".to_owned(),
                 });
             }
-            let bytes = if super::fixture_tree_name(value.resident_bytes()).is_some() {
-                self.fixture_store
-                    .as_ref()
-                    .ok_or_else(|| PrimitiveMachineError::Unavailable {
-                        detail: "no fixture store is installed for this effect snapshot".to_owned(),
-                    })?
-                    .tree_file_bytes(path)
-                    .map_err(|_| PrimitiveMachineError::Unavailable {
-                        detail: format!("fixture tree path {path} is unavailable"),
-                    })?
-            } else {
-                // Through the semantic Tree rather than the archive reader: a
-                // Tree's resident bytes may be an archive, a carrier, or the
-                // canonical form, and which one it is is a storage concern this
-                // read has no business knowing.
-                super::tree_from_resident(value.resident_bytes())
-                    .map_err(|_| PrimitiveMachineError::InvalidRequest {
-                        request: source.clone(),
-                    })?
-                    .file_bytes(path)
-                    .map(<[u8]>::to_vec)
-                    .ok_or_else(|| PrimitiveMachineError::Unavailable {
-                        detail: format!("archive tree path {path} is unavailable"),
-                    })?
+            // Route by the source's resident bytes: a content-identified tree
+            // carries its own members; a lazily-backed handle routes to the
+            // adapter whose declared namespace owns it; anything else is the
+            // loud refusal. r[impl machine.primitive.origin-routing]
+            let bytes = match self.origins.route_tree(value.resident_bytes()) {
+                super::TreeRouting::ContentIdentified => {
+                    // Through the semantic Tree rather than the archive
+                    // reader: a Tree's resident bytes may be an archive, a
+                    // carrier, or the canonical form, and which one it is is
+                    // a storage concern this read has no business knowing.
+                    let tree = super::tree_from_resident(value.resident_bytes()).map_err(|_| {
+                        PrimitiveMachineError::InvalidRequest {
+                            request: source.clone(),
+                        }
+                    })?;
+                    match tree.project(path) {
+                        Some(super::TreeEntry::File { content, .. }) => {
+                            content.as_bytes().to_vec()
+                        }
+                        Some(entry) => {
+                            let found = match entry {
+                                super::TreeEntry::File { .. } => super::TreeEntryKind::File,
+                                super::TreeEntry::Dir(_) => super::TreeEntryKind::Dir,
+                                super::TreeEntry::Symlink { .. } => super::TreeEntryKind::Symlink,
+                            };
+                            return Err(super::origin_tree_machine_error(
+                                super::OriginTreeError::WrongKind { found },
+                                path,
+                            ));
+                        }
+                        None => {
+                            return Err(super::origin_tree_machine_error(
+                                super::OriginTreeError::Missing,
+                                path,
+                            ));
+                        }
+                    }
+                }
+                super::TreeRouting::Origin(installation) => installation
+                    .adapter
+                    .tree_bytes(value.resident_bytes(), path)
+                    .map_err(|error| super::origin_tree_machine_error(error, path))?,
+                super::TreeRouting::Unclaimed(refusal) => return Err(refusal),
             };
             let value = PrimitiveValue::bytes(Type::String.schema_ref(), bytes.clone());
             let identity = value.identity();
@@ -618,17 +650,16 @@ impl EffectAuthority for StagedEffectAuthority {
                     detail: "registry-manifest read source was not a Registry".to_owned(),
                 });
             }
-            let manifest = self
-                .fixture_store
-                .as_ref()
-                .ok_or_else(|| PrimitiveMachineError::Unavailable {
-                    detail: "no fixture store is installed for this effect snapshot".to_owned(),
-                })?
-                .registry_manifest()
-                .map_err(|_| PrimitiveMachineError::Unavailable {
-                    detail: "fixture registry manifest is unavailable".to_owned(),
-                })?;
-            let bytes = manifest.into_bytes();
+            // The manifest is an ordinary coordinate read through the declared
+            // set (the projection variant retires in stage 3 of the origin
+            // rail); the Registry source is its own capability.
+            let coordinate = super::REGISTRY_MANIFEST_COORDINATE;
+            let bytes = self
+                .origins
+                .route_coordinate(source, coordinate)?
+                .adapter
+                .read(source, coordinate)
+                .map_err(|error| super::origin_read_machine_error(error, coordinate))?;
             let value = PrimitiveValue::bytes(Type::String.schema_ref(), bytes.clone());
             let identity = value.identity();
             return Ok(WitnessedValue {
@@ -707,22 +738,19 @@ impl EffectAuthority for StagedEffectAuthority {
             .map_or(Ok(()), |persistence| persistence.put(value, bytes))
     }
 
-    // r[impl machine.primitive.origin-routing] — no adapter, no backend: the
-    // refusal names the coordinate instead of a silent fallback serving it.
+    // r[impl machine.primitive.origin-routing] — selection is a lookup over
+    // the installed declarations: an unclaimed scheme, an inadmissible
+    // capability, or an empty set is the loud typed refusal, never a fallback.
     fn origin_candidate(
         &self,
         capability: &ValueId,
         coordinate: &str,
     ) -> Result<Vec<u8>, PrimitiveMachineError> {
-        self.origin
-            .as_ref()
-            .ok_or_else(|| PrimitiveMachineError::Unavailable {
-                detail: format!(
-                    "origin read {coordinate} refused: no origin adapter is installed \
-                     for this effect snapshot"
-                ),
-            })?
+        self.origins
+            .route_coordinate(capability, coordinate)?
+            .adapter
             .read(capability, coordinate)
+            .map_err(|error| super::origin_read_machine_error(error, coordinate))
     }
 
     fn exec_backend(&self) -> Option<Arc<dyn super::ExecBackend>> {

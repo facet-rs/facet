@@ -1566,14 +1566,30 @@ fn evaluate_snapshot_site(
 }
 
 /// The offline harness's default service set: the fixture store installed AS
-/// the origin adapter, explicitly. The machine holds no default origin
-/// backend — with no adapter installed an origin read is a loud typed refusal
-/// (`machine.primitive.origin-routing`) — so the conjuring that used to live
-/// in the scheduler's silent fixture fallback lives here instead, as a
-/// declared harness installation. Callers assembling their own
+/// the origin adapter, explicitly and under its declaration
+/// (`FixtureStore::origin_decl`: `fixture://` coordinates, Registry
+/// capabilities, the `fixture-tree\0` handle namespace). The machine holds no
+/// default origin backend — with no adapter installed an origin read is a
+/// loud typed refusal (`machine.primitive.origin-routing`) — so the conjuring
+/// that used to live in the scheduler's silent fixture fallback lives here
+/// instead, as a declared harness installation. Callers assembling their own
 /// `PrimitiveServices` are never defaulted over.
-fn harness_services() -> PrimitiveServices {
-    PrimitiveServices::default().with_origin_adapter(Arc::new(FixtureStore::default()))
+#[must_use]
+pub fn harness_services() -> PrimitiveServices {
+    harness_services_with_overlay(None)
+}
+
+/// The harness service set with a rerun overlay applied to the fixture store:
+/// the "world changed under the same name" simulation is DATA the harness
+/// installs per test, not scheduler state — the same seam re-verification
+/// resolves through, so the audit sees exactly what a live read would.
+fn harness_services_with_overlay(rerun_with: Option<String>) -> PrimitiveServices {
+    PrimitiveServices::default()
+        .with_origin(
+            FixtureStore::origin_decl(),
+            Arc::new(FixtureStore::default().with_rerun_overlay(rerun_with)),
+        )
+        .expect("the harness installs a single origin adapter; its declaration cannot overlap")
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1634,11 +1650,18 @@ fn run_lane(
     let mut journal_claims_loaded = false;
 
     for test in &module.tests {
-        runtime.set_fixture_rerun_overlay(
-            use_rerun_overlays
-                .then(|| test.metadata.rerun_with.clone())
-                .flatten(),
-        );
+        let overlay = use_rerun_overlays
+            .then(|| test.metadata.rerun_with.clone())
+            .flatten();
+        runtime.set_fixture_rerun_overlay(overlay.clone());
+        // The rerun overlay is harness data riding the declared installation:
+        // overlay lanes always run on the harness set (a caller-assembled set
+        // is installed verbatim above and never runs the overlay lanes), so a
+        // per-test reinstall puts the overlaid store behind the same seam the
+        // live reads and the rerun audit both resolve through.
+        if primitive_services.is_none() {
+            runtime.set_primitive_services(harness_services_with_overlay(overlay));
+        }
         if let Some(journal) = persistent_journal_in
             && !journal_claims_loaded
         {

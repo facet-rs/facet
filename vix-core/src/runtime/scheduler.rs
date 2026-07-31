@@ -77,13 +77,13 @@ enum EffectTerm {
 }
 
 /// The scheduler-side [`CodataDrainCtx`] a codata primitive (e.g. `tree-glob`)
-/// drains through. It borrows the effect island's source value, the fixture
-/// store, and the island's read log, so the primitive owns only the domain
-/// enumeration while every directory listing it demands is recorded as a
-/// witnessed read — the scheduler keeps the witness discipline the memo/receipt
-/// path relies on.
+/// drains through. It borrows the effect island's source value, the installed
+/// origin adapter set, and the island's read log, so the primitive owns only
+/// the domain enumeration while every directory listing it demands is routed
+/// by declaration and recorded as a witnessed read — the scheduler keeps the
+/// witness discipline the memo/receipt path relies on.
 struct GlobDrainCtx<'a> {
-    fixture_store: &'a FixtureStore,
+    origins: &'a super::OriginAdapterSet,
     source: &'a EffectValue,
     reads: &'a mut Vec<super::model::ReadWitness>,
 }
@@ -93,16 +93,26 @@ impl super::CodataDrainCtx for GlobDrainCtx<'_> {
         &self.source.resident
     }
 
+    // r[impl machine.primitive.origin-verbs] — the neutral directory verb,
+    // routed by the source handle's declared namespace.
     fn directory(
         &mut self,
         projection: &str,
     ) -> Result<Vec<(String, super::TreeEntryKind)>, super::PrimitiveMachineError> {
-        let entries = self
-            .fixture_store
-            .tree_dir_entries(projection)
-            .map_err(|_| super::PrimitiveMachineError::Unavailable {
-                detail: format!("fixture glob directory {projection} is unavailable"),
-            })?;
+        let entries = match self.origins.route_tree(&self.source.resident) {
+            super::TreeRouting::ContentIdentified => {
+                return Err(super::PrimitiveMachineError::AuthorityViolation {
+                    detail: "a content-identified tree enumerates its own members; \
+                             the directory verb serves only lazily-backed trees"
+                        .to_owned(),
+                });
+            }
+            super::TreeRouting::Origin(installation) => installation
+                .adapter
+                .tree_directory(&self.source.resident, projection)
+                .map_err(|error| super::origin_tree_machine_error(error, projection))?,
+            super::TreeRouting::Unclaimed(refusal) => return Err(refusal),
+        };
         self.reads.push(super::model::ReadWitness {
             source: self.source.identity.clone(),
             projection: ReadProjection::TreePath {
@@ -1012,9 +1022,6 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
     }
 
     pub fn set_primitive_services(&mut self, services: super::PrimitiveServices) {
-        if let Some(fixture_store) = services.fixture_store() {
-            self.fixture_store = fixture_store;
-        }
         self.primitive_services = services;
     }
 
@@ -3277,8 +3284,9 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
         let primitive = self.codata_registry.get(primitive).ok_or_else(|| {
             effect_machine_error("no codata primitive is registered under the recipe's id")
         })?;
+        let origins = self.primitive_services.origins();
         let mut ctx = GlobDrainCtx {
-            fixture_store: &self.fixture_store,
+            origins: &origins,
             source,
             reads,
         };
@@ -3583,18 +3591,15 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                     PrimitiveValue::bytes(entry.identity.schema.clone(), bytes.to_vec()),
                 ))
             }));
+            // No conjuring: the machine holds no default origin backend.
+            // Every origin decision is a lookup over the installed declared
+            // set; an empty set refuses loudly.
+            // r[impl machine.primitive.origin-routing]
             let mut authority = StagedEffectAuthority::new(authority_inputs)
                 .with_schema_types(catalog)
-                .with_fixture_store(self.fixture_store.clone());
+                .with_origins(self.primitive_services.origins());
             if let Some(persistence) = self.primitive_services.value_persistence() {
                 authority = authority.with_value_persistence(persistence);
-            }
-            // No conjuring: the machine holds no default origin backend. When
-            // the embedder installed none, none serves, and an origin read is
-            // a loud typed refusal (`EffectAuthority::origin_candidate`).
-            // r[impl machine.primitive.origin-routing]
-            if let Some(origin) = self.primitive_services.origin() {
-                authority = authority.with_origin_adapter(origin);
             }
             let authority = Arc::new(authority);
             let ticket = match self.primitive_dispatcher.begin_or_join(
@@ -5514,20 +5519,17 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                     insert_schema_type(&node.ty, &mut catalog);
                 }
             }
+            // No conjuring: the machine holds no default origin backend.
+            // Every origin decision is a lookup over the installed declared
+            // set; an empty set refuses loudly.
+            // r[impl machine.primitive.origin-routing]
             let mut authority =
                 StagedEffectAuthority::new(vec![(request_id.clone(), request_value.clone())])
                     .with_schema_types(catalog)
-                    .with_fixture_store(self.fixture_store.clone())
+                    .with_origins(self.primitive_services.origins())
                     .with_exec_backend(self.primitive_services.exec_backend());
             if let Some(persistence) = self.primitive_services.value_persistence() {
                 authority = authority.with_value_persistence(persistence);
-            }
-            // No conjuring: the machine holds no default origin backend. When
-            // the embedder installed none, none serves, and an origin read is
-            // a loud typed refusal (`EffectAuthority::origin_candidate`).
-            // r[impl machine.primitive.origin-routing]
-            if let Some(origin) = self.primitive_services.origin() {
-                authority = authority.with_origin_adapter(origin);
             }
             let authority = Arc::new(authority);
             let ticket = self
