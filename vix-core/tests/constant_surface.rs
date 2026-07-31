@@ -106,10 +106,11 @@ fn the_std_spelling_resolves_like_any_injected_surface() {
     assert_eq!(declared_consts(&imported.module).len(), 1);
 }
 
-/// r[verify machine.primitive.origin-routing] — the literal-argument
-/// constraint is declared and checked at lowering: a computed coordinate-like
-/// argument is rejected with a diagnostic naming the surface, so a program's
-/// constant-surface requirement set stays static.
+/// The literal-argument constraint is declared and checked at lowering: a
+/// computed coordinate-like argument is rejected with a diagnostic naming
+/// the surface, so a program's constant-surface requirement set stays static
+/// (the origin-rail note's review amendment;
+/// `vixen.machine.requirements-are-static`).
 #[test]
 fn a_computed_argument_is_a_diagnostic_naming_the_surface() {
     let error = compiler()
