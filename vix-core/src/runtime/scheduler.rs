@@ -92,6 +92,10 @@ impl super::CodataDrainCtx for GlobDrainCtx<'_> {
         &self.source.resident
     }
 
+    fn source_origin_name(&self) -> Option<Vec<u8>> {
+        self.origins.tree_handle_name(&self.source.resident)
+    }
+
     // r[impl machine.primitive.origin-verbs] — the neutral directory verb,
     // routed by the source handle's declared namespace.
     fn directory(
@@ -2853,8 +2857,8 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
 
     /// Evaluate one machine-plane effect island. Effects use the same demand,
     /// task, memo, store, and receipt authority as Weavy islands; only their
-    /// operation interpreter is different. The fixture root is reachable here
-    /// and nowhere else in the production runner.
+    /// operation interpreter is different. Installed origin backends are
+    /// reachable here and nowhere else in the production runner.
     pub fn evaluate_effect(
         &mut self,
         island: IslandId,
@@ -3429,7 +3433,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
     /// `PrimitiveId` — the codata analogue of `Op::InvokePrimitive` — so the
     /// scheduler holds no per-recipe knowledge: it supplies the source value and
     /// records directory read witnesses through [`GlobDrainCtx`], while the domain
-    /// logic (glob pattern matching plus fixture/archive enumeration) lives in the
+    /// logic (glob pattern matching plus origin/archive enumeration) lives in the
     /// primitive (`vixen-primitives`).
     fn drain_codata(
         &self,
@@ -9037,8 +9041,8 @@ mod tests {
     use crate::lowering::{LoweringCache, attribution_for};
 
     /// The bare-language compiler. These decode-dispatch tests used to borrow
-    /// the vixen stdlib prelude across a dev-dependency so their fixture could
-    /// spell `json_decode`; the fixture now declares its own `Format` and calls
+    /// the vixen stdlib prelude across a dev-dependency so their test program
+    /// could spell `json_decode`; it now declares its own `Format` and calls
     /// the core `decode` binding directly, which is what the bare language
     /// actually offers (`json_decode` is embedder prelude source, not a core
     /// name). See the bare-language rule in `vix-core/Cargo.toml`.
@@ -10565,7 +10569,7 @@ fn passing() -> Stream<Check> {
 
         use super::*;
         use crate::runtime::{
-            FixtureStore, OriginAdapter, OriginAdapterDecl, OriginReadError, PrimitiveServices,
+            OriginAdapter, OriginAdapterDecl, OriginReadError, OriginTreeError, PrimitiveServices,
             ReadWitness, TreeEntryKind,
         };
         use crate::schema::SchemaPattern;
@@ -10601,16 +10605,90 @@ fn passing() -> Stream<Check> {
             Type::Extern(ExternKind::Host(crate::binding::TREE)).schema_ref()
         }
 
-        fn fixture_services(rerun_with: Option<&str>) -> PrimitiveServices {
+        /// An in-memory origin adapter with a declared tree namespace and a
+        /// mutable-world switch: `changed` stands for the harness overlay's
+        /// "the world changed under the same name". The trees it serves:
+        /// `path-appears` (where `src/new.rs` exists only once `changed`) and
+        /// `readme-changed` (where `src` is a directory holding `main.c`).
+        struct OverlayTreeOrigin {
+            changed: bool,
+        }
+
+        const TEST_TREE_NAMESPACE: &[u8] = b"test-tree\0";
+
+        impl OverlayTreeOrigin {
+            fn kind_of(&self, path: &str) -> Result<TreeEntryKind, OriginTreeError> {
+                match path {
+                    "path-appears/src" | "readme-changed/src" => Ok(TreeEntryKind::Dir),
+                    "path-appears/src/new.rs" if self.changed => Ok(TreeEntryKind::File),
+                    "readme-changed/src/main.c" => Ok(TreeEntryKind::File),
+                    _ => Err(OriginTreeError::Missing),
+                }
+            }
+        }
+
+        impl OriginAdapter for OverlayTreeOrigin {
+            fn read(
+                &self,
+                _capability: &ValueId,
+                coordinate: &str,
+            ) -> Result<Vec<u8>, OriginReadError> {
+                Err(OriginReadError::Miss {
+                    detail: format!("{coordinate} is not served"),
+                })
+            }
+
+            fn tree_kind(
+                &self,
+                _handle: &[u8],
+                path: &str,
+            ) -> Result<TreeEntryKind, OriginTreeError> {
+                self.kind_of(path)
+            }
+
+            fn tree_bytes(&self, handle: &[u8], path: &str) -> Result<Vec<u8>, OriginTreeError> {
+                match self.tree_kind(handle, path)? {
+                    TreeEntryKind::File => Ok(b"content".to_vec()),
+                    found @ (TreeEntryKind::Dir | TreeEntryKind::Symlink) => {
+                        Err(OriginTreeError::WrongKind { found })
+                    }
+                }
+            }
+
+            fn tree_directory(
+                &self,
+                handle: &[u8],
+                path: &str,
+            ) -> Result<Vec<(String, TreeEntryKind)>, OriginTreeError> {
+                match self.tree_kind(handle, path)? {
+                    TreeEntryKind::Dir => Ok(match path {
+                        "readme-changed/src" => vec![("main.c".to_owned(), TreeEntryKind::File)],
+                        "path-appears/src" if self.changed => {
+                            vec![("new.rs".to_owned(), TreeEntryKind::File)]
+                        }
+                        _ => Vec::new(),
+                    }),
+                    found @ (TreeEntryKind::File | TreeEntryKind::Symlink) => {
+                        Err(OriginTreeError::WrongKind { found })
+                    }
+                }
+            }
+        }
+
+        fn overlay_services(changed: bool) -> PrimitiveServices {
             PrimitiveServices::default()
                 .with_origin(
-                    FixtureStore::origin_decl(),
-                    Arc::new(
-                        FixtureStore::default()
-                            .with_rerun_overlay(rerun_with.map(str::to_owned)),
-                    ),
+                    OriginAdapterDecl {
+                        name: "overlay".to_owned(),
+                        schemes: vec!["overlay".to_owned()],
+                        capability: SchemaPattern::exact(
+                            &Type::Extern(ExternKind::Registry).schema_ref(),
+                        ),
+                        tree_namespace: Some(TEST_TREE_NAMESPACE.to_vec()),
+                    },
+                    Arc::new(OverlayTreeOrigin { changed }),
                 )
-                .expect("the fixture declaration overlaps nothing")
+                .expect("the overlay declaration overlaps nothing")
         }
 
         /// r[verify machine.primitive.witness-reverification]
@@ -10702,7 +10780,7 @@ fn passing() -> Stream<Check> {
         }
 
         /// The world changing under an unchanged name is exactly what the
-        /// fixture rerun overlay simulates: without the overlay the path is
+        /// harness rerun overlay simulates: without the overlay the path is
         /// missing (the recorded miss holds), with it the path exists (the
         /// miss breaks and the claim recomputes).
         ///
@@ -10710,8 +10788,8 @@ fn passing() -> Stream<Check> {
         #[test]
         fn a_missing_tree_witness_holds_until_the_path_appears() {
             let mut runtime = Runtime::new(EventLog::default());
-            runtime.set_primitive_services(fixture_services(None));
-            let handle = b"fixture-tree\0path-appears".to_vec();
+            runtime.set_primitive_services(overlay_services(false));
+            let handle = b"test-tree\0path-appears".to_vec();
             let node = FramedNode::leaf(tree_schema(), handle.clone());
             runtime.store.intern_tree(&node, &handle);
             let witness = ReadWitness {
@@ -10726,7 +10804,7 @@ fn passing() -> Stream<Check> {
                 runtime.reverify_read_witness(&witness),
                 "a recorded tree miss re-verifies true while the path is still missing"
             );
-            runtime.set_primitive_services(fixture_services(Some("path-appears")));
+            runtime.set_primitive_services(overlay_services(true));
             assert!(
                 !runtime.reverify_read_witness(&witness),
                 "the path appearing under the overlay breaks the recorded miss"
@@ -10742,8 +10820,8 @@ fn passing() -> Stream<Check> {
         #[test]
         fn a_kind_witness_holds_exactly_for_the_recorded_kind() {
             let mut runtime = Runtime::new(EventLog::default());
-            runtime.set_primitive_services(fixture_services(None));
-            let handle = b"fixture-tree\0readme-changed".to_vec();
+            runtime.set_primitive_services(overlay_services(false));
+            let handle = b"test-tree\0readme-changed".to_vec();
             let node = FramedNode::leaf(tree_schema(), handle.clone());
             runtime.store.intern_tree(&node, &handle);
             let projection = ReadProjection::TreePath {
@@ -10781,11 +10859,11 @@ fn passing() -> Stream<Check> {
         #[test]
         fn tree_read_failures_are_witnessed_as_what_was_seen() {
             let source =
-                PrimitiveValue::bytes(tree_schema(), b"fixture-tree\0readme-changed".to_vec());
+                PrimitiveValue::bytes(tree_schema(), b"test-tree\0readme-changed".to_vec());
             let source_id = source.identity();
             let authority = Arc::new(
                 StagedEffectAuthority::new([(source_id.clone(), source)])
-                    .with_origins(fixture_services(None).origins()),
+                    .with_origins(overlay_services(false).origins()),
             );
             let demand = DemandKey::from_preimage(&DemandPreimage {
                 closure: RecipeId::from_canonical_vir(b"witnessed-miss-test"),

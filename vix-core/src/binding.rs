@@ -40,7 +40,7 @@
 //! expected-type-derived targets don't reduce to a record shape) — both are
 //! hand-registered onto the single [`decode_primitive_id`]; `request_shape`
 //! returns `None` for it, and the compiler keeps a typed builder. Embedder
-//! constants (the harness's `fixture_tree`/`fixture_registry` spellings) are
+//! constants (the offline harness's tree/registry spellings) are
 //! not registered here at all: they are injected [`ConstantSurfaceDecl`]s,
 //! resolved through [`injected_constant`].
 //!
@@ -178,7 +178,7 @@ pub struct CapabilityTypeDecl {
 /// name whose call lowers to a declared typed byte-leaf constant
 /// ([`crate::vir::Op::DeclaredConst`]) rather than a primitive invocation.
 /// This is how an embedder or harness names its own well-known values — a
-/// harness fixture tree, its offline registry — without the machine carrying
+/// harness tree, its offline registry — without the machine carrying
 /// a dedicated op (or any vocabulary) per name.
 ///
 /// Every parameter is a **declared literal**: each call-site argument must be

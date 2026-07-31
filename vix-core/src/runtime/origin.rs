@@ -4,8 +4,8 @@
 //! (`machine.primitive.effect-backend-service`). This module owns the seam's
 //! vocabulary — the [`OriginAdapter`] trait's two verbs, the declarations that
 //! route requests to installed adapters, and the structured failure taxonomy —
-//! and none of it names a particular backend: the fixture store and the HTTP
-//! transport are two entries in the same declared set.
+//! and none of it names a particular backend: the harness's offline store and
+//! the HTTP transport are two entries in the same declared set.
 //!
 //! Routing is a lookup over declarations, not a sniff: each installed adapter
 //! states the coordinate schemes it serves, the capability schema it admits,
@@ -126,7 +126,7 @@ pub trait OriginAdapter: Send + Sync {
 /// r[impl machine.primitive.origin-routing]
 #[derive(Clone, Debug)]
 pub struct OriginAdapterDecl {
-    /// Diagnostic name, spoken by refusals ("fixture", "http-blob").
+    /// Diagnostic name, spoken by refusals ("offline", "http-blob").
     pub name: String,
     /// The coordinate schemes served — the part of a coordinate before
     /// `://`. Each scheme may be claimed by at most one installed adapter.
@@ -136,9 +136,9 @@ pub struct OriginAdapterDecl {
     /// adapter.
     pub capability: SchemaPattern,
     /// The tree-handle namespace this adapter owns: a byte prefix of the
-    /// handle residents of the lazily-backed trees it serves (the fixture
-    /// adapter declares `fixture-tree\0`). `None` for adapters that serve no
-    /// trees. Namespaces of installed adapters may not be prefix-related.
+    /// handle residents of the lazily-backed trees it serves (a harness
+    /// adapter might declare `sample-tree\0`). `None` for adapters that serve
+    /// no trees. Namespaces of installed adapters may not be prefix-related.
     pub tree_namespace: Option<Vec<u8>>,
 }
 
@@ -348,6 +348,28 @@ impl OriginAdapterSet {
                 self.installed_summary()
             ),
         })
+    }
+
+    /// The adapter-relative name of a lazily-backed tree handle: its resident
+    /// bytes with the owning adapter's declared namespace stripped. `None`
+    /// for content-identified trees and unclaimed handles.
+    ///
+    /// This is what makes tree projections **name-relative** without any
+    /// primitive knowing a backend: an origin-backed tree's projection paths
+    /// are spelled `<name>/<path>` — the witness names its subject in the
+    /// owning adapter's coordinate space — and the *seam* derives the name
+    /// from the declaration set, so no primitive spells any namespace.
+    ///
+    /// r[impl machine.primitive.origin-verbs]
+    #[must_use]
+    pub fn tree_handle_name(&self, resident: &[u8]) -> Option<Vec<u8>> {
+        match self.route_tree(resident) {
+            TreeRouting::Origin(installation) => {
+                let namespace = installation.decl.tree_namespace.as_ref()?;
+                Some(resident[namespace.len()..].to_vec())
+            }
+            TreeRouting::ContentIdentified | TreeRouting::Unclaimed(_) => None,
+        }
     }
 }
 

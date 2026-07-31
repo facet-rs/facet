@@ -918,7 +918,7 @@ mod tests {
         let mut tree = Tree::new();
         for (path, entry) in entries {
             tree.insert_path(path, entry.clone())
-                .expect("test fixture path is well formed");
+                .expect("test sample path is well formed");
         }
         tree
     }
@@ -1329,7 +1329,7 @@ mod tests {
         let row = canonical.len() / 2;
         let mut swapped = canonical[row..].to_vec();
         swapped.extend_from_slice(&canonical[..row]);
-        assert_ne!(swapped, canonical, "the fixture actually reorders");
+        assert_ne!(swapped, canonical, "the sample actually reorders");
         assert_eq!(Tree::decode_canonical(&swapped), Err(TreeDecodeError));
     }
 
@@ -1348,7 +1348,7 @@ mod tests {
     /// lets `untar` intern canonical bytes without changing any identity: the
     /// carrier and the canonical form decode to one value with one hash.
     ///
-    /// (The ustar leg lives in `fixture::tests`, where the archive writer is.)
+    /// (The ustar leg lives in `tree_resident::tests`, beside the sample archive.)
     ///
     /// r[verify machine.identity.tree-model]
     #[test]

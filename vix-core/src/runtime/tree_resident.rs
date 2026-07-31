@@ -176,7 +176,7 @@ pub fn tree_from_members(members: Vec<TarMember>) -> Result<Tree, TreeError> {
 
 /// The semantic [`Tree`] of a value's resident bytes, in any representation.
 ///
-/// Trees used to live at runtime as ustar bytes, and fixtures still ship that
+/// Trees used to live at runtime as ustar bytes, and harness data still ships that
 /// way; the carrier is what a producer inside the machine writes; the canonical
 /// form is what a producer *outside* it writes, since a primitive can only
 /// intern bytes it is willing to have hashed (see `Tree::decode_canonical`). All
@@ -230,17 +230,19 @@ pub fn canonical_resident_tree(bytes: &[u8]) -> Result<Vec<u8>, ResidentTreeErro
 
 #[cfg(test)]
 mod tests {
-    use super::super::fixture::FixtureStore;
     use super::*;
 
+    /// A real 4096-byte plain-tar archive (one `Cargo.toml` member), checked
+    /// in as core test data: the ustar/carrier machinery is core's, so its
+    /// sample bytes are too. The harness ships the same archive in its own
+    /// registry data, pinned by hash there.
+    const SAMPLE_ARCHIVE: &[u8] = include_bytes!("testdata/tokio-1.52.3.tar");
+
     #[test]
-    fn parses_the_fixture_archive() {
-        let store = FixtureStore::default();
-        let bytes = store
-            .fetch_url("fixture://registry/tokio-1.52.3.crate")
-            .expect("fixture archive resolves");
+    fn parses_the_sample_archive() {
+        let bytes = SAMPLE_ARCHIVE;
         assert_eq!(bytes.len(), 4096);
-        let members = parse_ustar(&bytes).expect("fixture archive parses");
+        let members = parse_ustar(bytes).expect("sample archive parses");
         assert_eq!(members.len(), 1);
         let TarMember::File {
             path,
@@ -248,7 +250,7 @@ mod tests {
             executable,
         } = &members[0]
         else {
-            panic!("fixture archive holds one file");
+            panic!("sample archive holds one file");
         };
         assert_eq!(path, "Cargo.toml");
         assert!(!executable);
@@ -268,11 +270,7 @@ mod tests {
     /// r[verify machine.identity.tree-model]
     #[test]
     fn resident_tree_identity_is_representation_independent() {
-        let store = FixtureStore::default();
-        let archive = store
-            .fetch_url("fixture://registry/tokio-1.52.3.crate")
-            .expect("fixture archive resolves");
-        let from_archive = tree_from_resident(&archive).expect("archive describes a tree");
+        let from_archive = tree_from_resident(SAMPLE_ARCHIVE).expect("archive describes a tree");
         let from_carrier =
             tree_from_resident(&from_archive.encode()).expect("carrier describes a tree");
         assert_eq!(from_archive, from_carrier, "same tree, either way in");
@@ -287,12 +285,8 @@ mod tests {
     /// representations without guessing.
     #[test]
     fn a_ustar_archive_is_not_mistaken_for_a_carrier() {
-        let store = FixtureStore::default();
-        let archive = store
-            .fetch_url("fixture://registry/tokio-1.52.3.crate")
-            .expect("fixture archive resolves");
-        assert!(!Tree::is_carrier(&archive));
-        let tree = tree_from_resident(&archive).expect("archive describes a tree");
+        assert!(!Tree::is_carrier(SAMPLE_ARCHIVE));
+        let tree = tree_from_resident(SAMPLE_ARCHIVE).expect("archive describes a tree");
         assert!(Tree::is_carrier(&tree.encode()));
     }
 

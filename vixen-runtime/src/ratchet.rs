@@ -9,12 +9,14 @@ use vix::diagnostic::Diagnostics;
 use vix::lowering::{LoweringCache, LoweringCacheCounters, LoweringError, attribution_for};
 use vix::runtime::{
     ChaosPolicy, Counters, DemandState, EffectProjectionRequest, Evaluation, Event, EventKind,
-    EventLog, FailureContext, FailureValue, FixtureStore, FramedNode, GeneratorOutcome,
-    IslandInputs, Location, MachineError, PersistentRuntimeJournal, PersistentRuntimeJournalError,
+    EventLog, FailureContext, FailureValue, FramedNode, GeneratorOutcome, IslandInputs, Location,
+    MachineError, PersistentRuntimeJournal, PersistentRuntimeJournalError,
     PersistentRuntimeJournalLoadReport, PersistentRuntimeState, PrimitiveServices, ReadProjection,
     RealizedWireDemand, RootSubmission, Runtime, SnapshotCapture, SnapshotOutcome, TaskState,
     ValueId, ValueRootRequest, WireDemand,
 };
+
+use crate::fixture::FixtureStore;
 use vix::vir::{
     DescribedWire, FunctionId, Island, Module, NodeId, Op, PartitionedRecipe, PartitionedValue,
     TraceCheck, ValueIslandId, WireArg, WireSelector,

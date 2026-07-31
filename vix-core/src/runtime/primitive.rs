@@ -458,6 +458,16 @@ pub trait EffectAuthority: Send + Sync {
     fn exec_backend(&self) -> Option<Arc<dyn super::ExecBackend>> {
         None
     }
+
+    /// The adapter-relative name of a lazily-backed tree handle under this
+    /// snapshot's installed origin declarations, or `None` when the resident
+    /// bytes are content-identified or unclaimed
+    /// ([`super::OriginAdapterSet::tree_handle_name`]). The default is a
+    /// snapshot with no origins, which claims no handle.
+    fn tree_handle_name(&self, resident: &[u8]) -> Option<Vec<u8>> {
+        let _ = resident;
+        None
+    }
 }
 
 #[derive(Default)]
@@ -756,6 +766,10 @@ impl EffectAuthority for StagedEffectAuthority {
     fn exec_backend(&self) -> Option<Arc<dyn super::ExecBackend>> {
         self.exec_backend.clone()
     }
+
+    fn tree_handle_name(&self, resident: &[u8]) -> Option<Vec<u8>> {
+        self.origins.tree_handle_name(resident)
+    }
 }
 
 /// The scheduler-installed live delivery authority for in-flight progressive
@@ -1014,6 +1028,15 @@ impl EffectCtx {
             })
     }
 
+    /// The adapter-relative name of a lazily-backed tree handle
+    /// ([`EffectAuthority::tree_handle_name`]): how a primitive spells an
+    /// origin-backed tree's name-relative projection paths (`<name>/<path>`)
+    /// without knowing any backend's namespace.
+    #[must_use]
+    pub fn tree_handle_name(&self, resident: &[u8]) -> Option<Vec<u8>> {
+        self.authority.tree_handle_name(resident)
+    }
+
     pub fn observe(&self, observation: JournalObservation) {
         self.transaction
             .lock()
@@ -1084,7 +1107,7 @@ pub trait FromRef<Ctx> {
 /// `fetch`/`observe`. This is deliberately a generic `impl … for ()` rather than
 /// the reflexive `impl<T: Clone> FromRef<T> for T` (whole-context-as-its-own-dep):
 /// the two overlap at `Ctx = ()`, and it is `()`-deps agnosticism the built-in
-/// primitives actually rely on. Concrete slices (`PgPool`, a fixture store, …)
+/// primitives actually rely on. Concrete slices (`PgPool`, an offline store, …)
 /// name their own `impl FromRef<Ctx>` per embedder context, the way the
 /// `from_ref_tests` `FakePool` does.
 impl<Ctx> FromRef<Ctx> for () {
@@ -1489,7 +1512,7 @@ pub enum PrimitiveDispatchError {
 /// scheduler owns the concrete implementation (it holds the installed origin
 /// backends and the read log); the primitive sees only this trait, and the
 /// trait names no backend (`machine.primitive.origin-verbs` retires the
-/// fixture-named method this one replaces).
+/// backend-named method this one replaces).
 pub trait CodataDrainCtx {
     /// The resident bytes of the stream's source value (e.g. the `Tree` a glob
     /// matches against). For a lazily-backed tree these are its opaque handle
@@ -1506,6 +1529,14 @@ pub trait CodataDrainCtx {
         &mut self,
         projection: &str,
     ) -> Result<Vec<(String, super::TreeEntryKind)>, PrimitiveMachineError>;
+
+    /// The adapter-relative name of the lazily-backed source under the
+    /// installed origin declarations, or `None` for a content-identified
+    /// source ([`super::OriginAdapterSet::tree_handle_name`]). An
+    /// origin-backed tree's projections are name-relative (`<name>/<path>`),
+    /// and the seam — not the primitive — derives the name, so no drain
+    /// spells any backend's namespace.
+    fn source_origin_name(&self) -> Option<Vec<u8>>;
 }
 
 /// A registered producer of effect codata. Unlike [`RawPrimitive`], a codata

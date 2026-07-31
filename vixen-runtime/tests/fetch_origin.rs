@@ -6,11 +6,12 @@ use std::thread::JoinHandle;
 
 use tempfile::TempDir;
 use vix::runtime::{
-    CanonicalBlobPersistence, FixtureStore, FramedNode, MachineCause, PrimitiveMachineError,
-    PrimitiveServices, RuntimeFault, ValueBodyCandidate, ValueId, ValuePersistence,
+    CanonicalBlobPersistence, FramedNode, MachineCause, PrimitiveMachineError, PrimitiveServices,
+    RuntimeFault, ValueBodyCandidate, ValueId, ValuePersistence,
 };
 use vix::vir::{ExternKind, Type};
 use vixen_primitives::HttpBlobOriginAdapter;
+use vixen_runtime::fixture::FixtureStore;
 use vixen_runtime::ratchet::{RunError, prepare_source};
 
 const FETCH_AND_EXTRACT: &str = r#"
@@ -192,7 +193,7 @@ impl Drop for BlobServer {
 fn archive_bytes() -> Vec<u8> {
     std::fs::read(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../vix-core/tests/fixtures/registry/tokio-1.52.3.crate"),
+            .join("tests/fixtures/registry/tokio-1.52.3.crate"),
     )
     .expect("read pinned archive fixture")
 }

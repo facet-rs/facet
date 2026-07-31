@@ -554,7 +554,7 @@ pub enum WireArg {
     // `ReadProjection` variant: survivors keep their numbers, and no future
     // variant may reuse 2 with a different meaning.
     /// A declared-constant literal (a call to an injected constant surface
-    /// with literal arguments, `fixture_tree("name")`-shaped): the surface's
+    /// with literal arguments): the surface's
     /// encoded resident bytes and the framing schema of its declared type,
     /// carried so a described selector computes the exact realized argument
     /// identity without demanding anything.
@@ -771,7 +771,7 @@ pub enum Type {
 /// here; its identity is name-keyed, so a `Host("Tree")` value hashes exactly as
 /// the retired `Tree` variant did. `Blob` is immutable bytes named by its vix
 /// ContentHash (`machine.identity.blake3`); `Registry`/`PinnedUrl` are the
-/// lock-time fixture-registry surface (`machine.primitive.fetch-is-pinned`).
+/// harness's lock-time registry surface (`machine.primitive.fetch-is-pinned`).
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ExternKind {
@@ -1826,7 +1826,7 @@ pub enum IslandPurpose {
     Snapshot,
     /// A machine-plane primitive demand (tree projection, glob, fetch,
     /// extract): its output node is an [`EffectKind::Effect`] op the runtime
-    /// evaluates directly against the store/fixture root with a recorded
+    /// evaluates directly against the store/origin backend with a recorded
     /// read-set. Never lowered to a Weavy program.
     Effect,
 }
@@ -2883,7 +2883,7 @@ impl Module {
     /// An effectful `Call` is specialized before island cutting so its
     /// machine-plane roots become scheduler-owned publications and the
     /// remaining computation stays in verified Weavy. This includes helpers
-    /// that mix fixture/tree effects with ordinary control or collections, and
+    /// that mix origin/tree effects with ordinary control or collections, and
     /// helpers that build a registered-primitive request from effectful inputs.
     ///
     /// Pure calls are untouched. The spliced graph preserves each node's
@@ -3500,7 +3500,7 @@ fn progressive_exec_tree_text_values(function: &Function) -> Vec<PartitionedProg
         .iter()
         .filter_map(|node| {
             // The effect-origin `.text()` rail lowers to a tree-read primitive
-            // marked `EFFECT` (see `is_effect_root`); a settled fixture/archive
+            // marked `EFFECT` (see `is_effect_root`); a settled origin/archive
             // read is the same primitive marked `PURE`. Only the effectful one
             // can name a still-running producer.
             if node.effect.kind != EffectKind::Effect {
@@ -4352,7 +4352,7 @@ fn is_effect_root(node: &Node) -> bool {
         // registered effect root (exec) submitted on the effect plane, or an
         // effect-origin tree-read (`(out.tree / ..).text()`) realized
         // progressively against its still-running producer. Neither is ever
-        // lowered to Weavy. Settled tree-reads (fixture/archive/completed
+        // lowered to Weavy. Settled tree-reads (origin/archive/completed
         // outputs) stay `PURE` and are ordinary in-frame primitive calls, not
         // roots.
         || (node.effect.kind == EffectKind::Effect

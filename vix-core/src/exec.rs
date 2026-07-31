@@ -972,7 +972,7 @@ impl Tool for FakeRustc {
 }
 
 /// Fake build-script runner for the default lane. It mirrors Cargo's two
-/// observable products for the fixture: stdout directives and OUT_DIR files.
+/// observable products for the test program: stdout directives and OUT_DIR files.
 pub struct FakeBuildScript;
 
 impl Tool for FakeBuildScript {

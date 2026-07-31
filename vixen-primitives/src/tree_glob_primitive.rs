@@ -3,8 +3,7 @@ use vix::vir::{ExternKind, Type};
 
 use crate::rt::{
     CodataDrainCtx, CodataPrimitive, PrimitiveDescriptor, PrimitiveMachineError,
-    PrimitiveMemoPolicy, TreeEntry, TreeEntryKind, fixture_tree_name, tree_from_resident,
-    tree_glob_primitive_id,
+    PrimitiveMemoPolicy, TreeEntry, TreeEntryKind, tree_from_resident, tree_glob_primitive_id,
     tree_glob_request_type,
 };
 
@@ -14,9 +13,9 @@ use crate::rt::{
 /// primitive completes an async ticket with one interned value, this drains a
 /// stream recipe into its ordered path elements when `.collect()` demands them.
 ///
-/// The domain logic — glob pattern matching, and enumeration of a fixture-backed
-/// tree's directories or an archive tree's members — lives here in
-/// `vixen-primitives`; `vix-core` supplies only the source value and the
+/// The domain logic — glob pattern matching, and enumeration of an
+/// origin-backed tree's directories or an archive tree's members — lives here
+/// in `vixen-primitives`; `vix-core` supplies only the source value and the
 /// witnessing context (an `Op::InvokeCodataPrimitive` recipe names this
 /// primitive's id).
 pub struct TreeGlobPrimitive {
@@ -69,14 +68,17 @@ impl CodataPrimitive for TreeGlobPrimitive {
                 && name.ends_with(suffix)
         };
 
-        // A fixture-backed tree is a lazy handle: enumerate the pattern's
-        // directory through the witnessing context, which records the listing as
-        // a `Directory` read. Copy the fixture name out first so the immutable
-        // borrow of `ctx` ends before the `&mut` directory read.
-        let fixture_name = fixture_tree_name(ctx.source_bytes()).map(<[u8]>::to_vec);
-        if let Some(name) = fixture_name {
+        // An origin-backed tree is a lazy handle: enumerate the pattern's
+        // directory through the witnessing context, which records the listing
+        // as a `Directory` read. The seam derives the handle's
+        // adapter-relative name from the installed declarations — projections
+        // are name-relative (`<name>/<path>`), and this drain names no
+        // backend. Copy the name out first so the immutable borrow of `ctx`
+        // ends before the `&mut` directory read.
+        let origin_name = ctx.source_origin_name();
+        if let Some(name) = origin_name {
             let name = core::str::from_utf8(&name)
-                .map_err(|_| invalid("fixture tree name was not UTF-8"))?;
+                .map_err(|_| invalid("origin tree name was not UTF-8"))?;
             let projection = if directory.is_empty() {
                 name.to_owned()
             } else {

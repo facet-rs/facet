@@ -84,8 +84,8 @@ pub struct CompilerConfig {
     pub capabilities: &'static [crate::binding::CapabilityTypeDecl],
     /// Constant-surface declarations the embedder injects: free-function
     /// names that lower to declared typed byte-leaf constants
-    /// ([`crate::binding::ConstantSurfaceDecl`] — the harness's
-    /// `fixture_tree`/`fixture_registry` spellings ride this). Every argument
+    /// ([`crate::binding::ConstantSurfaceDecl`] — the offline harness's
+    /// tree/registry spellings ride this). Every argument
     /// of such a surface is a declared string literal, checked at lowering.
     /// `vix-core` alone ships **none** — the bare language names no
     /// backend's constants.
