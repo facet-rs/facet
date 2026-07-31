@@ -54,6 +54,11 @@ fn serve(pin: PinnedBlobRef, ctx: &EffectCtx) -> Result<ValueId, PrimitiveMachin
 
     if let Ok(stored) = ctx.read(&target, ReadProjection::Whole) {
         verify_upstream(&stored.bytes, pin.upstream.as_ref())?;
+        // Provenance is a post-verification fact at EVERY serving tier: the
+        // store hit's Whole witness carries the digest its bytes just passed,
+        // exactly as an origin transfer's witness would — which tier served
+        // identical pinned bytes never changes what the receipt records.
+        attest_upstream(ctx, &target, &ReadProjection::Whole, pin.upstream.as_ref())?;
         return Ok(stored.identity);
     }
 
@@ -69,24 +74,33 @@ fn serve(pin: PinnedBlobRef, ctx: &EffectCtx) -> Result<ValueId, PrimitiveMachin
                 last_error = Some(PrimitiveMachineError::CorruptCandidate { source: observed });
             } else {
                 verify_upstream(&candidate.bytes, pin.upstream.as_ref())?;
-                return admit(&candidate.bytes, &target, ctx);
+                let admitted = admit(&candidate.bytes, &target, ctx)?;
+                // The persistence tier's serving witness — previously this
+                // tier recorded NOTHING. The admitted value is read whole so
+                // the receipt shows the same serving shape as a store hit,
+                // and the verified digest attests onto it.
+                ctx.read(&admitted, ReadProjection::Whole)?;
+                attest_upstream(ctx, &admitted, &ReadProjection::Whole, pin.upstream.as_ref())?;
+                return Ok(admitted);
             }
         }
     }
 
     for origin in &pin.origins {
-        // The pin's upstream digest rides the witness as provenance: a record
-        // of what the transfer is checked against (verify_upstream below),
-        // recorded beside the vix identity. If the check then fails, the
-        // demand fails and the receipt never publishes.
-        match ctx.origin_candidate(
-            &origin.capability.0,
-            &origin.coordinate,
-            &target,
-            pin.upstream.clone(),
-        ) {
+        match ctx.origin_candidate(&origin.capability.0, &origin.coordinate, &target) {
             Ok(bytes) => {
                 verify_upstream(&bytes, pin.upstream.as_ref())?;
+                // Only now — after the bytes passed the upstream check — does
+                // the digest enter the transfer's witness: a receipt can
+                // never claim a verification that then failed.
+                attest_upstream(
+                    ctx,
+                    &origin.capability.0,
+                    &ReadProjection::Origin {
+                        coordinate: origin.coordinate.clone(),
+                    },
+                    pin.upstream.as_ref(),
+                )?;
                 let admitted = admit(&bytes, &target, ctx)?;
                 ctx.persist_value(&admitted, &bytes)?;
                 return Ok(admitted);
@@ -139,6 +153,25 @@ fn compute_digest(algorithm: DigestAlgorithm, bytes: &[u8]) -> Vec<u8> {
         DigestAlgorithm::Blake3 => blake3::hash(bytes).as_bytes().to_vec(),
         DigestAlgorithm::Sha256 => Sha256::digest(bytes).to_vec(),
         DigestAlgorithm::Sha512 => Sha512::digest(bytes).to_vec(),
+    }
+}
+
+/// Record the upstream digest on the serving tier's witness, called only
+/// AFTER [`verify_upstream`] passed on that tier's bytes — the attestation is
+/// the true statement "these bytes were checked against this digest", so it
+/// is written strictly behind the check. A pin without an upstream digest
+/// attests nothing.
+///
+/// r[impl machine.primitive.fetch-integrity-vs-identity]
+fn attest_upstream(
+    ctx: &EffectCtx,
+    source: &ValueId,
+    projection: &ReadProjection,
+    upstream: Option<&UpstreamDigest>,
+) -> Result<(), PrimitiveMachineError> {
+    match upstream {
+        Some(upstream) => ctx.attest_provenance(source, projection, upstream.clone()),
+        None => Ok(()),
     }
 }
 
@@ -331,8 +364,8 @@ mod origin_fallthrough {
         BlobId, DemandKey, DemandPreimage, DigestAlgorithm, EffectCtx, FramedNode, OriginAdapter,
         OriginAdapterDecl, OriginAdapterSet, OriginHint, OriginReadError, PinnedBlobRef,
         PinnedFetchRequest, PrimitiveCompletion, PrimitiveMachineError, PrimitivePublication,
-        ReadObservation, ReadProjection, RecipeId, RegistryHandle, StagedEffectAuthority,
-        UpstreamDigest, ValueId,
+        PrimitiveValue, ReadObservation, ReadProjection, RecipeId, RegistryHandle,
+        StagedEffectAuthority, UpstreamDigest, ValueBodyCandidate, ValueId, ValuePersistence,
     };
     struct ScriptedOrigin {
         serving: BTreeMap<String, Vec<u8>>,
@@ -355,6 +388,24 @@ mod origin_fallthrough {
                 .ok_or_else(|| OriginReadError::Miss {
                     detail: format!("{coordinate} is not scripted"),
                 })
+        }
+    }
+
+    /// A persistence tier that always offers the scripted candidate.
+    struct CandidatePersistence {
+        candidate: ValueBodyCandidate,
+    }
+
+    impl ValuePersistence for CandidatePersistence {
+        fn get(
+            &self,
+            _value: &ValueId,
+        ) -> Result<Option<ValueBodyCandidate>, PrimitiveMachineError> {
+            Ok(Some(self.candidate.clone()))
+        }
+
+        fn put(&self, _value: &ValueId, _bytes: &[u8]) -> Result<(), PrimitiveMachineError> {
+            Ok(())
         }
     }
 
@@ -397,6 +448,8 @@ mod origin_fallthrough {
         coordinates: &[&str],
         payload: &[u8],
         upstream: Option<UpstreamDigest>,
+        staged_in_store: bool,
+        persistence: Option<Arc<dyn ValuePersistence>>,
     ) -> (PrimitivePublication, ValueId, ValueId) {
         let target =
             FramedNode::leaf(Type::Extern(ExternKind::Blob).schema_ref(), payload.to_vec())
@@ -419,9 +472,22 @@ mod origin_fallthrough {
             closure: RecipeId::from_canonical_vir(b"fetch-fallthrough-test"),
             arguments: Vec::new(),
         });
-        let authority =
-            Arc::new(StagedEffectAuthority::new(std::iter::empty()).with_origins(origins));
-        let ctx = EffectCtx::new(demand, authority);
+        let mut authority = if staged_in_store {
+            StagedEffectAuthority::new([(
+                target.clone(),
+                PrimitiveValue::bytes(
+                    Type::Extern(ExternKind::Blob).schema_ref(),
+                    payload.to_vec(),
+                ),
+            )])
+        } else {
+            StagedEffectAuthority::new(std::iter::empty())
+        }
+        .with_origins(origins);
+        if let Some(persistence) = persistence {
+            authority = authority.with_value_persistence(persistence);
+        }
+        let ctx = EffectCtx::new(demand, Arc::new(authority));
         let ticket =
             crate::typed_primitive::Primitive::<()>::begin(&PinnedFetchPrimitive, request, ctx, ())
                 .into_raw();
@@ -447,7 +513,8 @@ mod origin_fallthrough {
             origins,
             &["stub://miss-a", "stub://miss-b", "stub://serves"],
             b"payload",
-        
+            None,
+            false,
             None,
         );
 
@@ -497,7 +564,8 @@ mod origin_fallthrough {
             origins,
             &["stub://corrupt", "stub://never-reached"],
             b"payload",
-        
+            None,
+            false,
             None,
         );
 
@@ -538,6 +606,8 @@ mod origin_fallthrough {
             &["stub://miss", "stub://serves"],
             payload,
             Some(upstream.clone()),
+            false,
+            None,
         );
 
         assert_eq!(publication.completion, PrimitiveCompletion::Ok(target));
@@ -554,6 +624,149 @@ mod origin_fallthrough {
             Some(upstream),
             "both digests are in the receipt: the vix identity as the \
              observation, the verified upstream digest as provenance"
+        );
+    }
+
+    fn payload_upstream(payload: &[u8]) -> UpstreamDigest {
+        use sha2::{Digest as _, Sha256};
+        UpstreamDigest {
+            algorithm: DigestAlgorithm::Sha256,
+            bytes: Sha256::digest(payload).to_vec(),
+        }
+    }
+
+    /// The resident-store tier verifies the upstream digest too, so its
+    /// serving witness carries the same provenance an origin transfer's
+    /// would: which tier serves identical pinned bytes never changes what
+    /// the receipt records.
+    ///
+    /// r[verify machine.primitive.fetch-integrity-vs-identity]
+    #[test]
+    fn a_store_hit_attests_the_verified_upstream_digest() {
+        let payload = b"payload";
+        let (origins, adapter) = scripted_set([("stub://unused", payload.to_vec())]);
+        let (publication, target, _capability) = run_fetch(
+            origins,
+            &["stub://unused"],
+            payload,
+            Some(payload_upstream(payload)),
+            true,
+            None,
+        );
+
+        assert_eq!(
+            publication.completion,
+            PrimitiveCompletion::Ok(target.clone())
+        );
+        assert!(
+            adapter
+                .asked
+                .lock()
+                .expect("scripted origin mutex poisoned")
+                .is_empty(),
+            "a store hit precedes every origin"
+        );
+        let reads = &publication.receipt.reads;
+        assert_eq!(reads.len(), 1, "{reads:#?}");
+        assert_eq!(reads[0].projection, ReadProjection::Whole);
+        assert_eq!(reads[0].observation, ReadObservation::Value(target));
+        assert_eq!(
+            reads[0].provenance,
+            Some(payload_upstream(payload)),
+            "the store hit's witness carries the digest its bytes passed"
+        );
+    }
+
+    /// The persistence tier previously recorded NO witness at all; now its
+    /// serving read appears in the receipt shaped like a store hit, carrying
+    /// the verified digest as provenance.
+    ///
+    /// r[verify machine.primitive.fetch-integrity-vs-identity]
+    #[test]
+    fn a_persistence_candidate_attests_the_verified_upstream_digest() {
+        let payload = b"payload";
+        let target =
+            FramedNode::leaf(Type::Extern(ExternKind::Blob).schema_ref(), payload.to_vec())
+                .identity();
+        let (origins, adapter) = scripted_set([("stub://unused", payload.to_vec())]);
+        let (publication, target_again, _capability) = run_fetch(
+            origins,
+            &["stub://unused"],
+            payload,
+            Some(payload_upstream(payload)),
+            false,
+            Some(Arc::new(CandidatePersistence {
+                candidate: ValueBodyCandidate {
+                    claimed: target.clone(),
+                    bytes: payload.to_vec(),
+                },
+            })),
+        );
+
+        assert_eq!(publication.completion, PrimitiveCompletion::Ok(target_again));
+        assert!(
+            adapter
+                .asked
+                .lock()
+                .expect("scripted origin mutex poisoned")
+                .is_empty(),
+            "a persistence candidate precedes every origin"
+        );
+        let reads = &publication.receipt.reads;
+        assert_eq!(reads.len(), 1, "{reads:#?}");
+        assert_eq!(reads[0].projection, ReadProjection::Whole);
+        assert_eq!(reads[0].observation, ReadObservation::Value(target));
+        assert_eq!(
+            reads[0].provenance,
+            Some(payload_upstream(payload)),
+            "the persistence tier's witness carries the digest its bytes passed"
+        );
+    }
+
+    /// Provenance is a POST-verification fact: bytes that contradict the
+    /// upstream digest fail the fetch, and the failed publication's receipt
+    /// contains no provenance claim for the rejected digest — the witness of
+    /// the transfer (a true identity observation) survives, the never-passed
+    /// check does not.
+    ///
+    /// r[verify machine.primitive.fetch-integrity-vs-identity]
+    #[test]
+    fn a_failed_upstream_check_leaves_no_provenance_claim() {
+        let payload = b"payload";
+        let wrong = UpstreamDigest {
+            algorithm: DigestAlgorithm::Sha256,
+            bytes: vec![0; 32],
+        };
+        let (origins, adapter) = scripted_set([("stub://serves", payload.to_vec())]);
+        let (publication, _target, _capability) = run_fetch(
+            origins,
+            &["stub://serves"],
+            payload,
+            Some(wrong),
+            false,
+            None,
+        );
+
+        assert!(
+            matches!(
+                publication.completion,
+                PrimitiveCompletion::MachineError(PrimitiveMachineError::PolicyRejected { .. })
+            ),
+            "the contradicted pin fails the fetch: {:#?}",
+            publication.completion
+        );
+        assert_eq!(
+            *adapter.asked.lock().expect("scripted origin mutex poisoned"),
+            ["stub://serves"],
+        );
+        assert!(
+            publication
+                .receipt
+                .reads
+                .iter()
+                .all(|read| read.provenance.is_none()),
+            "a receipt never claims a verification that failed: {:#?}",
+            publication.receipt.reads
         );
     }
 }

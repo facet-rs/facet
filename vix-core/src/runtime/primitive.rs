@@ -899,16 +899,17 @@ impl EffectCtx {
 
     /// Resolve one origin candidate: route the coordinate read, verify the
     /// served bytes against the pinned identity, and witness the outcome —
-    /// a `Value` observation carrying `provenance` (the upstream digest the
-    /// caller is verifying the transfer against, recorded beside the vix
-    /// identity per `machine.primitive.fetch-integrity-vs-identity`), or a
-    /// `Missing` observation for a tried coordinate that had nothing.
+    /// a `Value` observation for a serving coordinate, a `Missing`
+    /// observation for a tried coordinate that had nothing. Provenance is
+    /// deliberately NOT recorded here: it is a post-verification fact the
+    /// caller attests through [`Self::attest_provenance`] after its own
+    /// upstream check passes, never a claim built ahead of the check it
+    /// describes.
     pub fn origin_candidate(
         &self,
         capability: &ValueId,
         coordinate: &str,
         expected: &ValueId,
-        provenance: Option<super::UpstreamDigest>,
     ) -> Result<Vec<u8>, PrimitiveMachineError> {
         let bytes = match self.authority.origin_candidate(capability, coordinate) {
             Ok(bytes) => bytes,
@@ -952,9 +953,52 @@ impl EffectCtx {
                     coordinate: coordinate.to_owned(),
                 },
                 observation: ReadObservation::Value(observed),
-                provenance,
+                provenance: None,
             });
         Ok(bytes)
+    }
+
+    /// Attach transfer provenance to an already-recorded witness — strictly
+    /// AFTER the caller verified the served bytes against the digest, which
+    /// is what makes `ReadWitness::provenance`'s invariant ("what the
+    /// transfer WAS checked against") true by construction: a receipt can
+    /// never claim a verification that then failed, because the claim is
+    /// only written once the check has passed. Tier-neutral on purpose: the
+    /// serving tier — a resident-store hit, a persistence candidate, an
+    /// origin transfer — attests on whichever witness it recorded, so "both
+    /// digests are recorded" does not depend on which tier served identical
+    /// pinned bytes.
+    ///
+    /// The attestation names the serving read by (source, projection) and
+    /// lands on the most recent such witness still lacking provenance; a
+    /// dangling attestation (no matching witness) is an authority violation,
+    /// never a silent no-op.
+    ///
+    /// r[impl machine.primitive.witness-reverification]
+    pub fn attest_provenance(
+        &self,
+        source: &ValueId,
+        projection: &ReadProjection,
+        provenance: super::UpstreamDigest,
+    ) -> Result<(), PrimitiveMachineError> {
+        let mut transaction = self
+            .transaction
+            .lock()
+            .expect("effect transaction mutex poisoned");
+        let witness = transaction
+            .reads
+            .iter_mut()
+            .rev()
+            .find(|read| {
+                &read.source == source
+                    && &read.projection == projection
+                    && read.provenance.is_none()
+            })
+            .ok_or_else(|| PrimitiveMachineError::AuthorityViolation {
+                detail: "provenance attestation names no recorded witness".to_owned(),
+            })?;
+        witness.provenance = Some(provenance);
+        Ok(())
     }
 
     /// The process-boundary service this effect may cross through
