@@ -103,7 +103,7 @@ the demand. Current examples include:
 
 - `ValuePersistence` for self-verifying value bodies;
 - `OriginAdapter` for capability-relative origin reads;
-- `ClaimHistory` for append-only observation claims.
+- `ExecBackend` for the exec process boundary.
 
 The request still carries semantic inputs such as capability identities,
 coordinates, and expected value identities. A service object is execution

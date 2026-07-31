@@ -1147,10 +1147,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
     fn reverify_read_witness(&self, read: &ReadWitness) -> bool {
         match &read.observation {
             ReadObservation::Value(observed) => {
-                if matches!(
-                    read.projection,
-                    ReadProjection::Whole | ReadProjection::Document
-                ) {
+                if matches!(read.projection, ReadProjection::Whole) {
                     return observed == &read.source;
                 }
                 if matches!(read.projection, ReadProjection::RegistryManifest) {
@@ -1176,7 +1173,6 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                     // A stream-range witness names bytes only its producing
                     // effect ever published; no fixture can re-verify it.
                     ReadProjection::Whole
-                    | ReadProjection::Document
                     | ReadProjection::RegistryManifest
                     | ReadProjection::CapabilityProgram
                     | ReadProjection::StreamRange { .. } => {}
@@ -7179,7 +7175,7 @@ fn primitive_demand_preimage(primitive: &super::PrimitiveId, request: &ValueId) 
 fn projection_fingerprint(projection: &ReadProjection) -> String {
     match projection {
         ReadProjection::Whole => "whole".to_owned(),
-        ReadProjection::Document => "document".to_owned(),
+        // "document" is the retired `Document` variant's reserved spelling.
         ReadProjection::RegistryManifest => "registry-manifest".to_owned(),
         ReadProjection::CapabilityProgram => "capability-program".to_owned(),
         ReadProjection::TreePath { path } => format!("tree-path:{path}"),

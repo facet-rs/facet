@@ -224,7 +224,15 @@ pub struct ReadWitness {
 #[repr(u8)]
 pub enum ReadProjection {
     Whole,
-    Document,
+    // `Document` (a whole-document read distinct from `Whole`) lived here
+    // between `Whole` and `RegistryManifest`; it never gained a producer and
+    // was removed. Its fingerprint spelling ("document",
+    // `projection_fingerprint`) stays reserved: no future variant may reuse
+    // it with a different meaning. Removal does not shift any wire form —
+    // receipts serialize through facet-json by variant NAME
+    // (`PersistentRuntimeJournal::to_json`), demand fingerprints spell each
+    // projection explicitly, and no path encodes this enum's `repr(u8)`
+    // discriminants.
     RegistryManifest,
     CapabilityProgram,
     TreePath {
@@ -253,7 +261,6 @@ impl ReadProjection {
             Self::TreePath { path } => Some(path),
             Self::Origin { coordinate } => Some(coordinate),
             Self::Whole
-            | Self::Document
             | Self::RegistryManifest
             | Self::CapabilityProgram
             | Self::StreamRange { .. } => None,

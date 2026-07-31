@@ -189,13 +189,6 @@ impl FixtureStore {
         }
         std::fs::read(self.root.join(relative)).map_err(|_| FixtureReadError::Missing)
     }
-
-    /// The fixture-root-relative projection a `fixture://` URL reads, for the
-    /// receipt's read witness.
-    #[must_use]
-    pub fn url_projection(url: &str) -> Option<&str> {
-        url.strip_prefix("fixture://")
-    }
 }
 
 #[must_use]
