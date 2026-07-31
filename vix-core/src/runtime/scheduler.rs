@@ -3588,11 +3588,13 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             if let Some(persistence) = self.primitive_services.value_persistence() {
                 authority = authority.with_value_persistence(persistence);
             }
-            authority = authority.with_origin_adapter(
-                self.primitive_services
-                    .origin()
-                    .unwrap_or_else(|| Arc::new(self.fixture_store.clone())),
-            );
+            // No conjuring: the machine holds no default origin backend. When
+            // the embedder installed none, none serves, and an origin read is
+            // a loud typed refusal (`EffectAuthority::origin_candidate`).
+            // r[impl machine.primitive.origin-routing]
+            if let Some(origin) = self.primitive_services.origin() {
+                authority = authority.with_origin_adapter(origin);
+            }
             let authority = Arc::new(authority);
             let ticket = match self.primitive_dispatcher.begin_or_join(
                 &plan.primitive,
@@ -5519,11 +5521,13 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             if let Some(persistence) = self.primitive_services.value_persistence() {
                 authority = authority.with_value_persistence(persistence);
             }
-            authority = authority.with_origin_adapter(
-                self.primitive_services
-                    .origin()
-                    .unwrap_or_else(|| Arc::new(self.fixture_store.clone())),
-            );
+            // No conjuring: the machine holds no default origin backend. When
+            // the embedder installed none, none serves, and an origin read is
+            // a loud typed refusal (`EffectAuthority::origin_candidate`).
+            // r[impl machine.primitive.origin-routing]
+            if let Some(origin) = self.primitive_services.origin() {
+                authority = authority.with_origin_adapter(origin);
+            }
             let authority = Arc::new(authority);
             let ticket = self
                 .primitive_dispatcher

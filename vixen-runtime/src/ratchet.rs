@@ -2,14 +2,15 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use vix::compiler::{Compiler, CompilerConfig};
 use vix::diagnostic::Diagnostics;
 use vix::lowering::{LoweringCache, LoweringCacheCounters, LoweringError, attribution_for};
 use vix::runtime::{
     ChaosPolicy, Counters, DemandState, EffectProjectionRequest, Evaluation, Event, EventKind,
-    EventLog, FailureContext, FailureValue, FramedNode, GeneratorOutcome, IslandInputs, Location,
-    MachineError, PersistentRuntimeJournal, PersistentRuntimeJournalError,
+    EventLog, FailureContext, FailureValue, FixtureStore, FramedNode, GeneratorOutcome,
+    IslandInputs, Location, MachineError, PersistentRuntimeJournal, PersistentRuntimeJournalError,
     PersistentRuntimeJournalLoadReport, PersistentRuntimeState, PrimitiveServices, ReadProjection,
     RealizedWireDemand, RootSubmission, Runtime, SnapshotCapture, SnapshotOutcome, TaskState,
     ValueId, ValueRootRequest, WireDemand,
@@ -1085,11 +1086,7 @@ impl PreparedRun {
     /// r[impl machine.scheduler.chaos-kill-oracle]
     /// r[impl machine.scheduler.replay-is-semantics]
     pub fn execute(self) -> Result<RatchetReport, RunError> {
-        self.execute_inner(
-            &SnapshotExpectations::new(),
-            |_| {},
-            PrimitiveServices::default(),
-        )
+        self.execute_inner(&SnapshotExpectations::new(), |_| {}, harness_services())
     }
 
     /// Execute with a snapshot oracle: snapshot checks compare their rendering to
@@ -1098,7 +1095,7 @@ impl PreparedRun {
         self,
         expectations: &SnapshotExpectations,
     ) -> Result<RatchetReport, RunError> {
-        self.execute_inner(expectations, |_| {}, PrimitiveServices::default())
+        self.execute_inner(expectations, |_| {}, harness_services())
     }
 
     /// Execute with lifecycle observations made while each lane's runtime is
@@ -1108,11 +1105,7 @@ impl PreparedRun {
         self,
         observe: impl FnMut(ExecutionPhase),
     ) -> Result<RatchetReport, RunError> {
-        self.execute_inner(
-            &SnapshotExpectations::new(),
-            observe,
-            PrimitiveServices::default(),
-        )
+        self.execute_inner(&SnapshotExpectations::new(), observe, harness_services())
     }
 
     /// Execute through the production runner with explicit primitive service
@@ -1572,6 +1565,17 @@ fn evaluate_snapshot_site(
     })
 }
 
+/// The offline harness's default service set: the fixture store installed AS
+/// the origin adapter, explicitly. The machine holds no default origin
+/// backend — with no adapter installed an origin read is a loud typed refusal
+/// (`machine.primitive.origin-routing`) — so the conjuring that used to live
+/// in the scheduler's silent fixture fallback lives here instead, as a
+/// declared harness installation. Callers assembling their own
+/// `PrimitiveServices` are never defaulted over.
+fn harness_services() -> PrimitiveServices {
+    PrimitiveServices::default().with_origin_adapter(Arc::new(FixtureStore::default()))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_lane(
     module: &vix::vir::Module,
@@ -1605,9 +1609,12 @@ fn run_lane(
     // vix-core builds runtimes with an empty dispatcher; install the vixen
     // builtin primitives so fixtures that fetch/observe/decode/tree-read run.
     crate::install_builtins(&mut runtime);
-    if let Some(services) = primitive_services {
-        runtime.set_primitive_services(services.clone());
-    }
+    // A lane that assembled no services of its own runs on the harness set,
+    // which installs the offline fixture store as the origin adapter
+    // EXPLICITLY (`harness_services`). A caller-assembled set is installed
+    // verbatim: its origin choices — including choosing none, and refusing
+    // origin reads loudly — are respected.
+    runtime.set_primitive_services(primitive_services.cloned().unwrap_or_else(harness_services));
     runtime.set_authoritative_rerun_audit(use_rerun_overlays);
     observe(ready_phase);
     let mut checks = Vec::new();
