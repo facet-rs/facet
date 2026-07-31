@@ -60,7 +60,7 @@
     "eslint-plugin-regexp": "^2.10.0",
     "execa": "^9.6.1",
     "globals": "^16.5.0",
-    "lint-staged": "^16.2.7",
+    "lint-staged": "^17.0.0",
     "picocolors": "^1.1.1",
     "playwright-chromium": "^1.57.0",
     "prettier": "3.7.3",
