@@ -1528,13 +1528,28 @@ pub trait CodataDrainCtx {
         projection: &str,
     ) -> Result<Vec<(String, super::TreeEntryKind)>, PrimitiveMachineError>;
 
-    /// The adapter-relative name of the lazily-backed source under the
-    /// installed origin declarations, or `None` for a content-identified
-    /// source ([`super::OriginAdapterSet::tree_handle_name`]). An
-    /// origin-backed tree's projections are name-relative (`<name>/<path>`),
-    /// and the seam — not the primitive — derives the name, so no drain
-    /// spells any backend's namespace.
-    fn source_origin_name(&self) -> Option<Vec<u8>>;
+    /// Route the source under the installed origin declarations
+    /// ([`super::OriginAdapterSet::route_tree`]): a content-identified source
+    /// enumerates its own bytes, an origin-backed handle carries its
+    /// adapter-relative name (projections are name-relative,
+    /// `<name>/<path>`, and the seam — not the primitive — derives the
+    /// name), and an **unclaimed handle is the loud typed refusal** — never
+    /// a fall-through into content enumeration, whose parse failure would be
+    /// the confusing lie the routing rule bans.
+    ///
+    /// r[impl machine.primitive.origin-routing]
+    fn source_routing(&self) -> Result<DrainSourceRouting, PrimitiveMachineError>;
+}
+
+/// How a codata drain's source routes — the owned answer to
+/// [`super::TreeRouting`] for drains, which need the adapter-relative name
+/// rather than the installation borrow.
+pub enum DrainSourceRouting {
+    /// The resident bytes carry the tree's own members; enumerate directly.
+    ContentIdentified,
+    /// A lazily-backed handle owned by an installed adapter's declared
+    /// namespace: its adapter-relative name (the namespace stripped).
+    Origin { name: Vec<u8> },
 }
 
 /// A registered producer of effect codata. Unlike [`RawPrimitive`], a codata

@@ -92,8 +92,26 @@ impl super::CodataDrainCtx for GlobDrainCtx<'_> {
         &self.source.resident
     }
 
-    fn source_origin_name(&self) -> Option<Vec<u8>> {
-        self.origins.tree_handle_name(&self.source.resident)
+    // r[impl machine.primitive.origin-routing] — the drain's source routes
+    // by declaration, and an unclaimed handle refuses here, loudly, before
+    // any enumeration strategy is chosen.
+    fn source_routing(&self) -> Result<super::DrainSourceRouting, super::PrimitiveMachineError> {
+        match self.origins.route_tree(&self.source.resident) {
+            super::TreeRouting::ContentIdentified => {
+                Ok(super::DrainSourceRouting::ContentIdentified)
+            }
+            super::TreeRouting::Origin(installation) => {
+                let namespace = installation
+                    .decl
+                    .tree_namespace
+                    .as_ref()
+                    .expect("a routed tree handle is owned by a declared namespace");
+                Ok(super::DrainSourceRouting::Origin {
+                    name: self.source.resident[namespace.len()..].to_vec(),
+                })
+            }
+            super::TreeRouting::Unclaimed(refusal) => Err(refusal),
+        }
     }
 
     // r[impl machine.primitive.origin-verbs] — the neutral directory verb,
