@@ -54,6 +54,49 @@ fn t() -> Stream<Check> {
     );
 }
 
+/// A `root: true` constant surface — hoisted into its own published effect
+/// island rather than realized in-frame, the shape `fixture_registry()`
+/// rides. The authored argument node is still `Op::DeclaredConst`, so the
+/// actual-side recorders must encode it exactly as the non-root case.
+const PINNED_ROOT: &[ConstantSurfaceDecl] = &[ConstantSurfaceDecl {
+    name: "pinned_root",
+    literal_params: 0,
+    result: || vix::vir::Type::String,
+    encode: |_| b"root\0subject".to_vec(),
+    root: true,
+}];
+
+/// The root publication shape of the same regression: the selector must
+/// observe the invocation even though the constant argument is its own
+/// scheduler-published island.
+#[test]
+fn a_call_site_selector_matches_a_root_declared_constant_argument() {
+    const PROGRAM: &str = r#"
+fn inspect(note: String) -> Int {
+    7
+}
+
+#[test]
+fn t() -> Stream<Check> {
+    let value = inspect(pinned_root());
+    yield expect_eq(value, 7);
+    yield demanded_once(inspect(pinned_root()));
+}
+"#;
+    let report = run_source_with_config(
+        PROGRAM,
+        CompilerConfig {
+            constants: PINNED_ROOT,
+            ..vixen_runtime::default_config()
+        },
+    )
+    .expect("the root declared-constant selector source runs");
+    assert!(
+        report.passed(),
+        "the invocation is realized once and the selector observes it: {report:#?}"
+    );
+}
+
 /// The reviewed repro verbatim, as a second pin through the harness's own
 /// fixture spelling: `inspect` runs once and `demanded_once` observes 1 —
 /// never 0 against a `CallSite([Constant {..}])` selector.
