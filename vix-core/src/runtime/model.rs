@@ -223,16 +223,25 @@ pub struct ReadWitness {
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum ReadProjection {
-    Whole,
-    Document,
-    RegistryManifest,
-    CapabilityProgram,
+    Whole = 0,
+    // `Document` (a whole-document read distinct from `Whole`) lived at
+    // discriminant 1; it never gained a producer and was removed. The slot
+    // retires-and-reserves like an Op ordinal: the explicit discriminants
+    // below keep every survivor at its original number, and the fingerprint
+    // spelling ("document", `projection_fingerprint`) stays reserved — no
+    // future variant may reuse either with a different meaning. Receipts
+    // serialize through facet-json by variant NAME
+    // (`PersistentRuntimeJournal::to_json`) and demand fingerprints spell
+    // each projection explicitly, so nothing reads these numbers today — the
+    // pinning is what keeps that true for any future binary format too.
+    RegistryManifest = 2,
+    CapabilityProgram = 3,
     TreePath {
         path: String,
-    },
+    } = 4,
     Origin {
         coordinate: String,
-    },
+    } = 5,
     /// One immutable published range of a named byte stream of the effect's
     /// response, addressed by byte offset (`machine.primitive.exec-outcome`:
     /// OS writes and transport frames are not keys — the offsets are the
@@ -243,7 +252,7 @@ pub enum ReadProjection {
         stream: String,
         start: u64,
         end: u64,
-    },
+    } = 6,
 }
 
 impl ReadProjection {
@@ -253,7 +262,6 @@ impl ReadProjection {
             Self::TreePath { path } => Some(path),
             Self::Origin { coordinate } => Some(coordinate),
             Self::Whole
-            | Self::Document
             | Self::RegistryManifest
             | Self::CapabilityProgram
             | Self::StreamRange { .. } => None,

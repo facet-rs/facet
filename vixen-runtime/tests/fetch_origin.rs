@@ -455,6 +455,50 @@ fn pinned_fetch_local_store_hit_never_contacts_provider_or_origin() {
     }
 }
 
+/// No conjuring: with no origin adapter installed, nothing serves an origin
+/// read — not even the fixture store the services DO carry, because a store
+/// is not an installed origin backend. The refusal is loud and typed, it
+/// names the coordinate, and zero fetches are performed (the origin server
+/// is never contacted). This pins the death of the scheduler's silent
+/// fixture-store fallback.
+///
+/// r[verify machine.primitive.origin-routing]
+#[test]
+fn no_origin_adapter_refuses_the_origin_read_loudly() {
+    let bytes = archive_bytes();
+    let identity = blob_identity(&bytes);
+    let upstream = vixen_primitives::sha256_pin(&bytes);
+    let server = BlobServer::start(bytes);
+    let fixtures = TempDir::new().expect("create fixture root");
+    // A fixture store, but NO origin adapter: the registry manifest resolves
+    // (so the fetch has a real coordinate to ask for), and then the origin
+    // read must refuse rather than fall back to anything.
+    let services = PrimitiveServices::default().with_fixture_store(fixture_store(
+        &fixtures,
+        &server.url(),
+        &identity,
+        &upstream,
+    ));
+
+    let error = prepare_source(FETCH_MUST_FAIL)
+        .expect("prepare no-origin-adapter source")
+        .execute_with_primitive_services(services)
+        .expect_err("an origin read with no origin adapter installed must refuse");
+
+    let PrimitiveMachineError::Unavailable { detail } = primitive_machine_error(error) else {
+        panic!("expected a typed Unavailable refusal");
+    };
+    assert!(
+        detail.contains("no origin adapter is installed"),
+        "the refusal says nothing is installed: {detail}"
+    );
+    assert!(
+        detail.contains(&server.url()),
+        "the refusal names the coordinate: {detail}"
+    );
+    assert_eq!(server.requests(), 0, "zero fetches performed");
+}
+
 #[test]
 fn pinned_fetch_rejects_vix_identity_mismatch() {
     let bytes = archive_bytes();

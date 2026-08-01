@@ -18,7 +18,8 @@ use crate::vir::{
     ExternKind, Function, FunctionId, Island, IslandId, NodeId, Op, Type, VariantPayload,
 };
 
-use super::fixture::{FixtureEntryKind, FixtureReadError, FixtureStore, canonical_resident_tree};
+use super::fixture::{FixtureEntryKind, FixtureReadError, FixtureStore};
+use super::tree_resident::canonical_resident_tree;
 use super::identity::{
     DemandKey, DemandPreimage, Digest, Location, LocationId, RecipeId, ValueId, hash_framed,
 };
@@ -1146,10 +1147,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
     fn reverify_read_witness(&self, read: &ReadWitness) -> bool {
         match &read.observation {
             ReadObservation::Value(observed) => {
-                if matches!(
-                    read.projection,
-                    ReadProjection::Whole | ReadProjection::Document
-                ) {
+                if matches!(read.projection, ReadProjection::Whole) {
                     return observed == &read.source;
                 }
                 if matches!(read.projection, ReadProjection::RegistryManifest) {
@@ -1175,7 +1173,6 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                     // A stream-range witness names bytes only its producing
                     // effect ever published; no fixture can re-verify it.
                     ReadProjection::Whole
-                    | ReadProjection::Document
                     | ReadProjection::RegistryManifest
                     | ReadProjection::CapabilityProgram
                     | ReadProjection::StreamRange { .. } => {}
@@ -3591,11 +3588,13 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             if let Some(persistence) = self.primitive_services.value_persistence() {
                 authority = authority.with_value_persistence(persistence);
             }
-            authority = authority.with_origin_adapter(
-                self.primitive_services
-                    .origin()
-                    .unwrap_or_else(|| Arc::new(self.fixture_store.clone())),
-            );
+            // No conjuring: the machine holds no default origin backend. When
+            // the embedder installed none, none serves, and an origin read is
+            // a loud typed refusal (`EffectAuthority::origin_candidate`).
+            // r[impl machine.primitive.origin-routing]
+            if let Some(origin) = self.primitive_services.origin() {
+                authority = authority.with_origin_adapter(origin);
+            }
             let authority = Arc::new(authority);
             let ticket = match self.primitive_dispatcher.begin_or_join(
                 &plan.primitive,
@@ -5522,11 +5521,13 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             if let Some(persistence) = self.primitive_services.value_persistence() {
                 authority = authority.with_value_persistence(persistence);
             }
-            authority = authority.with_origin_adapter(
-                self.primitive_services
-                    .origin()
-                    .unwrap_or_else(|| Arc::new(self.fixture_store.clone())),
-            );
+            // No conjuring: the machine holds no default origin backend. When
+            // the embedder installed none, none serves, and an origin read is
+            // a loud typed refusal (`EffectAuthority::origin_candidate`).
+            // r[impl machine.primitive.origin-routing]
+            if let Some(origin) = self.primitive_services.origin() {
+                authority = authority.with_origin_adapter(origin);
+            }
             let authority = Arc::new(authority);
             let ticket = self
                 .primitive_dispatcher
@@ -7178,7 +7179,7 @@ fn primitive_demand_preimage(primitive: &super::PrimitiveId, request: &ValueId) 
 fn projection_fingerprint(projection: &ReadProjection) -> String {
     match projection {
         ReadProjection::Whole => "whole".to_owned(),
-        ReadProjection::Document => "document".to_owned(),
+        // "document" is the retired `Document` variant's reserved spelling.
         ReadProjection::RegistryManifest => "registry-manifest".to_owned(),
         ReadProjection::CapabilityProgram => "capability-program".to_owned(),
         ReadProjection::TreePath { path } => format!("tree-path:{path}"),

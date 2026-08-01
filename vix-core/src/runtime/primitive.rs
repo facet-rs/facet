@@ -416,13 +416,20 @@ pub trait EffectAuthority: Send + Sync {
         Ok(())
     }
 
+    /// The refusal is loud and names the coordinate: the machine holds no
+    /// default origin backend, so an unconfigured origin never falls back to
+    /// anything — it says what was asked and that nothing is installed.
+    /// r[impl machine.primitive.origin-routing]
     fn origin_candidate(
         &self,
         _capability: &ValueId,
-        _coordinate: &str,
+        coordinate: &str,
     ) -> Result<Vec<u8>, PrimitiveMachineError> {
         Err(PrimitiveMachineError::Unavailable {
-            detail: "no origin adapter is installed for this effect snapshot".to_owned(),
+            detail: format!(
+                "origin read {coordinate} refused: no origin adapter is installed \
+                 for this effect snapshot"
+            ),
         })
     }
 
@@ -700,6 +707,8 @@ impl EffectAuthority for StagedEffectAuthority {
             .map_or(Ok(()), |persistence| persistence.put(value, bytes))
     }
 
+    // r[impl machine.primitive.origin-routing] — no adapter, no backend: the
+    // refusal names the coordinate instead of a silent fallback serving it.
     fn origin_candidate(
         &self,
         capability: &ValueId,
@@ -708,7 +717,10 @@ impl EffectAuthority for StagedEffectAuthority {
         self.origin
             .as_ref()
             .ok_or_else(|| PrimitiveMachineError::Unavailable {
-                detail: "no origin adapter is installed for this effect snapshot".to_owned(),
+                detail: format!(
+                    "origin read {coordinate} refused: no origin adapter is installed \
+                     for this effect snapshot"
+                ),
             })?
             .read(capability, coordinate)
     }
