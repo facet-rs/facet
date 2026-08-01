@@ -1579,6 +1579,21 @@ fn lower_module(
         let ast::Item::Fn(function) = item else {
             continue;
         };
+        // An injected constant surface resolves before source functions in
+        // call lowering, so a source function sharing its name could never
+        // be reached — the same silent shadowing the constant-surface set
+        // validation above rejects, closed on the source side too.
+        if constant_names.contains(function.name.value.as_str()) {
+            return Err(Diagnostics::one(Diagnostic::unsupported(
+                function.name.span,
+                format!(
+                    "function `{}` collides with an injected constant surface of the \
+                     same name — the surface resolves first, so the function could \
+                     never be reached",
+                    function.name.value
+                ),
+            )));
+        }
         // Only generic *value* functions become monomorphization templates. A
         // generic `#[test]` has no instantiation surface, so it flows through
         // `declare_function`, which rejects it as a generic function.
@@ -5703,7 +5718,6 @@ fn lower_constant_surface(
         ty,
     })
 }
-
 
 fn decode_format_label(format: DecodeFormat) -> &'static str {
     match format {

@@ -204,6 +204,22 @@ fn a_constant_surface_cannot_shadow_an_injected_primitive_surface() {
     );
 }
 
+/// The same collision from the source side: an injected constant surface
+/// resolves before source functions in call lowering, so a source function
+/// sharing its name could never be reached — rejected loudly at the
+/// function's own span, never shadowed by arm order.
+#[test]
+fn a_source_function_cannot_be_shadowed_by_a_constant_surface() {
+    let error = compiler()
+        .compile("fn pinned_note(name: String) -> String {\n    name\n}\n")
+        .expect_err("a source function named like a constant surface is rejected");
+    let error = format!("{error:?}");
+    assert!(
+        error.contains("pinned_note") && error.contains("injected constant surface"),
+        "the rejection names the collision: {error}"
+    );
+}
+
 /// A name declared twice in the constant set is the same degenerate
 /// declaration set — first-match-wins resolution would hide the second.
 #[test]
