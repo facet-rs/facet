@@ -30,9 +30,18 @@ use vixen_runtime::ratchet::{RatchetReport, prepare_source};
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
-    let Some(invocation) = Invocation::parse(&arguments) else {
-        eprintln!("usage: vx <file.vix> [--fixtures <dir>]");
-        return ExitCode::from(2);
+    let invocation = match Invocation::parse(&arguments) {
+        Parsed::Run(invocation) => invocation,
+        // Asked-for help is a success: it goes to stdout and exits 0. Only a
+        // malformed invocation is an error.
+        Parsed::Help => {
+            println!("{USAGE}");
+            return ExitCode::SUCCESS;
+        }
+        Parsed::Invalid => {
+            eprintln!("{USAGE}");
+            return ExitCode::from(2);
+        }
     };
 
     let source = match std::fs::read_to_string(&invocation.source) {
@@ -79,26 +88,41 @@ fn main() -> ExitCode {
     }
 }
 
+const USAGE: &str = "usage: vx <file.vix> [--fixtures <dir>]";
+
 struct Invocation {
     source: PathBuf,
     fixtures: PathBuf,
 }
 
+/// What an argument vector asked for. Help and a malformed invocation are
+/// different answers and get different exit codes.
+enum Parsed {
+    Run(Invocation),
+    Help,
+    Invalid,
+}
+
 impl Invocation {
-    fn parse(arguments: &[String]) -> Option<Self> {
+    fn parse(arguments: &[String]) -> Parsed {
         let mut source: Option<PathBuf> = None;
         let mut fixtures: Option<PathBuf> = None;
         let mut rest = arguments.iter();
         while let Some(argument) = rest.next() {
             match argument.as_str() {
-                "--fixtures" => fixtures = Some(PathBuf::from(rest.next()?)),
-                "-h" | "--help" => return None,
-                flag if flag.starts_with('-') => return None,
+                "--fixtures" => match rest.next() {
+                    Some(directory) => fixtures = Some(PathBuf::from(directory)),
+                    None => return Parsed::Invalid,
+                },
+                "-h" | "--help" => return Parsed::Help,
+                flag if flag.starts_with('-') => return Parsed::Invalid,
                 path if source.is_none() => source = Some(PathBuf::from(path)),
-                _ => return None,
+                _ => return Parsed::Invalid,
             }
         }
-        let source = source?;
+        let Some(source) = source else {
+            return Parsed::Invalid;
+        };
         // The `.vix` file's own directory is the default fixture root, so a
         // program and the trees it reads travel together.
         let fixtures = fixtures.unwrap_or_else(|| {
@@ -107,7 +131,7 @@ impl Invocation {
                 .filter(|parent| !parent.as_os_str().is_empty())
                 .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
         });
-        Some(Self { source, fixtures })
+        Parsed::Run(Self { source, fixtures })
     }
 }
 

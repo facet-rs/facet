@@ -106,9 +106,16 @@ fn ready_after(packages: [LockPackage]) where { done: [String] } -> [String] {
 }
 
 // Rounds until nothing new becomes ready. A round that adds nothing terminates
-// the walk, so a cyclic lock yields a SHORT order rather than looping — the
-// caller sees the truncation by comparing lengths, which is why `build_plan`
-// does exactly that instead of trusting the order blindly.
+// the walk, so a SHORT order comes back rather than a loop, and the caller sees
+// the truncation by comparing lengths.
+//
+// TWO causes produce a short order, and this walk cannot tell them apart: a
+// genuine cycle, and DUPLICATE PACKAGE NAMES. A real lock may hold one name at
+// two versions, and its `dependencies` entries then read `"name version"`
+// rather than `"name"` — the duplicates collapse in `done` and the names stop
+// matching. Keying on name+version is the fix and it waits for a fixture that
+// needs it; until then the length check is what keeps the failure loud instead
+// of silently building the wrong thing.
 fn order_after(done: [String]) where { packages: [LockPackage] } -> [String] {
     let ready = ready_after(packages) where { done: done };
     if ready.len() == 0 {

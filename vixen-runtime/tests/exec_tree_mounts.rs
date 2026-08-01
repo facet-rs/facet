@@ -170,3 +170,52 @@ fn t(sh: Sh) -> Stream<Check> {
         "the refusal names the missing verb rather than blaming the bytes: {rendered}"
     );
 }
+
+#[test]
+fn a_mount_does_not_come_back_in_the_output_tree() {
+    // Inputs are not outputs. Without excluding the mount root from capture,
+    // stage N's tree carries stage N-1's sources, mounting it into stage N+1
+    // nests them again, and a build chain grows quadratically until it hits the
+    // ustar path cap. Worse, two byte-identical products would get DIFFERENT
+    // identities depending on what they were built from — the exact opposite of
+    // what an output identity is for.
+    expect_pass(
+        "no-leak",
+        r#"
+#[test { budget_wall: 60s, budget_rss: 2048MB }]
+fn t(sh: Sh) -> Stream<Check> {
+    let produced = exec sh`-c "echo input > carried.txt"`;
+    let inputs = produced.tree;
+    let consumer = exec sh`-c "cat {inputs}/carried.txt > copied.txt"`;
+    let out = consumer.tree;
+
+    // The consumer wrote exactly one file, and that is all its tree holds.
+    let listed = exec sh`-c "ls -A {out} | tr '\n' ' '"`;
+    yield expect_eq(listed.stdout.text().trim(), "copied.txt");
+}
+"#,
+    );
+}
+
+#[test]
+fn a_chain_of_mounts_does_not_nest_its_inputs() {
+    // The compounding half of the same property: three stages deep, the last
+    // tree still holds only what the last process wrote.
+    expect_pass(
+        "no-nesting",
+        r#"
+#[test { budget_wall: 60s, budget_rss: 2048MB }]
+fn t(sh: Sh) -> Stream<Check> {
+    let one = exec sh`-c "echo a > a.txt"`;
+    let t1 = one.tree;
+    let two = exec sh`-c "cat {t1}/a.txt > b.txt"`;
+    let t2 = two.tree;
+    let three = exec sh`-c "cat {t2}/b.txt > c.txt"`;
+    let t3 = three.tree;
+
+    let listed = exec sh`-c "ls -A {t3} | tr '\n' ' '"`;
+    yield expect_eq(listed.stdout.text().trim(), "c.txt");
+}
+"#,
+    );
+}

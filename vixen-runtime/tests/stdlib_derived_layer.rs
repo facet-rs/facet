@@ -84,9 +84,6 @@ fn t() -> Stream<Check> {
 
     yield expect("src/lib.rs".starts_with("src/"));
     yield expect(!"lib.rs".starts_with("src/"));
-    yield expect("lib.rs".ends_with(".rs"));
-    yield expect(!"lib.rsx".ends_with(".rs"));
-
     yield expect_eq("src/lib.rs".strip_prefix("src/"), Some("lib.rs"));
     yield expect_eq("lib.rs".strip_prefix("src/"), None);
 
@@ -94,7 +91,7 @@ fn t() -> Stream<Check> {
     yield expect_eq("a.b.c".replace(".", "/"), "a/b/c");
 }
 "#,
-        12,
+        10,
     );
 }
 

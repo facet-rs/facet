@@ -539,26 +539,42 @@ fn decode_fields<'de>(
                         match slots[index].take() {
                             None => slots[index] = Some(value),
                             // TOML's array-of-tables: `[[package]]` repeats the
-                            // field key once per block, each carrying a
-                            // one-element sequence. Accumulating them IS the
-                            // spelling's meaning — the document says one array,
-                            // written across several headers. Restricted to TOML
-                            // on purpose: a repeated key in JSON is a genuine
-                            // duplicate and stays a typed failure.
-                            Some(DecodedValue::Array(mut first))
-                                if format == DecodeFormat::Toml =>
+                            // field key, each carrying a one-element sequence.
+                            // Accumulating them IS the spelling's meaning — the
+                            // document says one array, written across several
+                            // headers. Restricted to TOML on purpose: a repeated
+                            // key in JSON is a genuine duplicate and stays a
+                            // typed failure.
+                            //
+                            // KNOWN LENIENCE, pinned by test: the parser presents
+                            // an inline `x = [1]` and an array-of-tables block
+                            // identically, so a repeated INLINE array key in TOML
+                            // — which is invalid TOML — also accumulates instead
+                            // of failing. Telling them apart needs the parser to
+                            // distinguish the two spellings; until it does, this
+                            // decoder cannot, and pretending otherwise by
+                            // guessing would be worse than saying so.
+                            Some(existing) if format == DecodeFormat::Toml
+                                && as_array(&existing).is_some()
+                                && as_array(&value).is_some() =>
                             {
-                                let DecodedValue::Array(rest) = value else {
-                                    return Err(span_opt(
-                                        DecodeError::of(DecodeErrorKind::DuplicateField {
-                                            container: container.to_owned(),
-                                            field: name,
-                                        }),
-                                        span,
-                                    ));
-                                };
-                                first.extend(rest);
-                                slots[index] = Some(DecodedValue::Array(first));
+                                let mut first = as_array(&existing)
+                                    .expect("guarded array")
+                                    .clone();
+                                first.extend(
+                                    as_array(&value).expect("guarded array").iter().cloned(),
+                                );
+                                let merged = DecodedValue::Array(first);
+                                // An `Option<[T]>` field wraps its sequence, so
+                                // the merge has to survive the wrapper or whether
+                                // `[[x]]` decodes would depend on whether the
+                                // field is `[T]` or `Option<[T]>`.
+                                slots[index] = Some(match existing {
+                                    DecodedValue::OptionSome(_) => {
+                                        DecodedValue::OptionSome(Box::new(merged))
+                                    }
+                                    _ => merged,
+                                });
                             }
                             Some(_) => {
                                 return Err(span_opt(
@@ -603,6 +619,16 @@ fn decode_fields<'de>(
         }
     }
     Ok(out)
+}
+
+/// The sequence a decoded value carries, seeing through an `Option` wrapper.
+/// `[T]` and `Option<[T]>` must accumulate identically under array-of-tables.
+fn as_array(value: &DecodedValue) -> Option<&Vec<DecodedValue>> {
+    match value {
+        DecodedValue::Array(elements) => Some(elements),
+        DecodedValue::OptionSome(inner) => as_array(inner),
+        _ => None,
+    }
 }
 
 fn skip_value<'de>(parser: &mut dyn FormatParser<'de>) -> Result<(), DecodeError> {

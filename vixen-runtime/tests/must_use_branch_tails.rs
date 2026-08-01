@@ -76,6 +76,46 @@ fn unchanged(xs: [Int]) -> [Int] {
 }
 
 #[test]
+fn a_discarded_branch_discards_its_arm_tails_too() {
+    // The other direction, and the one an unconditional propagation gets wrong:
+    // when the BRANCH's own result is dropped, its arm tails are dropped with
+    // it. Marking region outputs consumed regardless of whether the branch is
+    // consumed would trade the old false positive for a false negative, and a
+    // silently discarded collection `+` is exactly what this lint is for.
+    let source = r#"
+fn unchanged(xs: [Int]) -> [Int] {
+    let ignored = if xs.len() == 0 { xs + 1 } else { xs + 2 };
+    xs
+}
+"#;
+    let warnings = warnings(source);
+    assert_eq!(
+        warnings.len(),
+        2,
+        "both discarded arm tails are reported: {warnings:?}"
+    );
+    assert!(
+        warnings.iter().all(|warning| warning.contains("UnusedMustUse")),
+        "{warnings:?}"
+    );
+}
+
+#[test]
+fn a_nested_branch_tail_is_still_a_result() {
+    // The fixed point matters: an arm whose own tail is another branch.
+    let source = r#"
+fn nested(xs: [Int]) -> [Int] {
+    if xs.len() == 0 {
+        xs
+    } else {
+        if xs.len() == 1 { xs + 1 } else { xs + 2 }
+    }
+}
+"#;
+    assert_eq!(warnings(source), Vec::<String>::new());
+}
+
+#[test]
 fn a_discard_inside_a_branch_still_warns() {
     // The narrow case the fix must not swallow: the arm's OUTPUT is used, but a
     // second addition inside the same arm is not.

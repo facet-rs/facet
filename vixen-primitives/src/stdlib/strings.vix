@@ -7,6 +7,16 @@
 // There is no substring or slice op in the language, so `starts_with` is
 // expressed as "the text before the first occurrence is empty" — correct
 // because `split_once` splits at the FIRST occurrence.
+//
+// NO `ends_with` HERE, deliberately. The mirror trick does not work: "split on
+// the suffix, is the last piece empty" misses a suffix that OVERLAPS an earlier
+// occurrence, because `split` advances past whole matches. It answers false for
+// `"a---".ends_with("--")` and `"baaa".ends_with("aa")` — any repeated-character
+// suffix, which is exactly the shape file extensions and operators take. Getting
+// it right needs to compare the LAST n characters, and the language has no
+// `String.len`, no slicing, and no right-split to express that with. A predicate
+// that is wrong on a whole class of inputs is worse than an absent one, so this
+// waits for the axiom rather than shipping the trick.
 
 fn split_onto(acc: [String]) where { text: String, sep: String } -> [String] {
     if !(sep == "") && text.contains(sep) {
@@ -34,17 +44,6 @@ pub fn starts_with(text: String) where { prefix: String } -> Bool {
             before == ""
         } else {
             false
-        }
-    }
-}
-
-pub fn ends_with(text: String) where { suffix: String } -> Bool {
-    if suffix == "" {
-        true
-    } else {
-        match last(split(text) where { sep: suffix }) {
-            Some(tail) => tail == "",
-            None => false,
         }
     }
 }

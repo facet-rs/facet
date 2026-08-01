@@ -231,13 +231,22 @@ pub fn exec_request_type(capability: &Type) -> Type {
     ))
 }
 
+/// The workspace-relative directory every input mount materializes under.
+///
+/// It is a single reserved top-level name so that workspace CAPTURE can exclude
+/// it wholesale: a process's inputs are not its outputs, and an output tree that
+/// carried them back would grow quadratically along a build chain and would give
+/// two byte-identical products different identities depending on what they were
+/// built from. `archive_directory` skips exactly this entry.
+pub const EXEC_MOUNT_ROOT: &str = ".vix-mounts";
+
 /// The workspace-relative directory one spliced tree materializes at. The
 /// index is the splice's position in the plan, so the path is a function of the
 /// plan alone — two runs of the same plan agree, and a mount path never leaks
 /// the workspace's location.
 #[must_use]
 pub fn exec_mount_path(index: usize) -> String {
-    format!(".vix-mounts/{index}")
+    format!("{EXEC_MOUNT_ROOT}/{index}")
 }
 
 #[must_use]

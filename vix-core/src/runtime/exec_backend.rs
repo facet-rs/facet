@@ -13,6 +13,8 @@
 //! r[impl machine.primitive.effect-backend-service]
 
 use std::path::{Path, PathBuf};
+
+use super::EXEC_MOUNT_ROOT;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -174,7 +176,7 @@ pub trait ExecBackend: Send + Sync {
 /// capture behind the [`ExecBackend`] trait — that changes the trait's shape and
 /// is deliberately not bundled with the backend's relocation.
 pub fn archive_directory(root: &Path) -> Result<Vec<u8>, String> {
-    fn collect(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+    fn collect(directory: &Path, root: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
         let mut entries = std::fs::read_dir(directory)
             .map_err(|error| {
                 format!(
@@ -187,6 +189,16 @@ pub fn archive_directory(root: &Path) -> Result<Vec<u8>, String> {
         entries.sort_by_key(std::fs::DirEntry::file_name);
         for entry in entries {
             let path = entry.path();
+            // Inputs are not outputs. Mounts live under one reserved top-level
+            // name precisely so capture can drop them here: without this, stage
+            // N's tree carries stage N-1's sources, mounting it into stage N+1
+            // nests them again, and a chain grows quadratically until it hits
+            // the ustar path cap. It would also give two byte-identical
+            // products different identities depending on what they were built
+            // from, which is the opposite of what an output identity is for.
+            if directory == root && path.file_name().is_some_and(|name| name == EXEC_MOUNT_ROOT) {
+                continue;
+            }
             let metadata = std::fs::symlink_metadata(&path)
                 .map_err(|error| format!("inspect exec output `{}`: {error}", path.display()))?;
             if metadata.file_type().is_symlink() {
@@ -196,7 +208,7 @@ pub fn archive_directory(root: &Path) -> Result<Vec<u8>, String> {
                 ));
             }
             if metadata.is_dir() {
-                collect(&path, files)?;
+                collect(&path, root, files)?;
             } else if metadata.is_file() {
                 files.push(path);
             }
@@ -221,7 +233,7 @@ pub fn archive_directory(root: &Path) -> Result<Vec<u8>, String> {
     }
 
     let mut files = Vec::new();
-    collect(root, &mut files)?;
+    collect(root, root, &mut files)?;
     files.sort();
     let mut archive = Vec::new();
     for file in files {

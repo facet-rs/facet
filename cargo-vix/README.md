@@ -83,6 +83,15 @@ Recorded where they were hit, so they are not rediscovered:
 - **No `#[decode(rename)]`.** Hyphenated TOML keys (`dev-dependencies`,
   `default-features`, `crate-type`) have no spelling that decodes onto a struct
   field, which bounds how much of a manifest can be ingested typed.
+- **The build order keys on package NAME alone.** A real lock may hold one name
+  at two versions, and its `dependencies` entries then read `"name version"`.
+  The Kahn walk would come up short and the truncation reads as a cycle. Keying
+  on name+version is the fix; the length check in `orders_the_locked_packages`
+  is what keeps it loud meanwhile.
+- **No `String.len`, slicing, or right-split**, which is why `stdlib/strings.vix`
+  ships no `ends_with`: the "split on the suffix, is the last piece empty" trick
+  is wrong for a suffix that overlaps an earlier occurrence (`"a---"` vs `"--"`),
+  and that is the shape extensions and operators take.
 - **No `Map` decode target.** `[dependencies]` cannot decode into
   `Map<String, String>` — only into a struct naming each dependency, which a
   general tool cannot write ahead of time. Not on the critical path (the lock's

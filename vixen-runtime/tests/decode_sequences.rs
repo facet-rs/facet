@@ -207,3 +207,55 @@ fn t() -> Stream<Check> {
         report.plain.checks
     );
 }
+
+#[test]
+fn array_of_tables_accumulates_into_an_optional_field_too() {
+    // Whether `[[x]]` decodes must not depend on whether the field is `[T]` or
+    // `Option<[T]>`: the wrapper is about absence, not about how repetition is
+    // spelled. Before the accumulation saw through `OptionSome`, the second
+    // block hit the duplicate-field arm and a lock-adjacent struct would fail
+    // for a reason that had nothing to do with its document.
+    run(
+        "optional-array-of-tables",
+        r#"
+struct Package { name: String }
+struct Lock { package: Option<[Package]> }
+
+fn count(lock: Lock) -> Int {
+    let none: [Package] = [];
+    lock.package.unwrap_or(none).len()
+}
+
+#[test]
+fn t() -> Stream<Check> {
+    let lock: Lock = toml_decode("[[package]]\nname = \"a\"\n\n[[package]]\nname = \"b\"\n");
+    yield expect_eq(count(lock), 2);
+}
+"#,
+        1,
+    );
+}
+
+#[test]
+fn a_repeated_inline_toml_array_key_accumulates_a_known_lenience() {
+    // PINNING A LENIENCE, not endorsing it. `names = [...]` twice is INVALID
+    // TOML, and a stricter decoder would reject it. Ours cannot: the parser
+    // presents an inline array and an array-of-tables block as the same events,
+    // so the rule that makes `[[package]]` work necessarily also accepts this.
+    // Telling them apart needs the parser to distinguish the two spellings.
+    // This test exists so the day that lands, the change in behaviour is
+    // deliberate and visible rather than a silently altered decode.
+    run(
+        "inline-duplicate-lenience",
+        r#"
+struct Doc { names: [String] }
+
+#[test]
+fn t() -> Stream<Check> {
+    let d: Doc = toml_decode("names = [\"a\"]\nnames = [\"b\"]\n");
+    yield expect_eq(d.names, ["a", "b"]);
+}
+"#,
+        1,
+    );
+}
