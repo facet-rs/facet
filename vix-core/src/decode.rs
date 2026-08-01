@@ -82,6 +82,10 @@ pub enum DecodeErrorKind {
         container: String,
         found: &'static str,
     },
+    ExpectedArray {
+        element: String,
+        found: &'static str,
+    },
     ExpectedStringOrObject {
         enum_name: String,
         found: &'static str,
@@ -135,6 +139,7 @@ impl DecodeErrorKind {
         match self {
             DecodeErrorKind::ExpectedScalar { .. } => "expected-scalar",
             DecodeErrorKind::ExpectedObject { .. } => "expected-object",
+            DecodeErrorKind::ExpectedArray { .. } => "expected-array",
             DecodeErrorKind::ExpectedStringOrObject { .. } => "expected-string-or-object",
             DecodeErrorKind::IntOutOfRange => "int-out-of-range",
             DecodeErrorKind::MissingField { .. } => "missing-field",
@@ -159,6 +164,9 @@ impl DecodeErrorKind {
             }
             DecodeErrorKind::ExpectedObject { container, found } => {
                 format!("expected an object for {container}, found {found}")
+            }
+            DecodeErrorKind::ExpectedArray { element, found } => {
+                format!("expected an array of {element}, found {found}")
             }
             DecodeErrorKind::ExpectedStringOrObject { enum_name, found } => {
                 format!("expected a string or object for {enum_name}, found {found}")
@@ -272,6 +280,11 @@ pub enum DecodedValue {
         index: u32,
         fields: Vec<DecodedValue>,
     },
+    /// A sequence's elements in document order. Document order IS the array's
+    /// order — decoding is not a place to canonicalize, because `[[package]]`
+    /// entries and a `dependencies = [...]` list both mean what the document
+    /// says they mean.
+    Array(Vec<DecodedValue>),
 }
 
 /// Decode `source` against `target`, driving one parser to completion.
@@ -283,7 +296,7 @@ pub fn decode(
     match format {
         DecodeFormat::Json => {
             let mut parser: JsonParser<'_, false> = JsonParser::new(source.as_bytes());
-            let value = decode_value(&mut parser, target)?;
+            let value = decode_value(format, &mut parser, target)?;
             expect_end(&mut parser, format)?;
             Ok(value)
         }
@@ -293,7 +306,7 @@ pub fn decode(
                     detail: format!("TOML parse error: {err:?}"),
                 })
             })?;
-            let value = decode_value(&mut parser, target)?;
+            let value = decode_value(format, &mut parser, target)?;
             expect_end(&mut parser, format)?;
             Ok(value)
         }
@@ -301,6 +314,7 @@ pub fn decode(
 }
 
 fn decode_value<'de>(
+    format: DecodeFormat,
     parser: &mut dyn FormatParser<'de>,
     ty: &Type,
 ) -> Result<DecodedValue, DecodeError> {
@@ -312,7 +326,7 @@ fn decode_value<'de>(
             return Ok(DecodedValue::OptionNone);
         }
         return Ok(DecodedValue::OptionSome(Box::new(decode_value(
-            parser, inner,
+            format, parser, inner,
         )?)));
     }
 
@@ -342,11 +356,42 @@ fn decode_value<'de>(
             }
         }
         Type::Record(record) => Ok(DecodedValue::Record(decode_fields(
+            format,
             parser,
             &record.name,
             &record.fields,
         )?)),
-        Type::Enum(enumeration) => decode_enum(parser, enumeration),
+        Type::Enum(enumeration) => decode_enum(format, parser, enumeration),
+        // A sequence decodes element-wise against one element type. Both TOML
+        // spellings arrive here as the same events — an inline `x = [1, 2]` and
+        // a repeated `[[table]]` are one `SequenceStart`/`SequenceEnd` pair
+        // either way — so `[[package]]` needs no case of its own.
+        Type::Array(element) => {
+            let event = consume(parser)?;
+            let span = event_span(&event);
+            let ParseEventKind::SequenceStart(_) = event.kind else {
+                return Err(DecodeError::of(DecodeErrorKind::ExpectedArray {
+                    element: element.name(),
+                    found: event_label(&event.kind),
+                })
+                .with_span(span));
+            };
+            let mut elements = Vec::new();
+            loop {
+                match peek(parser)?.0 {
+                    Some(ParseEventKind::SequenceEnd) => {
+                        consume(parser)?;
+                        return Ok(DecodedValue::Array(elements));
+                    }
+                    Some(_) => elements.push(decode_value(format, parser, element)?),
+                    None => {
+                        return Err(DecodeError::of(DecodeErrorKind::UnexpectedEnd {
+                            container: format!("an array of {}", element.name()),
+                        }));
+                    }
+                }
+            }
+        }
         other => Err(DecodeError::of(DecodeErrorKind::UnsupportedTarget {
             type_name: other.name(),
         })),
@@ -359,6 +404,7 @@ fn decode_value<'de>(
 /// deterministic: an ambiguous payload shape (two short forms, or two table
 /// forms) is a typed failure, never a first-match guess.
 fn decode_enum<'de>(
+    format: DecodeFormat,
     parser: &mut dyn FormatParser<'de>,
     enumeration: &EnumType,
 ) -> Result<DecodedValue, DecodeError> {
@@ -366,7 +412,7 @@ fn decode_enum<'de>(
     match kind {
         Some(ParseEventKind::Scalar(_)) => {
             let (index, inner) = string_form_variant(enumeration)?;
-            let field = decode_value(parser, inner)?;
+            let field = decode_value(format, parser, inner)?;
             Ok(DecodedValue::Variant {
                 index,
                 fields: vec![field],
@@ -374,7 +420,7 @@ fn decode_enum<'de>(
         }
         Some(ParseEventKind::StructStart(_)) => {
             let (index, fields) = table_form_variant(enumeration)?;
-            let values = decode_fields(parser, &enumeration.name, fields)?;
+            let values = decode_fields(format, parser, &enumeration.name, fields)?;
             Ok(DecodedValue::Variant {
                 index,
                 fields: values,
@@ -454,6 +500,7 @@ fn table_form_variant(enumeration: &EnumType) -> Result<(u32, &[RecordField]), D
 /// smaller typed projection. `container` names the struct or enum for error
 /// attribution.
 fn decode_fields<'de>(
+    format: DecodeFormat,
     parser: &mut dyn FormatParser<'de>,
     container: &str,
     fields: &[RecordField],
@@ -487,18 +534,42 @@ fn decode_fields<'de>(
                 let name = field_name(&key);
                 match fields.iter().position(|field| field.name == name) {
                     Some(index) => {
-                        if slots[index].is_some() {
-                            return Err(span_opt(
-                                DecodeError::of(DecodeErrorKind::DuplicateField {
-                                    container: container.to_owned(),
-                                    field: name,
-                                }),
-                                span,
-                            ));
-                        }
-                        let value = decode_value(parser, &fields[index].ty)
+                        let value = decode_value(format, parser, &fields[index].ty)
                             .map_err(|err| err.under(&name))?;
-                        slots[index] = Some(value);
+                        match slots[index].take() {
+                            None => slots[index] = Some(value),
+                            // TOML's array-of-tables: `[[package]]` repeats the
+                            // field key once per block, each carrying a
+                            // one-element sequence. Accumulating them IS the
+                            // spelling's meaning — the document says one array,
+                            // written across several headers. Restricted to TOML
+                            // on purpose: a repeated key in JSON is a genuine
+                            // duplicate and stays a typed failure.
+                            Some(DecodedValue::Array(mut first))
+                                if format == DecodeFormat::Toml =>
+                            {
+                                let DecodedValue::Array(rest) = value else {
+                                    return Err(span_opt(
+                                        DecodeError::of(DecodeErrorKind::DuplicateField {
+                                            container: container.to_owned(),
+                                            field: name,
+                                        }),
+                                        span,
+                                    ));
+                                };
+                                first.extend(rest);
+                                slots[index] = Some(DecodedValue::Array(first));
+                            }
+                            Some(_) => {
+                                return Err(span_opt(
+                                    DecodeError::of(DecodeErrorKind::DuplicateField {
+                                        container: container.to_owned(),
+                                        field: name,
+                                    }),
+                                    span,
+                                ));
+                            }
+                        }
                     }
                     None => {
                         let _ = (container, name, span);

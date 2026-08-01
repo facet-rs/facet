@@ -6276,6 +6276,28 @@ fn lower_decoded_value(
             ),
             ty: ty.clone(),
         }),
+        // A decoded sequence folds into the same `Op::Array` an authored array
+        // literal lowers to, so a constant-folded `[[package]]` list interns to
+        // the identity a hand-written array of those records would.
+        (DecodedValue::Array(values), Type::Array(element)) => {
+            let elements = values
+                .iter()
+                .map(|value| {
+                    lower_decoded_value(nodes, value, element, span).map(|lowered| lowered.node)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    span,
+                    ty.clone(),
+                    EffectFacts::PURE,
+                    elements,
+                    Op::Array,
+                ),
+                ty: ty.clone(),
+            })
+        }
         (DecodedValue::Variant { index, fields }, Type::Enum(enumeration)) => {
             let variant = enumeration.variants.get(*index as usize).ok_or_else(|| {
                 Diagnostics::one(Diagnostic::unsupported(
