@@ -30,6 +30,11 @@ directory, which is why the crate under test lives in `trees/small-crate/` —
 RUSTC=$(rustup which rustc) cargo test -p vixen-runtime --test exec_tree_mounts
 ```
 
+That test runs `hello.vix` itself, so the shipped example and the proof are one
+source. Running it through `vx` directly needs a machine manifest offering
+`Rustc` — the default offers only `Echo`/`Sh`/`ProgressiveSh`, so `vx` refuses
+before anything runs. `hello.vix`'s header has the manifest to copy.
+
 Three processes — write the source, compile it with rustc, run the binary it
 produced — and the check reads `hello from vix` off the third one's stdout.
 

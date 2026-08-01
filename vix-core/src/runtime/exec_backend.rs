@@ -176,7 +176,11 @@ pub trait ExecBackend: Send + Sync {
 /// capture behind the [`ExecBackend`] trait — that changes the trait's shape and
 /// is deliberately not bundled with the backend's relocation.
 pub fn archive_directory(root: &Path) -> Result<Vec<u8>, String> {
-    fn collect(directory: &Path, root: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+    fn collect(
+        directory: &Path,
+        root: &Path,
+        files: &mut Vec<(PathBuf, bool)>,
+    ) -> Result<(), String> {
         let mut entries = std::fs::read_dir(directory)
             .map_err(|error| {
                 format!(
@@ -210,7 +214,18 @@ pub fn archive_directory(root: &Path) -> Result<Vec<u8>, String> {
             if metadata.is_dir() {
                 collect(&path, root, files)?;
             } else if metadata.is_file() {
-                files.push(path);
+                // Executability is read from the metadata already in hand.
+                // Only the two canonical modes are representable, because the
+                // tree model carries a bool, not a mode word — inventing finer
+                // permissions would claim an identity the value cannot hold.
+                #[cfg(unix)]
+                let executable = {
+                    use std::os::unix::fs::PermissionsExt as _;
+                    metadata.permissions().mode() & 0o100 != 0
+                };
+                #[cfg(not(unix))]
+                let executable = false;
+                files.push((path, executable));
             }
         }
         Ok(())
@@ -232,11 +247,11 @@ pub fn archive_directory(root: &Path) -> Result<Vec<u8>, String> {
         Ok(())
     }
 
-    let mut files = Vec::new();
+    let mut files: Vec<(PathBuf, bool)> = Vec::new();
     collect(root, root, &mut files)?;
     files.sort();
     let mut archive = Vec::new();
-    for file in files {
+    for (file, executable) in files {
         let relative = file
             .strip_prefix(root)
             .map_err(|_| format!("exec output `{}` escaped its workspace", file.display()))?;
@@ -250,26 +265,6 @@ pub fn archive_directory(root: &Path) -> Result<Vec<u8>, String> {
         }
         let bytes = std::fs::read(&file)
             .map_err(|error| format!("read exec output `{}`: {error}", file.display()))?;
-        // Executability is part of what the output SAYS ABOUT ITSELF, not a
-        // filesystem detail: a compiler's product that loses its mode is a file
-        // the next stage cannot run. The tree model carries the bit
-        // (`TreeEntry::File::executable`) and the archive is how it gets there,
-        // so the mode is read rather than assumed. Only the two canonical modes
-        // are representable — the tree model has a bool, not a mode word, and
-        // inventing finer permissions here would claim an identity the value
-        // cannot hold.
-        #[cfg(unix)]
-        let executable = {
-            use std::os::unix::fs::PermissionsExt as _;
-            std::fs::metadata(&file)
-                .map_err(|error| format!("inspect exec output `{}`: {error}", file.display()))?
-                .permissions()
-                .mode()
-                & 0o100
-                != 0
-        };
-        #[cfg(not(unix))]
-        let executable = false;
         let mut header = [0u8; 512];
         header[..relative.len()].copy_from_slice(relative.as_bytes());
         header[100..108].copy_from_slice(if executable {

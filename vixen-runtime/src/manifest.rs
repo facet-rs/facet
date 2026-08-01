@@ -452,12 +452,6 @@ fn collect_exec_requirements(
             continue;
         };
         // `{capability, argv, mounts}` — the mounts are inputs to the process,
-        // not part of its plan, so the requirement scan reads past them. This
-        // destructure is exhaustive on purpose: a request that grows a field
-        // must come back HERE and decide, because the silent alternative is a
-        // scan that matches nothing and reports "no requirements" for a program
-        // that has them — which is a refusal that never happens.
-        // `{capability, argv, mounts}` — the mounts are inputs to the process,
         // not part of its plan, so the requirement scan reads past them.
         //
         // A shape mismatch here is an INVARIANT BREAK, not a case to skip: the

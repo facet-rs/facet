@@ -102,23 +102,12 @@ fn t(sh: Sh) -> Stream<Check> {
 
 #[test]
 fn vix_compiles_and_runs_a_hello_world() {
-    // Rung one of the ladder. Three processes: write the source, compile it,
-    // run the binary. The braces are octal escapes because an exec template
-    // reads a literal `{` as an interpolation.
-    let report = expect_pass(
-        "hello-world",
-        r#"
-#[test { budget_wall: 120s, budget_rss: 4096MB }]
-fn t(sh: Sh, rustc: Rustc) -> Stream<Check> {
-    let sources = exec sh`-c "mkdir -p src; printf 'fn main() \173 println!(\042hello from vix\042); \175\n' > src/main.rs"`;
-    let src = sources.tree;
-    let built = exec rustc`--crate-name hello --edition 2021 {src}/src/main.rs --out-dir .`;
-    let out = built.tree;
-    let ran = exec sh`-c "{out}/hello"`;
-    yield expect_eq(ran.stdout.text().trim(), "hello from vix");
-}
-"#,
-    );
+    // Rung one of the ladder. Three processes: write the source, compile it with
+    // real rustc, run the binary.
+    //
+    // The source is the SHIPPED example, read from disk rather than copied here,
+    // so `cargo-vix/hello.vix` cannot drift from the thing that is proven green.
+    let report = expect_pass("hello-world", include_str!("../../cargo-vix/hello.vix"));
     assert_eq!(
         report.plain.counters.effect_spawns, 3,
         "write, compile, run — the binary really was produced and executed"

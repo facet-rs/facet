@@ -1,5 +1,25 @@
 // Rung one: compile a hello world and run the binary it produces.
 //
+// RUNNING IT. This needs a `Rustc` capability, and the default machine manifest
+// offers only Echo/Sh/ProgressiveSh — so plain `vx cargo-vix/hello.vix` refuses
+// before anything runs (loudly, naming the type it wanted). Declare a machine
+// that has one:
+//
+//   cat > /tmp/machine.toml <<EOF
+//   host = "x86_64-unknown-linux-gnu"
+//   [[capability]]
+//   ty = "Sh"
+//   program = "sh"
+//   [[capability]]
+//   ty = "Rustc"
+//   program = "$(rustup which rustc)"
+//   targets = ["x86_64-unknown-linux-gnu"]
+//   EOF
+//   VIX_MACHINE_MANIFEST=/tmp/machine.toml vx cargo-vix/hello.vix
+//
+// The test `vixen-runtime/tests/exec_tree_mounts.rs` runs THIS FILE with such a
+// manifest built in Rust, so the example and the proof are the same source.
+//
 // The source is written by a shell exec so the tree it lands in is
 // content-identified — mounting an ORIGIN-backed tree (a `fixture_tree`) still
 // needs a directory verb on the effect authority. The braces are octal escapes

@@ -55,7 +55,17 @@ fn materialize_mounts(workspace: &Path, mounts: &[ExecMount]) -> Result<(), Stri
             .map_err(|error| format!("create `{}`: {error}", root.display()))?;
         for file in &mount.files {
             let joined = format!("{}/{}", mount.path, file.path);
-            if joined.split('/').any(|segment| segment == "..") {
+            // Validate through `Path::components`, not by splitting on '/':
+            // `Path::join` honours the platform's separators, so a member named
+            // `..\\evil` would slip a '/'-only check and escape on Windows. The
+            // same discipline `validate_exec_product_path` uses below — a member
+            // name is untrusted input, and the paths are otherwise derived from
+            // the plan, so an escape means something upstream is wrong and
+            // silently normalizing it would hide that.
+            if Path::new(&joined)
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+            {
                 return Err(format!("mount path `{joined}` escapes the workspace"));
             }
             let target = workspace.join(&joined);
