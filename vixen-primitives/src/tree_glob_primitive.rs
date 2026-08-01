@@ -2,8 +2,9 @@ use vix::schema::SchemaPattern;
 use vix::vir::{ExternKind, Type};
 
 use crate::rt::{
-    CodataDrainCtx, CodataPrimitive, FixtureEntryKind, PrimitiveDescriptor, PrimitiveMachineError,
-    PrimitiveMemoPolicy, TreeEntry, fixture_tree_name, tree_from_resident, tree_glob_primitive_id,
+    CodataDrainCtx, CodataPrimitive, PrimitiveDescriptor, PrimitiveMachineError,
+    PrimitiveMemoPolicy, TreeEntry, TreeEntryKind, fixture_tree_name, tree_from_resident,
+    tree_glob_primitive_id,
     tree_glob_request_type,
 };
 
@@ -81,10 +82,10 @@ impl CodataPrimitive for TreeGlobPrimitive {
             } else {
                 format!("{name}/{directory}")
             };
-            let entries = ctx.fixture_directory(&projection)?;
+            let entries = ctx.directory(&projection)?;
             let mut paths = entries
                 .into_iter()
-                .filter_map(|(entry, kind)| (kind == FixtureEntryKind::File).then_some(entry))
+                .filter_map(|(entry, kind)| (kind == TreeEntryKind::File).then_some(entry))
                 .map(|entry| {
                     if directory.is_empty() {
                         entry

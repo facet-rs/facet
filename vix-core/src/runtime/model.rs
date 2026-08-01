@@ -210,11 +210,41 @@ pub enum MemoVerdict {
     Semantic,
 }
 
+/// The kind of one entry of a lazily-backed tree, mirroring the Tree model's
+/// `TreeEntry` kinds (`machine.identity.tree-model`) without carrying any
+/// content: directory listings are `(name, TreeEntryKind)` rows, never full
+/// `TreeEntry`s, which would force eager materialization and defeat the lazy
+/// projection the origin seam exists for. Backend-neutral on purpose — this is
+/// the type that retires the fixture-named `FixtureEntryKind`.
+///
+/// r[impl machine.primitive.origin-verbs]
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum TreeEntryKind {
+    File,
+    Dir,
+    Symlink,
+}
+
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct ReadWitness {
     pub source: ValueId,
     pub projection: ReadProjection,
     pub observation: ReadObservation,
+    /// Transfer provenance: the foreign upstream digest the arriving bytes
+    /// were verified against, recorded beside the vix identity — this is
+    /// `machine.primitive.fetch-integrity-vs-identity`'s "both digests are
+    /// recorded in the receipt" made real. The repr is [`UpstreamDigest`]
+    /// (self-describing: the algorithm is data, not schema), which already
+    /// lives in core as the pin vocabulary the fetch request carries.
+    ///
+    /// Its re-verification meaning is NONE, deliberately: provenance is a
+    /// record of what the transfer was checked against, never a claim the
+    /// rerun audit re-checks — the vix identity in `observation` is the
+    /// claim. `Runtime::reverify_read_witness` does not read this field.
+    ///
+    /// r[impl machine.primitive.witness-reverification]
+    pub provenance: Option<super::identity::UpstreamDigest>,
 }
 
 // `Ord` because a projection is half of a progressive-readiness key: the
@@ -269,13 +299,32 @@ impl ReadProjection {
     }
 }
 
+// Discriminants are explicit for the same reason `ReadProjection`'s are:
+// observations are persisted receipt vocabulary, so every variant keeps its
+// number forever — retire-and-reserve, never renumber — and new variants are
+// appended with the next number.
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ReadObservation {
-    Value(ValueId),
-    Missing,
-    Directory { digest: super::identity::Digest },
-    Unverifiable,
+    Value(ValueId) = 0,
+    /// Nothing existed where the projection looked. Misses are witnessed —
+    /// a failed origin candidate records one of these per tried coordinate,
+    /// and a tree read that finds nothing (including an absent directory)
+    /// records one for its path — so the rerun audit can hold "it was not
+    /// there" to the same standard as "it was this".
+    ///
+    /// r[impl machine.primitive.witness-reverification]
+    Missing = 1,
+    Directory { digest: super::identity::Digest } = 2,
+    Unverifiable = 3,
+    /// The entry exists with this kind, contradicting the projection's
+    /// request — a file read that found a directory. Deliberately not a
+    /// [`Self::Missing`]: recording the found kind is what lets the rerun
+    /// audit distinguish "the file appeared" from "the file became a
+    /// directory".
+    ///
+    /// r[impl machine.primitive.witness-reverification]
+    Kind(TreeEntryKind) = 4,
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]

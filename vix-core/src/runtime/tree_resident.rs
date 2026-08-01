@@ -201,6 +201,17 @@ pub fn tree_from_resident(bytes: &[u8]) -> Result<Tree, ResidentTreeError> {
     tree_from_members(members).map_err(ResidentTreeError::Model)
 }
 
+/// Whether resident bytes are a content-identified tree — a carrier, the
+/// canonical form, or a ustar archive — as opposed to an opaque lazily-backed
+/// handle owned by an origin adapter's declared namespace. Content-identified
+/// trees carry their own members and never route to any origin backend
+/// (`machine.primitive.origin-routing`); the three forms are disjoint from
+/// handle namespaces on their leading bytes, so recognition is total.
+#[must_use]
+pub fn is_content_identified_tree(bytes: &[u8]) -> bool {
+    tree_from_resident(bytes).is_ok()
+}
+
 /// Canonical tree identity material, derived from the semantic [`Tree`] rather
 /// than from the bytes it happened to arrive in.
 ///

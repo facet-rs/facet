@@ -18,7 +18,7 @@ use crate::vir::{
     ExternKind, Function, FunctionId, Island, IslandId, NodeId, Op, Type, VariantPayload,
 };
 
-use super::fixture::{FixtureEntryKind, FixtureReadError, FixtureStore};
+use super::model::TreeEntryKind;
 use super::tree_resident::canonical_resident_tree;
 use super::identity::{
     DemandKey, DemandPreimage, Digest, Location, LocationId, RecipeId, ValueId, hash_framed,
@@ -76,13 +76,13 @@ enum EffectTerm {
 }
 
 /// The scheduler-side [`CodataDrainCtx`] a codata primitive (e.g. `tree-glob`)
-/// drains through. It borrows the effect island's source value, the fixture
-/// store, and the island's read log, so the primitive owns only the domain
-/// enumeration while every directory listing it demands is recorded as a
-/// witnessed read — the scheduler keeps the witness discipline the memo/receipt
-/// path relies on.
+/// drains through. It borrows the effect island's source value, the installed
+/// origin adapter set, and the island's read log, so the primitive owns only
+/// the domain enumeration while every directory listing it demands is routed
+/// by declaration and recorded as a witnessed read — the scheduler keeps the
+/// witness discipline the memo/receipt path relies on.
 struct GlobDrainCtx<'a> {
-    fixture_store: &'a FixtureStore,
+    origins: &'a super::OriginAdapterSet,
     source: &'a EffectValue,
     reads: &'a mut Vec<super::model::ReadWitness>,
 }
@@ -92,16 +92,56 @@ impl super::CodataDrainCtx for GlobDrainCtx<'_> {
         &self.source.resident
     }
 
-    fn fixture_directory(
+    // r[impl machine.primitive.origin-verbs] — the neutral directory verb,
+    // routed by the source handle's declared namespace.
+    fn directory(
         &mut self,
         projection: &str,
-    ) -> Result<Vec<(String, super::FixtureEntryKind)>, super::PrimitiveMachineError> {
-        let entries = self
-            .fixture_store
-            .tree_dir_entries(projection)
-            .map_err(|_| super::PrimitiveMachineError::Unavailable {
-                detail: format!("fixture glob directory {projection} is unavailable"),
-            })?;
+    ) -> Result<Vec<(String, super::TreeEntryKind)>, super::PrimitiveMachineError> {
+        let entries = match self.origins.route_tree(&self.source.resident) {
+            super::TreeRouting::ContentIdentified => {
+                return Err(super::PrimitiveMachineError::AuthorityViolation {
+                    detail: "a content-identified tree enumerates its own members; \
+                             the directory verb serves only lazily-backed trees"
+                        .to_owned(),
+                });
+            }
+            super::TreeRouting::Origin(installation) => {
+                match installation
+                    .adapter
+                    .tree_directory(&self.source.resident, projection)
+                {
+                    Ok(entries) => entries,
+                    Err(error) => {
+                        // Misses are witnessed — an absent directory is an
+                        // observation, and a wrong-kind entry is witnessed as
+                        // the kind that contradicts the listing request.
+                        // r[impl machine.primitive.witness-reverification]
+                        let observation = match &error {
+                            super::OriginTreeError::Missing => {
+                                Some(ReadObservation::Missing)
+                            }
+                            super::OriginTreeError::WrongKind { found } => {
+                                Some(ReadObservation::Kind(*found))
+                            }
+                            super::OriginTreeError::Corruption { .. } => None,
+                        };
+                        if let Some(observation) = observation {
+                            self.reads.push(super::model::ReadWitness {
+                                source: self.source.identity.clone(),
+                                projection: ReadProjection::TreePath {
+                                    path: projection.to_owned(),
+                                },
+                                observation,
+                                provenance: None,
+                            });
+                        }
+                        return Err(super::origin_tree_machine_error(error, projection));
+                    }
+                }
+            }
+            super::TreeRouting::Unclaimed(refusal) => return Err(refusal),
+        };
         self.reads.push(super::model::ReadWitness {
             source: self.source.identity.clone(),
             projection: ReadProjection::TreePath {
@@ -110,6 +150,7 @@ impl super::CodataDrainCtx for GlobDrainCtx<'_> {
             observation: ReadObservation::Directory {
                 digest: directory_observation_digest(&entries),
             },
+            provenance: None,
         });
         Ok(entries)
     }
@@ -657,7 +698,6 @@ pub struct Runtime<S, Ctx = ()> {
     /// callee/argument/preimage selectors a descriptor can name.
     wire_demands: Vec<RealizedWireDemand>,
     performed_read_paths: BTreeSet<String>,
-    fixture_store: FixtureStore,
     primitive_dispatcher: PrimitiveDispatcher<Ctx>,
     /// The registered codata primitives (`glob`) that realize effect streams.
     /// `vix-core` ships an empty registry — the bare language realizes no
@@ -721,10 +761,24 @@ pub struct PersistentRuntimeState {
     memo: BTreeMap<LocationId, MemoEntry>,
 }
 
+/// The persistent runtime journal's format version.
+///
+/// A journal is a CACHE: rejecting one costs a recompute, never correctness —
+/// so witness-vocabulary changes (a new observation variant, a new witness
+/// field) bump this number and intentionally invalidate every older journal
+/// instead of attempting migration. Version 1 covers the origin-rail stage-2
+/// receipt vocabulary (witnessed misses, kind observations, the provenance
+/// field); journals written before versioning existed carry no field at all
+/// and are rejected the same way.
+///
+/// r[impl machine.primitive.witness-reverification]
+pub const PERSISTENT_RUNTIME_JOURNAL_FORMAT: u32 = 1;
+
 impl PersistentRuntimeState {
     #[must_use]
     pub fn to_journal(&self) -> PersistentRuntimeJournal {
         PersistentRuntimeJournal {
+            format: PERSISTENT_RUNTIME_JOURNAL_FORMAT,
             store: self.store.to_journal(),
             claims: self
                 .memo
@@ -749,8 +803,19 @@ impl PersistentRuntimeState {
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct PersistentRuntimeJournal {
+    /// See [`PERSISTENT_RUNTIME_JOURNAL_FORMAT`].
+    pub format: u32,
     pub store: StoreJournal,
     pub claims: Vec<PersistentMemoClaim>,
+}
+
+/// The version probe [`PersistentRuntimeJournal::from_json`] reads before the
+/// full parse: format rejection must be TYPED, not a parse error, and must
+/// fire for a versionless journal too — so the probe's field is optional and
+/// every other field is skipped.
+#[derive(facet::Facet)]
+struct JournalFormatProbe {
+    format: Option<u32>,
 }
 
 impl PersistentRuntimeJournal {
@@ -760,7 +825,22 @@ impl PersistentRuntimeJournal {
         })
     }
 
+    /// Parse a persisted journal, rejecting any format but the current one —
+    /// including the versionless past — as a typed
+    /// [`PersistentRuntimeJournalError::FormatUnsupported`]. Intentional
+    /// invalidation: the journal is a cache, and one recompute is the whole
+    /// price of never migrating witness vocabulary.
     pub fn from_json(text: &str) -> Result<Self, PersistentRuntimeJournalError> {
+        let probe: JournalFormatProbe =
+            facet_json::from_str(text).map_err(|error| PersistentRuntimeJournalError::Json {
+                detail: error.to_string(),
+            })?;
+        if probe.format != Some(PERSISTENT_RUNTIME_JOURNAL_FORMAT) {
+            return Err(PersistentRuntimeJournalError::FormatUnsupported {
+                found: probe.format,
+                supported: PERSISTENT_RUNTIME_JOURNAL_FORMAT,
+            });
+        }
         facet_json::from_str(text).map_err(|error| PersistentRuntimeJournalError::Json {
             detail: error.to_string(),
         })
@@ -808,6 +888,13 @@ pub enum PersistentClaimRejectionReason {
 pub enum PersistentRuntimeJournalError {
     Json { detail: String },
     Store(Box<StoreJournalError>),
+    /// The journal predates the current format (a `None` is the versionless
+    /// past) or postdates it. Rejection is intentional invalidation, never a
+    /// migration attempt: recompute and rewrite.
+    FormatUnsupported {
+        found: Option<u32>,
+        supported: u32,
+    },
 }
 
 impl From<StoreJournalError> for PersistentRuntimeJournalError {
@@ -853,7 +940,6 @@ impl<S: EventSink> Runtime<S, ()> {
             next_task: 0,
             wire_demands: Vec::new(),
             performed_read_paths: BTreeSet::new(),
-            fixture_store: FixtureStore::default(),
             codata_registry: super::CodataRegistry::default(),
             primitive_dispatcher: PrimitiveDispatcher::empty(),
             primitive_services: super::PrimitiveServices::default(),
@@ -895,7 +981,6 @@ impl<S: EventSink> Runtime<S, ()> {
             next_task: 0,
             wire_demands: Vec::new(),
             performed_read_paths: BTreeSet::new(),
-            fixture_store: FixtureStore::default(),
             codata_registry: super::CodataRegistry::default(),
             primitive_dispatcher: PrimitiveDispatcher::empty(),
             primitive_services: super::PrimitiveServices::default(),
@@ -932,7 +1017,6 @@ impl<S: EventSink> Runtime<S, ()> {
                 next_task: 0,
                 wire_demands: Vec::new(),
                 performed_read_paths: BTreeSet::new(),
-                fixture_store: FixtureStore::default(),
                 codata_registry: super::CodataRegistry::default(),
                 primitive_dispatcher: PrimitiveDispatcher::empty(),
                 primitive_services: super::PrimitiveServices::default(),
@@ -972,7 +1056,6 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             next_task: 0,
             wire_demands: Vec::new(),
             performed_read_paths: BTreeSet::new(),
-            fixture_store: FixtureStore::default(),
             codata_registry: super::CodataRegistry::default(),
             primitive_dispatcher: PrimitiveDispatcher::empty(),
             primitive_services: super::PrimitiveServices::default(),
@@ -991,10 +1074,6 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
         }
     }
 
-    pub fn set_fixture_rerun_overlay(&mut self, rerun_with: Option<String>) {
-        self.fixture_store = self.fixture_store.clone().with_rerun_overlay(rerun_with);
-    }
-
     /// Install the primitive dispatcher the engine dispatches effects through.
     /// `vix-core` constructs runtimes with an **empty** dispatcher (the bare
     /// language performs no effects); the `vixen` runtime injects the builtin
@@ -1011,9 +1090,6 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
     }
 
     pub fn set_primitive_services(&mut self, services: super::PrimitiveServices) {
-        if let Some(fixture_store) = services.fixture_store() {
-            self.fixture_store = fixture_store;
-        }
         self.primitive_services = services;
     }
 
@@ -1144,57 +1220,147 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             .all(|read| self.reverify_read_witness(read))
     }
 
+    /// Re-verify one receipt witness by resolving its projection through the
+    /// installed origin adapter set, exactly as the original read routed —
+    /// coordinate witnesses by declared scheme, tree witnesses by the source
+    /// handle's declared namespace (content-identified sources resolve
+    /// locally, as they were read) — and comparing observations without
+    /// naming any backend. A projection the set cannot resolve simply fails
+    /// to verify: the memo entry recomputes, which is a cost, never a lie.
+    ///
+    /// The witness's `provenance` is deliberately not consulted: it records
+    /// what a transfer was checked against, never a claim the audit
+    /// re-checks — the vix identity IS the claim.
+    ///
+    /// r[impl machine.primitive.witness-reverification]
     fn reverify_read_witness(&self, read: &ReadWitness) -> bool {
-        match &read.observation {
-            ReadObservation::Value(observed) => {
-                if matches!(read.projection, ReadProjection::Whole) {
-                    return observed == &read.source;
-                }
-                if matches!(read.projection, ReadProjection::RegistryManifest) {
-                    return self
-                        .fixture_store
-                        .registry_manifest()
-                        .is_ok_and(|manifest| {
-                            effect_leaf(&Type::String, manifest.into_bytes()).identity == *observed
-                        });
-                }
-                match &read.projection {
-                    ReadProjection::TreePath { path } => {
-                        if let Ok(bytes) = self.fixture_store.tree_file_bytes(path) {
-                            return effect_leaf(&Type::String, bytes).identity == *observed;
-                        }
-                    }
-                    ReadProjection::Origin { coordinate } => {
-                        if let Ok(bytes) = self.fixture_store.fetch_url(coordinate) {
-                            return effect_leaf(&Type::Extern(ExternKind::Blob), bytes).identity
-                                == *observed;
-                        }
-                    }
-                    // A stream-range witness names bytes only its producing
-                    // effect ever published; no fixture can re-verify it.
-                    ReadProjection::Whole
-                    | ReadProjection::RegistryManifest
-                    | ReadProjection::CapabilityProgram
-                    | ReadProjection::StreamRange { .. } => {}
-                }
-                false
-            }
-            ReadObservation::Missing => matches!(
-                &read.projection,
-                ReadProjection::TreePath { path }
-                    if matches!(
-                        self.fixture_store.tree_file_bytes(path),
-                        Err(FixtureReadError::Missing)
-                    )
+        let origins = self.primitive_services.origins();
+        match &read.projection {
+            ReadProjection::Whole => matches!(
+                &read.observation,
+                ReadObservation::Value(observed) if observed == &read.source
             ),
-            ReadObservation::Directory { digest } => match &read.projection {
-                ReadProjection::TreePath { path } => self
-                    .fixture_store
-                    .tree_dir_entries(path)
-                    .is_ok_and(|entries| directory_observation_digest(&entries) == *digest),
-                _ => false,
-            },
-            ReadObservation::Unverifiable => false,
+            // An ordinary coordinate read at the manifest's one transitional
+            // spelling; the Registry source is its own capability. The
+            // projection variant retires in stage 3 of the origin rail.
+            ReadProjection::RegistryManifest => self.reverify_coordinate_observation(
+                &origins,
+                &read.source,
+                super::REGISTRY_MANIFEST_COORDINATE,
+                &Type::String,
+                &read.observation,
+            ),
+            ReadProjection::Origin { coordinate } => self.reverify_coordinate_observation(
+                &origins,
+                &read.source,
+                coordinate,
+                &Type::Extern(ExternKind::Blob),
+                &read.observation,
+            ),
+            ReadProjection::TreePath { path } => {
+                let Some(resident) = self
+                    .store
+                    .handle_for_identity(&read.source)
+                    .and_then(|handle| self.store.entry(handle))
+                    .and_then(|entry| entry.resident_bytes().map(<[u8]>::to_vec))
+                else {
+                    return false;
+                };
+                match origins.route_tree(&resident) {
+                    super::TreeRouting::ContentIdentified => {
+                        let Ok(tree) = super::tree_from_resident(&resident) else {
+                            return false;
+                        };
+                        match &read.observation {
+                            ReadObservation::Value(observed) => matches!(
+                                tree.project(path),
+                                Some(super::TreeEntry::File { content, .. })
+                                    if effect_leaf(&Type::String, content.as_bytes().to_vec())
+                                        .identity == *observed
+                            ),
+                            ReadObservation::Missing => tree.project(path).is_none(),
+                            ReadObservation::Directory { digest } => {
+                                matches!(
+                                    tree.project_dir(path),
+                                    Some(dir)
+                                        if directory_observation_digest(
+                                            &content_tree_listing(dir)
+                                        ) == *digest
+                                )
+                            }
+                            // The kind observation re-verifies against the
+                            // entry's CURRENT kind: "still a directory" holds,
+                            // "became a file" or "disappeared" breaks.
+                            ReadObservation::Kind(kind) => matches!(
+                                tree.project(path),
+                                Some(entry) if content_entry_kind(entry) == *kind
+                            ),
+                            ReadObservation::Unverifiable => false,
+                        }
+                    }
+                    super::TreeRouting::Origin(installation) => match &read.observation {
+                        ReadObservation::Value(observed) => installation
+                            .adapter
+                            .tree_bytes(&resident, path)
+                            .is_ok_and(|bytes| {
+                                effect_leaf(&Type::String, bytes).identity == *observed
+                            }),
+                        // A miss re-verifies true exactly while nothing is
+                        // there: an appearing entry (of any kind) breaks it.
+                        ReadObservation::Missing => matches!(
+                            installation.adapter.tree_kind(&resident, path),
+                            Err(super::OriginTreeError::Missing)
+                        ),
+                        ReadObservation::Directory { digest } => installation
+                            .adapter
+                            .tree_directory(&resident, path)
+                            .is_ok_and(|entries| {
+                                directory_observation_digest(&entries) == *digest
+                            }),
+                        // "Still the contradicting kind" holds; any change —
+                        // to the requested kind, another kind, or absence —
+                        // breaks the witness and recomputes.
+                        ReadObservation::Kind(kind) => installation
+                            .adapter
+                            .tree_kind(&resident, path)
+                            .is_ok_and(|found| found == *kind),
+                        ReadObservation::Unverifiable => false,
+                    },
+                    super::TreeRouting::Unclaimed(_) => false,
+                }
+            }
+            // A stream-range witness names bytes only its producing effect
+            // ever published; no origin can re-verify it. A capability
+            // program has no seam either.
+            ReadProjection::CapabilityProgram | ReadProjection::StreamRange { .. } => false,
+        }
+    }
+
+    /// Re-verify a coordinate-read observation through the declared set: a
+    /// `Value` observation must resolve to the same identity, a `Missing`
+    /// observation must still miss (an unroutable coordinate verifies
+    /// nothing — including a recorded miss, since nobody can look).
+    fn reverify_coordinate_observation(
+        &self,
+        origins: &super::OriginAdapterSet,
+        capability: &ValueId,
+        coordinate: &str,
+        leaf_ty: &Type,
+        observation: &ReadObservation,
+    ) -> bool {
+        let Ok(installation) = origins.route_coordinate(capability, coordinate) else {
+            return false;
+        };
+        let resolved = installation.adapter.read(capability, coordinate);
+        match observation {
+            ReadObservation::Value(observed) => resolved
+                .is_ok_and(|bytes| effect_leaf(leaf_ty, bytes).identity == *observed),
+            ReadObservation::Missing => {
+                matches!(resolved, Err(super::OriginReadError::Miss { .. }))
+            }
+            ReadObservation::Directory { .. }
+            | ReadObservation::Kind(_)
+            | ReadObservation::Unverifiable => false,
         }
     }
 
@@ -3276,8 +3442,9 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
         let primitive = self.codata_registry.get(primitive).ok_or_else(|| {
             effect_machine_error("no codata primitive is registered under the recipe's id")
         })?;
+        let origins = self.primitive_services.origins();
         let mut ctx = GlobDrainCtx {
-            fixture_store: &self.fixture_store,
+            origins: &origins,
             source,
             reads,
         };
@@ -3582,18 +3749,15 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                     PrimitiveValue::bytes(entry.identity.schema.clone(), bytes.to_vec()),
                 ))
             }));
+            // No conjuring: the machine holds no default origin backend.
+            // Every origin decision is a lookup over the installed declared
+            // set; an empty set refuses loudly.
+            // r[impl machine.primitive.origin-routing]
             let mut authority = StagedEffectAuthority::new(authority_inputs)
                 .with_schema_types(catalog)
-                .with_fixture_store(self.fixture_store.clone());
+                .with_origins(self.primitive_services.origins());
             if let Some(persistence) = self.primitive_services.value_persistence() {
                 authority = authority.with_value_persistence(persistence);
-            }
-            // No conjuring: the machine holds no default origin backend. When
-            // the embedder installed none, none serves, and an origin read is
-            // a loud typed refusal (`EffectAuthority::origin_candidate`).
-            // r[impl machine.primitive.origin-routing]
-            if let Some(origin) = self.primitive_services.origin() {
-                authority = authority.with_origin_adapter(origin);
             }
             let authority = Arc::new(authority);
             let ticket = match self.primitive_dispatcher.begin_or_join(
@@ -5368,6 +5532,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                     source: identity.clone(),
                     projection: ReadProjection::CapabilityProgram,
                     observation: ReadObservation::Unverifiable,
+                    provenance: None,
                 })
                 .collect(),
         };
@@ -5513,20 +5678,17 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                     insert_schema_type(&node.ty, &mut catalog);
                 }
             }
+            // No conjuring: the machine holds no default origin backend.
+            // Every origin decision is a lookup over the installed declared
+            // set; an empty set refuses loudly.
+            // r[impl machine.primitive.origin-routing]
             let mut authority =
                 StagedEffectAuthority::new(vec![(request_id.clone(), request_value.clone())])
                     .with_schema_types(catalog)
-                    .with_fixture_store(self.fixture_store.clone())
+                    .with_origins(self.primitive_services.origins())
                     .with_exec_backend(self.primitive_services.exec_backend());
             if let Some(persistence) = self.primitive_services.value_persistence() {
                 authority = authority.with_value_persistence(persistence);
-            }
-            // No conjuring: the machine holds no default origin backend. When
-            // the embedder installed none, none serves, and an origin read is
-            // a loud typed refusal (`EffectAuthority::origin_candidate`).
-            // r[impl machine.primitive.origin-routing]
-            if let Some(origin) = self.primitive_services.origin() {
-                authority = authority.with_origin_adapter(origin);
             }
             let authority = Arc::new(authority);
             let ticket = self
@@ -5824,6 +5986,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 source: pending.source,
                 projection: pending.projection,
                 observation: ReadObservation::Value(interned.identity.clone()),
+                provenance: None,
             }],
         };
         self.record_performed_reads(&receipt);
@@ -6098,14 +6261,33 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
     }
 }
 
-fn directory_observation_digest(entries: &[(String, FixtureEntryKind)]) -> Digest {
+/// The `(name, TreeEntryKind)` rows of one directory of a content-identified
+/// tree, in the Tree model's canonical name order — the same listing shape
+/// the origin seam's directory verb speaks, so re-verification digests both
+/// through one function.
+fn content_tree_listing(dir: &super::Tree) -> Vec<(String, TreeEntryKind)> {
+    dir.iter()
+        .map(|(name, entry)| (name.as_str().to_owned(), content_entry_kind(entry)))
+        .collect()
+}
+
+/// The seam-vocabulary kind of one content-tree entry.
+fn content_entry_kind(entry: &super::TreeEntry) -> TreeEntryKind {
+    match entry {
+        super::TreeEntry::File { .. } => TreeEntryKind::File,
+        super::TreeEntry::Dir(_) => TreeEntryKind::Dir,
+        super::TreeEntry::Symlink { .. } => TreeEntryKind::Symlink,
+    }
+}
+
+fn directory_observation_digest(entries: &[(String, TreeEntryKind)]) -> Digest {
     let mut fields = Vec::with_capacity(entries.len() * 2);
     for (name, kind) in entries {
         fields.push(name.as_bytes());
         fields.push(match kind {
-            FixtureEntryKind::File => b"file".as_slice(),
-            FixtureEntryKind::Dir => b"dir".as_slice(),
-            FixtureEntryKind::Symlink => b"symlink".as_slice(),
+            TreeEntryKind::File => b"file".as_slice(),
+            TreeEntryKind::Dir => b"dir".as_slice(),
+            TreeEntryKind::Symlink => b"symlink".as_slice(),
         });
     }
     hash_framed(b"vix.fixture.directory-observation.v1", &fields)
@@ -10374,5 +10556,335 @@ fn passing() -> Stream<Check> {
             .entry(evaluation.handle)
             .expect("realized value is resident");
         assert_eq!(entry.identity, expected);
+    }
+
+    mod origin_witness_reverification {
+        //! Miss and wrong-kind witnesses re-verify through the seam
+        //! (`machine.primitive.witness-reverification`): a recorded miss
+        //! holds exactly while nothing is there, and a recorded kind holds
+        //! exactly while the contradicting kind persists.
+
+        use super::*;
+        use crate::runtime::{
+            FixtureStore, OriginAdapter, OriginAdapterDecl, OriginReadError, PrimitiveServices,
+            ReadWitness, TreeEntryKind,
+        };
+        use crate::schema::SchemaPattern;
+
+        struct ToggleOrigin {
+            bytes: Mutex<Option<Vec<u8>>>,
+        }
+
+        impl OriginAdapter for ToggleOrigin {
+            fn read(
+                &self,
+                _capability: &ValueId,
+                coordinate: &str,
+            ) -> Result<Vec<u8>, OriginReadError> {
+                self.bytes
+                    .lock()
+                    .expect("toggle origin mutex poisoned")
+                    .clone()
+                    .ok_or_else(|| OriginReadError::Miss {
+                        detail: format!("{coordinate} is absent"),
+                    })
+            }
+        }
+
+        fn registry_capability() -> ValueId {
+            effect_leaf(&Type::Extern(ExternKind::Registry), b"registry".to_vec()).identity
+        }
+
+        /// The `Tree` host extern's schema, registered first: these tests run
+        /// on the bare language, where no embedder has injected host types.
+        fn tree_schema() -> SchemaRef {
+            crate::schema::register_host_externs(&[crate::binding::TREE]);
+            Type::Extern(ExternKind::Host(crate::binding::TREE)).schema_ref()
+        }
+
+        fn fixture_services(rerun_with: Option<&str>) -> PrimitiveServices {
+            PrimitiveServices::default()
+                .with_origin(
+                    FixtureStore::origin_decl(),
+                    Arc::new(
+                        FixtureStore::default()
+                            .with_rerun_overlay(rerun_with.map(str::to_owned)),
+                    ),
+                )
+                .expect("the fixture declaration overlaps nothing")
+        }
+
+        /// r[verify machine.primitive.witness-reverification]
+        #[test]
+        fn a_missing_origin_witness_holds_until_the_coordinate_appears() {
+            let adapter = Arc::new(ToggleOrigin {
+                bytes: Mutex::new(None),
+            });
+            let mut runtime = Runtime::new(EventLog::default());
+            runtime.set_primitive_services(
+                PrimitiveServices::default()
+                    .with_origin(
+                        OriginAdapterDecl {
+                            name: "toggle".to_owned(),
+                            schemes: vec!["stub".to_owned()],
+                            capability: SchemaPattern::exact(
+                                &Type::Extern(ExternKind::Registry).schema_ref(),
+                            ),
+                            tree_namespace: None,
+                        },
+                        adapter.clone(),
+                    )
+                    .expect("the toggle declaration overlaps nothing"),
+            );
+            let witness = ReadWitness {
+                source: registry_capability(),
+                projection: ReadProjection::Origin {
+                    coordinate: "stub://blob".to_owned(),
+                },
+                observation: ReadObservation::Missing,
+                provenance: None,
+            };
+            assert!(
+                runtime.reverify_read_witness(&witness),
+                "a recorded miss re-verifies true while the coordinate is still missing"
+            );
+            *adapter.bytes.lock().expect("toggle origin mutex poisoned") =
+                Some(b"appeared".to_vec());
+            assert!(
+                !runtime.reverify_read_witness(&witness),
+                "an appearing coordinate breaks the recorded miss"
+            );
+        }
+
+        /// Provenance is a record, the identity is the claim: re-verification
+        /// never consults the witness's provenance field, so a receipt whose
+        /// recorded transfer digest is nonsense still verifies as long as the
+        /// observed identity holds.
+        ///
+        /// r[verify machine.primitive.witness-reverification]
+        #[test]
+        fn reverification_ignores_the_provenance_record() {
+            let adapter = Arc::new(ToggleOrigin {
+                bytes: Mutex::new(Some(b"served".to_vec())),
+            });
+            let mut runtime = Runtime::new(EventLog::default());
+            runtime.set_primitive_services(
+                crate::runtime::PrimitiveServices::default()
+                    .with_origin(
+                        OriginAdapterDecl {
+                            name: "toggle".to_owned(),
+                            schemes: vec!["stub".to_owned()],
+                            capability: SchemaPattern::exact(
+                                &Type::Extern(ExternKind::Registry).schema_ref(),
+                            ),
+                            tree_namespace: None,
+                        },
+                        adapter,
+                    )
+                    .expect("the toggle declaration overlaps nothing"),
+            );
+            let observed =
+                effect_leaf(&Type::Extern(ExternKind::Blob), b"served".to_vec()).identity;
+            let witness = ReadWitness {
+                source: registry_capability(),
+                projection: ReadProjection::Origin {
+                    coordinate: "stub://blob".to_owned(),
+                },
+                observation: ReadObservation::Value(observed),
+                provenance: Some(crate::runtime::UpstreamDigest {
+                    algorithm: crate::runtime::DigestAlgorithm::Sha256,
+                    bytes: vec![0; 32],
+                }),
+            };
+            assert!(
+                runtime.reverify_read_witness(&witness),
+                "a nonsense provenance record does not fail an identity that holds"
+            );
+        }
+
+        /// The world changing under an unchanged name is exactly what the
+        /// fixture rerun overlay simulates: without the overlay the path is
+        /// missing (the recorded miss holds), with it the path exists (the
+        /// miss breaks and the claim recomputes).
+        ///
+        /// r[verify machine.primitive.witness-reverification]
+        #[test]
+        fn a_missing_tree_witness_holds_until_the_path_appears() {
+            let mut runtime = Runtime::new(EventLog::default());
+            runtime.set_primitive_services(fixture_services(None));
+            let handle = b"fixture-tree\0path-appears".to_vec();
+            let node = FramedNode::leaf(tree_schema(), handle.clone());
+            runtime.store.intern_tree(&node, &handle);
+            let witness = ReadWitness {
+                source: node.identity(),
+                projection: ReadProjection::TreePath {
+                    path: "path-appears/src/new.rs".to_owned(),
+                },
+                observation: ReadObservation::Missing,
+                provenance: None,
+            };
+            assert!(
+                runtime.reverify_read_witness(&witness),
+                "a recorded tree miss re-verifies true while the path is still missing"
+            );
+            runtime.set_primitive_services(fixture_services(Some("path-appears")));
+            assert!(
+                !runtime.reverify_read_witness(&witness),
+                "the path appearing under the overlay breaks the recorded miss"
+            );
+        }
+
+        /// The kind observation is what distinguishes "the file appeared"
+        /// from "the file became a directory": a recorded Dir holds while
+        /// the entry is still a directory, and neither a miss nor another
+        /// kind satisfies it.
+        ///
+        /// r[verify machine.primitive.witness-reverification]
+        #[test]
+        fn a_kind_witness_holds_exactly_for_the_recorded_kind() {
+            let mut runtime = Runtime::new(EventLog::default());
+            runtime.set_primitive_services(fixture_services(None));
+            let handle = b"fixture-tree\0readme-changed".to_vec();
+            let node = FramedNode::leaf(tree_schema(), handle.clone());
+            runtime.store.intern_tree(&node, &handle);
+            let projection = ReadProjection::TreePath {
+                path: "readme-changed/src".to_owned(),
+            };
+            let kind_witness = |observation: ReadObservation| ReadWitness {
+                source: node.identity(),
+                projection: projection.clone(),
+                observation,
+                provenance: None,
+            };
+            assert!(
+                runtime.reverify_read_witness(&kind_witness(ReadObservation::Kind(
+                    TreeEntryKind::Dir
+                ))),
+                "the entry is still a directory, so the recorded kind holds"
+            );
+            assert!(
+                !runtime.reverify_read_witness(&kind_witness(ReadObservation::Kind(
+                    TreeEntryKind::File
+                ))),
+                "a different recorded kind does not hold"
+            );
+            assert!(
+                !runtime.reverify_read_witness(&kind_witness(ReadObservation::Missing)),
+                "an existing entry breaks a recorded miss regardless of kind"
+            );
+        }
+
+        /// A wrong-kind tree read is witnessed as the KIND observation
+        /// contradicting the request — never as a miss — and a plain miss is
+        /// witnessed as Missing: the receipt records what was seen.
+        ///
+        /// r[verify machine.primitive.witness-reverification]
+        #[test]
+        fn tree_read_failures_are_witnessed_as_what_was_seen() {
+            let source =
+                PrimitiveValue::bytes(tree_schema(), b"fixture-tree\0readme-changed".to_vec());
+            let source_id = source.identity();
+            let authority = Arc::new(
+                StagedEffectAuthority::new([(source_id.clone(), source)])
+                    .with_origins(fixture_services(None).origins()),
+            );
+            let demand = DemandKey::from_preimage(&DemandPreimage {
+                closure: RecipeId::from_canonical_vir(b"witnessed-miss-test"),
+                arguments: Vec::new(),
+            });
+            let ctx = EffectCtx::new(demand, authority);
+
+            let wrong_kind = ctx
+                .read(
+                    &source_id,
+                    ReadProjection::TreePath {
+                        path: "readme-changed/src".to_owned(),
+                    },
+                )
+                .expect_err("a directory does not serve a file read");
+            assert!(
+                matches!(
+                    wrong_kind,
+                    PrimitiveMachineError::ProjectionWrongKind {
+                        found: TreeEntryKind::Dir,
+                        ..
+                    }
+                ),
+                "the error names the found kind: {wrong_kind:?}"
+            );
+            let miss = ctx
+                .read(
+                    &source_id,
+                    ReadProjection::TreePath {
+                        path: "readme-changed/no-such-entry".to_owned(),
+                    },
+                )
+                .expect_err("an absent path misses");
+            assert!(
+                matches!(miss, PrimitiveMachineError::ProjectionMissing { .. }),
+                "the miss is typed: {miss:?}"
+            );
+
+            let publication = ctx
+                .finish(PrimitiveCompletion::MachineError(miss))
+                .expect("single completion transaction");
+            let reads = &publication.receipt.reads;
+            assert_eq!(reads.len(), 2, "both failures are witnessed: {reads:#?}");
+            assert_eq!(
+                reads[0].observation,
+                ReadObservation::Kind(TreeEntryKind::Dir),
+                "the wrong-kind read is witnessed as the contradicting kind, not a miss"
+            );
+            assert_eq!(reads[1].observation, ReadObservation::Missing);
+        }
+    }
+
+    mod journal_format {
+        //! The persistent journal's format version: a journal is a cache, so
+        //! a versionless or mismatched journal is a TYPED rejection —
+        //! intentional invalidation costing one recompute, never a migration.
+
+        use crate::runtime::{
+            PERSISTENT_RUNTIME_JOURNAL_FORMAT, PersistentRuntimeJournal,
+            PersistentRuntimeJournalError, PersistentRuntimeState,
+        };
+
+        /// r[verify machine.primitive.witness-reverification]
+        #[test]
+        fn a_versionless_journal_is_rejected_typed() {
+            let error = PersistentRuntimeJournal::from_json(r#"{"claims":[]}"#)
+                .expect_err("a journal from before versioning is rejected");
+            assert_eq!(
+                error,
+                PersistentRuntimeJournalError::FormatUnsupported {
+                    found: None,
+                    supported: PERSISTENT_RUNTIME_JOURNAL_FORMAT,
+                }
+            );
+        }
+
+        /// r[verify machine.primitive.witness-reverification]
+        #[test]
+        fn a_mismatched_format_is_rejected_typed() {
+            let error = PersistentRuntimeJournal::from_json(r#"{"format":999,"claims":[]}"#)
+                .expect_err("an unknown future format is rejected, not guessed at");
+            assert_eq!(
+                error,
+                PersistentRuntimeJournalError::FormatUnsupported {
+                    found: Some(999),
+                    supported: PERSISTENT_RUNTIME_JOURNAL_FORMAT,
+                }
+            );
+        }
+
+        #[test]
+        fn the_current_format_round_trips() {
+            let journal = PersistentRuntimeState::default().to_journal();
+            assert_eq!(journal.format, PERSISTENT_RUNTIME_JOURNAL_FORMAT);
+            let json = journal.to_json().expect("the journal serializes");
+            let loaded =
+                PersistentRuntimeJournal::from_json(&json).expect("the journal loads back");
+            assert_eq!(loaded, journal);
+        }
     }
 }

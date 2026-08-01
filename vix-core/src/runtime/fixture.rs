@@ -5,14 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-/// The kind of one directory entry, mirroring the Tree model's `TreeEntry`
-/// kinds (`machine.identity.tree-model`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FixtureEntryKind {
-    File,
-    Dir,
-    Symlink,
-}
+use super::model::TreeEntryKind;
 
 /// A read that could not be served: the path is absent, or it exists with the
 /// wrong kind for the demand. IO errors are folded into `Missing` — the
@@ -87,24 +80,24 @@ impl FixtureStore {
     }
 
     /// The kind of the tree entry at `projection` (`<fixture>/<path…>`).
-    pub fn tree_entry_kind(&self, projection: &str) -> Result<FixtureEntryKind, FixtureReadError> {
+    pub fn tree_entry_kind(&self, projection: &str) -> Result<TreeEntryKind, FixtureReadError> {
         if self.virtual_file(projection).is_some() {
-            return Ok(FixtureEntryKind::File);
+            return Ok(TreeEntryKind::File);
         }
         if projection == "readme-changed/src" {
-            return Ok(FixtureEntryKind::Dir);
+            return Ok(TreeEntryKind::Dir);
         }
         if projection == "path-appears/src" {
-            return Ok(FixtureEntryKind::Dir);
+            return Ok(TreeEntryKind::Dir);
         }
         let metadata = std::fs::symlink_metadata(self.tree_path(projection))
             .map_err(|_| FixtureReadError::Missing)?;
         Ok(if metadata.is_dir() {
-            FixtureEntryKind::Dir
+            TreeEntryKind::Dir
         } else if metadata.is_symlink() {
-            FixtureEntryKind::Symlink
+            TreeEntryKind::Symlink
         } else {
-            FixtureEntryKind::File
+            TreeEntryKind::File
         })
     }
 
@@ -114,10 +107,10 @@ impl FixtureStore {
             return Ok(bytes.to_vec());
         }
         match self.tree_entry_kind(projection)? {
-            FixtureEntryKind::File => {
+            TreeEntryKind::File => {
                 std::fs::read(self.tree_path(projection)).map_err(|_| FixtureReadError::Missing)
             }
-            FixtureEntryKind::Dir | FixtureEntryKind::Symlink => Err(FixtureReadError::NotAFile),
+            TreeEntryKind::Dir | TreeEntryKind::Symlink => Err(FixtureReadError::NotAFile),
         }
     }
 
@@ -127,14 +120,14 @@ impl FixtureStore {
     pub fn tree_dir_entries(
         &self,
         projection: &str,
-    ) -> Result<Vec<(String, FixtureEntryKind)>, FixtureReadError> {
+    ) -> Result<Vec<(String, TreeEntryKind)>, FixtureReadError> {
         if projection == "readme-changed/src" {
-            return Ok(vec![("main.c".to_owned(), FixtureEntryKind::File)]);
+            return Ok(vec![("main.c".to_owned(), TreeEntryKind::File)]);
         }
         if projection == "path-appears/src" {
             let mut entries = Vec::new();
             if self.rerun_with.as_deref() == Some("path-appears") {
-                entries.push(("new.rs".to_owned(), FixtureEntryKind::File));
+                entries.push(("new.rs".to_owned(), TreeEntryKind::File));
             }
             return Ok(entries);
         }
@@ -150,19 +143,19 @@ impl FixtureStore {
             };
             let file_type = entry.file_type().map_err(|_| FixtureReadError::Missing)?;
             let kind = if file_type.is_dir() {
-                FixtureEntryKind::Dir
+                TreeEntryKind::Dir
             } else if file_type.is_symlink() {
-                FixtureEntryKind::Symlink
+                TreeEntryKind::Symlink
             } else {
-                FixtureEntryKind::File
+                TreeEntryKind::File
             };
             entries.push((name, kind));
         }
         if projection == "readme-changed" && !entries.iter().any(|(name, _)| name == "src") {
-            entries.push(("src".to_owned(), FixtureEntryKind::Dir));
+            entries.push(("src".to_owned(), TreeEntryKind::Dir));
         }
         if projection == "touched-fixture" && !entries.iter().any(|(name, _)| name == "data.txt") {
-            entries.push(("data.txt".to_owned(), FixtureEntryKind::File));
+            entries.push(("data.txt".to_owned(), TreeEntryKind::File));
         }
         entries.sort_by(|(left, _), (right, _)| left.as_bytes().cmp(right.as_bytes()));
         Ok(entries)
@@ -191,28 +184,83 @@ impl FixtureStore {
     }
 }
 
+/// The byte prefix of fixture tree handles — the fixture adapter's declared
+/// tree-handle namespace ([`FixtureStore::origin_decl`]). The rail's goal is
+/// for this to be spelled in exactly one place; until stage 3 moves the store
+/// out of core, the compiler/scheduler constant-construction sites still
+/// share it through [`fixture_tree_name`].
+const FIXTURE_TREE_NAMESPACE: &[u8] = b"fixture-tree\0";
+
 #[must_use]
 pub fn fixture_tree_name(bytes: &[u8]) -> Option<&[u8]> {
-    let name = bytes.strip_prefix(b"fixture-tree\0")?;
+    let name = bytes.strip_prefix(FIXTURE_TREE_NAMESPACE)?;
     Some(name.split(|byte| *byte == 0).next().unwrap_or(name))
+}
+
+impl FixtureStore {
+    /// The fixture adapter's declaration: `fixture://` coordinates, Registry
+    /// capabilities, and the `fixture-tree\0` handle namespace, as data. The
+    /// scheme sniff and the capability-schema check the adapter used to
+    /// perform live here now — routing admits before the adapter is reached.
+    ///
+    /// r[impl machine.primitive.origin-routing]
+    #[must_use]
+    pub fn origin_decl() -> super::OriginAdapterDecl {
+        super::OriginAdapterDecl {
+            name: "fixture".to_owned(),
+            schemes: vec!["fixture".to_owned()],
+            capability: crate::schema::SchemaPattern::exact(
+                &crate::vir::Type::Extern(crate::vir::ExternKind::Registry).schema_ref(),
+            ),
+            tree_namespace: Some(FIXTURE_TREE_NAMESPACE.to_vec()),
+        }
+    }
 }
 
 impl super::OriginAdapter for FixtureStore {
     fn read(
         &self,
-        capability: &super::ValueId,
+        _capability: &super::ValueId,
         coordinate: &str,
-    ) -> Result<Vec<u8>, super::PrimitiveMachineError> {
-        if capability.schema
-            != crate::vir::Type::Extern(crate::vir::ExternKind::Registry).schema_ref()
-        {
-            return Err(super::PrimitiveMachineError::PolicyRejected {
-                detail: "fixture origin requires a Registry capability".to_owned(),
-            });
-        }
+    ) -> Result<Vec<u8>, super::OriginReadError> {
         self.fetch_url(coordinate)
-            .map_err(|_| super::PrimitiveMachineError::Unavailable {
+            .map_err(|_| super::OriginReadError::Miss {
                 detail: format!("fixture origin {coordinate} is unavailable"),
             })
+    }
+
+    fn tree_kind(
+        &self,
+        _handle: &[u8],
+        path: &str,
+    ) -> Result<super::TreeEntryKind, super::OriginTreeError> {
+        self.tree_entry_kind(path)
+            .map_err(|_| super::OriginTreeError::Missing)
+    }
+
+    fn tree_bytes(&self, handle: &[u8], path: &str) -> Result<Vec<u8>, super::OriginTreeError> {
+        match self.tree_kind(handle, path)? {
+            TreeEntryKind::File => self
+                .tree_file_bytes(path)
+                .map_err(|_| super::OriginTreeError::Missing),
+            found @ (TreeEntryKind::Dir | TreeEntryKind::Symlink) => {
+                Err(super::OriginTreeError::WrongKind { found })
+            }
+        }
+    }
+
+    fn tree_directory(
+        &self,
+        handle: &[u8],
+        path: &str,
+    ) -> Result<Vec<(String, TreeEntryKind)>, super::OriginTreeError> {
+        match self.tree_kind(handle, path)? {
+            TreeEntryKind::Dir => self
+                .tree_dir_entries(path)
+                .map_err(|_| super::OriginTreeError::Missing),
+            found @ (TreeEntryKind::File | TreeEntryKind::Symlink) => {
+                Err(super::OriginTreeError::WrongKind { found })
+            }
+        }
     }
 }
