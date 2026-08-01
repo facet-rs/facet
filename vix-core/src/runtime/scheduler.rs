@@ -11038,7 +11038,7 @@ fn passing() -> Stream<Check> {
         //! no bytes and must not count.
 
         use super::*;
-        use crate::runtime::{Receipt, ReadWitness};
+        use crate::runtime::{ReadWitness, Receipt};
 
         /// A multi-origin fallthrough that succeeds on its LAST origin
         /// performed exactly one fetch: two Missing witnesses and one Value

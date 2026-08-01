@@ -1415,6 +1415,11 @@ impl EffectFacts {
     };
 }
 
+// NOTE: `Op`'s facet/`repr(u8)` discriminants are positional and NOT
+// identity-bearing — node identity flows through `canonical_node`'s explicit
+// ordinals, which retire-and-reserve. A new variant may therefore occupy a
+// retired variant's repr slot (as `DeclaredConst` does `FixtureTree`'s)
+// without any identity consequence.
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Op {

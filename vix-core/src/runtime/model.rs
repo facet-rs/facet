@@ -221,9 +221,12 @@ pub enum MemoVerdict {
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum TreeEntryKind {
-    File,
-    Dir,
-    Symlink,
+    // Persisted receipt vocabulary (inside `ReadObservation::Kind`), so the
+    // discriminants are explicit and pinned like `ReadProjection`'s: a
+    // variant that ever retires keeps its number and spelling reserved.
+    File = 0,
+    Dir = 1,
+    Symlink = 2,
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
