@@ -12,10 +12,13 @@
 // every fetch.
 //
 // WHAT IS AND IS NOT HERE. Everything up to and including the argv plan is real
-// and runs. The invocations do NOT, and the reason is one missing piece of exec
-// surface rather than anything about cargo: an exec template splices Int,
-// String, and Path only, so there is no way to put an INPUT FILE in front of
-// the process. rustc cannot see src/lib.rs. See cargo-vix/README.md.
+// and runs. The invocations are still plans HERE, for one reason: mounting a
+// tree into an exec now works (see hello.vix, which really does compile and run
+// a binary), but only for a CONTENT-IDENTIFIED tree. `fixture_tree` is an
+// origin-backed handle, and enumerating one needs a directory verb on the
+// effect authority that does not exist yet. So this file can read a workspace
+// and plan its build, and hello.vix can compile sources it generated — joining
+// the two is the next rung. See cargo-vix/README.md.
 
 // ---------------------------------------------------------------- the manifest
 

@@ -1,0 +1,18 @@
+// Rung one: compile a hello world and run the binary it produces.
+//
+// The source is written by a shell exec so the tree it lands in is
+// content-identified — mounting an ORIGIN-backed tree (a `fixture_tree`) still
+// needs a directory verb on the effect authority. The braces are octal escapes
+// (\173 \175) because an exec template reads a literal `{` as an interpolation.
+#[test { budget_wall: 120s, budget_rss: 4096MB }]
+fn hello_world(sh: Sh, rustc: Rustc) -> Stream<Check> {
+    let sources = exec sh`-c "mkdir -p src; printf 'fn main() \173 println!(\042hello from vix\042); \175\n' > src/main.rs"`;
+
+    // A template splices BARE NAMES, so each tree is bound before it is used.
+    let src = sources.tree;
+    let built = exec rustc`--crate-name hello --edition 2021 {src}/src/main.rs --out-dir .`;
+
+    let out = built.tree;
+    let ran = exec sh`-c "{out}/hello"`;
+    yield expect_eq(ran.stdout.text().trim(), "hello from vix");
+}

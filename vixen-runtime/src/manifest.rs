@@ -451,7 +451,13 @@ fn collect_exec_requirements(
         let Some(request) = node.inputs.first().copied().and_then(node_by_id) else {
             continue;
         };
-        let [capability_id, argv_id] = request.inputs.as_slice() else {
+        // `{capability, argv, mounts}` — the mounts are inputs to the process,
+        // not part of its plan, so the requirement scan reads past them. This
+        // destructure is exhaustive on purpose: a request that grows a field
+        // must come back HERE and decide, because the silent alternative is a
+        // scan that matches nothing and reports "no requirements" for a program
+        // that has them — which is a refusal that never happens.
+        let [capability_id, argv_id, _mounts_id] = request.inputs.as_slice() else {
             continue;
         };
         let Some(ty) =

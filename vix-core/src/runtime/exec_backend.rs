@@ -49,6 +49,34 @@ pub struct ExecInvocation {
     /// environment, in plan order.
     pub env: Vec<(String, String)>,
     pub protocol: ExecOutputProtocol,
+    /// Input trees to materialize into the workspace before spawning. Each
+    /// mount's `path` is workspace-relative and already named by the argv, so a
+    /// backend writes them where it is told and invents nothing.
+    pub mounts: Vec<ExecMount>,
+}
+
+/// One input tree, flattened to its files, destined for a workspace-relative
+/// directory. This is a plain file list rather than a tree value on purpose:
+/// materializing an input is a filesystem act, and the backend is the only
+/// thing that should know a filesystem exists.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecMount {
+    /// Workspace-relative directory the files land under.
+    pub path: String,
+    /// The tree's files, in tree order.
+    pub files: Vec<ExecMountFile>,
+}
+
+/// One materialized file of a mount. The executable bit is carried because a
+/// tree carries it (`TreeEntry::File::executable`) and dropping it turns a
+/// compiler's output into a file the next stage cannot run — the mode is part
+/// of what the value says about itself, not a filesystem detail.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecMountFile {
+    /// Tree-relative path.
+    pub path: String,
+    pub bytes: Vec<u8>,
+    pub executable: bool,
 }
 
 /// One command-grammar-authorized immutable exec product, snapshotted by the
@@ -145,6 +173,35 @@ pub trait ExecBackend: Send + Sync {
 /// behind the same demand keys.
 pub struct HostExecBackend;
 
+/// Write every mount's files under the workspace. A mount path that escapes the
+/// workspace is refused rather than normalized: the paths are derived from the
+/// plan (`exec_mount_path`) and a tree's own member names, so an escape means
+/// something upstream is wrong and silently clamping it would hide that.
+fn materialize_mounts(workspace: &Path, mounts: &[ExecMount]) -> Result<(), String> {
+    for mount in mounts {
+        for file in &mount.files {
+            let joined = format!("{}/{}", mount.path, file.path);
+            if joined.split('/').any(|segment| segment == "..") {
+                return Err(format!("mount path `{joined}` escapes the workspace"));
+            }
+            let target = workspace.join(&joined);
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|error| format!("create `{}`: {error}", parent.display()))?;
+            }
+            std::fs::write(&target, &file.bytes)
+                .map_err(|error| format!("write `{}`: {error}", target.display()))?;
+            #[cfg(unix)]
+            if file.executable {
+                use std::os::unix::fs::PermissionsExt as _;
+                std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755))
+                    .map_err(|error| format!("chmod `{}`: {error}", target.display()))?;
+            }
+        }
+    }
+    Ok(())
+}
+
 impl ExecBackend for HostExecBackend {
     fn begin(
         &self,
@@ -157,8 +214,10 @@ impl ExecBackend for HostExecBackend {
             env_remove,
             env,
             protocol,
+            mounts,
         } = invocation;
         let workspace = ExecWorkspace::create()?;
+        materialize_mounts(workspace.path(), &mounts)?;
         let mut command = std::process::Command::new(&program);
         command.args(&argv);
         for name in env_remove {
@@ -359,9 +418,33 @@ pub fn archive_directory(root: &Path) -> Result<Vec<u8>, String> {
         }
         let bytes = std::fs::read(&file)
             .map_err(|error| format!("read exec output `{}`: {error}", file.display()))?;
+        // Executability is part of what the output SAYS ABOUT ITSELF, not a
+        // filesystem detail: a compiler's product that loses its mode is a file
+        // the next stage cannot run. The tree model carries the bit
+        // (`TreeEntry::File::executable`) and the archive is how it gets there,
+        // so the mode is read rather than assumed. Only the two canonical modes
+        // are representable — the tree model has a bool, not a mode word, and
+        // inventing finer permissions here would claim an identity the value
+        // cannot hold.
+        #[cfg(unix)]
+        let executable = {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::metadata(&file)
+                .map_err(|error| format!("inspect exec output `{}`: {error}", file.display()))?
+                .permissions()
+                .mode()
+                & 0o100
+                != 0
+        };
+        #[cfg(not(unix))]
+        let executable = false;
         let mut header = [0u8; 512];
         header[..relative.len()].copy_from_slice(relative.as_bytes());
-        header[100..108].copy_from_slice(b"0000644\0");
+        header[100..108].copy_from_slice(if executable {
+            b"0000755\0"
+        } else {
+            b"0000644\0"
+        });
         header[108..116].copy_from_slice(b"0000000\0");
         header[116..124].copy_from_slice(b"0000000\0");
         write_octal(&mut header[124..136], bytes.len() as u64)?;

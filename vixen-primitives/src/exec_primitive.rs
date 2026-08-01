@@ -222,8 +222,8 @@ fn parse_request(
     let PrimitiveValueBody::Product(fields) = &request.body else {
         return Err(invalid("request was not a record"));
     };
-    let [capability_field, argv_field] = fields.as_slice() else {
-        return Err(invalid("request does not have exactly two fields"));
+    let [capability_field, argv_field, mounts_field] = fields.as_slice() else {
+        return Err(invalid("request does not have exactly three fields"));
     };
     let capability = child_value(capability_field).ok_or_else(|| invalid("capability field"))?;
     let capability_ty = ctx.type_for_schema(&capability.schema)?;
@@ -269,6 +269,7 @@ fn parse_request(
     // elements). The demand preimage already hashed the full normalized plan;
     // this split is host-side value redemption, like the program name itself.
     let (env_remove, env, argv) = package.split_invocation(argv);
+    let mounts = parse_mounts(ctx, mounts_field)?;
     Ok(ParsedRequest {
         invocation: ExecInvocation {
             program,
@@ -276,8 +277,73 @@ fn parse_request(
             env_remove,
             env,
             protocol,
+            mounts,
         },
     })
+}
+
+/// The spliced trees, flattened to the files the backend writes into the
+/// workspace before spawning. A mount's position in the array IS its workspace
+/// path (`exec_mount_path`), which the argv already names — the two are
+/// derived from one plan, so they cannot disagree.
+///
+/// Directories are carried implicitly: a file's own path creates them. An empty
+/// directory is therefore not reproduced, which no compiler input depends on.
+fn parse_mounts(
+    ctx: &EffectCtx,
+    mounts_field: &PrimitiveField,
+) -> Result<Vec<crate::rt::ExecMount>, PrimitiveMachineError> {
+    let invalid = |detail: &str| PrimitiveMachineError::AuthorityViolation {
+        detail: format!("malformed exec request: {detail}"),
+    };
+    let Some(mounts_value) = child_value(mounts_field) else {
+        return Err(invalid("mounts field"));
+    };
+    let PrimitiveValueBody::Sequence { elements, .. } = &mounts_value.body else {
+        return Err(invalid("mounts was not a sequence"));
+    };
+    elements
+        .iter()
+        .enumerate()
+        .map(|(index, tree)| {
+            let resident = tree.resident_bytes();
+            // Route the source the way every other tree consumer does
+            // (`machine.primitive.origin-routing`): an origin-backed handle is
+            // NOT enumerable from its own bytes, and falling through to content
+            // enumeration would report "malformed bytes" for what is a missing
+            // machine verb. Refuse loudly and name the gap instead.
+            if ctx.tree_handle_name(resident).is_some() {
+                return Err(PrimitiveMachineError::Unavailable {
+                    detail: "mounting an origin-backed tree needs a directory verb on the \
+                             effect authority, which does not exist yet; mount a \
+                             content-identified tree (an untar'd archive or another exec's \
+                             output) for now"
+                        .to_owned(),
+                });
+            }
+            let tree = tree_from_resident(resident)
+                .map_err(|_| invalid("a mounted tree's resident bytes were malformed"))?;
+            let mut files = Vec::new();
+            for (path, entry) in tree.walk() {
+                let vix::runtime::TreeEntry::File { executable, .. } = entry else {
+                    continue;
+                };
+                let bytes = tree
+                    .file_bytes(&path)
+                    .ok_or_else(|| invalid("a mounted tree lost one of its files"))?
+                    .to_vec();
+                files.push(crate::rt::ExecMountFile {
+                    path,
+                    bytes,
+                    executable: *executable,
+                });
+            }
+            Ok(crate::rt::ExecMount {
+                path: vix::runtime::exec_mount_path(index),
+                files,
+            })
+        })
+        .collect()
 }
 
 fn child_value(field: &PrimitiveField) -> Option<&PrimitiveValue> {

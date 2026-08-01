@@ -9224,6 +9224,9 @@ fn lower_command(
 enum TemplatePiece {
     Literal(String),
     Value(LoweredValue),
+    /// A `Tree` splice: an input mount. It contributes the tree to the request's
+    /// `mounts` array and renders as that mount's workspace-relative path.
+    Mount(LoweredValue),
 }
 
 /// The ratchet capability packages' command grammar: whitespace-separated
@@ -9328,14 +9331,29 @@ fn parse_command_template(
                         payload: DiagnosticPayload::Name { name: name.clone() },
                     })
                 })?;
-                if !matches!(value.ty, Type::Int | Type::String | Type::Path) {
+                // A `Tree` splice is an INPUT MOUNT, not a rendering: the tree
+                // is materialized into the process's workspace and the element
+                // renders as its deterministic workspace-relative path. This is
+                // what lets a plan hand a compiler its sources —
+                // `rustc {sources}/src/main.rs` fuses the mount path with the
+                // literal suffix through the ordinary adjacency rule, so no
+                // separate path-building surface is needed.
+                let mountable = matches!(
+                    &value.ty,
+                    Type::Extern(ExternKind::Host(name)) if *name == crate::binding::TREE
+                );
+                if !mountable && !matches!(value.ty, Type::Int | Type::String | Type::Path) {
                     return Err(type_mismatch(
                         template.span,
-                        "Int, String, or Path command interpolation",
+                        "Int, String, Path, or Tree command interpolation",
                         value.ty.name(),
                     ));
                 }
-                pieces.push(TemplatePiece::Value(value.clone()));
+                pieces.push(if mountable {
+                    TemplatePiece::Mount(value.clone())
+                } else {
+                    TemplatePiece::Value(value.clone())
+                });
             }
             if !literal.is_empty() || pieces.is_empty() {
                 pieces.push(TemplatePiece::Literal(literal));
@@ -9371,6 +9389,10 @@ fn lower_exec(
     let template = parse_command_template(&exec.command.template, bindings)?;
     let span = exec.span;
     let mut elements = Vec::with_capacity(template.len());
+    // The spliced trees, in splice order. Their positions ARE their mount
+    // paths, so the argv is a function of the plan and the mount list is a
+    // function of the same plan — the two cannot drift.
+    let mut mounts: Vec<NodeId> = Vec::new();
     for pieces in template {
         let mut element: Option<NodeId> = None;
         for piece in pieces {
@@ -9383,6 +9405,18 @@ fn lower_exec(
                     Vec::new(),
                     Op::String(text),
                 ),
+                TemplatePiece::Mount(tree) => {
+                    let index = mounts.len();
+                    mounts.push(tree.node);
+                    push_node(
+                        nodes,
+                        span,
+                        Type::String,
+                        EffectFacts::PURE,
+                        Vec::new(),
+                        Op::String(crate::runtime::exec_mount_path(index)),
+                    )
+                }
                 TemplatePiece::Value(value) => match value.ty {
                     Type::String => value.node,
                     Type::Int => push_node(
@@ -9421,13 +9455,17 @@ fn lower_exec(
     }
     let argv_ty = Type::Array(Box::new(Type::String));
     let argv = push_node(nodes, span, argv_ty, EffectFacts::PURE, elements, Op::Array);
+    let mounts_ty = Type::Array(Box::new(Type::Extern(ExternKind::Host(
+        crate::binding::TREE,
+    ))));
+    let mounts = push_node(nodes, span, mounts_ty, EffectFacts::PURE, mounts, Op::Array);
     let request_ty = exec_request_type(&capability.ty);
     let request = push_node(
         nodes,
         span,
         request_ty,
         EffectFacts::PURE,
-        vec![capability.node, argv],
+        vec![capability.node, argv, mounts],
         Op::Record,
     );
     let ty = exec_outcome_type();

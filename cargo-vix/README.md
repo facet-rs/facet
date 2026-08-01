@@ -22,27 +22,49 @@ reports the checks. It roots the harness `FixtureStore` at the `.vix` file's own
 directory, which is why the crate under test lives in `trees/small-crate/` —
 `fixture_tree("small-crate")` reads `<root>/trees/<name>`.
 
-## Where the road stops, and why
+## vix compiles and runs a Rust binary
 
-`cargo.vix` gets as far as rendering the exact argv rustc wants. It does not run
-rustc, and the blocker is one specific gap rather than a pile of them:
+`hello.vix` is rung one of the ladder, and it is green:
 
-**An exec cannot receive an input file.** `lower_exec` builds the request as
-`{capability, argv: [String]}`, and a template splices `Int | String | Path`
-only (`vix-core/src/compiler.rs`, `parse_command_template`). A tree projection
-is a `Blob`, there are no mounts, and there is no `cwd`. So rustc can be spawned
-but cannot be shown `src/lib.rs`. Rung `073-exec-consumes-tree.vix` is exactly
-this shape and is excluded from the ratchet runner — it is a red rung, not an
-oversight.
+```
+RUSTC=$(rustup which rustc) cargo test -p vixen-runtime --test exec_tree_mounts
+```
 
-The second gap, close behind: **no declared env** (rung `074-exec-env.vix`, red
-for the same reason — the request record has no env field). Crates read
-`CARGO_PKG_*` through `env!`, and build scripts are nothing but env.
+Three processes — write the source, compile it with rustc, run the binary it
+produced — and the check reads `hello from vix` off the third one's stdout.
 
-Everything else the first step needs already exists and is exercised here:
-`tree-read` for the manifest bytes, `decode` for TOML → typed structs,
-`tree-glob` for target discovery, and `exec` itself for the invocation. No new
-primitive is required to finish this — the exec rail's input side is.
+This works because a `Tree` is now spliceable into a command template. The tree
+joins the request's `mounts` array and the splice renders as its deterministic
+workspace-relative path, so `{src}/src/main.rs` fuses through the ordinary
+adjacency rule and needs no path-building surface. The tree's value identity is
+IN the request, which is what makes "the same plan over changed sources" a
+different demand rather than a stale memo hit.
+
+## Where the road stops now
+
+- **Origin-backed trees cannot be mounted.** A `fixture_tree` is a lazy handle,
+  and enumerating one needs a directory verb on the effect authority that does
+  not exist. Content-identified trees — an `untar`'d archive, another exec's
+  output — mount fine, which is why `hello.vix` writes its source with a shell
+  exec first. This is the next thing to build: without it a build walk cannot
+  read a workspace off disk.
+- **No declared env** (rung `074-exec-env.vix`, red): the request record has no
+  env field. Crates read `CARGO_PKG_*` through `env!`, and build scripts are
+  nothing but env.
+- **An exec template cannot contain a literal brace** — `{` always starts an
+  interpolation and there is no escape. Harmless for rustc argv; crippling for
+  `sh -c` with real shell code (`hello.vix` writes `\173`/`\175` octal escapes
+  and lets printf produce the braces).
+- **A template splices bare NAMES only**, not expressions: `{sources.tree}` is
+  an unbound identifier, so each tree is bound to a `let` first.
+- **No rmeta pipelining.** The machinery exists and is proven — rung 128 has a
+  subfile consumer finishing before its producer exits — but `Rustc` declares
+  `ExecOutputProtocol::ExitOnly`, so nothing is announced. rustc does emit the
+  signal (`--json=artifacts` writes `{"$message_type":"artifact",…,"emit":"metadata"}`
+  to stderr, metadata before link). Two easy pieces (a rustc artifact protocol;
+  read the protocol off stderr, not just stdout) and one hard one: the
+  progressive rail only engages when the projection path is a COMPILE-TIME
+  CONSTANT, and a build walk computes `lib{name}.rmeta` from lock data.
 
 ## Gaps found while writing this
 

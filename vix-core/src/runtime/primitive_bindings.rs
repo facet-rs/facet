@@ -215,8 +215,29 @@ pub fn exec_request_type(capability: &Type) -> Type {
                 name: "argv".to_owned(),
                 ty: Type::Array(Box::new(Type::String)),
             },
+            // The trees the plan spliced, in splice order. A mount is an INPUT
+            // to the process, and its value identity therefore belongs in the
+            // request — which is what makes "the same plan over changed sources"
+            // a different demand instead of a stale memo hit. The argv already
+            // names each mount by its deterministic workspace-relative path, so
+            // no temp-directory path ever reaches the identity.
+            RecordField {
+                name: "mounts".to_owned(),
+                ty: Type::Array(Box::new(Type::Extern(ExternKind::Host(
+                    crate::binding::TREE,
+                )))),
+            },
         ],
     ))
+}
+
+/// The workspace-relative directory one spliced tree materializes at. The
+/// index is the splice's position in the plan, so the path is a function of the
+/// plan alone — two runs of the same plan agree, and a mount path never leaks
+/// the workspace's location.
+#[must_use]
+pub fn exec_mount_path(index: usize) -> String {
+    format!(".vix-mounts/{index}")
 }
 
 #[must_use]
