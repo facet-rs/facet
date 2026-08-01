@@ -165,6 +165,19 @@ pub enum OriginInstallError {
     /// Two adapters declared prefix-related tree namespaces (equal namespaces
     /// included): a handle in the longer namespace would be claimed by both.
     NamespaceOverlap { first: String, second: String },
+    /// A declaration claimed the EMPTY tree namespace. The empty prefix
+    /// matches every non-content handle, so it is a wildcard claim that
+    /// would defeat the unclaimed-handle refusal — degenerate, not a
+    /// namespace.
+    EmptyNamespace { name: String },
+    /// A declaration listed an empty scheme string: no coordinate spells the
+    /// empty scheme, so the entry is unreachable — and an unreachable claim
+    /// in the declared set is a configuration lie.
+    EmptyScheme { name: String },
+    /// A declaration listed the same scheme twice: routing over the set must
+    /// be a function of the declarations, and a self-duplicate is the same
+    /// degenerate shape as a cross-adapter double claim.
+    SelfDuplicateScheme { name: String, scheme: String },
 }
 
 impl core::fmt::Display for OriginInstallError {
@@ -183,6 +196,19 @@ impl core::fmt::Display for OriginInstallError {
                 formatter,
                 "origin adapters \"{first}\" and \"{second}\" declare prefix-related \
                  tree-handle namespaces"
+            ),
+            Self::EmptyNamespace { name } => write!(
+                formatter,
+                "origin adapter \"{name}\" declares the empty tree-handle namespace, \
+                 a wildcard claim over every non-content handle"
+            ),
+            Self::EmptyScheme { name } => write!(
+                formatter,
+                "origin adapter \"{name}\" declares an empty coordinate scheme"
+            ),
+            Self::SelfDuplicateScheme { name, scheme } => write!(
+                formatter,
+                "origin adapter \"{name}\" declares coordinate scheme \"{scheme}\" twice"
             ),
         }
     }
@@ -210,13 +236,43 @@ pub struct OriginAdapterSet {
 }
 
 impl OriginAdapterSet {
-    /// Install one adapter under its declaration, rejecting overlap with the
-    /// already-installed set.
+    /// Install one adapter under its declaration, rejecting a degenerate
+    /// declaration and overlap with the already-installed set.
+    ///
+    /// r[impl machine.primitive.origin-routing]
     pub fn install(
         &mut self,
         decl: OriginAdapterDecl,
         adapter: Arc<dyn OriginAdapter>,
     ) -> Result<(), OriginInstallError> {
+        // Degenerate declarations first: an empty namespace is a wildcard
+        // claim over every non-content handle (`starts_with(&[])` is always
+        // true) that would defeat the unclaimed refusal; an empty scheme is
+        // unreachable; a self-duplicate scheme is a double claim with one
+        // author. Rejected for the same reason overlaps are — routing must
+        // be a function of the declaration set, not of what slipped past it.
+        if decl
+            .tree_namespace
+            .as_ref()
+            .is_some_and(|namespace| namespace.is_empty())
+        {
+            return Err(OriginInstallError::EmptyNamespace {
+                name: decl.name.clone(),
+            });
+        }
+        for (index, scheme) in decl.schemes.iter().enumerate() {
+            if scheme.is_empty() {
+                return Err(OriginInstallError::EmptyScheme {
+                    name: decl.name.clone(),
+                });
+            }
+            if decl.schemes[..index].contains(scheme) {
+                return Err(OriginInstallError::SelfDuplicateScheme {
+                    name: decl.name.clone(),
+                    scheme: scheme.clone(),
+                });
+            }
+        }
         for installed in &self.entries {
             for scheme in &decl.schemes {
                 if installed.decl.schemes.contains(scheme) {
@@ -476,6 +532,45 @@ mod tests {
             Arc::new(NullAdapter),
         )
         .expect("a disjoint namespace installs");
+    }
+
+    /// r[verify machine.primitive.origin-routing] — the empty namespace is a
+    /// wildcard claim over every non-content handle; admitted, it would
+    /// defeat the unclaimed-handle refusal, so it is rejected at install.
+    #[test]
+    fn an_empty_tree_namespace_is_rejected_at_install_time() {
+        let mut set = OriginAdapterSet::default();
+        assert_eq!(
+            set.install(decl("wildcard", &["a"], Some(b"")), Arc::new(NullAdapter)),
+            Err(OriginInstallError::EmptyNamespace {
+                name: "wildcard".to_owned(),
+            })
+        );
+    }
+
+    /// r[verify machine.primitive.origin-routing]
+    #[test]
+    fn an_empty_scheme_string_is_rejected_at_install_time() {
+        let mut set = OriginAdapterSet::default();
+        assert_eq!(
+            set.install(decl("blank", &["a", ""], None), Arc::new(NullAdapter)),
+            Err(OriginInstallError::EmptyScheme {
+                name: "blank".to_owned(),
+            })
+        );
+    }
+
+    /// r[verify machine.primitive.origin-routing]
+    #[test]
+    fn a_self_duplicate_scheme_is_rejected_at_install_time() {
+        let mut set = OriginAdapterSet::default();
+        assert_eq!(
+            set.install(decl("twice", &["a", "b", "a"], None), Arc::new(NullAdapter)),
+            Err(OriginInstallError::SelfDuplicateScheme {
+                name: "twice".to_owned(),
+                scheme: "a".to_owned(),
+            })
+        );
     }
 
     /// r[verify machine.primitive.origin-routing]
