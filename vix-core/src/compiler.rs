@@ -9447,7 +9447,10 @@ fn lower_exec(
                         vec![value.node],
                         Op::PathToString,
                     ),
-                    _ => unreachable!("parse_command_template admits Int, String, and Path only"),
+                    _ => unreachable!(
+                        "a Value piece is Int, String, or Path; a Tree splice \
+                         becomes a Mount piece, handled above"
+                    ),
                 },
             };
             element = Some(match element {

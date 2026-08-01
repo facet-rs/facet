@@ -621,12 +621,21 @@ fn decode_fields<'de>(
     Ok(out)
 }
 
-/// The sequence a decoded value carries, seeing through an `Option` wrapper.
-/// `[T]` and `Option<[T]>` must accumulate identically under array-of-tables.
+/// The sequence a decoded value carries, seeing through AT MOST ONE `Option`
+/// wrapper. `[T]` and `Option<[T]>` must accumulate identically under
+/// array-of-tables.
+///
+/// One layer, not arbitrarily many, because the accumulation rewraps exactly
+/// one: recursing deeper would merge an `Option<Option<[T]>>` and hand back a
+/// value one wrapper short of its declared type, which then mismatches
+/// downstream. Matching the two depths keeps the asymmetry unrepresentable.
 fn as_array(value: &DecodedValue) -> Option<&Vec<DecodedValue>> {
     match value {
         DecodedValue::Array(elements) => Some(elements),
-        DecodedValue::OptionSome(inner) => as_array(inner),
+        DecodedValue::OptionSome(inner) => match inner.as_ref() {
+            DecodedValue::Array(elements) => Some(elements),
+            _ => None,
+        },
         _ => None,
     }
 }

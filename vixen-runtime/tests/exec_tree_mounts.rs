@@ -219,3 +219,23 @@ fn t(sh: Sh) -> Stream<Check> {
 "#,
     );
 }
+
+#[test]
+fn an_empty_mounted_tree_still_creates_its_directory() {
+    // The argv names the mount path unconditionally, so the directory has to
+    // exist even when the tree holds no files. Creating it only as a parent of
+    // written files hands the process an ENOENT where the model promises a
+    // directory — the shape an exec that wrote nothing produces.
+    expect_pass(
+        "empty-mount",
+        r#"
+#[test { budget_wall: 60s, budget_rss: 2048MB }]
+fn t(sh: Sh) -> Stream<Check> {
+    let nothing = exec sh`-c "true"`;
+    let empty = nothing.tree;
+    let probed = exec sh`-c "test -d {empty} && echo dir || echo missing"`;
+    yield expect_eq(probed.stdout.text().trim(), "dir");
+}
+"#,
+    );
+}

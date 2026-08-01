@@ -13,10 +13,10 @@
 //! r[impl machine.primitive.effect-backend-service]
 
 use std::path::{Path, PathBuf};
-
-use super::EXEC_MOUNT_ROOT;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+
+use super::EXEC_MOUNT_ROOT;
 
 /// The output protocol the backend streams a command under. Which protocol
 /// applies is a property of the capability package

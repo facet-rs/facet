@@ -46,6 +46,13 @@ pub struct HostExecBackend;
 /// something upstream is wrong and silently clamping it would hide that.
 fn materialize_mounts(workspace: &Path, mounts: &[ExecMount]) -> Result<(), String> {
     for mount in mounts {
+        // The mount's own directory is created even when the tree holds no
+        // files. The argv names this path unconditionally, so an empty tree
+        // (an exec that wrote nothing, captured and mounted) would otherwise
+        // hand the process an ENOENT where the model promises a directory.
+        let root = workspace.join(&mount.path);
+        std::fs::create_dir_all(&root)
+            .map_err(|error| format!("create `{}`: {error}", root.display()))?;
         for file in &mount.files {
             let joined = format!("{}/{}", mount.path, file.path);
             if joined.split('/').any(|segment| segment == "..") {

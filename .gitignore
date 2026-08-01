@@ -22,6 +22,11 @@ tarpaulin-report.html
 !facet-reflect/fuzz/Cargo.lock
 !tools/styx-webmd/Cargo.lock
 !vox/fuzz/vox-afl/Cargo.lock
+# Lock FIXTURES: input data for the decode/cargo-vix tests, not a build
+# product. Without these the sequence-decode and cargo.vix tests are
+# unrunnable on a fresh checkout.
+!vixen-runtime/tests/fixtures/trees/locked-crate/Cargo.lock
+!cargo-vix/trees/small-crate/Cargo.lock
 
 **/node_modules/
 playgrounds/snark/dist/
