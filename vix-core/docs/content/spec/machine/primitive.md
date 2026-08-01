@@ -169,6 +169,54 @@ primitives reference by identity.
 > ticket; a replayed stream is indistinguishable from a live one because the
 > witness records what was published.
 
+> r[machine.primitive.origin-routing]
+>
+> [DESIGN] Origin adapters install as a declared set: each entry states the
+> coordinate schemes it serves, the capability schema it admits, and the
+> tree-handle namespace (a byte prefix of handle residents) it owns, as data.
+> Selection is a lookup over declarations — adapters do not sniff and refuse,
+> and the machine holds no default backend. Overlapping declarations (a scheme
+> claimed twice, prefix-related namespaces) are rejected at install time, so
+> routing — including witness re-verification routing — is a property of the
+> declaration set. An unroutable coordinate, an unclaimed tree handle, or an
+> unconfigured origin is a loud typed refusal naming what was asked and what
+> is installed; a silent fallback to any backend (today: the fixture store) is
+> the conjuring failure mode and is banned. Content-identified tree residents
+> never route to an adapter.
+
+> r[machine.primitive.origin-verbs]
+>
+> [DESIGN] The origin seam speaks two verbs: a coordinate read (bytes by
+> coordinate, with a structured failure taxonomy — a miss that may fall
+> through, a refusal that routes elsewhere, and a corruption that stops are
+> different answers), and a tree projection (entry kind, file bytes, directory
+> listing for a lazily-backed tree). Listings are `(name, TreeEntryKind)`
+> rows — a neutral `File | Dir | Symlink` kind, never full `TreeEntry`s, which
+> would force eager materialization and defeat the lazy projection. No core
+> trait or type names a particular backend; `CodataDrainCtx::fixture_directory`
+> and `FixtureEntryKind` were the counterexamples this rule retired.
+
+> r[machine.primitive.witness-reverification]
+>
+> [DESIGN] The seam that produced a witness re-verifies it: the rerun audit
+> resolves a receipt's projections through the installed adapter set exactly
+> as the original read did (tree witnesses route by the source handle's
+> declared namespace), and the scheduler compares observations without
+> naming any backend (`Runtime::reverify_read_witness`'s direct fixture calls
+> were the counterexample this rule retired). Misses are witnessed — none
+> were before this rule landed: a failed origin
+> candidate records one `Missing` witness per tried coordinate, a tree read
+> that finds nothing (including an absent directory) records one for its
+> path, and a wrong-kind outcome is witnessed as the kind observation that
+> contradicts the request, never as a miss. A foreign upstream digest
+> verified on arrival is recorded beside the vix identity as an additive
+> witness field with no re-verification meaning — provenance is a record,
+> the vix identity is the claim (`machine.primitive.fetch-integrity-vs-identity`'s
+> "both digests" made real). The witness vocabulary is persisted in the
+> runtime journal, which gains a format version; journals predating it are
+> intentionally invalidated (a journal is a cache — rejection costs one
+> recompute, never correctness).
+
 > r[machine.primitive.fetch-is-an-invocation]
 >
 > [DESIGN] Fetch is a memoized invocation with stable closure identity flowing
