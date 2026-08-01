@@ -10817,6 +10817,84 @@ fn passing() -> Stream<Check> {
             );
         }
 
+        /// Provenance is a post-verification fact, so it can only land on a
+        /// witness that OBSERVED A VALUE: an attestation naming a (source,
+        /// projection) whose only witness is a recorded miss is an authority
+        /// violation, and the miss stays undecorated — nothing arrived, so
+        /// nothing was checked against the digest.
+        ///
+        /// r[verify machine.primitive.witness-reverification]
+        #[test]
+        fn provenance_never_attests_onto_a_missing_witness() {
+            let adapter = Arc::new(ToggleOrigin {
+                bytes: Mutex::new(None),
+            });
+            let services = PrimitiveServices::default()
+                .with_origin(
+                    OriginAdapterDecl {
+                        name: "toggle".to_owned(),
+                        schemes: vec!["stub".to_owned()],
+                        capability: SchemaPattern::exact(
+                            &Type::Extern(ExternKind::Registry).schema_ref(),
+                        ),
+                        tree_namespace: None,
+                    },
+                    adapter,
+                )
+                .expect("the toggle declaration overlaps nothing");
+            let capability_value = PrimitiveValue::bytes(
+                Type::Extern(ExternKind::Registry).schema_ref(),
+                b"registry".to_vec(),
+            );
+            let capability = capability_value.identity();
+            let authority = Arc::new(
+                StagedEffectAuthority::new([(capability.clone(), capability_value)])
+                    .with_origins(services.origins()),
+            );
+            let demand = DemandKey::from_preimage(&DemandPreimage {
+                closure: RecipeId::from_canonical_vir(b"attest-miss-test"),
+                arguments: Vec::new(),
+            });
+            let ctx = EffectCtx::new(demand, authority);
+            let projection = ReadProjection::Origin {
+                coordinate: "stub://blob".to_owned(),
+            };
+
+            let miss = ctx
+                .read(&capability, projection.clone())
+                .expect_err("the adapter serves nothing, so the read misses");
+            assert!(matches!(
+                miss,
+                PrimitiveMachineError::ProjectionMissing { .. }
+            ));
+
+            let error = ctx
+                .attest_provenance(
+                    &capability,
+                    &projection,
+                    crate::runtime::UpstreamDigest {
+                        algorithm: crate::runtime::DigestAlgorithm::Sha256,
+                        bytes: vec![0; 32],
+                    },
+                )
+                .expect_err("an attestation cannot decorate a miss");
+            assert!(
+                matches!(error, PrimitiveMachineError::AuthorityViolation { .. }),
+                "a dangling attestation is loud: {error:?}"
+            );
+
+            let publication = ctx
+                .finish(PrimitiveCompletion::MachineError(miss))
+                .expect("single completion transaction");
+            let reads = &publication.receipt.reads;
+            assert_eq!(reads.len(), 1, "the miss alone is witnessed: {reads:#?}");
+            assert_eq!(reads[0].observation, ReadObservation::Missing);
+            assert!(
+                reads[0].provenance.is_none(),
+                "the recorded miss stays undecorated"
+            );
+        }
+
         /// The world changing under an unchanged name is exactly what the
         /// harness rerun overlay simulates: without the overlay the path is
         /// missing (the recorded miss holds), with it the path exists (the

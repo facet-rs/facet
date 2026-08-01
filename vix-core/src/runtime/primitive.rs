@@ -982,9 +982,13 @@ impl EffectCtx {
     /// pinned bytes.
     ///
     /// The attestation names the serving read by (source, projection) and
-    /// lands on the most recent such witness still lacking provenance; a
-    /// dangling attestation (no matching witness) is an authority violation,
-    /// never a silent no-op.
+    /// lands on the most recent such witness that OBSERVED A VALUE and still
+    /// lacks provenance; a dangling attestation (no matching witness) is an
+    /// authority violation, never a silent no-op. A `Missing` (or kind, or
+    /// directory) witness is never decorated: nothing arrived, so nothing
+    /// was checked against a digest — a provenance claim on a miss would be
+    /// exactly the verification-that-never-happened this method exists to
+    /// make unrepresentable.
     ///
     /// r[impl machine.primitive.witness-reverification]
     pub fn attest_provenance(
@@ -1004,10 +1008,12 @@ impl EffectCtx {
             .find(|read| {
                 &read.source == source
                     && &read.projection == projection
+                    && matches!(read.observation, ReadObservation::Value(_))
                     && read.provenance.is_none()
             })
             .ok_or_else(|| PrimitiveMachineError::AuthorityViolation {
-                detail: "provenance attestation names no recorded witness".to_owned(),
+                detail: "provenance attestation names no recorded served-value witness"
+                    .to_owned(),
             })?;
         witness.provenance = Some(provenance);
         Ok(())
