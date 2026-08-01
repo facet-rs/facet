@@ -1,6 +1,6 @@
 +++
 title = "The origin rail"
-weight = 35
+weight = 36
 +++
 
 How the last residents of [issue #2597](https://github.com/facet-rs/facet/issues/2597)
@@ -106,8 +106,8 @@ or symlink targets — returning it from an enumeration would force eager
 materialization and defeat the lazy projection this verb exists for. The seam
 speaks a neutral `TreeEntryKind { File, Dir, Symlink }` (which is exactly what
 `FixtureEntryKind` already is, minus the backend's name): listings are
-`(name, TreeEntryKind)` rows, file bytes come from the file-bytes verb, and
-nothing is materialized that was not asked for.
+`(name, TreeEntryKind)` rows, file bytes come from the tree projection's
+file-bytes operation, and nothing is materialized that was not asked for.
 
 `machine.primitive.origin-verbs` pins this. The `tree-read`/`tree-glob`
 primitives then serve *any* lazily-backed tree through the seam — fixture
@@ -164,9 +164,10 @@ an **unpinned observation**, and its identity model says so.
 The rail therefore does not "fix" this — it *declares* it: the fixture adapter
 is the origin-rail backend whose trees are coordinate-identified and
 re-verified against live content, installed only by harnesses; and the
-`fixture-tree\0` sentinel becomes that adapter's declared coordinate encoding,
-spelled in exactly one place instead of today's four (`scheduler.rs`,
-`lowering.rs`, `ratchet.rs`, `fixture.rs`). Production trees remain
+`fixture-tree\0` sentinel becomes that adapter's declared tree-handle
+namespace, spelled once in the harness (plus its identity-pin test) instead
+of today's four independent copies (`scheduler.rs`, `lowering.rs`,
+`ratchet.rs`, `fixture.rs`). Production trees remain
 content-identified (`machine.identity.tree-model`), and nothing
 content-identified ever routes to the fixture adapter.
 
@@ -255,14 +256,14 @@ fixture uses leave; the rest are exec/tree-read/schema machinery that stays).
 
 1. **Identities survive.** Every existing fixture-using test (the ratchet
    rungs, `persistence_journal`, `solver_value_lane`, `fetch_origin`) passes
-   with unchanged value identities — the coordinate encoding moves, its bytes
+   with unchanged value identities — the handle encoding moves, its bytes
    do not. If any identity must change, it is called out à la the exec re-key,
    not discovered.
 2. **The oracle works through the seam.** The rerun-audit and
    persistence-journal suites pass with `reverify_read_witness` containing
    zero direct fixture calls.
 3. **Misses are witnessed.** A multi-origin fetch that falls through records
-   one `Missing`-observed witness per tried origin, pinned by test; the
+   one `Missing`-observed witness per tried coordinate, pinned by test; the
    upstream digest appears in the receipt beside the blake3.
 4. **No conjuring.** With no origin adapters installed, an origin read is a
    loud typed refusal naming the coordinate and the installed set — pinned
@@ -322,9 +323,10 @@ way the stage-2 build recorded its own:
   handle's coordinate in its adapter's space:
   `OriginAdapterSet::tree_handle_name` strips the owning *declared*
   namespace from the resident bytes, surfaced as
-  `EffectCtx::tree_handle_name` / `CodataDrainCtx::source_origin_name` —
-  so `fixture_tree_name` deleted and no primitive spells any backend's
-  namespace, with every projection string byte-identical.
+  `EffectCtx::tree_handle_name` / `CodataDrainCtx::source_routing` (whose
+  `Origin` arm carries the stripped name) — so `fixture_tree_name` deleted
+  and no primitive spells any backend's namespace, with every projection
+  string byte-identical.
 - **The manifest coordinate lives with the registry-url primitive.**
   `registry://manifest` (`REGISTRY_MANIFEST_COORDINATE`, declared once in
   `vixen-primitives`) is the primitive's contract: a registry capability's
