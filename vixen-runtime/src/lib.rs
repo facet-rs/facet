@@ -23,6 +23,7 @@
 
 pub mod budget;
 pub mod fixture;
+pub mod host_exec;
 pub mod manifest;
 pub mod module_graph;
 pub mod ratchet;

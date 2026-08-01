@@ -179,13 +179,16 @@ impl PrimitiveServices {
         self.origins.clone()
     }
 
-    /// The installed exec backend, or the host-trusting default — the current
-    /// behavior verbatim, whose receipts carry `Unverifiable` capability
-    /// witnesses (`machine.primitive.memo-policy`).
-    pub(crate) fn exec_backend(&self) -> Arc<dyn super::ExecBackend> {
-        self.exec_backend
-            .clone()
-            .unwrap_or_else(|| Arc::new(super::HostExecBackend))
+    /// The installed exec backend, or `None`. There is deliberately NO default:
+    /// `vix-core` declares the seam and ships no implementation of it, the same
+    /// as primitives and host types. A default here would mean the machine —
+    /// not the embedder — decided that vix spawns host processes, and it would
+    /// do so invisibly, for every caller that installed nothing. An embedder
+    /// that wants a process boundary installs one
+    /// (`vixen_runtime::host_exec::HostExecBackend`); one that does not gets a
+    /// loud typed failure at the first `exec`, never a silent spawn.
+    pub(crate) fn exec_backend(&self) -> Option<Arc<dyn super::ExecBackend>> {
+        self.exec_backend.clone()
     }
 }
 

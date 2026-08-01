@@ -25,6 +25,7 @@ use std::sync::Arc;
 
 use vix::runtime::PrimitiveServices;
 use vixen_runtime::fixture::FixtureStore;
+use vixen_runtime::host_exec::HostExecBackend;
 use vixen_runtime::ratchet::{RatchetReport, prepare_source};
 
 fn main() -> ExitCode {
@@ -42,12 +43,19 @@ fn main() -> ExitCode {
         }
     };
 
+    // The two authorities this CLI grants, both named here on purpose. `vix-core`
+    // ships neither: it declares the seams and lets the embedder decide. So the
+    // decision that running a `.vix` file may spawn host processes through
+    // `std::process::Command` is THIS FILE's, and swapping in a sandboxing
+    // backend later is a one-line change here rather than a change to the
+    // machine.
     let services = PrimitiveServices::default()
         .with_origin(
             FixtureStore::origin_decl(),
             Arc::new(FixtureStore::with_root(invocation.fixtures.clone())),
         )
-        .expect("one origin adapter cannot overlap itself");
+        .expect("one origin adapter cannot overlap itself")
+        .with_exec_backend(Arc::new(HostExecBackend));
 
     let report = match prepare_source(&source).and_then(|run| {
         run.execute_with_primitive_services(services)

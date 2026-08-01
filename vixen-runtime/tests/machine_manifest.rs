@@ -14,7 +14,7 @@
 use std::sync::{Arc, Mutex};
 
 use vix::runtime::{
-    EventLog, ExecBackend, ExecEventSender, ExecInvocation, ExecWorkspace, HostExecBackend,
+    EventLog, ExecBackend, ExecEventSender, ExecInvocation, ExecWorkspace,
     PrimitiveServices, Runtime,
 };
 use vixen_primitives::capability_package::Target;
@@ -57,7 +57,7 @@ impl ExecBackend for RecordingExecBackend {
             .lock()
             .expect("invocation recorder mutex poisoned")
             .push(invocation.clone());
-        HostExecBackend.begin(invocation, events)
+        vixen_runtime::host_exec::HostExecBackend.begin(invocation, events)
     }
 }
 
