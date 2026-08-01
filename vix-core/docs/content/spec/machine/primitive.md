@@ -194,7 +194,7 @@ primitives reference by identity.
 > rows — a neutral `File | Dir | Symlink` kind, never full `TreeEntry`s, which
 > would force eager materialization and defeat the lazy projection. No core
 > trait or type names a particular backend; `CodataDrainCtx::fixture_directory`
-> and `FixtureEntryKind` are the counterexamples this rule retires.
+> and `FixtureEntryKind` were the counterexamples this rule retired.
 
 > r[machine.primitive.witness-reverification]
 >
@@ -203,8 +203,8 @@ primitives reference by identity.
 > as the original read did (tree witnesses route by the source handle's
 > declared namespace), and the scheduler compares observations without
 > naming any backend (`Runtime::reverify_read_witness`'s direct fixture calls
-> are the counterexample). Misses are witnessed — today NONE are
-> (`ReadObservation::Missing` has no production site): a failed origin
+> were the counterexample this rule retired). Misses are witnessed — none
+> were before this rule landed: a failed origin
 > candidate records one `Missing` witness per tried coordinate, a tree read
 > that finds nothing (including an absent directory) records one for its
 > path, and a wrong-kind outcome is witnessed as the kind observation that

@@ -189,8 +189,8 @@ virtual-file overlay with it as declared harness data. What *stays* in core:
 the Tree representation layer currently sharing `fixture.rs` (`parse_ustar`,
 `tree_from_resident`, `canonical_resident_tree` — consumed by untar, glob,
 exec capture; the file splits), the `tree-read`/`tree-glob` contracts (exec's
-progressive machinery names them), and `binding::TREE` (of its ten core uses,
-only the two fixture ones leave).
+progressive machinery names them), and `binding::TREE` (only its two
+fixture uses leave; the rest are exec/tree-read/schema machinery that stays).
 
 ## Honest couplings, stated before they bite
 
@@ -267,9 +267,13 @@ only the two fixture ones leave).
 4. **No conjuring.** With no origin adapters installed, an origin read is a
    loud typed refusal naming the coordinate and the installed set — pinned
    against the silent-fixture-fallback failure mode.
-5. **Core is clean.** No `fixture` spelling in `vix-core/src` outside the
-   split-off Tree layer's history; `Intrinsic` gone; grep-zero for
-   `fixture-tree\0` outside the harness adapter.
+5. **Core is clean.** No *functional* `fixture` spelling in `vix-core/src` —
+   what remains is retirement history (reserve comments), the tombstone test
+   pinning that the names no longer resolve, and nothing else; `Intrinsic`
+   gone; `fixture-tree\0` spelled only in the harness adapter and the
+   identity-pin test that acceptance 1 itself mandates. (Wording amended
+   post-review: the original sentence claimed grep-zero, which the tombstone
+   test and identity pins legitimately contradict.)
 
 ## Staging
 
