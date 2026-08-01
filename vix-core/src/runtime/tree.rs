@@ -680,6 +680,17 @@ impl Tree {
         bytes.starts_with(CARRIER_MAGIC)
     }
 
+    /// Whether `bytes` and the carrier magic are prefix-related — i.e. some
+    /// byte string beginning with `bytes` is a carrier. Install-time
+    /// vocabulary: a declared tree-handle namespace that is a proper prefix
+    /// of the magic does not probe as content itself, but handles under it
+    /// could complete the magic and route as carriers instead of to their
+    /// adapter, so such a namespace is rejected at install.
+    #[must_use]
+    pub fn carrier_prefix_related(bytes: &[u8]) -> bool {
+        CARRIER_MAGIC.starts_with(bytes) || bytes.starts_with(CARRIER_MAGIC)
+    }
+
     fn decode_into(cursor: &mut &[u8], depth: u32) -> Result<Tree, TreeDecodeError> {
         // A forged carrier must not be able to blow the stack.
         const MAX_DEPTH: u32 = 256;
@@ -918,7 +929,7 @@ mod tests {
         let mut tree = Tree::new();
         for (path, entry) in entries {
             tree.insert_path(path, entry.clone())
-                .expect("test fixture path is well formed");
+                .expect("test sample path is well formed");
         }
         tree
     }
@@ -1329,7 +1340,7 @@ mod tests {
         let row = canonical.len() / 2;
         let mut swapped = canonical[row..].to_vec();
         swapped.extend_from_slice(&canonical[..row]);
-        assert_ne!(swapped, canonical, "the fixture actually reorders");
+        assert_ne!(swapped, canonical, "the sample actually reorders");
         assert_eq!(Tree::decode_canonical(&swapped), Err(TreeDecodeError));
     }
 
@@ -1348,7 +1359,7 @@ mod tests {
     /// lets `untar` intern canonical bytes without changing any identity: the
     /// carrier and the canonical form decode to one value with one hash.
     ///
-    /// (The ustar leg lives in `fixture::tests`, where the archive writer is.)
+    /// (The ustar leg lives in `tree_resident::tests`, beside the sample archive.)
     ///
     /// r[verify machine.identity.tree-model]
     #[test]

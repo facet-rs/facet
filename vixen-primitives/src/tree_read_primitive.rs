@@ -4,8 +4,8 @@ use vix::vir::{ExternKind, Type};
 use crate::rt::{
     EffectCtx, PrimitiveCompletion, PrimitiveDescriptor, PrimitiveField, PrimitiveFieldValue,
     PrimitiveMachineError, PrimitiveMemoPolicy, PrimitiveValue, PrimitiveValueBody,
-    RawEffectTicket, RawPrimitive, ReadProjection, ValueId, fixture_tree_name,
-    tree_read_primitive_id, tree_read_request_type,
+    RawEffectTicket, RawPrimitive, ReadProjection, ValueId, tree_read_primitive_id,
+    tree_read_request_type,
 };
 
 pub struct TreeReadPrimitive {
@@ -67,9 +67,14 @@ fn execute(request: &ValueId, ctx: &EffectCtx) -> Result<ValueId, PrimitiveMachi
     let tree_bytes = bytes(&tree)?;
     let path = core::str::from_utf8(bytes(&path)?)
         .map_err(|_| invalid_value("tree-read path was not UTF-8"))?;
-    let projection = if let Some(name) = fixture_tree_name(tree_bytes) {
-        let name = core::str::from_utf8(name)
-            .map_err(|_| invalid_value("fixture tree name was not UTF-8"))?;
+    // An origin-backed tree's projections are name-relative: the seam derives
+    // the handle's adapter-relative name from the installed declarations, and
+    // the read path is spelled `<name>/<path>` — a witness names its subject
+    // in the owning adapter's coordinate space, and this primitive names no
+    // backend. A content-identified tree projects by bare path.
+    let projection = if let Some(name) = ctx.tree_handle_name(tree_bytes) {
+        let name = core::str::from_utf8(&name)
+            .map_err(|_| invalid_value("origin tree name was not UTF-8"))?;
         format!("{name}/{path}")
     } else {
         path.to_owned()

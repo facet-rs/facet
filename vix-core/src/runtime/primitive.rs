@@ -458,6 +458,16 @@ pub trait EffectAuthority: Send + Sync {
     fn exec_backend(&self) -> Option<Arc<dyn super::ExecBackend>> {
         None
     }
+
+    /// The adapter-relative name of a lazily-backed tree handle under this
+    /// snapshot's installed origin declarations, or `None` when the resident
+    /// bytes are content-identified or unclaimed
+    /// ([`super::OriginAdapterSet::tree_handle_name`]). The default is a
+    /// snapshot with no origins, which claims no handle.
+    fn tree_handle_name(&self, resident: &[u8]) -> Option<Vec<u8>> {
+        let _ = resident;
+        None
+    }
 }
 
 #[derive(Default)]
@@ -644,16 +654,14 @@ impl EffectAuthority for StagedEffectAuthority {
                 observation: ReadObservation::Value(identity),
             });
         }
-        if let ReadProjection::RegistryManifest = projection {
-            if value.schema != Type::Extern(crate::vir::ExternKind::Registry).schema_ref() {
-                return Err(PrimitiveMachineError::AuthorityViolation {
-                    detail: "registry-manifest read source was not a Registry".to_owned(),
-                });
-            }
-            // The manifest is an ordinary coordinate read through the declared
-            // set (the projection variant retires in stage 3 of the origin
-            // rail); the Registry source is its own capability.
-            let coordinate = super::REGISTRY_MANIFEST_COORDINATE;
+        if let ReadProjection::Origin { coordinate } = projection {
+            // An unpinned coordinate read: the source value is its own
+            // capability, routing is a lookup over the declared set, and the
+            // served text is witnessed as a String-framed observation (the
+            // registry manifest is today's one consumer). Pinned binary
+            // transfers ride `origin_candidate`, which frames by the pin;
+            // re-verification frames by the recorded observation's own
+            // schema, so the two coexist on one projection vocabulary.
             let bytes = self
                 .origins
                 .route_coordinate(source, coordinate)?
@@ -755,6 +763,10 @@ impl EffectAuthority for StagedEffectAuthority {
 
     fn exec_backend(&self) -> Option<Arc<dyn super::ExecBackend>> {
         self.exec_backend.clone()
+    }
+
+    fn tree_handle_name(&self, resident: &[u8]) -> Option<Vec<u8>> {
+        self.origins.tree_handle_name(resident)
     }
 }
 
@@ -970,9 +982,13 @@ impl EffectCtx {
     /// pinned bytes.
     ///
     /// The attestation names the serving read by (source, projection) and
-    /// lands on the most recent such witness still lacking provenance; a
-    /// dangling attestation (no matching witness) is an authority violation,
-    /// never a silent no-op.
+    /// lands on the most recent such witness that OBSERVED A VALUE and still
+    /// lacks provenance; a dangling attestation (no matching witness) is an
+    /// authority violation, never a silent no-op. A `Missing` (or kind, or
+    /// directory) witness is never decorated: nothing arrived, so nothing
+    /// was checked against a digest — a provenance claim on a miss would be
+    /// exactly the verification-that-never-happened this method exists to
+    /// make unrepresentable.
     ///
     /// r[impl machine.primitive.witness-reverification]
     pub fn attest_provenance(
@@ -992,10 +1008,12 @@ impl EffectCtx {
             .find(|read| {
                 &read.source == source
                     && &read.projection == projection
+                    && matches!(read.observation, ReadObservation::Value(_))
                     && read.provenance.is_none()
             })
             .ok_or_else(|| PrimitiveMachineError::AuthorityViolation {
-                detail: "provenance attestation names no recorded witness".to_owned(),
+                detail: "provenance attestation names no recorded served-value witness"
+                    .to_owned(),
             })?;
         witness.provenance = Some(provenance);
         Ok(())
@@ -1012,6 +1030,15 @@ impl EffectCtx {
             .ok_or_else(|| PrimitiveMachineError::Unavailable {
                 detail: "no exec backend is installed for this effect snapshot".to_owned(),
             })
+    }
+
+    /// The adapter-relative name of a lazily-backed tree handle
+    /// ([`EffectAuthority::tree_handle_name`]): how a primitive spells an
+    /// origin-backed tree's name-relative projection paths (`<name>/<path>`)
+    /// without knowing any backend's namespace.
+    #[must_use]
+    pub fn tree_handle_name(&self, resident: &[u8]) -> Option<Vec<u8>> {
+        self.authority.tree_handle_name(resident)
     }
 
     pub fn observe(&self, observation: JournalObservation) {
@@ -1084,7 +1111,7 @@ pub trait FromRef<Ctx> {
 /// `fetch`/`observe`. This is deliberately a generic `impl … for ()` rather than
 /// the reflexive `impl<T: Clone> FromRef<T> for T` (whole-context-as-its-own-dep):
 /// the two overlap at `Ctx = ()`, and it is `()`-deps agnosticism the built-in
-/// primitives actually rely on. Concrete slices (`PgPool`, a fixture store, …)
+/// primitives actually rely on. Concrete slices (`PgPool`, an offline store, …)
 /// name their own `impl FromRef<Ctx>` per embedder context, the way the
 /// `from_ref_tests` `FakePool` does.
 impl<Ctx> FromRef<Ctx> for () {
@@ -1489,7 +1516,7 @@ pub enum PrimitiveDispatchError {
 /// scheduler owns the concrete implementation (it holds the installed origin
 /// backends and the read log); the primitive sees only this trait, and the
 /// trait names no backend (`machine.primitive.origin-verbs` retires the
-/// fixture-named method this one replaces).
+/// backend-named method this one replaces).
 pub trait CodataDrainCtx {
     /// The resident bytes of the stream's source value (e.g. the `Tree` a glob
     /// matches against). For a lazily-backed tree these are its opaque handle
@@ -1506,6 +1533,29 @@ pub trait CodataDrainCtx {
         &mut self,
         projection: &str,
     ) -> Result<Vec<(String, super::TreeEntryKind)>, PrimitiveMachineError>;
+
+    /// Route the source under the installed origin declarations
+    /// ([`super::OriginAdapterSet::route_tree`]): a content-identified source
+    /// enumerates its own bytes, an origin-backed handle carries its
+    /// adapter-relative name (projections are name-relative,
+    /// `<name>/<path>`, and the seam — not the primitive — derives the
+    /// name), and an **unclaimed handle is the loud typed refusal** — never
+    /// a fall-through into content enumeration, whose parse failure would be
+    /// the confusing lie the routing rule bans.
+    ///
+    /// r[impl machine.primitive.origin-routing]
+    fn source_routing(&self) -> Result<DrainSourceRouting, PrimitiveMachineError>;
+}
+
+/// How a codata drain's source routes — the owned answer to
+/// [`super::TreeRouting`] for drains, which need the adapter-relative name
+/// rather than the installation borrow.
+pub enum DrainSourceRouting {
+    /// The resident bytes carry the tree's own members; enumerate directly.
+    ContentIdentified,
+    /// A lazily-backed handle owned by an installed adapter's declared
+    /// namespace: its adapter-relative name (the namespace stripped).
+    Origin { name: Vec<u8> },
 }
 
 /// A registered producer of effect codata. Unlike [`RawPrimitive`], a codata

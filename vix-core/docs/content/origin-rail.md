@@ -1,6 +1,6 @@
 +++
 title = "The origin rail"
-weight = 35
+weight = 36
 +++
 
 How the last residents of [issue #2597](https://github.com/facet-rs/facet/issues/2597)
@@ -106,8 +106,8 @@ or symlink targets — returning it from an enumeration would force eager
 materialization and defeat the lazy projection this verb exists for. The seam
 speaks a neutral `TreeEntryKind { File, Dir, Symlink }` (which is exactly what
 `FixtureEntryKind` already is, minus the backend's name): listings are
-`(name, TreeEntryKind)` rows, file bytes come from the file-bytes verb, and
-nothing is materialized that was not asked for.
+`(name, TreeEntryKind)` rows, file bytes come from the tree projection's
+file-bytes operation, and nothing is materialized that was not asked for.
 
 `machine.primitive.origin-verbs` pins this. The `tree-read`/`tree-glob`
 primitives then serve *any* lazily-backed tree through the seam — fixture
@@ -164,9 +164,10 @@ an **unpinned observation**, and its identity model says so.
 The rail therefore does not "fix" this — it *declares* it: the fixture adapter
 is the origin-rail backend whose trees are coordinate-identified and
 re-verified against live content, installed only by harnesses; and the
-`fixture-tree\0` sentinel becomes that adapter's declared coordinate encoding,
-spelled in exactly one place instead of today's four (`scheduler.rs`,
-`lowering.rs`, `ratchet.rs`, `fixture.rs`). Production trees remain
+`fixture-tree\0` sentinel becomes that adapter's declared tree-handle
+namespace, spelled once in the harness (plus its identity-pin test) instead
+of today's four independent copies (`scheduler.rs`, `lowering.rs`,
+`ratchet.rs`, `fixture.rs`). Production trees remain
 content-identified (`machine.identity.tree-model`), and nothing
 content-identified ever routes to the fixture adapter.
 
@@ -255,14 +256,14 @@ fixture uses leave; the rest are exec/tree-read/schema machinery that stays).
 
 1. **Identities survive.** Every existing fixture-using test (the ratchet
    rungs, `persistence_journal`, `solver_value_lane`, `fetch_origin`) passes
-   with unchanged value identities — the coordinate encoding moves, its bytes
+   with unchanged value identities — the handle encoding moves, its bytes
    do not. If any identity must change, it is called out à la the exec re-key,
    not discovered.
 2. **The oracle works through the seam.** The rerun-audit and
    persistence-journal suites pass with `reverify_read_witness` containing
    zero direct fixture calls.
 3. **Misses are witnessed.** A multi-origin fetch that falls through records
-   one `Missing`-observed witness per tried origin, pinned by test; the
+   one `Missing`-observed witness per tried coordinate, pinned by test; the
    upstream digest appears in the receipt beside the blake3.
 4. **No conjuring.** With no origin adapters installed, an origin read is a
    loud typed refusal naming the coordinate and the installed set — pinned
@@ -294,3 +295,61 @@ fixture uses leave; the rest are exec/tree-read/schema machinery that stays).
    surface spellings ride the injected rail.
 4. **Follow-ups** — `Registry` as host type; `fetch`'s capability-role
    alignment; whatever stage 2 surfaces.
+
+## Stage-3 precisions, from the build
+
+Five places where the move forced the design to commit, recorded here the
+way the stage-2 build recorded its own:
+
+- **The injected rail's fixture half is a *constant-surface* rail.** The
+  surfaces could not ride the primitive rail: `fixture_tree`'s value is a
+  compile-time constant (a `Tree`-framed coordinate handle), not an
+  invocation. The mechanism is `binding::ConstantSurfaceDecl` on
+  `CompilerConfig::constants` — name, literal-only string parameters,
+  declared result type, declared byte encoding — lowered to the one generic
+  `Op::DeclaredConst { bytes, root }` (fresh ordinal 103). The declaration
+  also carries its **publication shape** (`root`), because the two ops
+  occupied different shapes — `fixture_registry` was its own effect island,
+  `fixture_tree` an in-frame realized constant — and identity survival
+  covered structure, not just bytes. The literal-argument constraint is the
+  declaration's own vocabulary, checked at lowering with the surface's name
+  in the diagnostic, exactly as amended. `WireArg::FixtureTree`
+  retires-and-reserves (slot 2) behind the generic
+  `WireArg::Constant { schema, bytes }`.
+- **Tree projections stay name-relative, and the seam derives the name.**
+  The alternative (handle-relative paths) would have re-keyed every tree
+  witness and broken the receipts band's path vocabulary
+  (`never_read(p"small-crate/src/lib.rs")`). Instead the name IS the
+  handle's coordinate in its adapter's space:
+  `OriginAdapterSet::tree_handle_name` strips the owning *declared*
+  namespace from the resident bytes, surfaced as
+  `EffectCtx::tree_handle_name` / `CodataDrainCtx::source_routing` (whose
+  `Origin` arm carries the stripped name) — so `fixture_tree_name` deleted
+  and no primitive spells any backend's namespace, with every projection
+  string byte-identical.
+- **The manifest coordinate lives with the registry-url primitive.**
+  `registry://manifest` (`REGISTRY_MANIFEST_COORDINATE`, declared once in
+  `vixen-primitives`) is the primitive's contract: a registry capability's
+  manifest is served by whichever installed adapter claims the `registry`
+  scheme and admits the Registry capability — the fixture adapter declares
+  both, which is how the transitional core const folded into the
+  declaration. Recorded limitation: scheme routing cannot tell two
+  registries apart, exactly as the retired projection could not; resolves
+  with the `Registry`-as-host-type follow-up. Coordinate re-verification
+  now frames served bytes by the recorded observation's own schema — the
+  witness identity defines its own claim — so pinned (Blob-framed) and
+  unpinned (String-framed) coordinate witnesses share one audit arm.
+- **`fetches_performed` scoped to pinned publications.** The counter
+  equated "an `Origin` witness" with "a fetch", which was true only while
+  fetch was the projection's sole producer; the manifest read would have
+  counted. A fetch is a *pinned* transfer against an origin, and the
+  counter now says so (`memo_policy == Pinned`).
+- **Journal format 2.** The witness vocabulary changed twice over
+  (`RegistryManifest` retired; the directory-observation hash domain moved
+  off its backend-named `vix.fixture.…` tag onto `vix.origin.….v2`), and a
+  journal is a cache: older journals are intentionally invalidated.
+
+Acceptance 1's evidence is pinned in `vixen-runtime/tests/fixture_identity.rs`:
+the lowered constants' bytes, framings, and publication shapes are asserted
+against the retired ops' exactly, and both value identities are pinned as hex
+literals captured from the pre-move pipeline.

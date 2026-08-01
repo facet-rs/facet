@@ -3,9 +3,9 @@
 //! or the canonical form; everything here decodes any of them to the one
 //! semantic value, so identity is representation-independent
 //! (`machine.identity.tree-model`). Consumed by the untar/tree-glob/exec
-//! primitives and the scheduler — this is value-model machinery, not harness
-//! fixture code, which is why it lives beside `tree.rs` rather than in
-//! `fixture.rs`.
+//! primitives and the scheduler — this is value-model machinery, not any
+//! backend's code, which is why it lives beside `tree.rs` rather than with
+//! the harness's store.
 
 use super::tree::{Tree, TreeEntry, TreeError};
 
@@ -176,7 +176,7 @@ pub fn tree_from_members(members: Vec<TarMember>) -> Result<Tree, TreeError> {
 
 /// The semantic [`Tree`] of a value's resident bytes, in any representation.
 ///
-/// Trees used to live at runtime as ustar bytes, and fixtures still ship that
+/// Trees used to live at runtime as ustar bytes, and harness data still ships that
 /// way; the carrier is what a producer inside the machine writes; the canonical
 /// form is what a producer *outside* it writes, since a primitive can only
 /// intern bytes it is willing to have hashed (see `Tree::decode_canonical`). All
@@ -201,15 +201,48 @@ pub fn tree_from_resident(bytes: &[u8]) -> Result<Tree, ResidentTreeError> {
     tree_from_members(members).map_err(ResidentTreeError::Model)
 }
 
-/// Whether resident bytes are a content-identified tree — a carrier, the
-/// canonical form, or a ustar archive — as opposed to an opaque lazily-backed
-/// handle owned by an origin adapter's declared namespace. Content-identified
-/// trees carry their own members and never route to any origin backend
-/// (`machine.primitive.origin-routing`); the three forms are disjoint from
-/// handle namespaces on their leading bytes, so recognition is total.
+/// The ustar magic at byte offset 257 of the first header block. Recognition
+/// vocabulary only — [`parse_ustar`] validates structurally; every producer
+/// this machine admits (GNU/POSIX tar, the harness's shipped archives)
+/// writes the magic.
+const USTAR_MAGIC_OFFSET: usize = 257;
+const USTAR_MAGIC: &[u8] = b"ustar";
+
+/// Whether resident bytes are RECOGNIZED as a content-identified tree — a
+/// carrier, the canonical form, or a ustar archive — as opposed to an opaque
+/// lazily-backed handle owned by an origin adapter's declared namespace
+/// (`machine.primitive.origin-routing`: content-identified trees never route
+/// to any backend).
+///
+/// Recognition is by cheap markers, deliberately NOT by parsing:
+/// - the carrier magic (`vix-tree\0\x01`) at offset 0;
+/// - a canonical entry tag (byte 0/1/2) first — including the empty
+///   canonical encoding (empty bytes ARE the empty tree);
+/// - the ustar magic (`ustar`) at offset 257.
+///
+/// What the markers do and do not guarantee: recognition claims only "this
+/// routes as content, never to an adapter" — a recognized resident that then
+/// fails to PARSE is a loud malformed-content error, not a handle to retry
+/// against a backend. Marker recognition and handle namespaces stay disjoint
+/// because `OriginAdapterSet::install` REJECTS a declared namespace that
+/// carries a content marker or prefixes the carrier magic
+/// (`OriginInstallError::ContentMarkedNamespace`); the one residual overlap
+/// — a handle whose NAME stretches past offset 257 and spells `ustar` there
+/// — routes as content and dies loudly as malformed content, the naming
+/// author's own doing. What the seam DOES guarantee is that a routing
+/// decision costs a marker probe, not a full archive parse — and that a
+/// content read parses once, not twice (route, then read), which full-parse
+/// recognition used to do.
 #[must_use]
 pub fn is_content_identified_tree(bytes: &[u8]) -> bool {
-    tree_from_resident(bytes).is_ok()
+    if Tree::is_carrier(bytes) {
+        return true;
+    }
+    if matches!(bytes.first(), None | Some(0..=2)) {
+        return true;
+    }
+    bytes.len() >= USTAR_MAGIC_OFFSET + USTAR_MAGIC.len()
+        && &bytes[USTAR_MAGIC_OFFSET..USTAR_MAGIC_OFFSET + USTAR_MAGIC.len()] == USTAR_MAGIC
 }
 
 /// Canonical tree identity material, derived from the semantic [`Tree`] rather
@@ -230,17 +263,19 @@ pub fn canonical_resident_tree(bytes: &[u8]) -> Result<Vec<u8>, ResidentTreeErro
 
 #[cfg(test)]
 mod tests {
-    use super::super::fixture::FixtureStore;
     use super::*;
 
+    /// A real 4096-byte plain-tar archive (one `Cargo.toml` member), checked
+    /// in as core test data: the ustar/carrier machinery is core's, so its
+    /// sample bytes are too. The harness ships the same archive in its own
+    /// registry data, pinned by hash there.
+    const SAMPLE_ARCHIVE: &[u8] = include_bytes!("testdata/tokio-1.52.3.tar");
+
     #[test]
-    fn parses_the_fixture_archive() {
-        let store = FixtureStore::default();
-        let bytes = store
-            .fetch_url("fixture://registry/tokio-1.52.3.crate")
-            .expect("fixture archive resolves");
+    fn parses_the_sample_archive() {
+        let bytes = SAMPLE_ARCHIVE;
         assert_eq!(bytes.len(), 4096);
-        let members = parse_ustar(&bytes).expect("fixture archive parses");
+        let members = parse_ustar(bytes).expect("sample archive parses");
         assert_eq!(members.len(), 1);
         let TarMember::File {
             path,
@@ -248,7 +283,7 @@ mod tests {
             executable,
         } = &members[0]
         else {
-            panic!("fixture archive holds one file");
+            panic!("sample archive holds one file");
         };
         assert_eq!(path, "Cargo.toml");
         assert!(!executable);
@@ -268,11 +303,7 @@ mod tests {
     /// r[verify machine.identity.tree-model]
     #[test]
     fn resident_tree_identity_is_representation_independent() {
-        let store = FixtureStore::default();
-        let archive = store
-            .fetch_url("fixture://registry/tokio-1.52.3.crate")
-            .expect("fixture archive resolves");
-        let from_archive = tree_from_resident(&archive).expect("archive describes a tree");
+        let from_archive = tree_from_resident(SAMPLE_ARCHIVE).expect("archive describes a tree");
         let from_carrier =
             tree_from_resident(&from_archive.encode()).expect("carrier describes a tree");
         assert_eq!(from_archive, from_carrier, "same tree, either way in");
@@ -283,16 +314,56 @@ mod tests {
         );
     }
 
+    /// r[verify machine.primitive.origin-routing] — content recognition is a
+    /// marker probe, and it recognizes every legitimate representation while
+    /// refusing opaque handle bytes: the three content forms route as
+    /// content, a namespaced handle does not.
+    #[test]
+    fn content_recognition_is_by_marker_and_refuses_handle_bytes() {
+        // All three legitimate representations of the same tree.
+        let tree = tree_from_resident(SAMPLE_ARCHIVE).expect("archive describes a tree");
+        assert!(is_content_identified_tree(SAMPLE_ARCHIVE), "ustar magic");
+        assert!(is_content_identified_tree(&tree.encode()), "carrier magic");
+        assert!(
+            is_content_identified_tree(&tree.encode_canonical()),
+            "canonical tag byte"
+        );
+        // The empty canonical encoding IS the empty tree.
+        assert!(is_content_identified_tree(b""));
+
+        // An opaque handle in a declared-namespace shape is NOT content —
+        // it must route to (or refuse through) the adapter set, never fall
+        // into content enumeration.
+        assert!(!is_content_identified_tree(b"sample-tree\0small-crate"));
+    }
+
+    /// Recognition is not validation: bytes wearing the ustar marker but
+    /// failing to parse are a RECOGNIZED, malformed content tree — a loud
+    /// parse error, never an unclaimed handle silently retried against a
+    /// backend.
+    #[test]
+    fn a_marked_but_malformed_resident_is_malformed_content_not_a_handle() {
+        let mut forged = vec![b'x'; 512];
+        forged[257..262].copy_from_slice(b"ustar");
+        assert!(
+            is_content_identified_tree(&forged),
+            "the marker recognizes it as content"
+        );
+        assert!(
+            matches!(
+                tree_from_resident(&forged),
+                Err(ResidentTreeError::Malformed)
+            ),
+            "and the parse rejects it loudly"
+        );
+    }
+
     /// A carrier is recognized by its magic, so a reader can accept both
     /// representations without guessing.
     #[test]
     fn a_ustar_archive_is_not_mistaken_for_a_carrier() {
-        let store = FixtureStore::default();
-        let archive = store
-            .fetch_url("fixture://registry/tokio-1.52.3.crate")
-            .expect("fixture archive resolves");
-        assert!(!Tree::is_carrier(&archive));
-        let tree = tree_from_resident(&archive).expect("archive describes a tree");
+        assert!(!Tree::is_carrier(SAMPLE_ARCHIVE));
+        let tree = tree_from_resident(SAMPLE_ARCHIVE).expect("archive describes a tree");
         assert!(Tree::is_carrier(&tree.encode()));
     }
 

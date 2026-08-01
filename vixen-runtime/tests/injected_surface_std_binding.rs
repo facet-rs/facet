@@ -40,6 +40,10 @@ fn injected_grab_surface() -> PrimitiveSurface {
 fn grab_compiler() -> Compiler {
     Compiler::with_config(CompilerConfig {
         methods: TEST_METHODS,
+        // The harness constant declarations, so the test programs can spell
+        // their Registry source (`fixture_registry()` is an injected constant
+        // surface now, not a core binding).
+        constants: vixen_runtime::fixture::FIXTURE_CONSTANTS,
         ..CompilerConfig::default()
     })
     .with_primitive_surfaces([injected_grab_surface()])

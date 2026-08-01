@@ -4,8 +4,8 @@
 //! (`machine.primitive.effect-backend-service`). This module owns the seam's
 //! vocabulary — the [`OriginAdapter`] trait's two verbs, the declarations that
 //! route requests to installed adapters, and the structured failure taxonomy —
-//! and none of it names a particular backend: the fixture store and the HTTP
-//! transport are two entries in the same declared set.
+//! and none of it names a particular backend: the harness's offline store and
+//! the HTTP transport are two entries in the same declared set.
 //!
 //! Routing is a lookup over declarations, not a sniff: each installed adapter
 //! states the coordinate schemes it serves, the capability schema it admits,
@@ -24,15 +24,6 @@ use crate::schema::SchemaPattern;
 
 use super::model::TreeEntryKind;
 use super::{PrimitiveMachineError, ValueId};
-
-/// The transitional coordinate the offline registry manifest is served at.
-///
-/// `ReadProjection::RegistryManifest` predates the seam; until it
-/// retires-and-reserves (stage 3 of the origin rail), the machine resolves it
-/// as an ordinary coordinate read at this one spelling, routed through the
-/// declared adapter set like any other coordinate. This constant is the only
-/// place the machine spells it.
-pub(crate) const REGISTRY_MANIFEST_COORDINATE: &str = "fixture://registry/manifest";
 
 /// Why a coordinate read could not be served. The three answers are the
 /// origin taxonomy and they are deliberately different: a miss may fall
@@ -126,7 +117,7 @@ pub trait OriginAdapter: Send + Sync {
 /// r[impl machine.primitive.origin-routing]
 #[derive(Clone, Debug)]
 pub struct OriginAdapterDecl {
-    /// Diagnostic name, spoken by refusals ("fixture", "http-blob").
+    /// Diagnostic name, spoken by refusals ("offline", "http-blob").
     pub name: String,
     /// The coordinate schemes served — the part of a coordinate before
     /// `://`. Each scheme may be claimed by at most one installed adapter.
@@ -136,9 +127,9 @@ pub struct OriginAdapterDecl {
     /// adapter.
     pub capability: SchemaPattern,
     /// The tree-handle namespace this adapter owns: a byte prefix of the
-    /// handle residents of the lazily-backed trees it serves (the fixture
-    /// adapter declares `fixture-tree\0`). `None` for adapters that serve no
-    /// trees. Namespaces of installed adapters may not be prefix-related.
+    /// handle residents of the lazily-backed trees it serves (a harness
+    /// adapter might declare `sample-tree\0`). `None` for adapters that serve
+    /// no trees. Namespaces of installed adapters may not be prefix-related.
     pub tree_namespace: Option<Vec<u8>>,
 }
 
@@ -174,6 +165,27 @@ pub enum OriginInstallError {
     /// Two adapters declared prefix-related tree namespaces (equal namespaces
     /// included): a handle in the longer namespace would be claimed by both.
     NamespaceOverlap { first: String, second: String },
+    /// A declaration claimed the EMPTY tree namespace. The empty prefix
+    /// matches every non-content handle, so it is a wildcard claim that
+    /// would defeat the unclaimed-handle refusal — degenerate, not a
+    /// namespace.
+    EmptyNamespace { name: String },
+    /// A declaration's tree namespace carries a content-identified tree
+    /// marker — the carrier magic, a canonical entry tag byte, ustar-length
+    /// bytes with the magic in place — or is a prefix of the carrier magic
+    /// that handles could complete. Content recognition runs before
+    /// namespace routing, so such a namespace's handles would route as
+    /// content (and die as malformed content) instead of reaching their
+    /// adapter: a claim no handle could ever ride.
+    ContentMarkedNamespace { name: String },
+    /// A declaration listed an empty scheme string: no coordinate spells the
+    /// empty scheme, so the entry is unreachable — and an unreachable claim
+    /// in the declared set is a configuration lie.
+    EmptyScheme { name: String },
+    /// A declaration listed the same scheme twice: routing over the set must
+    /// be a function of the declarations, and a self-duplicate is the same
+    /// degenerate shape as a cross-adapter double claim.
+    SelfDuplicateScheme { name: String, scheme: String },
 }
 
 impl core::fmt::Display for OriginInstallError {
@@ -192,6 +204,25 @@ impl core::fmt::Display for OriginInstallError {
                 formatter,
                 "origin adapters \"{first}\" and \"{second}\" declare prefix-related \
                  tree-handle namespaces"
+            ),
+            Self::EmptyNamespace { name } => write!(
+                formatter,
+                "origin adapter \"{name}\" declares the empty tree-handle namespace, \
+                 a wildcard claim over every non-content handle"
+            ),
+            Self::ContentMarkedNamespace { name } => write!(
+                formatter,
+                "origin adapter \"{name}\" declares a tree-handle namespace carrying a \
+                 content-identified tree marker — its handles would route as content, \
+                 never to the adapter"
+            ),
+            Self::EmptyScheme { name } => write!(
+                formatter,
+                "origin adapter \"{name}\" declares an empty coordinate scheme"
+            ),
+            Self::SelfDuplicateScheme { name, scheme } => write!(
+                formatter,
+                "origin adapter \"{name}\" declares coordinate scheme \"{scheme}\" twice"
             ),
         }
     }
@@ -219,13 +250,53 @@ pub struct OriginAdapterSet {
 }
 
 impl OriginAdapterSet {
-    /// Install one adapter under its declaration, rejecting overlap with the
-    /// already-installed set.
+    /// Install one adapter under its declaration, rejecting a degenerate
+    /// declaration and overlap with the already-installed set.
+    ///
+    /// r[impl machine.primitive.origin-routing]
     pub fn install(
         &mut self,
         decl: OriginAdapterDecl,
         adapter: Arc<dyn OriginAdapter>,
     ) -> Result<(), OriginInstallError> {
+        // Degenerate declarations first: an empty namespace is a wildcard
+        // claim over every non-content handle (`starts_with(&[])` is always
+        // true) that would defeat the unclaimed refusal; an empty scheme is
+        // unreachable; a self-duplicate scheme is a double claim with one
+        // author. Rejected for the same reason overlaps are — routing must
+        // be a function of the declaration set, not of what slipped past it.
+        if let Some(namespace) = &decl.tree_namespace {
+            if namespace.is_empty() {
+                return Err(OriginInstallError::EmptyNamespace {
+                    name: decl.name.clone(),
+                });
+            }
+            // Content recognition runs before namespace routing
+            // (`route_tree`), so a namespace that probes as content — or
+            // that is a prefix of the carrier magic and could therefore mint
+            // carrier-marked handles — is a claim its adapter would never be
+            // consulted for.
+            if super::tree_resident::is_content_identified_tree(namespace)
+                || super::tree::Tree::carrier_prefix_related(namespace)
+            {
+                return Err(OriginInstallError::ContentMarkedNamespace {
+                    name: decl.name.clone(),
+                });
+            }
+        }
+        for (index, scheme) in decl.schemes.iter().enumerate() {
+            if scheme.is_empty() {
+                return Err(OriginInstallError::EmptyScheme {
+                    name: decl.name.clone(),
+                });
+            }
+            if decl.schemes[..index].contains(scheme) {
+                return Err(OriginInstallError::SelfDuplicateScheme {
+                    name: decl.name.clone(),
+                    scheme: scheme.clone(),
+                });
+            }
+        }
         for installed in &self.entries {
             for scheme in &decl.schemes {
                 if installed.decl.schemes.contains(scheme) {
@@ -349,6 +420,28 @@ impl OriginAdapterSet {
             ),
         })
     }
+
+    /// The adapter-relative name of a lazily-backed tree handle: its resident
+    /// bytes with the owning adapter's declared namespace stripped. `None`
+    /// for content-identified trees and unclaimed handles.
+    ///
+    /// This is what makes tree projections **name-relative** without any
+    /// primitive knowing a backend: an origin-backed tree's projection paths
+    /// are spelled `<name>/<path>` — the witness names its subject in the
+    /// owning adapter's coordinate space — and the *seam* derives the name
+    /// from the declaration set, so no primitive spells any namespace.
+    ///
+    /// r[impl machine.primitive.origin-verbs]
+    #[must_use]
+    pub fn tree_handle_name(&self, resident: &[u8]) -> Option<Vec<u8>> {
+        match self.route_tree(resident) {
+            TreeRouting::Origin(installation) => {
+                let namespace = installation.decl.tree_namespace.as_ref()?;
+                Some(resident[namespace.len()..].to_vec())
+            }
+            TreeRouting::ContentIdentified | TreeRouting::Unclaimed(_) => None,
+        }
+    }
 }
 
 /// Fold an adapter's coordinate-read answer into the machine error channel.
@@ -424,15 +517,15 @@ mod tests {
     #[test]
     fn a_scheme_claimed_twice_is_rejected_at_install_time() {
         let mut set = OriginAdapterSet::default();
-        set.install(decl("first", &["fixture"], None), Arc::new(NullAdapter))
+        set.install(decl("first", &["offline"], None), Arc::new(NullAdapter))
             .expect("first install succeeds");
         assert_eq!(
             set.install(
-                decl("second", &["https", "fixture"], None),
+                decl("second", &["https", "offline"], None),
                 Arc::new(NullAdapter)
             ),
             Err(OriginInstallError::SchemeClaimedTwice {
-                scheme: "fixture".to_owned(),
+                scheme: "offline".to_owned(),
                 first: "first".to_owned(),
                 second: "second".to_owned(),
             })
@@ -444,14 +537,14 @@ mod tests {
     fn prefix_related_namespaces_are_rejected_at_install_time() {
         let mut set = OriginAdapterSet::default();
         set.install(
-            decl("first", &["a"], Some(b"fixture-tree\0")),
+            decl("first", &["a"], Some(b"sample-tree\0")),
             Arc::new(NullAdapter),
         )
         .expect("first install succeeds");
         // A strict prefix of an installed namespace: every handle the
         // installed adapter owns would also be claimed by this one.
         assert_eq!(
-            set.install(decl("second", &["b"], Some(b"fixture")), Arc::new(NullAdapter)),
+            set.install(decl("second", &["b"], Some(b"sample")), Arc::new(NullAdapter)),
             Err(OriginInstallError::NamespaceOverlap {
                 first: "first".to_owned(),
                 second: "second".to_owned(),
@@ -465,11 +558,87 @@ mod tests {
         .expect("a disjoint namespace installs");
     }
 
+    /// r[verify machine.primitive.origin-routing] — the empty namespace is a
+    /// wildcard claim over every non-content handle; admitted, it would
+    /// defeat the unclaimed-handle refusal, so it is rejected at install.
+    #[test]
+    fn an_empty_tree_namespace_is_rejected_at_install_time() {
+        let mut set = OriginAdapterSet::default();
+        assert_eq!(
+            set.install(decl("wildcard", &["a"], Some(b"")), Arc::new(NullAdapter)),
+            Err(OriginInstallError::EmptyNamespace {
+                name: "wildcard".to_owned(),
+            })
+        );
+    }
+
+    /// r[verify machine.primitive.origin-routing] — content recognition runs
+    /// before namespace routing, so a namespace carrying a content marker
+    /// (here: a canonical entry tag byte) is a claim its handles could never
+    /// ride to the adapter; rejected at install like every other degenerate
+    /// declaration.
+    #[test]
+    fn a_content_marked_tree_namespace_is_rejected_at_install_time() {
+        let mut set = OriginAdapterSet::default();
+        assert_eq!(
+            set.install(
+                decl("tagged", &["a"], Some(b"\x00trees\0")),
+                Arc::new(NullAdapter)
+            ),
+            Err(OriginInstallError::ContentMarkedNamespace {
+                name: "tagged".to_owned(),
+            })
+        );
+    }
+
+    /// r[verify machine.primitive.origin-routing] — a namespace that is a
+    /// PREFIX of the carrier magic does not probe as content itself, but a
+    /// handle under it could complete the magic and route as a carrier;
+    /// rejected the same way.
+    #[test]
+    fn a_carrier_magic_prefix_namespace_is_rejected_at_install_time() {
+        let mut set = OriginAdapterSet::default();
+        assert_eq!(
+            set.install(
+                decl("carrier", &["a"], Some(b"vix-tree")),
+                Arc::new(NullAdapter)
+            ),
+            Err(OriginInstallError::ContentMarkedNamespace {
+                name: "carrier".to_owned(),
+            })
+        );
+    }
+
+    /// r[verify machine.primitive.origin-routing]
+    #[test]
+    fn an_empty_scheme_string_is_rejected_at_install_time() {
+        let mut set = OriginAdapterSet::default();
+        assert_eq!(
+            set.install(decl("blank", &["a", ""], None), Arc::new(NullAdapter)),
+            Err(OriginInstallError::EmptyScheme {
+                name: "blank".to_owned(),
+            })
+        );
+    }
+
+    /// r[verify machine.primitive.origin-routing]
+    #[test]
+    fn a_self_duplicate_scheme_is_rejected_at_install_time() {
+        let mut set = OriginAdapterSet::default();
+        assert_eq!(
+            set.install(decl("twice", &["a", "b", "a"], None), Arc::new(NullAdapter)),
+            Err(OriginInstallError::SelfDuplicateScheme {
+                name: "twice".to_owned(),
+                scheme: "a".to_owned(),
+            })
+        );
+    }
+
     /// r[verify machine.primitive.origin-routing]
     #[test]
     fn an_unclaimed_scheme_is_a_loud_refusal_naming_the_installed_set() {
         let mut set = OriginAdapterSet::default();
-        set.install(decl("fixture", &["fixture"], None), Arc::new(NullAdapter))
+        set.install(decl("offline", &["offline"], None), Arc::new(NullAdapter))
             .expect("install succeeds");
         let capability =
             super::super::FramedNode::leaf(Type::String.schema_ref(), b"cap".to_vec()).identity();
@@ -480,20 +649,20 @@ mod tests {
             panic!("expected a typed unroutable refusal, got {error:?}");
         };
         assert!(detail.contains("https://example.test/blob"), "{detail}");
-        assert!(detail.contains("\"fixture\""), "{detail}");
+        assert!(detail.contains("\"offline\""), "{detail}");
     }
 
     /// r[verify machine.primitive.origin-routing]
     #[test]
     fn an_inadmissible_capability_is_a_refusal_produced_by_routing() {
         let mut set = OriginAdapterSet::default();
-        set.install(decl("fixture", &["fixture"], None), Arc::new(NullAdapter))
+        set.install(decl("offline", &["offline"], None), Arc::new(NullAdapter))
             .expect("install succeeds");
         // The declaration admits String; route with an Int-schema capability.
         let capability =
             super::super::FramedNode::leaf(Type::Int.schema_ref(), b"cap".to_vec()).identity();
         let error = set
-            .route_coordinate(&capability, "fixture://registry/x")
+            .route_coordinate(&capability, "offline://registry/x")
             .expect_err("inadmissible capability refuses");
         assert!(matches!(
             error,

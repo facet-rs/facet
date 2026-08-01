@@ -82,6 +82,14 @@ pub struct CompilerConfig {
     /// a tool name is a capability package's, never the machine's
     /// (`machine.capability.no-argv-dialect`).
     pub capabilities: &'static [crate::binding::CapabilityTypeDecl],
+    /// Constant-surface declarations the embedder injects: free-function
+    /// names that lower to declared typed byte-leaf constants
+    /// ([`crate::binding::ConstantSurfaceDecl`] — the offline harness's
+    /// tree/registry spellings ride this). Every argument
+    /// of such a surface is a declared string literal, checked at lowering.
+    /// `vix-core` alone ships **none** — the bare language names no
+    /// backend's constants.
+    pub constants: &'static [crate::binding::ConstantSurfaceDecl],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -165,7 +173,12 @@ impl Compiler {
         for module in modules {
             parsed.push((module.name.to_owned(), self.parser.parse(module.source)?));
         }
-        let merged = crate::modules::merge_module_set(root, &parsed, &self.primitive_surfaces)?;
+        let merged = crate::modules::merge_module_set(
+            root,
+            &parsed,
+            &self.primitive_surfaces,
+            self.config.constants,
+        )?;
         let module = lower_module(&merged, self.config, &self.primitive_surfaces)?;
         let warnings = lint_module(&module);
         Ok(Compilation { module, warnings })
@@ -263,6 +276,12 @@ impl ModuleContext<'_> {
                 crate::binding::surface_primitive(name)
                     .and_then(|primitive| crate::binding::request_shape(&primitive))
             })
+    }
+
+    /// The injected constant-surface declaration a callee name resolves to,
+    /// under the same bare/`std::` dual spelling as [`Self::primitive_shape`].
+    fn constant_surface(&self, name: &str) -> Option<&'static crate::binding::ConstantSurfaceDecl> {
+        crate::binding::injected_constant(self.config.constants, name)
     }
 }
 
@@ -1490,6 +1509,49 @@ fn lower_module(
             .entry(decl.name.to_owned())
             .or_insert_with(|| Type::Extern(ExternKind::Host(decl.name)));
     }
+    // Injected constant surfaces resolve BEFORE registered primitive shapes
+    // in call lowering, so a declaration named `fetch` would silently shadow
+    // the machine's primitive, and one named `decode` (matched even earlier
+    // by the typed decode builders) would be silently dead. The adapter-set
+    // install-rejection principle applies to this rail too: a colliding
+    // declaration is rejected at the seam, loudly, never resolved by match
+    // ordering — and a name declared twice is the same degenerate set.
+    let mut constant_names = BTreeSet::new();
+    for constant in config.constants {
+        if crate::binding::is_prelude_name(constant.name) {
+            return Err(Diagnostics::one(Diagnostic::unsupported(
+                Span { start: 0, end: 0 },
+                format!(
+                    "injected constant surface `{}` collides with a registered builtin \
+                     binding — builtin vocabulary cannot be shadowed by an injected \
+                     declaration",
+                    constant.name
+                ),
+            )));
+        }
+        if primitive_surfaces
+            .iter()
+            .any(|surface| surface.surface_name == constant.name)
+        {
+            return Err(Diagnostics::one(Diagnostic::unsupported(
+                Span { start: 0, end: 0 },
+                format!(
+                    "injected constant surface `{}` collides with an injected primitive \
+                     surface of the same name",
+                    constant.name
+                ),
+            )));
+        }
+        if !constant_names.insert(constant.name) {
+            return Err(Diagnostics::one(Diagnostic::unsupported(
+                Span { start: 0, end: 0 },
+                format!(
+                    "injected constant surface `{}` is declared twice",
+                    constant.name
+                ),
+            )));
+        }
+    }
     let declared_type_names = source
         .items
         .iter()
@@ -1517,6 +1579,21 @@ fn lower_module(
         let ast::Item::Fn(function) = item else {
             continue;
         };
+        // An injected constant surface resolves before source functions in
+        // call lowering, so a source function sharing its name could never
+        // be reached — the same silent shadowing the constant-surface set
+        // validation above rejects, closed on the source side too.
+        if constant_names.contains(function.name.value.as_str()) {
+            return Err(Diagnostics::one(Diagnostic::unsupported(
+                function.name.span,
+                format!(
+                    "function `{}` collides with an injected constant surface of the \
+                     same name — the surface resolves first, so the function could \
+                     never be reached",
+                    function.name.value
+                ),
+            )));
+        }
         // Only generic *value* functions become monomorphization templates. A
         // generic `#[test]` has no instantiation surface, so it flows through
         // `declare_function`, which rejects it as a generic function.
@@ -3233,7 +3310,7 @@ fn described_wire(
         .args
         .args
         .iter()
-        .map(wire_argument_literal)
+        .map(|argument| wire_argument_literal(context, argument))
         .collect::<Result<Vec<_>, _>>();
     let selector = match arguments {
         Ok(arguments) => {
@@ -3263,7 +3340,10 @@ fn described_wire(
 /// One closed scalar literal in a described-wire selector. A described selector
 /// only names literal arguments; it never evaluates a sub-expression to obtain
 /// an argument identity.
-fn wire_argument_literal(argument: &ast::Expr) -> Result<WireArg, Diagnostics> {
+fn wire_argument_literal(
+    context: &ModuleContext<'_>,
+    argument: &ast::Expr,
+) -> Result<WireArg, Diagnostics> {
     match argument {
         ast::Expr::Number(number) => number.value.parse::<i64>().map(WireArg::Int).map_err(|_| {
             type_mismatch(
@@ -3273,16 +3353,29 @@ fn wire_argument_literal(argument: &ast::Expr) -> Result<WireArg, Diagnostics> {
             )
         }),
         ast::Expr::Bool(boolean) => Ok(WireArg::Bool(boolean.value)),
-        ast::Expr::Call(call) if call.callee.value == "fixture_tree" => {
-            check_arity(call, 1)?;
-            let ast::Expr::Str(name) = &call.args.args[0] else {
-                return Err(type_mismatch(
-                    expr_span(&call.args.args[0]),
-                    "a fixture_tree string literal",
-                    "expression",
-                ));
-            };
-            Ok(WireArg::FixtureTree(name.value.clone()))
+        // A call to an injected constant surface with literal arguments is a
+        // closed scalar literal: its bytes and framing schema are declared
+        // data, so the selector identity is computable without demanding.
+        ast::Expr::Call(call) if context.constant_surface(&call.callee.value).is_some() => {
+            let decl = context
+                .constant_surface(&call.callee.value)
+                .expect("guard confirmed the callee is an injected constant surface");
+            check_arity(call, decl.literal_params)?;
+            let mut literals = Vec::with_capacity(decl.literal_params);
+            for argument in &call.args.args {
+                let ast::Expr::Str(literal) = argument else {
+                    return Err(type_mismatch(
+                        expr_span(argument),
+                        format!("a {} string literal", decl.name),
+                        "expression",
+                    ));
+                };
+                literals.push(literal.value.as_str());
+            }
+            Ok(WireArg::Constant {
+                schema: (decl.result)().schema_ref(),
+                bytes: (decl.encode)(&literals),
+            })
         }
         other => Err(Diagnostics::one(Diagnostic::unsupported(
             expr_span(other),
@@ -3411,12 +3504,11 @@ fn lower_value_expected(
         {
             lower_try_decode_binding(nodes, bindings, context, call, expected)
         }
-        ast::Expr::Call(call)
-            if crate::binding::surface_intrinsic(&call.callee.value).is_some() =>
-        {
-            let intrinsic = crate::binding::surface_intrinsic(&call.callee.value)
-                .expect("guard confirmed the callee is a built-in intrinsic");
-            lower_effect_intrinsic(nodes, call, intrinsic)
+        ast::Expr::Call(call) if context.constant_surface(&call.callee.value).is_some() => {
+            let decl = context
+                .constant_surface(&call.callee.value)
+                .expect("guard confirmed the callee is an injected constant surface");
+            lower_constant_surface(nodes, call, decl)
         }
         ast::Expr::Call(call) if context.primitive_shape(&call.callee.value).is_some() => {
             let shape = context
@@ -4425,7 +4517,8 @@ fn lower_tree_text_projection(
     // `machine.primitive.progressive-response`) so one subfile can land before
     // the whole process exits — or, at the fallback authority, from the
     // publications the effect's completion witnessed. Every other tree
-    // (fixture, extracted archive, completed exec output) is a settled,
+    // (an origin-backed handle, an extracted archive, a completed exec
+    // output) is a settled,
     // interned value the store-backed `TreeReadPrimitive` reads directly. Both
     // spell the same tree-read request; only the effect facts differ —
     // `EFFECT` marks the effect-origin read as an effect root the partitioner
@@ -4435,7 +4528,7 @@ fn lower_tree_text_projection(
     // frontier subscribes to a named product (`out/early.txt`), which the
     // partitioner reads back off the request. A computed path cannot name a
     // product ahead of time, so it falls back to a settled read of the
-    // completed tree (identical to a fixture read). This gate and the
+    // completed tree (identical to a settled origin-backed read). This gate and the
     // partitioner's node-level twin (`vir::progressive_exec_tree_path`) must
     // agree: the partitioner asserts that every EFFECT-marked tree-read
     // extracts, so a drift fails loudly.
@@ -5508,15 +5601,15 @@ fn lower_some(
 /// Lower a call to a uniform registered primitive (`fetch`, `observe`)
 /// through the [`RequestShape`](crate::binding::RequestShape) it declares on
 /// itself (`RawPrimitive::request_shape`, harvested by `crate::binding`) — there
-/// is no per-primitive Rust arm here. `decode`/`try_decode` and the
-/// `fixture_*`/`untar` intrinsics are matched by callee name earlier and never
+/// is no per-primitive Rust arm here. `decode`/`try_decode` and the injected
+/// constant surfaces are matched by callee name earlier and never
 /// reach this function; see `lower_value_expected`'s `ast::Expr::Call` arms.
 /// Build a registered-primitive call from its [`RequestShape`](crate::binding::RequestShape):
 /// check arity, then lower each argument in order into the request record and
 /// invoke the primitive.
 ///
-/// This is the one generic replacement for the former per-primitive arms in
-/// `lower_effect_intrinsic`. The request record and the `InvokePrimitive` node are
+/// This is the one generic replacement for the former per-primitive arms of
+/// the retired intrinsic builder. The request record and the `InvokePrimitive` node are
 /// `PURE`: the effect-island the primitive runs in is keyed off the primitive
 /// itself, not these nodes' effect facts.
 fn lower_request_shape(
@@ -5577,59 +5670,50 @@ fn lower_request_shape(
     })
 }
 
-/// The dedicated-op fixture primitives (`fixture_tree`, `fixture_registry`).
-/// Each lowers to an [`EffectKind::Effect`] node the partitioner hoists into its
-/// own effect island; nothing here is a Weavy-lowerable pure operation.
+/// Lower a call to an embedder-injected constant surface
+/// ([`crate::binding::ConstantSurfaceDecl`]): check the declared
+/// literal-argument constraint, encode the literals into the constant's
+/// resident bytes, and push the effect-marked [`Op::DeclaredConst`] node.
 ///
-/// Unlike `fetch`/`observe`, these are not `InvokePrimitive` requests — they are
-/// bespoke VIR ops, so they do not have a [`RequestShape`](crate::binding::RequestShape)
-/// yet and stay hand-lowered here. Both take a literal or no argument, which is
-/// why no lowering environment reaches this far: `untar` was the one intrinsic
-/// with a value operand, and it is a primitive in `vixen-primitives` now.
-fn lower_effect_intrinsic(
+/// The literal constraint is checked here, with a diagnostic naming the
+/// surface: a computed argument is rejected at compile time, never
+/// evaluated — a surface with coordinate-like arguments keeps a program's
+/// requirement set static (`vixen.machine.requirements-are-static`).
+fn lower_constant_surface(
     nodes: &mut Vec<Node>,
     call: &ast::Call,
-    kind: crate::binding::Intrinsic,
+    decl: &crate::binding::ConstantSurfaceDecl,
 ) -> Result<LoweredValue, Diagnostics> {
-    use crate::binding::Intrinsic;
     if call.named_args.is_some() {
         return Err(Diagnostics::one(Diagnostic::unsupported(
             call.span,
             "named arguments on a primitive constructor",
         )));
     }
-    let (ty, op, inputs) = match kind {
-        Intrinsic::FixtureTree => {
-            check_arity(call, 1)?;
-            let ast::Expr::Str(name) = &call.args.args[0] else {
-                return Err(Diagnostics::one(Diagnostic::unsupported(
-                    expr_span(&call.args.args[0]),
-                    "a fixture_tree string literal",
-                )));
-            };
-            (
-                Type::Extern(ExternKind::Host(crate::binding::TREE)),
-                Op::FixtureTree(name.value.clone()),
-                Vec::new(),
-            )
-        }
-        Intrinsic::FixtureRegistry => {
-            check_arity(call, 0)?;
-            (
-                Type::Extern(ExternKind::Registry),
-                Op::FixtureRegistry,
-                Vec::new(),
-            )
-        }
-    };
+    check_arity(call, decl.literal_params)?;
+    let mut literals = Vec::with_capacity(decl.literal_params);
+    for argument in &call.args.args {
+        let ast::Expr::Str(literal) = argument else {
+            return Err(Diagnostics::one(Diagnostic::unsupported(
+                expr_span(argument),
+                format!("a {} string literal", decl.name),
+            )));
+        };
+        literals.push(literal.value.as_str());
+    }
+    let bytes = (decl.encode)(&literals);
+    let ty = (decl.result)();
     Ok(LoweredValue {
         node: push_node(
             nodes,
             call.span,
             ty.clone(),
             EffectFacts::EFFECT,
-            inputs,
-            op,
+            Vec::new(),
+            Op::DeclaredConst {
+                bytes,
+                root: decl.root,
+            },
         ),
         ty,
     })
@@ -5900,8 +5984,8 @@ fn lower_try_decode_core(
 }
 
 /// The single decode binding: `decode(document, Format::Json)`. The format is a
-/// `Format` enum value read at lower time (like a fixture name — the selector
-/// never lowers to a runtime value); the target type comes from the expected
+/// `Format` enum value read at lower time (like a constant-surface literal —
+/// the selector never lowers to a runtime value); the target type comes from the expected
 /// type, so `fn json_decode<T>(s: String) -> T { decode(s, Format::Json) }`
 /// forwards `T` here via return-position inference. This is the primitive
 /// binding the json_decode/toml_decode vix functions wrap: json vs toml is a

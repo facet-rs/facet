@@ -27,6 +27,9 @@ fn decode_compiler() -> Compiler {
         prelude: vixen_primitives::stdlib::PRELUDE_SOURCES,
         methods: vixen_primitives::DOMAIN_METHODS,
         host_types: vixen_primitives::HOST_TYPES,
+        // The harness constant declarations: these fixtures spell
+        // `fixture_tree`, an injected constant surface declared by this crate.
+        constants: vixen_runtime::fixture::FIXTURE_CONSTANTS,
         ..CompilerConfig::default()
     })
 }

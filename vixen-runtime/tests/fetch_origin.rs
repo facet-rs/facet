@@ -6,11 +6,12 @@ use std::thread::JoinHandle;
 
 use tempfile::TempDir;
 use vix::runtime::{
-    CanonicalBlobPersistence, FixtureStore, FramedNode, MachineCause, PrimitiveMachineError,
-    PrimitiveServices, RuntimeFault, ValueBodyCandidate, ValueId, ValuePersistence,
+    CanonicalBlobPersistence, FramedNode, MachineCause, PrimitiveMachineError, PrimitiveServices,
+    RuntimeFault, ValueBodyCandidate, ValueId, ValuePersistence,
 };
 use vix::vir::{ExternKind, Type};
 use vixen_primitives::HttpBlobOriginAdapter;
+use vixen_runtime::fixture::FixtureStore;
 use vixen_runtime::ratchet::{RunError, prepare_source};
 
 const FETCH_AND_EXTRACT: &str = r#"
@@ -192,7 +193,7 @@ impl Drop for BlobServer {
 fn archive_bytes() -> Vec<u8> {
     std::fs::read(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../vix-core/tests/fixtures/registry/tokio-1.52.3.crate"),
+            .join("tests/fixtures/registry/tokio-1.52.3.crate"),
     )
     .expect("read pinned archive fixture")
 }
@@ -514,6 +515,44 @@ fn no_origin_adapter_refuses_the_origin_read_loudly() {
         "the refusal names what IS installed: {detail}"
     );
     assert_eq!(server.requests(), 0, "zero fetches performed");
+}
+
+/// A glob over a tree handle no installed declaration claims is the same
+/// loud typed refusal an unclaimed coordinate gets — never a fall-through
+/// into content enumeration, whose parse failure would report "malformed
+/// bytes" for what is actually a configuration gap. With NO origin adapter
+/// installed, the fixture handle is unclaimed, and the refusal names both
+/// what was asked (the handle's leading bytes) and what is installed
+/// (nothing).
+///
+/// r[verify machine.primitive.origin-routing]
+#[test]
+fn glob_on_an_unclaimed_tree_handle_refuses_loudly() {
+    const GLOB_UNCLAIMED: &str = r#"
+#[test]
+fn glob_unclaimed() -> Stream<Check> {
+    let tree = fixture_tree("small-crate");
+    let sources = tree.glob("src/*.rs").collect().values().sorted();
+    yield expect_eq(sources.len(), 2);
+}
+"#;
+
+    let error = prepare_source(GLOB_UNCLAIMED)
+        .expect("prepare unclaimed-glob source")
+        .execute_with_primitive_services(PrimitiveServices::default())
+        .expect_err("a glob over an unclaimed handle must refuse");
+
+    let PrimitiveMachineError::OriginUnroutable { detail } = primitive_machine_error(error) else {
+        panic!("expected a typed unroutable refusal, not a malformed-bytes lie");
+    };
+    assert!(
+        detail.contains("declared namespace"),
+        "the refusal says the handle is unclaimed: {detail}"
+    );
+    assert!(
+        detail.contains("no origin adapter is installed"),
+        "the refusal names the installed set: {detail}"
+    );
 }
 
 #[test]

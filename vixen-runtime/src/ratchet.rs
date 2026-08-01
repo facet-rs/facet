@@ -9,12 +9,14 @@ use vix::diagnostic::Diagnostics;
 use vix::lowering::{LoweringCache, LoweringCacheCounters, LoweringError, attribution_for};
 use vix::runtime::{
     ChaosPolicy, Counters, DemandState, EffectProjectionRequest, Evaluation, Event, EventKind,
-    EventLog, FailureContext, FailureValue, FixtureStore, FramedNode, GeneratorOutcome,
-    IslandInputs, Location, MachineError, PersistentRuntimeJournal, PersistentRuntimeJournalError,
+    EventLog, FailureContext, FailureValue, FramedNode, GeneratorOutcome, IslandInputs, Location,
+    MachineError, PersistentRuntimeJournal, PersistentRuntimeJournalError,
     PersistentRuntimeJournalLoadReport, PersistentRuntimeState, PrimitiveServices, ReadProjection,
     RealizedWireDemand, RootSubmission, Runtime, SnapshotCapture, SnapshotOutcome, TaskState,
     ValueId, ValueRootRequest, WireDemand,
 };
+
+use crate::fixture::FixtureStore;
 use vix::vir::{
     DescribedWire, FunctionId, Island, Module, NodeId, Op, PartitionedRecipe, PartitionedValue,
     TraceCheck, ValueIslandId, WireArg, WireSelector,
@@ -168,9 +170,19 @@ fn observe_bundled_invocations(
         let mut literals = Vec::with_capacity(node.inputs.len());
         let mut literal = true;
         for input in &node.inputs {
-            match authored.nodes[input.0 as usize].op {
-                Op::Int(value) => literals.push(WireArg::Int(value)),
-                Op::Bool(value) => literals.push(WireArg::Bool(value)),
+            let argument = &authored.nodes[input.0 as usize];
+            match &argument.op {
+                Op::Int(value) => literals.push(WireArg::Int(*value)),
+                Op::Bool(value) => literals.push(WireArg::Bool(*value)),
+                // A declared constant is a closed literal: encoded exactly as
+                // the selector side (`wire_argument_literal`) encodes it —
+                // the declared type's schema and the declaration's bytes —
+                // so `demanded_once(f(fixture_tree("x")))` matches the
+                // realized invocation instead of observing nothing.
+                Op::DeclaredConst { bytes, .. } => literals.push(WireArg::Constant {
+                    schema: argument.ty.schema_ref(),
+                    bytes: bytes.clone(),
+                }),
                 _ => {
                     literal = false;
                     break;
@@ -419,22 +431,21 @@ struct TraceSnapshot {
 /// same way an evaluated scalar value interns, so a described literal selects
 /// the exact realized argument identity without demanding anything.
 fn wire_arg_identity(arg: &WireArg) -> ValueId {
-    let (ty, bytes) = match arg {
-        WireArg::Int(value) => (vix::vir::Type::Int, value.to_le_bytes().to_vec()),
+    let (schema, bytes) = match arg {
+        WireArg::Int(value) => (
+            vix::vir::Type::Int.schema_ref(),
+            value.to_le_bytes().to_vec(),
+        ),
         WireArg::Bool(value) => (
-            vix::vir::Type::Bool,
+            vix::vir::Type::Bool.schema_ref(),
             i64::from(*value).to_le_bytes().to_vec(),
         ),
-        WireArg::FixtureTree(name) => {
-            let mut bytes = b"fixture-tree\0".to_vec();
-            bytes.extend(name.as_bytes());
-            (
-                vix::vir::Type::Extern(vix::vir::ExternKind::Host(vix::binding::TREE)),
-                bytes,
-            )
-        }
+        // A declared-constant literal carries its own framing: the schema and
+        // bytes are the injected surface's declaration, so the selector
+        // identity is exactly the realized constant's.
+        WireArg::Constant { schema, bytes } => (schema.clone(), bytes.clone()),
     };
-    FramedNode::leaf(ty.schema_ref(), bytes).identity()
+    FramedNode::leaf(schema, bytes).identity()
 }
 
 /// An at-most trace comparison: the observed counter and whether it stays
@@ -1568,7 +1579,7 @@ fn evaluate_snapshot_site(
 /// The offline harness's default service set: the fixture store installed AS
 /// the origin adapter, explicitly and under its declaration
 /// (`FixtureStore::origin_decl`: `fixture://` coordinates, Registry
-/// capabilities, the `fixture-tree\0` handle namespace). The machine holds no
+/// capabilities, its declared tree-handle namespace). The machine holds no
 /// default origin backend — with no adapter installed an origin read is a
 /// loud typed refusal (`machine.primitive.origin-routing`) — so the conjuring
 /// that used to live in the scheduler's silent fixture fallback lives here

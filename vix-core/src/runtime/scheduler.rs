@@ -92,6 +92,28 @@ impl super::CodataDrainCtx for GlobDrainCtx<'_> {
         &self.source.resident
     }
 
+    // r[impl machine.primitive.origin-routing] — the drain's source routes
+    // by declaration, and an unclaimed handle refuses here, loudly, before
+    // any enumeration strategy is chosen.
+    fn source_routing(&self) -> Result<super::DrainSourceRouting, super::PrimitiveMachineError> {
+        match self.origins.route_tree(&self.source.resident) {
+            super::TreeRouting::ContentIdentified => {
+                Ok(super::DrainSourceRouting::ContentIdentified)
+            }
+            super::TreeRouting::Origin(installation) => {
+                let namespace = installation
+                    .decl
+                    .tree_namespace
+                    .as_ref()
+                    .expect("a routed tree handle is owned by a declared namespace");
+                Ok(super::DrainSourceRouting::Origin {
+                    name: self.source.resident[namespace.len()..].to_vec(),
+                })
+            }
+            super::TreeRouting::Unclaimed(refusal) => Err(refusal),
+        }
+    }
+
     // r[impl machine.primitive.origin-verbs] — the neutral directory verb,
     // routed by the source handle's declared namespace.
     fn directory(
@@ -769,10 +791,13 @@ pub struct PersistentRuntimeState {
 /// instead of attempting migration. Version 1 covers the origin-rail stage-2
 /// receipt vocabulary (witnessed misses, kind observations, the provenance
 /// field); journals written before versioning existed carry no field at all
-/// and are rejected the same way.
+/// and are rejected the same way. Version 2 covers stage 3's witness
+/// vocabulary: `ReadProjection::RegistryManifest` retired (the manifest is an
+/// ordinary `Origin` coordinate read) and the directory-observation hash
+/// domain moved off its backend-named v1 tag.
 ///
 /// r[impl machine.primitive.witness-reverification]
-pub const PERSISTENT_RUNTIME_JOURNAL_FORMAT: u32 = 1;
+pub const PERSISTENT_RUNTIME_JOURNAL_FORMAT: u32 = 2;
 
 impl PersistentRuntimeState {
     #[must_use]
@@ -1240,21 +1265,10 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 &read.observation,
                 ReadObservation::Value(observed) if observed == &read.source
             ),
-            // An ordinary coordinate read at the manifest's one transitional
-            // spelling; the Registry source is its own capability. The
-            // projection variant retires in stage 3 of the origin rail.
-            ReadProjection::RegistryManifest => self.reverify_coordinate_observation(
-                &origins,
-                &read.source,
-                super::REGISTRY_MANIFEST_COORDINATE,
-                &Type::String,
-                &read.observation,
-            ),
             ReadProjection::Origin { coordinate } => self.reverify_coordinate_observation(
                 &origins,
                 &read.source,
                 coordinate,
-                &Type::Extern(ExternKind::Blob),
                 &read.observation,
             ),
             ReadProjection::TreePath { path } => {
@@ -1340,12 +1354,17 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
     /// `Value` observation must resolve to the same identity, a `Missing`
     /// observation must still miss (an unroutable coordinate verifies
     /// nothing — including a recorded miss, since nobody can look).
+    ///
+    /// The served bytes are framed by the recorded observation's OWN schema:
+    /// the witness's identity is the claim, and it defines its own framing —
+    /// a pinned fetch's Blob-framed candidate and an unpinned read's
+    /// String-framed text re-verify through this one arm without the audit
+    /// knowing which producer wrote the witness.
     fn reverify_coordinate_observation(
         &self,
         origins: &super::OriginAdapterSet,
         capability: &ValueId,
         coordinate: &str,
-        leaf_ty: &Type,
         observation: &ReadObservation,
     ) -> bool {
         let Ok(installation) = origins.route_coordinate(capability, coordinate) else {
@@ -1353,8 +1372,9 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
         };
         let resolved = installation.adapter.read(capability, coordinate);
         match observation {
-            ReadObservation::Value(observed) => resolved
-                .is_ok_and(|bytes| effect_leaf(leaf_ty, bytes).identity == *observed),
+            ReadObservation::Value(observed) => resolved.is_ok_and(|bytes| {
+                FramedNode::leaf(observed.schema.clone(), bytes).identity() == *observed
+            }),
             ReadObservation::Missing => {
                 matches!(resolved, Err(super::OriginReadError::Miss { .. }))
             }
@@ -2853,8 +2873,8 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
 
     /// Evaluate one machine-plane effect island. Effects use the same demand,
     /// task, memo, store, and receipt authority as Weavy islands; only their
-    /// operation interpreter is different. The fixture root is reachable here
-    /// and nowhere else in the production runner.
+    /// operation interpreter is different. Installed origin backends are
+    /// reachable here and nowhere else in the production runner.
     pub fn evaluate_effect(
         &mut self,
         island: IslandId,
@@ -3189,10 +3209,13 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                 &node.ty,
                 reference.canonical_bytes(),
             ))),
-            Op::FixtureTree(name) => {
-                let mut resident = b"fixture-tree\0".to_vec();
-                resident.extend(name.as_bytes());
-                Ok(EffectTerm::Value(effect_leaf(&node.ty, resident)))
+            // A declared constant is pure construction: the bytes were encoded
+            // at lowering from the surface's literal arguments, and the node's
+            // type frames the identity. No authority is consulted here — the
+            // value is the stable NAME an installed backend re-verifies
+            // against, not a read of it.
+            Op::DeclaredConst { bytes, .. } => {
+                Ok(EffectTerm::Value(effect_leaf(&node.ty, bytes.clone())))
             }
             Op::Call(callee) => {
                 let (_, _, output) = Self::effect_function(island, *callee).ok_or_else(|| {
@@ -3326,10 +3349,6 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
                     frozen.clone(),
                 )?))
             }
-            Op::FixtureRegistry => Ok(EffectTerm::Value(effect_leaf(
-                &node.ty,
-                b"fixture-registry".to_vec(),
-            ))),
             Op::InvokeCodataPrimitive { primitive } => {
                 let EffectTerm::Value(source) = input(0, self)? else {
                     return effect_fault("codata primitive receiver was codata");
@@ -3430,7 +3449,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
     /// `PrimitiveId` — the codata analogue of `Op::InvokePrimitive` — so the
     /// scheduler holds no per-recipe knowledge: it supplies the source value and
     /// records directory read witnesses through [`GlobDrainCtx`], while the domain
-    /// logic (glob pattern matching plus fixture/archive enumeration) lives in the
+    /// logic (glob pattern matching plus origin/archive enumeration) lives in the
     /// primitive (`vixen-primitives`).
     fn drain_codata(
         &self,
@@ -4136,12 +4155,13 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
         }
         drop(subscription);
         self.primitive_dispatcher.retire(demand);
-        self.counters.fetches_performed += publication
-            .receipt
-            .reads
-            .iter()
-            .filter(|read| matches!(read.projection, ReadProjection::Origin { .. }))
-            .count() as u64;
+        // A "fetch performed" is a PINNED transfer against an origin: only
+        // pinned-policy publications count their coordinate witnesses.
+        // Unpinned coordinate reads (the registry manifest) share the
+        // `Origin` projection vocabulary but are not fetches.
+        if memo_policy == PrimitiveMemoPolicy::Pinned {
+            self.counters.fetches_performed += performed_fetch_transfers(&publication.receipt);
+        }
         if let Some(root) = root {
             // An EFFECT-marked invocation is hoisted into its own island and
             // never lowered into a Weavy frame, so a root-submitted effect can
@@ -6280,6 +6300,10 @@ fn content_entry_kind(entry: &super::TreeEntry) -> TreeEntryKind {
     }
 }
 
+// The hash domain moved off its backend-named `vix.fixture.…` v1 tag when the
+// fixture store left core: directory observations are seam vocabulary, served
+// by any adapter's directory verb. Journals recording v1 digests are
+// intentionally invalidated (`PERSISTENT_RUNTIME_JOURNAL_FORMAT` 2).
 fn directory_observation_digest(entries: &[(String, TreeEntryKind)]) -> Digest {
     let mut fields = Vec::with_capacity(entries.len() * 2);
     for (name, kind) in entries {
@@ -6290,7 +6314,7 @@ fn directory_observation_digest(entries: &[(String, TreeEntryKind)]) -> Digest {
             TreeEntryKind::Symlink => b"symlink".as_slice(),
         });
     }
-    hash_framed(b"vix.fixture.directory-observation.v1", &fields)
+    hash_framed(b"vix.origin.directory-observation.v2", &fields)
 }
 
 /// Type-directed structural rendering of a published snapshot value. It mirrors
@@ -7355,14 +7379,31 @@ fn primitive_demand_preimage(primitive: &super::PrimitiveId, request: &ValueId) 
     }
 }
 
+/// The origin TRANSFERS a pinned publication's receipt records: coordinate
+/// witnesses whose observation is a served `Value`. Witnessed misses are in
+/// the receipt too (a multi-origin fallthrough records one `Missing` per
+/// tried coordinate — `machine.primitive.witness-reverification`), but a
+/// miss moved no bytes: it is not a fetch performed, and counting it would
+/// make the `fetched(n)` contracts lie about a fallthrough.
+fn performed_fetch_transfers(receipt: &Receipt) -> u64 {
+    receipt
+        .reads
+        .iter()
+        .filter(|read| {
+            matches!(read.projection, ReadProjection::Origin { .. })
+                && matches!(read.observation, ReadObservation::Value(_))
+        })
+        .count() as u64
+}
+
 /// A projection's canonical spelling inside an effect-projection demand
 /// fingerprint. Explicit per variant: the fingerprint is identity-bearing, so
 /// it must not ride a debug or serialization format that owes it no stability.
 fn projection_fingerprint(projection: &ReadProjection) -> String {
     match projection {
         ReadProjection::Whole => "whole".to_owned(),
-        // "document" is the retired `Document` variant's reserved spelling.
-        ReadProjection::RegistryManifest => "registry-manifest".to_owned(),
+        // "document" and "registry-manifest" are the retired `Document` and
+        // `RegistryManifest` variants' reserved spellings — never reused.
         ReadProjection::CapabilityProgram => "capability-program".to_owned(),
         ReadProjection::TreePath { path } => format!("tree-path:{path}"),
         ReadProjection::Origin { coordinate } => format!("origin:{coordinate}"),
@@ -9038,8 +9079,8 @@ mod tests {
     use crate::lowering::{LoweringCache, attribution_for};
 
     /// The bare-language compiler. These decode-dispatch tests used to borrow
-    /// the vixen stdlib prelude across a dev-dependency so their fixture could
-    /// spell `json_decode`; the fixture now declares its own `Format` and calls
+    /// the vixen stdlib prelude across a dev-dependency so their test program
+    /// could spell `json_decode`; it now declares its own `Format` and calls
     /// the core `decode` binding directly, which is what the bare language
     /// actually offers (`json_decode` is embedder prelude source, not a core
     /// name). See the bare-language rule in `vix-core/Cargo.toml`.
@@ -10566,7 +10607,7 @@ fn passing() -> Stream<Check> {
 
         use super::*;
         use crate::runtime::{
-            FixtureStore, OriginAdapter, OriginAdapterDecl, OriginReadError, PrimitiveServices,
+            OriginAdapter, OriginAdapterDecl, OriginReadError, OriginTreeError, PrimitiveServices,
             ReadWitness, TreeEntryKind,
         };
         use crate::schema::SchemaPattern;
@@ -10602,16 +10643,90 @@ fn passing() -> Stream<Check> {
             Type::Extern(ExternKind::Host(crate::binding::TREE)).schema_ref()
         }
 
-        fn fixture_services(rerun_with: Option<&str>) -> PrimitiveServices {
+        /// An in-memory origin adapter with a declared tree namespace and a
+        /// mutable-world switch: `changed` stands for the harness overlay's
+        /// "the world changed under the same name". The trees it serves:
+        /// `path-appears` (where `src/new.rs` exists only once `changed`) and
+        /// `readme-changed` (where `src` is a directory holding `main.c`).
+        struct OverlayTreeOrigin {
+            changed: bool,
+        }
+
+        const TEST_TREE_NAMESPACE: &[u8] = b"test-tree\0";
+
+        impl OverlayTreeOrigin {
+            fn kind_of(&self, path: &str) -> Result<TreeEntryKind, OriginTreeError> {
+                match path {
+                    "path-appears/src" | "readme-changed/src" => Ok(TreeEntryKind::Dir),
+                    "path-appears/src/new.rs" if self.changed => Ok(TreeEntryKind::File),
+                    "readme-changed/src/main.c" => Ok(TreeEntryKind::File),
+                    _ => Err(OriginTreeError::Missing),
+                }
+            }
+        }
+
+        impl OriginAdapter for OverlayTreeOrigin {
+            fn read(
+                &self,
+                _capability: &ValueId,
+                coordinate: &str,
+            ) -> Result<Vec<u8>, OriginReadError> {
+                Err(OriginReadError::Miss {
+                    detail: format!("{coordinate} is not served"),
+                })
+            }
+
+            fn tree_kind(
+                &self,
+                _handle: &[u8],
+                path: &str,
+            ) -> Result<TreeEntryKind, OriginTreeError> {
+                self.kind_of(path)
+            }
+
+            fn tree_bytes(&self, handle: &[u8], path: &str) -> Result<Vec<u8>, OriginTreeError> {
+                match self.tree_kind(handle, path)? {
+                    TreeEntryKind::File => Ok(b"content".to_vec()),
+                    found @ (TreeEntryKind::Dir | TreeEntryKind::Symlink) => {
+                        Err(OriginTreeError::WrongKind { found })
+                    }
+                }
+            }
+
+            fn tree_directory(
+                &self,
+                handle: &[u8],
+                path: &str,
+            ) -> Result<Vec<(String, TreeEntryKind)>, OriginTreeError> {
+                match self.tree_kind(handle, path)? {
+                    TreeEntryKind::Dir => Ok(match path {
+                        "readme-changed/src" => vec![("main.c".to_owned(), TreeEntryKind::File)],
+                        "path-appears/src" if self.changed => {
+                            vec![("new.rs".to_owned(), TreeEntryKind::File)]
+                        }
+                        _ => Vec::new(),
+                    }),
+                    found @ (TreeEntryKind::File | TreeEntryKind::Symlink) => {
+                        Err(OriginTreeError::WrongKind { found })
+                    }
+                }
+            }
+        }
+
+        fn overlay_services(changed: bool) -> PrimitiveServices {
             PrimitiveServices::default()
                 .with_origin(
-                    FixtureStore::origin_decl(),
-                    Arc::new(
-                        FixtureStore::default()
-                            .with_rerun_overlay(rerun_with.map(str::to_owned)),
-                    ),
+                    OriginAdapterDecl {
+                        name: "overlay".to_owned(),
+                        schemes: vec!["overlay".to_owned()],
+                        capability: SchemaPattern::exact(
+                            &Type::Extern(ExternKind::Registry).schema_ref(),
+                        ),
+                        tree_namespace: Some(TEST_TREE_NAMESPACE.to_vec()),
+                    },
+                    Arc::new(OverlayTreeOrigin { changed }),
                 )
-                .expect("the fixture declaration overlaps nothing")
+                .expect("the overlay declaration overlaps nothing")
         }
 
         /// r[verify machine.primitive.witness-reverification]
@@ -10702,8 +10817,86 @@ fn passing() -> Stream<Check> {
             );
         }
 
+        /// Provenance is a post-verification fact, so it can only land on a
+        /// witness that OBSERVED A VALUE: an attestation naming a (source,
+        /// projection) whose only witness is a recorded miss is an authority
+        /// violation, and the miss stays undecorated — nothing arrived, so
+        /// nothing was checked against the digest.
+        ///
+        /// r[verify machine.primitive.witness-reverification]
+        #[test]
+        fn provenance_never_attests_onto_a_missing_witness() {
+            let adapter = Arc::new(ToggleOrigin {
+                bytes: Mutex::new(None),
+            });
+            let services = PrimitiveServices::default()
+                .with_origin(
+                    OriginAdapterDecl {
+                        name: "toggle".to_owned(),
+                        schemes: vec!["stub".to_owned()],
+                        capability: SchemaPattern::exact(
+                            &Type::Extern(ExternKind::Registry).schema_ref(),
+                        ),
+                        tree_namespace: None,
+                    },
+                    adapter,
+                )
+                .expect("the toggle declaration overlaps nothing");
+            let capability_value = PrimitiveValue::bytes(
+                Type::Extern(ExternKind::Registry).schema_ref(),
+                b"registry".to_vec(),
+            );
+            let capability = capability_value.identity();
+            let authority = Arc::new(
+                StagedEffectAuthority::new([(capability.clone(), capability_value)])
+                    .with_origins(services.origins()),
+            );
+            let demand = DemandKey::from_preimage(&DemandPreimage {
+                closure: RecipeId::from_canonical_vir(b"attest-miss-test"),
+                arguments: Vec::new(),
+            });
+            let ctx = EffectCtx::new(demand, authority);
+            let projection = ReadProjection::Origin {
+                coordinate: "stub://blob".to_owned(),
+            };
+
+            let miss = ctx
+                .read(&capability, projection.clone())
+                .expect_err("the adapter serves nothing, so the read misses");
+            assert!(matches!(
+                miss,
+                PrimitiveMachineError::ProjectionMissing { .. }
+            ));
+
+            let error = ctx
+                .attest_provenance(
+                    &capability,
+                    &projection,
+                    crate::runtime::UpstreamDigest {
+                        algorithm: crate::runtime::DigestAlgorithm::Sha256,
+                        bytes: vec![0; 32],
+                    },
+                )
+                .expect_err("an attestation cannot decorate a miss");
+            assert!(
+                matches!(error, PrimitiveMachineError::AuthorityViolation { .. }),
+                "a dangling attestation is loud: {error:?}"
+            );
+
+            let publication = ctx
+                .finish(PrimitiveCompletion::MachineError(miss))
+                .expect("single completion transaction");
+            let reads = &publication.receipt.reads;
+            assert_eq!(reads.len(), 1, "the miss alone is witnessed: {reads:#?}");
+            assert_eq!(reads[0].observation, ReadObservation::Missing);
+            assert!(
+                reads[0].provenance.is_none(),
+                "the recorded miss stays undecorated"
+            );
+        }
+
         /// The world changing under an unchanged name is exactly what the
-        /// fixture rerun overlay simulates: without the overlay the path is
+        /// harness rerun overlay simulates: without the overlay the path is
         /// missing (the recorded miss holds), with it the path exists (the
         /// miss breaks and the claim recomputes).
         ///
@@ -10711,8 +10904,8 @@ fn passing() -> Stream<Check> {
         #[test]
         fn a_missing_tree_witness_holds_until_the_path_appears() {
             let mut runtime = Runtime::new(EventLog::default());
-            runtime.set_primitive_services(fixture_services(None));
-            let handle = b"fixture-tree\0path-appears".to_vec();
+            runtime.set_primitive_services(overlay_services(false));
+            let handle = b"test-tree\0path-appears".to_vec();
             let node = FramedNode::leaf(tree_schema(), handle.clone());
             runtime.store.intern_tree(&node, &handle);
             let witness = ReadWitness {
@@ -10727,7 +10920,7 @@ fn passing() -> Stream<Check> {
                 runtime.reverify_read_witness(&witness),
                 "a recorded tree miss re-verifies true while the path is still missing"
             );
-            runtime.set_primitive_services(fixture_services(Some("path-appears")));
+            runtime.set_primitive_services(overlay_services(true));
             assert!(
                 !runtime.reverify_read_witness(&witness),
                 "the path appearing under the overlay breaks the recorded miss"
@@ -10743,8 +10936,8 @@ fn passing() -> Stream<Check> {
         #[test]
         fn a_kind_witness_holds_exactly_for_the_recorded_kind() {
             let mut runtime = Runtime::new(EventLog::default());
-            runtime.set_primitive_services(fixture_services(None));
-            let handle = b"fixture-tree\0readme-changed".to_vec();
+            runtime.set_primitive_services(overlay_services(false));
+            let handle = b"test-tree\0readme-changed".to_vec();
             let node = FramedNode::leaf(tree_schema(), handle.clone());
             runtime.store.intern_tree(&node, &handle);
             let projection = ReadProjection::TreePath {
@@ -10782,11 +10975,11 @@ fn passing() -> Stream<Check> {
         #[test]
         fn tree_read_failures_are_witnessed_as_what_was_seen() {
             let source =
-                PrimitiveValue::bytes(tree_schema(), b"fixture-tree\0readme-changed".to_vec());
+                PrimitiveValue::bytes(tree_schema(), b"test-tree\0readme-changed".to_vec());
             let source_id = source.identity();
             let authority = Arc::new(
                 StagedEffectAuthority::new([(source_id.clone(), source)])
-                    .with_origins(fixture_services(None).origins()),
+                    .with_origins(overlay_services(false).origins()),
             );
             let demand = DemandKey::from_preimage(&DemandPreimage {
                 closure: RecipeId::from_canonical_vir(b"witnessed-miss-test"),
@@ -10836,6 +11029,56 @@ fn passing() -> Stream<Check> {
                 "the wrong-kind read is witnessed as the contradicting kind, not a miss"
             );
             assert_eq!(reads[1].observation, ReadObservation::Missing);
+        }
+    }
+
+    mod fetch_counter {
+        //! `fetches_performed` counts pinned origin TRANSFERS: a witnessed
+        //! miss is in the receipt (every tried coordinate is), but it moved
+        //! no bytes and must not count.
+
+        use super::*;
+        use crate::runtime::{ReadWitness, Receipt};
+
+        /// A multi-origin fallthrough that succeeds on its LAST origin
+        /// performed exactly one fetch: two Missing witnesses and one Value
+        /// witness count 1, and non-coordinate witnesses count 0.
+        #[test]
+        fn a_fallthrough_receipt_counts_one_transfer() {
+            let capability =
+                effect_leaf(&Type::Extern(ExternKind::Registry), b"registry".to_vec()).identity;
+            let served = effect_leaf(&Type::Extern(ExternKind::Blob), b"payload".to_vec()).identity;
+            let coordinate_witness = |coordinate: &str, observation: ReadObservation| ReadWitness {
+                source: capability.clone(),
+                projection: ReadProjection::Origin {
+                    coordinate: coordinate.to_owned(),
+                },
+                observation,
+                provenance: None,
+            };
+            let receipt = Receipt {
+                demand: DemandKey::from_preimage(&DemandPreimage {
+                    closure: RecipeId::from_canonical_vir(b"fetch-counter-test"),
+                    arguments: Vec::new(),
+                }),
+                reads: vec![
+                    coordinate_witness("stub://miss-a", ReadObservation::Missing),
+                    coordinate_witness("stub://miss-b", ReadObservation::Missing),
+                    coordinate_witness("stub://serves", ReadObservation::Value(served.clone())),
+                    // A non-coordinate witness never counts, whatever it saw.
+                    ReadWitness {
+                        source: served,
+                        projection: ReadProjection::Whole,
+                        observation: ReadObservation::Missing,
+                        provenance: None,
+                    },
+                ],
+            };
+            assert_eq!(
+                performed_fetch_transfers(&receipt),
+                1,
+                "two misses and one served transfer is ONE fetch performed"
+            );
         }
     }
 

@@ -39,10 +39,10 @@
 //! Not yet on a shape: `decode`/`try_decode` (compile-time constant folding and
 //! expected-type-derived targets don't reduce to a record shape) — both are
 //! hand-registered onto the single [`decode_primitive_id`]; `request_shape`
-//! returns `None` for it, and the compiler keeps a typed builder. The
-//! `fixture_*`/`untar` dedicated VIR ops are not primitives at all — they are
-//! [`Intrinsic`]s, matched here by name and dispatched to the compiler's
-//! existing typed builder.
+//! returns `None` for it, and the compiler keeps a typed builder. Embedder
+//! constants (the offline harness's tree/registry spellings) are
+//! not registered here at all: they are injected [`ConstantSurfaceDecl`]s,
+//! resolved through [`injected_constant`].
 //!
 //! Name resolution consults [`is_prelude_name`] for compatibility names and
 //! [`BindingRegistry::qualified`] for canonical module paths. The vix-fn
@@ -105,21 +105,6 @@ pub enum Placement {
     /// Reached through a qualified path or `use module::name` — e.g.
     /// `some::ns::cool_function`.
     Module(ModulePath),
-}
-
-/// Which dedicated VIR op an intrinsic call lowers to. These are **not**
-/// primitives — `fixture_tree`/`fixture_registry` never cross an authority
-/// boundary and `untar` is a deterministic pure transform — so there is no
-/// request record to shape; the compiler keeps a hand-written typed builder
-/// (`lower_effect_intrinsic`) for each. This enum is only the *name → which
-/// builder arm* map, so that map is data rather than a string match in
-/// `compiler.rs`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Intrinsic {
-    /// `fixture_tree(name)` — a named fixture tree (a dedicated machine op).
-    FixtureTree,
-    /// `fixture_registry()` — the fixture registry (a dedicated machine op).
-    FixtureRegistry,
 }
 
 /// The vix type a method dispatches on — the kind of its receiver. Moved here
@@ -186,6 +171,44 @@ pub struct HostTypeDecl {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CapabilityTypeDecl {
     pub name: &'static str,
+}
+
+/// A constant-surface declaration the embedder injects into the compiler
+/// ([`crate::compiler::CompilerConfig::constants`]): a free-function surface
+/// name whose call lowers to a declared typed byte-leaf constant
+/// ([`crate::vir::Op::DeclaredConst`]) rather than a primitive invocation.
+/// This is how an embedder or harness names its own well-known values — a
+/// harness tree, its offline registry — without the machine carrying
+/// a dedicated op (or any vocabulary) per name.
+///
+/// Every parameter is a **declared literal**: each call-site argument must be
+/// spelled as a string literal, checked at lowering with a diagnostic that
+/// names the surface. The constraint is deliberate vocabulary, not an
+/// implementation shortcut — the constant folds at compile time, and a
+/// surface with coordinate-like arguments keeps a program's requirement set
+/// static (`vixen.machine.requirements-are-static`): a computed coordinate is
+/// rejected at compile time, never evaluated.
+// Equality on the thunks is pointer identity — good enough for its one use
+// (`CompilerConfig` equality; see `PrimitiveMethodDecl`).
+#[allow(unpredictable_function_pointer_comparisons)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ConstantSurfaceDecl {
+    pub name: &'static str,
+    /// The surface's arity; every argument is a declared string literal.
+    pub literal_params: usize,
+    /// The constant's vix type. Its schema frames the value identity, so the
+    /// declared type is identity-bearing.
+    pub result: fn() -> crate::vir::Type,
+    /// Encode the call's literal arguments, in order, into the constant's
+    /// resident bytes. Identity-bearing: the encoding IS the value.
+    pub encode: fn(&[&str]) -> Vec<u8>,
+    /// The constant's publication shape. A root (`true`) is its own
+    /// scheduler-published effect island — downstream islands consume its
+    /// value as a published input (the registry-constant shape). A non-root
+    /// (`false`) realizes in-frame as a lowered constant (the tree-handle
+    /// shape). Identity-bearing at the recipe level, so a surface may not
+    /// change it silently.
+    pub root: bool,
 }
 
 impl ReceiverType {
@@ -262,9 +285,6 @@ pub enum BindingTarget {
     /// [`PrimitiveId`] ([`decode_primitive_id`]) until the const-fold-through-
     /// wrappers work lands and their request construction becomes uniform.
     Primitive(PrimitiveId),
-    /// A compiler-known dedicated VIR op (`fixture_tree`, `fixture_registry`,
-    /// `untar`) — not a primitive at all.
-    Intrinsic(Intrinsic),
     /// A vix-source function bound under a placement. This is the sanctioned way
     /// to add an alias or convenience wrapper (`json_decode` over `decode`) and
     /// to "nicely add a pure vix function" to the prelude or a namespace. The
@@ -302,18 +322,6 @@ impl Binding {
             placement,
             name: name.into(),
             target: BindingTarget::Primitive(id),
-            receiver: None,
-            arity: None,
-        }
-    }
-
-    /// Bind a dedicated-op intrinsic to a surface name.
-    #[must_use]
-    pub fn intrinsic(placement: Placement, name: impl Into<String>, kind: Intrinsic) -> Self {
-        Self {
-            placement,
-            name: name.into(),
-            target: BindingTarget::Intrinsic(kind),
             receiver: None,
             arity: None,
         }
@@ -411,13 +419,12 @@ impl BindingRegistry {
 /// [`runtime::builtin_primitive_surfaces`] — `fetch` today. `decode`/
 /// `try_decode` share one primitive under two names and are not yet uniform
 /// (see the module docs), so they stay hand-registered onto
-/// [`decode_primitive_id`]; the `fixture_*`/`untar` dedicated ops are hand-
-/// registered as [`Intrinsic`]s. The decode aliases
+/// [`decode_primitive_id`]. The decode aliases
 /// (`json_decode`/`toml_decode`/`try_json_decode`/`try_toml_decode` over
 /// `decode`/`try_decode`) are vix functions over the single primitive rather
-/// than extra primitives or intrinsics. The compiler consumes this in
-/// place of hardcoded name matches: [`surface_primitive`]/[`surface_intrinsic`]
-/// map a name to its target for lowering, and [`is_prelude_name`] gates legacy
+/// than extra primitives. The compiler consumes this in
+/// place of hardcoded name matches: [`surface_primitive`]
+/// maps a name to its target for lowering, and [`is_prelude_name`] gates legacy
 /// unqualified resolution. The vix-fn `source` strings mirror the
 /// `vixen-primitives` stdlib sources, which are what actually inject them.
 ///
@@ -453,19 +460,6 @@ pub fn builtin_bindings() -> BindingRegistry {
         }
     }
 
-    // fixture_tree/fixture_registry/untar: dedicated VIR ops, not primitives.
-    for (name, kind) in [
-        ("fixture_tree", Intrinsic::FixtureTree),
-        ("fixture_registry", Intrinsic::FixtureRegistry),
-    ] {
-        reg.insert(Binding::intrinsic(Placement::Prelude, name, kind));
-        reg.insert(Binding::intrinsic(
-            Placement::Module(std.clone()),
-            name,
-            kind,
-        ));
-    }
-
     // The decode aliases (`json_decode`/`toml_decode`/`try_json_decode`/
     // `try_toml_decode`) are NOT registered here. They are ordinary vix source
     // functions the embedder injects through
@@ -473,8 +467,8 @@ pub fn builtin_bindings() -> BindingRegistry {
     // (`vixen_primitives::stdlib::PRELUDE_SOURCES`), so they resolve as declared
     // module items like any other prelude fn. Core used to carry a second copy of
     // their sources as `BindingTarget::VixFunction` rows; that copy was never
-    // lowered from — every resolver (`prelude_primitive`, `surface_primitive`,
-    // `prelude_intrinsic`, `surface_intrinsic`) returns `None` for a
+    // lowered from — every resolver (`prelude_primitive`, `surface_primitive`)
+    // returns `None` for a
     // `VixFunction` — and it made the *bare* language wrongly accept
     // `std::json_decode` through [`is_qualified_binding`] when no prelude was
     // installed. One source of truth: the embedder's stdlib.
@@ -657,28 +651,14 @@ pub struct MethodResolution {
 static BUILTIN_BINDINGS: LazyLock<BindingRegistry> = LazyLock::new(builtin_bindings);
 
 /// The [`PrimitiveId`] a prelude name lowers to, or `None` if the name is not a
-/// built-in primitive (an intrinsic, a vix-fn alias, a user name, or unknown).
+/// built-in primitive (a vix-fn alias, a user name, or unknown).
 /// The compiler calls this to dispatch primitive lowering instead of matching
 /// callee strings.
 #[must_use]
 pub fn prelude_primitive(name: &str) -> Option<PrimitiveId> {
     match &BUILTIN_BINDINGS.prelude(name)?.target {
         BindingTarget::Primitive(id) => Some(id.clone()),
-        BindingTarget::Intrinsic(_)
-        | BindingTarget::VixFunction { .. }
-        | BindingTarget::DedicatedOp(_) => None,
-    }
-}
-
-/// The [`Intrinsic`] a prelude name lowers to, or `None` if the name is not one
-/// of the dedicated-op intrinsics.
-#[must_use]
-pub fn prelude_intrinsic(name: &str) -> Option<Intrinsic> {
-    match &BUILTIN_BINDINGS.prelude(name)?.target {
-        BindingTarget::Intrinsic(kind) => Some(*kind),
-        BindingTarget::Primitive(_)
-        | BindingTarget::VixFunction { .. }
-        | BindingTarget::DedicatedOp(_) => None,
+        BindingTarget::VixFunction { .. } | BindingTarget::DedicatedOp(_) => None,
     }
 }
 
@@ -712,6 +692,7 @@ fn injected_surface_module() -> ModulePath {
 #[must_use]
 pub fn is_qualified_binding_with(
     surfaces: &[runtime::PrimitiveSurface],
+    constants: &[ConstantSurfaceDecl],
     module: &str,
     name: &str,
 ) -> bool {
@@ -720,7 +701,8 @@ pub fn is_qualified_binding_with(
     }
     ModulePath::new([module]).is_some_and(|path| {
         path == injected_surface_module()
-            && surfaces.iter().any(|surface| surface.surface_name == name)
+            && (surfaces.iter().any(|surface| surface.surface_name == name)
+                || constants.iter().any(|constant| constant.name == name))
     })
 }
 
@@ -734,17 +716,34 @@ pub fn injected_surface<'a>(
     surfaces: &'a [runtime::PrimitiveSurface],
     name: &str,
 ) -> Option<&'a runtime::PrimitiveSurface> {
-    let leaf = match name.rsplit_once("::") {
+    let leaf = injected_leaf(name)?;
+    surfaces.iter().find(|surface| surface.surface_name == leaf)
+}
+
+/// Resolve a possibly-qualified surface `name` against the embedder-injected
+/// constant-surface declarations ([`ConstantSurfaceDecl`]). Mirrors
+/// [`injected_surface`]'s dual spelling: a declared constant answers to both
+/// its bare prelude name and its canonical `std::` spelling, and to nothing
+/// under any other module.
+#[must_use]
+pub fn injected_constant<'a>(
+    constants: &'a [ConstantSurfaceDecl],
+    name: &str,
+) -> Option<&'a ConstantSurfaceDecl> {
+    let leaf = injected_leaf(name)?;
+    constants.iter().find(|constant| constant.name == leaf)
+}
+
+/// The leaf an injected surface answers under: the bare spelling itself, or
+/// the leaf of a `std::`-qualified spelling; `None` under any other module.
+fn injected_leaf(name: &str) -> Option<&str> {
+    match name.rsplit_once("::") {
         Some((module, leaf)) => {
             let path = ModulePath::new(module.split("::"))?;
-            if path != injected_surface_module() {
-                return None;
-            }
-            leaf
+            (path == injected_surface_module()).then_some(leaf)
         }
-        None => name,
-    };
-    surfaces.iter().find(|surface| surface.surface_name == leaf)
+        None => Some(name),
+    }
 }
 
 /// Resolve a primitive by either its compatibility prelude name or its
@@ -758,26 +757,7 @@ pub fn surface_primitive(name: &str) -> Option<PrimitiveId> {
     let path = ModulePath::new(module.split("::"))?;
     match &BUILTIN_BINDINGS.qualified(&path, leaf)?.target {
         BindingTarget::Primitive(id) => Some(id.clone()),
-        BindingTarget::Intrinsic(_)
-        | BindingTarget::VixFunction { .. }
-        | BindingTarget::DedicatedOp(_) => None,
-    }
-}
-
-/// Resolve an intrinsic by either its compatibility prelude name or its
-/// canonical qualified name (for example `std::untar`).
-#[must_use]
-pub fn surface_intrinsic(name: &str) -> Option<Intrinsic> {
-    if let Some(intrinsic) = prelude_intrinsic(name) {
-        return Some(intrinsic);
-    }
-    let (module, leaf) = name.rsplit_once("::")?;
-    let path = ModulePath::new(module.split("::"))?;
-    match &BUILTIN_BINDINGS.qualified(&path, leaf)?.target {
-        BindingTarget::Intrinsic(kind) => Some(*kind),
-        BindingTarget::Primitive(_)
-        | BindingTarget::VixFunction { .. }
-        | BindingTarget::DedicatedOp(_) => None,
+        BindingTarget::VixFunction { .. } | BindingTarget::DedicatedOp(_) => None,
     }
 }
 
@@ -857,14 +837,11 @@ mod tests {
             assert_eq!(prelude_primitive(name), Some(decode_primitive_id()));
         }
 
-        // The dedicated-op intrinsics are not primitives.
-        for (name, kind) in [
-            ("fixture_tree", Intrinsic::FixtureTree),
-            ("fixture_registry", Intrinsic::FixtureRegistry),
-        ] {
-            let binding = reg.prelude(name).expect("prelude intrinsic");
-            assert!(matches!(binding.target, BindingTarget::Intrinsic(_)));
-            assert_eq!(prelude_intrinsic(name), Some(kind));
+        // The fixture spellings are no longer core bindings of any kind: they
+        // are harness-declared constant surfaces (`ConstantSurfaceDecl`,
+        // injected through `CompilerConfig::constants` by `vixen-runtime`).
+        for name in ["fixture_tree", "fixture_registry"] {
+            assert!(reg.prelude(name).is_none(), "{name} is not a core binding");
             assert_eq!(prelude_primitive(name), None);
         }
 
@@ -886,7 +863,6 @@ mod tests {
             );
             assert!(!is_qualified_binding("std", alias));
             assert_eq!(prelude_primitive(alias), None);
-            assert_eq!(prelude_intrinsic(alias), None);
         }
     }
 
@@ -949,12 +925,12 @@ mod tests {
         // never sees it…
         assert!(!is_qualified_binding("std", "grab"));
         // …but the injected-aware seam resolves it under `std`, and only there.
-        assert!(is_qualified_binding_with(&surfaces, "std", "grab"));
-        assert!(!is_qualified_binding_with(&surfaces, "other", "grab"));
-        assert!(!is_qualified_binding_with(&surfaces, "std", "not_injected"));
+        assert!(is_qualified_binding_with(&surfaces, &[], "std", "grab"));
+        assert!(!is_qualified_binding_with(&surfaces, &[], "other", "grab"));
+        assert!(!is_qualified_binding_with(&surfaces, &[], "std", "not_injected"));
 
         // The static bundled names still resolve through the same seam.
-        assert!(is_qualified_binding_with(&surfaces, "std", "fetch"));
+        assert!(is_qualified_binding_with(&surfaces, &[], "std", "fetch"));
     }
 
     #[test]
@@ -970,5 +946,36 @@ mod tests {
         assert!(injected_surface(&surfaces, "other::grab").is_none());
         // An unknown leaf does not.
         assert!(injected_surface(&surfaces, "std::nope").is_none());
+    }
+
+    /// A constant-surface declaration standing in for one a harness injects:
+    /// a `String`-typed constant whose bytes tag its one literal argument.
+    const NOTE_CONSTANT: ConstantSurfaceDecl = ConstantSurfaceDecl {
+        name: "pinned_note",
+        literal_params: 1,
+        result: || crate::vir::Type::String,
+        encode: |args| {
+            let mut bytes = b"note\0".to_vec();
+            bytes.extend(args[0].as_bytes());
+            bytes
+        },
+        root: false,
+    };
+
+    #[test]
+    fn injected_constant_answers_bare_and_std_spellings() {
+        let constants = [NOTE_CONSTANT];
+
+        assert!(injected_constant(&constants, "pinned_note").is_some());
+        assert!(injected_constant(&constants, "std::pinned_note").is_some());
+
+        assert!(injected_constant(&constants, "other::pinned_note").is_none());
+        assert!(injected_constant(&constants, "std::nope").is_none());
+
+        // The qualified-binding seam resolves a declared constant under
+        // `std`, and only there — `use std::pinned_note` works like any
+        // injected surface's import.
+        assert!(is_qualified_binding_with(&[], &constants, "std", "pinned_note"));
+        assert!(!is_qualified_binding_with(&[], &constants, "other", "pinned_note"));
     }
 }

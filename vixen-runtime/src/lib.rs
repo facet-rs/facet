@@ -22,6 +22,7 @@
 //! `vix-core` can never silently collide with one in `vixen-primitives`.
 
 pub mod budget;
+pub mod fixture;
 pub mod manifest;
 pub mod module_graph;
 pub mod ratchet;
@@ -142,6 +143,12 @@ pub fn default_config() -> CompilerConfig {
         methods: vixen_primitives::DOMAIN_METHODS,
         host_types: vixen_primitives::HOST_TYPES,
         capabilities: vixen_primitives::CAPABILITY_TYPES,
+        // The offline harness's fixture spellings, declared here (the
+        // harness half of the system) rather than in `vixen-primitives`:
+        // `fixture_tree`/`fixture_registry` name entries of the fixture
+        // store this crate installs as its origin adapter, and a production
+        // embedding would declare neither.
+        constants: crate::fixture::FIXTURE_CONSTANTS,
         ..CompilerConfig::default()
     }
 }

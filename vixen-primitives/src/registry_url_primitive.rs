@@ -40,12 +40,27 @@ pub fn registry_url_primitive_id() -> PrimitiveId {
     }
 }
 
+/// The coordinate a registry capability's manifest is served at: an ordinary
+/// coordinate read, routed by the declared adapter set to whichever installed
+/// adapter claims the `registry` scheme and admits the Registry capability
+/// (the offline harness's fixture adapter declares both). This retired
+/// `ReadProjection::RegistryManifest` — the machine no longer knows the
+/// manifest exists, and the serving adapter maps this one spelling to its own
+/// storage.
+///
+/// One manifest per adapter set: the read's capability is the registry value
+/// itself, but scheme routing cannot tell two registries apart. That matches
+/// the retired projection's semantics exactly; multi-registry routing is the
+/// `Registry`-as-host-type follow-up's problem.
+pub const REGISTRY_MANIFEST_COORDINATE: &str = "registry://manifest";
+
 /// `Registry.url(name) -> PinnedBlobRef` — resolve an artifact name against the
 /// offline harness registry manifest into a pinned Blob reference (provenance URL
 /// plus the REQUIRED content hash). The manifest lookup is vixen domain logic, so
 /// it lives here rather than in the language core; the manifest bytes reach the
-/// primitive through `EffectCtx::read(registry, RegistryManifest)`, exactly as
-/// `tree-read` reaches fixture file bytes through a `TreePath` read.
+/// primitive through an ordinary witnessed coordinate read
+/// ([`REGISTRY_MANIFEST_COORDINATE`]), exactly as `tree-read` reaches
+/// origin-backed file bytes through a `TreePath` read.
 pub struct RegistryUrlPrimitive {
     descriptor: PrimitiveDescriptor,
 }
@@ -106,7 +121,12 @@ fn execute(request: &ValueId, ctx: &EffectCtx) -> Result<ValueId, PrimitiveMachi
         .map_err(|_| invalid_value("registry artifact name was not UTF-8"))?
         .to_owned();
 
-    let witnessed = ctx.read(&registry_id, ReadProjection::RegistryManifest)?;
+    let witnessed = ctx.read(
+        &registry_id,
+        ReadProjection::Origin {
+            coordinate: REGISTRY_MANIFEST_COORDINATE.to_owned(),
+        },
+    )?;
     let manifest = core::str::from_utf8(&witnessed.bytes)
         .map_err(|_| invalid_value("registry manifest was not UTF-8"))?;
     let (url, hash, upstream) =

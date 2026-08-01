@@ -1,11 +1,85 @@
-//! The offline harness fixture store: the ONLY place the effect plane touches
-//! the filesystem. Every accessor is a recording seam — callers witness each
-//! read into the demand's receipt — and nothing here ever opens a network
-//! connection: `fixture://` URLs resolve inside the fixture root.
+//! The offline harness's fixture vocabulary: the `fixture_tree` /
+//! `fixture_registry` surface spellings (injected constant surfaces), the
+//! [`FixtureStore`] the harness installs as its origin adapter, and the
+//! `fixture-tree\0` handle namespace — spelled in exactly one place, this
+//! module.
+//!
+//! These are HARNESS vocabulary, not language vocabulary: they name entries
+//! in the harness's fixture root (`vixen-runtime/tests/fixtures`), their
+//! values re-verify against the store through the origin seam, and a
+//! production embedding declares none of it. `vix-core` spells no fixture
+//! name anywhere — the machine sees a declared constant, a declared origin
+//! adapter, and a declared tree-handle namespace.
+//!
+//! The value identities are the coordinate encodings, unchanged from the
+//! retired dedicated ops (acceptance 1 of the origin-rail note): a fixture
+//! tree is the `Tree`-framed handle `fixture-tree\0<name>` — the identity of
+//! its *coordinate*, not its content, which is the point: the store exists
+//! to simulate "the world changed under the same name", and the rerun audit
+//! re-verifies the receipts against live content. The registry is the
+//! `Registry`-framed leaf `fixture-registry`.
 
 use std::path::{Path, PathBuf};
 
-use super::model::TreeEntryKind;
+use vix::binding::ConstantSurfaceDecl;
+use vix::runtime::{
+    OriginAdapter, OriginAdapterDecl, OriginReadError, OriginTreeError, TreeEntryKind, ValueId,
+};
+use vix::schema::SchemaPattern;
+use vix::vir::{ExternKind, Type};
+
+/// The byte prefix of fixture tree handles — the fixture adapter's declared
+/// tree-handle namespace ([`FixtureStore::origin_decl`]) and the prefix the
+/// `fixture_tree` constant surface encodes. One spelling, one place.
+const FIXTURE_TREE_NAMESPACE: &[u8] = b"fixture-tree\0";
+
+/// The `Tree` host type the fixture-tree constant is framed as.
+fn fixture_tree_type() -> Type {
+    Type::Extern(ExternKind::Host(vix::binding::TREE))
+}
+
+/// Encode `fixture_tree(name)`'s one literal into the lazy handle bytes.
+fn encode_fixture_tree(args: &[&str]) -> Vec<u8> {
+    let mut bytes = FIXTURE_TREE_NAMESPACE.to_vec();
+    bytes.extend(args[0].as_bytes());
+    bytes
+}
+
+fn fixture_registry_type() -> Type {
+    Type::Extern(ExternKind::Registry)
+}
+
+fn encode_fixture_registry(_args: &[&str]) -> Vec<u8> {
+    b"fixture-registry".to_vec()
+}
+
+/// The two fixture surfaces, as injected constant-surface declarations.
+///
+/// `fixture_tree` declares the literal-argument constraint the review
+/// amendment demanded (every constant-surface parameter is a declared
+/// literal): a computed fixture coordinate is rejected at lowering, so a
+/// harness's fixture requirement set stays static.
+///
+/// The publication shapes mirror the retired ops exactly: `fixture_tree` is
+/// an in-frame realized constant (non-root), `fixture_registry` is its own
+/// scheduler-published effect island (root) — downstream registry consumers
+/// take its value as a published input.
+pub const FIXTURE_CONSTANTS: &[ConstantSurfaceDecl] = &[
+    ConstantSurfaceDecl {
+        name: "fixture_tree",
+        literal_params: 1,
+        result: fixture_tree_type,
+        encode: encode_fixture_tree,
+        root: false,
+    },
+    ConstantSurfaceDecl {
+        name: "fixture_registry",
+        literal_params: 0,
+        result: fixture_registry_type,
+        encode: encode_fixture_registry,
+        root: true,
+    },
+];
 
 /// A read that could not be served: the path is absent, or it exists with the
 /// wrong kind for the demand. IO errors are folded into `Missing` — the
@@ -18,8 +92,11 @@ pub enum FixtureReadError {
     NotADir,
 }
 
-/// Read-only access to the harness fixture root (`vix/tests/fixtures`). Tree
-/// fixtures live under `trees/<name>/`, the registry under `registry/`.
+/// Read-only access to the harness fixture root
+/// (`vixen-runtime/tests/fixtures`). Tree fixtures live under
+/// `trees/<name>/`, the registry under `registry/`. The ONLY place the
+/// harness's effect plane touches the filesystem, and nothing here ever
+/// opens a network connection: `fixture://` URLs resolve inside the root.
 #[derive(Clone, Debug)]
 pub struct FixtureStore {
     root: PathBuf,
@@ -59,6 +136,9 @@ impl FixtureStore {
         self.root.join("trees").join(projection)
     }
 
+    /// The virtual-file overlay: harness data simulating "the world changed
+    /// under the same name" between a run and its rerun audit. Declared here,
+    /// with the store — never resident in any `Runtime`.
     fn virtual_file(&self, projection: &str) -> Option<&'static [u8]> {
         match (self.rerun_with.as_deref(), projection) {
             (Some("touched-fixture"), "touched-fixture/data.txt") => Some(b"uno\ndos\ntres\n"),
@@ -182,69 +262,60 @@ impl FixtureStore {
         }
         std::fs::read(self.root.join(relative)).map_err(|_| FixtureReadError::Missing)
     }
-}
 
-/// The byte prefix of fixture tree handles — the fixture adapter's declared
-/// tree-handle namespace ([`FixtureStore::origin_decl`]). The rail's goal is
-/// for this to be spelled in exactly one place; until stage 3 moves the store
-/// out of core, the compiler/scheduler constant-construction sites still
-/// share it through [`fixture_tree_name`].
-const FIXTURE_TREE_NAMESPACE: &[u8] = b"fixture-tree\0";
-
-#[must_use]
-pub fn fixture_tree_name(bytes: &[u8]) -> Option<&[u8]> {
-    let name = bytes.strip_prefix(FIXTURE_TREE_NAMESPACE)?;
-    Some(name.split(|byte| *byte == 0).next().unwrap_or(name))
-}
-
-impl FixtureStore {
-    /// The fixture adapter's declaration: `fixture://` coordinates, Registry
-    /// capabilities, and the `fixture-tree\0` handle namespace, as data. The
-    /// scheme sniff and the capability-schema check the adapter used to
-    /// perform live here now — routing admits before the adapter is reached.
+    /// The fixture adapter's declaration: `fixture://` coordinates, the
+    /// `registry://` manifest coordinate, Registry capabilities, and the
+    /// `fixture-tree\0` handle namespace, as data. The machine routes by this
+    /// declaration; the adapter re-checks none of it.
+    ///
+    /// Claiming `registry` is what folds the retired
+    /// `ReadProjection::RegistryManifest` into this declaration: the offline
+    /// registry's manifest is served at
+    /// [`vixen_primitives::REGISTRY_MANIFEST_COORDINATE`] like any other
+    /// coordinate, and the machine no longer knows a manifest exists.
     ///
     /// r[impl machine.primitive.origin-routing]
     #[must_use]
-    pub fn origin_decl() -> super::OriginAdapterDecl {
-        super::OriginAdapterDecl {
+    pub fn origin_decl() -> OriginAdapterDecl {
+        OriginAdapterDecl {
             name: "fixture".to_owned(),
-            schemes: vec!["fixture".to_owned()],
-            capability: crate::schema::SchemaPattern::exact(
-                &crate::vir::Type::Extern(crate::vir::ExternKind::Registry).schema_ref(),
-            ),
+            schemes: vec!["fixture".to_owned(), "registry".to_owned()],
+            capability: SchemaPattern::exact(&Type::Extern(ExternKind::Registry).schema_ref()),
             tree_namespace: Some(FIXTURE_TREE_NAMESPACE.to_vec()),
         }
     }
 }
 
-impl super::OriginAdapter for FixtureStore {
-    fn read(
-        &self,
-        _capability: &super::ValueId,
-        coordinate: &str,
-    ) -> Result<Vec<u8>, super::OriginReadError> {
+impl OriginAdapter for FixtureStore {
+    fn read(&self, _capability: &ValueId, coordinate: &str) -> Result<Vec<u8>, OriginReadError> {
+        // The one `registry://` coordinate this adapter declares maps to the
+        // manifest file inside the fixture root.
+        if coordinate == vixen_primitives::REGISTRY_MANIFEST_COORDINATE {
+            return self
+                .registry_manifest()
+                .map(String::into_bytes)
+                .map_err(|_| OriginReadError::Miss {
+                    detail: "the fixture registry manifest is unavailable".to_owned(),
+                });
+        }
         self.fetch_url(coordinate)
-            .map_err(|_| super::OriginReadError::Miss {
+            .map_err(|_| OriginReadError::Miss {
                 detail: format!("fixture origin {coordinate} is unavailable"),
             })
     }
 
-    fn tree_kind(
-        &self,
-        _handle: &[u8],
-        path: &str,
-    ) -> Result<super::TreeEntryKind, super::OriginTreeError> {
+    fn tree_kind(&self, _handle: &[u8], path: &str) -> Result<TreeEntryKind, OriginTreeError> {
         self.tree_entry_kind(path)
-            .map_err(|_| super::OriginTreeError::Missing)
+            .map_err(|_| OriginTreeError::Missing)
     }
 
-    fn tree_bytes(&self, handle: &[u8], path: &str) -> Result<Vec<u8>, super::OriginTreeError> {
+    fn tree_bytes(&self, handle: &[u8], path: &str) -> Result<Vec<u8>, OriginTreeError> {
         match self.tree_kind(handle, path)? {
             TreeEntryKind::File => self
                 .tree_file_bytes(path)
-                .map_err(|_| super::OriginTreeError::Missing),
+                .map_err(|_| OriginTreeError::Missing),
             found @ (TreeEntryKind::Dir | TreeEntryKind::Symlink) => {
-                Err(super::OriginTreeError::WrongKind { found })
+                Err(OriginTreeError::WrongKind { found })
             }
         }
     }
@@ -253,13 +324,13 @@ impl super::OriginAdapter for FixtureStore {
         &self,
         handle: &[u8],
         path: &str,
-    ) -> Result<Vec<(String, TreeEntryKind)>, super::OriginTreeError> {
+    ) -> Result<Vec<(String, TreeEntryKind)>, OriginTreeError> {
         match self.tree_kind(handle, path)? {
             TreeEntryKind::Dir => self
                 .tree_dir_entries(path)
-                .map_err(|_| super::OriginTreeError::Missing),
+                .map_err(|_| OriginTreeError::Missing),
             found @ (TreeEntryKind::File | TreeEntryKind::Symlink) => {
-                Err(super::OriginTreeError::WrongKind { found })
+                Err(OriginTreeError::WrongKind { found })
             }
         }
     }

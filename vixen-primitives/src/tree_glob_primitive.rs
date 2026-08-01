@@ -3,8 +3,7 @@ use vix::vir::{ExternKind, Type};
 
 use crate::rt::{
     CodataDrainCtx, CodataPrimitive, PrimitiveDescriptor, PrimitiveMachineError,
-    PrimitiveMemoPolicy, TreeEntry, TreeEntryKind, fixture_tree_name, tree_from_resident,
-    tree_glob_primitive_id,
+    PrimitiveMemoPolicy, TreeEntry, TreeEntryKind, tree_from_resident, tree_glob_primitive_id,
     tree_glob_request_type,
 };
 
@@ -14,9 +13,9 @@ use crate::rt::{
 /// primitive completes an async ticket with one interned value, this drains a
 /// stream recipe into its ordered path elements when `.collect()` demands them.
 ///
-/// The domain logic — glob pattern matching, and enumeration of a fixture-backed
-/// tree's directories or an archive tree's members — lives here in
-/// `vixen-primitives`; `vix-core` supplies only the source value and the
+/// The domain logic — glob pattern matching, and enumeration of an
+/// origin-backed tree's directories or an archive tree's members — lives here
+/// in `vixen-primitives`; `vix-core` supplies only the source value and the
 /// witnessing context (an `Op::InvokeCodataPrimitive` recipe names this
 /// primitive's id).
 pub struct TreeGlobPrimitive {
@@ -69,51 +68,62 @@ impl CodataPrimitive for TreeGlobPrimitive {
                 && name.ends_with(suffix)
         };
 
-        // A fixture-backed tree is a lazy handle: enumerate the pattern's
-        // directory through the witnessing context, which records the listing as
-        // a `Directory` read. Copy the fixture name out first so the immutable
-        // borrow of `ctx` ends before the `&mut` directory read.
-        let fixture_name = fixture_tree_name(ctx.source_bytes()).map(<[u8]>::to_vec);
-        if let Some(name) = fixture_name {
-            let name = core::str::from_utf8(&name)
-                .map_err(|_| invalid("fixture tree name was not UTF-8"))?;
-            let projection = if directory.is_empty() {
-                name.to_owned()
-            } else {
-                format!("{name}/{directory}")
-            };
-            let entries = ctx.directory(&projection)?;
-            let mut paths = entries
-                .into_iter()
-                .filter_map(|(entry, kind)| (kind == TreeEntryKind::File).then_some(entry))
-                .map(|entry| {
-                    if directory.is_empty() {
-                        entry
-                    } else {
-                        format!("{directory}/{entry}")
-                    }
-                })
-                .filter(|path| matches(path))
-                .collect::<Vec<_>>();
-            paths.sort();
-            return Ok(paths);
+        // Route the source FIRST (r[impl machine.primitive.origin-routing]):
+        // an unclaimed handle is the seam's loud typed refusal, surfaced
+        // here before any enumeration strategy is chosen — it must never
+        // fall into content enumeration, whose parse failure would report
+        // "malformed bytes" for what is actually a routing/configuration
+        // gap (the confusing lie the routing rule bans; the tree-read
+        // primitive refuses identically through its authority read).
+        match ctx.source_routing()? {
+            // An origin-backed tree is a lazy handle: enumerate the
+            // pattern's directory through the witnessing context, which
+            // records the listing as a `Directory` read. The seam derived
+            // the handle's adapter-relative name from the installed
+            // declarations — projections are name-relative
+            // (`<name>/<path>`), and this drain names no backend.
+            crate::rt::DrainSourceRouting::Origin { name } => {
+                let name = core::str::from_utf8(&name)
+                    .map_err(|_| invalid("origin tree name was not UTF-8"))?;
+                let projection = if directory.is_empty() {
+                    name.to_owned()
+                } else {
+                    format!("{name}/{directory}")
+                };
+                let entries = ctx.directory(&projection)?;
+                let mut paths = entries
+                    .into_iter()
+                    .filter_map(|(entry, kind)| (kind == TreeEntryKind::File).then_some(entry))
+                    .map(|entry| {
+                        if directory.is_empty() {
+                            entry
+                        } else {
+                            format!("{directory}/{entry}")
+                        }
+                    })
+                    .filter(|path| matches(path))
+                    .collect::<Vec<_>>();
+                paths.sort();
+                Ok(paths)
+            }
+            // A resident tree carries its members in its own bytes — a pure
+            // enumeration, no directory read. Decoded as a semantic Tree
+            // rather than as an archive: the resident representation
+            // (archive, carrier, or the canonical form `untar` interns) is a
+            // storage concern, and all three enumerate the same members.
+            crate::rt::DrainSourceRouting::ContentIdentified => {
+                let mut paths = tree_from_resident(ctx.source_bytes())
+                    .map_err(|_| invalid("tree resident bytes were malformed"))?
+                    .walk()
+                    .into_iter()
+                    .filter_map(|(path, entry)| {
+                        (matches!(entry, TreeEntry::File { .. }) && matches(&path)).then_some(path)
+                    })
+                    .collect::<Vec<_>>();
+                paths.sort();
+                Ok(paths)
+            }
         }
-
-        // A resident tree carries its members in its own bytes — a pure
-        // enumeration, no directory read. Decoded as a semantic Tree rather than
-        // as an archive: the resident representation (archive, carrier, or the
-        // canonical form `untar` interns) is a storage concern, and all three
-        // enumerate the same members.
-        let mut paths = tree_from_resident(ctx.source_bytes())
-            .map_err(|_| invalid("tree resident bytes were malformed"))?
-            .walk()
-            .into_iter()
-            .filter_map(|(path, entry)| {
-                (matches!(entry, TreeEntry::File { .. }) && matches(&path)).then_some(path)
-            })
-            .collect::<Vec<_>>();
-        paths.sort();
-        Ok(paths)
     }
 }
 
