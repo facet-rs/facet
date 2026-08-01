@@ -1509,6 +1509,49 @@ fn lower_module(
             .entry(decl.name.to_owned())
             .or_insert_with(|| Type::Extern(ExternKind::Host(decl.name)));
     }
+    // Injected constant surfaces resolve BEFORE registered primitive shapes
+    // in call lowering, so a declaration named `fetch` would silently shadow
+    // the machine's primitive, and one named `decode` (matched even earlier
+    // by the typed decode builders) would be silently dead. The adapter-set
+    // install-rejection principle applies to this rail too: a colliding
+    // declaration is rejected at the seam, loudly, never resolved by match
+    // ordering — and a name declared twice is the same degenerate set.
+    let mut constant_names = BTreeSet::new();
+    for constant in config.constants {
+        if crate::binding::is_prelude_name(constant.name) {
+            return Err(Diagnostics::one(Diagnostic::unsupported(
+                Span { start: 0, end: 0 },
+                format!(
+                    "injected constant surface `{}` collides with a registered builtin \
+                     binding — builtin vocabulary cannot be shadowed by an injected \
+                     declaration",
+                    constant.name
+                ),
+            )));
+        }
+        if primitive_surfaces
+            .iter()
+            .any(|surface| surface.surface_name == constant.name)
+        {
+            return Err(Diagnostics::one(Diagnostic::unsupported(
+                Span { start: 0, end: 0 },
+                format!(
+                    "injected constant surface `{}` collides with an injected primitive \
+                     surface of the same name",
+                    constant.name
+                ),
+            )));
+        }
+        if !constant_names.insert(constant.name) {
+            return Err(Diagnostics::one(Diagnostic::unsupported(
+                Span { start: 0, end: 0 },
+                format!(
+                    "injected constant surface `{}` is declared twice",
+                    constant.name
+                ),
+            )));
+        }
+    }
     let declared_type_names = source
         .items
         .iter()

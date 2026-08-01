@@ -135,6 +135,93 @@ fn arity_is_checked_against_the_declaration() {
     );
 }
 
+/// A constant surface that spells a registered builtin binding's name would
+/// silently shadow it (constants resolve before primitive shapes) or be
+/// silently dead (`decode` matches even earlier): the adapter-set
+/// install-rejection principle applies — the collision is rejected loudly at
+/// the seam, never resolved by match ordering.
+#[test]
+fn a_constant_surface_cannot_shadow_builtin_vocabulary() {
+    const SHADOW_FETCH: &[ConstantSurfaceDecl] = &[ConstantSurfaceDecl {
+        name: "fetch",
+        ..PINNED_NOTE
+    }];
+    const SHADOW_DECODE: &[ConstantSurfaceDecl] = &[ConstantSurfaceDecl {
+        name: "decode",
+        ..PINNED_NOTE
+    }];
+    const SHADOW_TRY_DECODE: &[ConstantSurfaceDecl] = &[ConstantSurfaceDecl {
+        name: "try_decode",
+        ..PINNED_NOTE
+    }];
+    for (shadowed, constants) in [
+        ("fetch", SHADOW_FETCH),
+        ("decode", SHADOW_DECODE),
+        ("try_decode", SHADOW_TRY_DECODE),
+    ] {
+        let error = Compiler::with_config(CompilerConfig {
+            constants,
+            ..CompilerConfig::default()
+        })
+        .compile("fn f() -> Int {\n    1\n}\n")
+        .expect_err("a builtin-shadowing constant surface is rejected");
+        let error = format!("{error:?}");
+        assert!(
+            error.contains(shadowed) && error.contains("collides with a registered builtin"),
+            "the rejection names the colliding surface: {error}"
+        );
+    }
+}
+
+/// The same collision against an *injected* primitive surface: whichever rail
+/// injected the name first, a second declaration of it refuses rather than
+/// winning by arm order.
+#[test]
+fn a_constant_surface_cannot_shadow_an_injected_primitive_surface() {
+    let fetch = vix::runtime::builtin_primitive_surfaces()
+        .into_iter()
+        .next()
+        .expect("fetch surface");
+    let injected = vix::runtime::PrimitiveSurface {
+        surface_name: "grab",
+        ..fetch
+    };
+    const GRAB_CONSTANT: &[ConstantSurfaceDecl] = &[ConstantSurfaceDecl {
+        name: "grab",
+        ..PINNED_NOTE
+    }];
+    let error = Compiler::with_config(CompilerConfig {
+        constants: GRAB_CONSTANT,
+        ..CompilerConfig::default()
+    })
+    .with_primitive_surfaces([injected])
+    .compile("fn f() -> Int {\n    1\n}\n")
+    .expect_err("a surface-shadowing constant declaration is rejected");
+    let error = format!("{error:?}");
+    assert!(
+        error.contains("grab") && error.contains("injected primitive surface"),
+        "the rejection names both rails: {error}"
+    );
+}
+
+/// A name declared twice in the constant set is the same degenerate
+/// declaration set — first-match-wins resolution would hide the second.
+#[test]
+fn a_constant_surface_declared_twice_is_rejected() {
+    const TWICE: &[ConstantSurfaceDecl] = &[PINNED_NOTE, PINNED_NOTE];
+    let error = Compiler::with_config(CompilerConfig {
+        constants: TWICE,
+        ..CompilerConfig::default()
+    })
+    .compile("fn f() -> Int {\n    1\n}\n")
+    .expect_err("a duplicate constant-surface name is rejected");
+    let error = format!("{error:?}");
+    assert!(
+        error.contains("pinned_note") && error.contains("declared twice"),
+        "the rejection names the duplicate: {error}"
+    );
+}
+
 #[test]
 fn the_bare_language_declares_no_constant_surfaces() {
     // Without the injected declaration the name is an unknown call — the
