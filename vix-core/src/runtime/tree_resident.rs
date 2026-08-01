@@ -201,15 +201,47 @@ pub fn tree_from_resident(bytes: &[u8]) -> Result<Tree, ResidentTreeError> {
     tree_from_members(members).map_err(ResidentTreeError::Model)
 }
 
-/// Whether resident bytes are a content-identified tree — a carrier, the
-/// canonical form, or a ustar archive — as opposed to an opaque lazily-backed
-/// handle owned by an origin adapter's declared namespace. Content-identified
-/// trees carry their own members and never route to any origin backend
-/// (`machine.primitive.origin-routing`); the three forms are disjoint from
-/// handle namespaces on their leading bytes, so recognition is total.
+/// The ustar magic at byte offset 257 of the first header block. Recognition
+/// vocabulary only — [`parse_ustar`] validates structurally; every producer
+/// this machine admits (GNU/POSIX tar, the harness's shipped archives)
+/// writes the magic.
+const USTAR_MAGIC_OFFSET: usize = 257;
+const USTAR_MAGIC: &[u8] = b"ustar";
+
+/// Whether resident bytes are RECOGNIZED as a content-identified tree — a
+/// carrier, the canonical form, or a ustar archive — as opposed to an opaque
+/// lazily-backed handle owned by an origin adapter's declared namespace
+/// (`machine.primitive.origin-routing`: content-identified trees never route
+/// to any backend).
+///
+/// Recognition is by cheap markers, deliberately NOT by parsing:
+/// - the carrier magic (`vix-tree\0\x01`) at offset 0;
+/// - a canonical entry tag (byte 0/1/2) first — including the empty
+///   canonical encoding (empty bytes ARE the empty tree);
+/// - the ustar magic (`ustar`) at offset 257.
+///
+/// What the markers do and do not guarantee: recognition claims only "this
+/// routes as content, never to an adapter" — a recognized resident that then
+/// fails to PARSE is a loud malformed-content error, not a handle to retry
+/// against a backend. Marker recognition and handle namespaces stay disjoint
+/// because a declared namespace is a short printable tag: it cannot begin
+/// with the carrier magic or a 0/1/2 tag byte, and a handle long enough to
+/// carry `ustar` at offset 257 is the embedder's own doing (an
+/// embedder that declares such a namespace collides with its own tree
+/// representations — self-harm the seam does not defend against). What the
+/// seam DOES guarantee is that a routing decision costs a marker probe, not
+/// a full archive parse — and that a content read parses once, not twice
+/// (route, then read), which full-parse recognition used to do.
 #[must_use]
 pub fn is_content_identified_tree(bytes: &[u8]) -> bool {
-    tree_from_resident(bytes).is_ok()
+    if Tree::is_carrier(bytes) {
+        return true;
+    }
+    if matches!(bytes.first(), None | Some(0..=2)) {
+        return true;
+    }
+    bytes.len() >= USTAR_MAGIC_OFFSET + USTAR_MAGIC.len()
+        && &bytes[USTAR_MAGIC_OFFSET..USTAR_MAGIC_OFFSET + USTAR_MAGIC.len()] == USTAR_MAGIC
 }
 
 /// Canonical tree identity material, derived from the semantic [`Tree`] rather
@@ -278,6 +310,50 @@ mod tests {
             from_archive.tree_hash(),
             from_carrier.tree_hash(),
             "identity is the tree's, not the transport's"
+        );
+    }
+
+    /// r[verify machine.primitive.origin-routing] — content recognition is a
+    /// marker probe, and it recognizes every legitimate representation while
+    /// refusing opaque handle bytes: the three content forms route as
+    /// content, a namespaced handle does not.
+    #[test]
+    fn content_recognition_is_by_marker_and_refuses_handle_bytes() {
+        // All three legitimate representations of the same tree.
+        let tree = tree_from_resident(SAMPLE_ARCHIVE).expect("archive describes a tree");
+        assert!(is_content_identified_tree(SAMPLE_ARCHIVE), "ustar magic");
+        assert!(is_content_identified_tree(&tree.encode()), "carrier magic");
+        assert!(
+            is_content_identified_tree(&tree.encode_canonical()),
+            "canonical tag byte"
+        );
+        // The empty canonical encoding IS the empty tree.
+        assert!(is_content_identified_tree(b""));
+
+        // An opaque handle in a declared-namespace shape is NOT content —
+        // it must route to (or refuse through) the adapter set, never fall
+        // into content enumeration.
+        assert!(!is_content_identified_tree(b"sample-tree\0small-crate"));
+    }
+
+    /// Recognition is not validation: bytes wearing the ustar marker but
+    /// failing to parse are a RECOGNIZED, malformed content tree — a loud
+    /// parse error, never an unclaimed handle silently retried against a
+    /// backend.
+    #[test]
+    fn a_marked_but_malformed_resident_is_malformed_content_not_a_handle() {
+        let mut forged = vec![b'x'; 512];
+        forged[257..262].copy_from_slice(b"ustar");
+        assert!(
+            is_content_identified_tree(&forged),
+            "the marker recognizes it as content"
+        );
+        assert!(
+            matches!(
+                tree_from_resident(&forged),
+                Err(ResidentTreeError::Malformed)
+            ),
+            "and the parse rejects it loudly"
         );
     }
 
