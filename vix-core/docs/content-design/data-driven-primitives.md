@@ -238,8 +238,10 @@ Primitives need **shared, runtime-installed services** — an async executor, a
 connection pool, an HTTP client, a cache — reused across every invocation, the
 way a backend framework shares one DB pool across all its handlers. Today this
 exists as `runtime::PrimitiveServices`: a `struct` with a *closed, hardcoded* set
-of `Option<Arc<dyn Trait>>` fields (`value_persistence`, `origin`,
-`claim_history`, `fixture_store`), installed via `set_primitive_services` and
+of `Option<Arc<dyn Trait>>` fields (as of the origin rail: `value_persistence`,
+`origins` — a declared adapter *set* — and `exec_backend`; `claim_history` never
+existed in code and `fixture_store` left with the fixtures), installed via
+`set_primitive_services` and
 hand-wired into the scheduler. Adding one shared service means editing that
 struct **and** the scheduler — the exact closed-shape anti-pattern this arc
 exists to kill.
@@ -308,13 +310,19 @@ target includes them; the order defers them behind their blockers.
   `ArgRole::ResultType` carries the expected-type-derived target. This is gated
   on the const-fold-through-wrappers capability that #2500 defers; until it
   lands, `decode` stays hand-lowered and `request_shape` returns `None` for it.
-- **`fixture_tree` / `fixture_registry` / `untar`** lower to *dedicated VIR ops*,
-  not `InvokePrimitive` — there is no request record to shape. The end-state
-  gives `RequestShape` an **op-backend**: a shape whose target is a VIR op
-  rather than a `PrimitiveId`, so their projection is data even though their
-  lowering is an op. (The alternative — promoting them to real primitives — was
-  considered and rejected: they don't cross an authority boundary the way
-  `registered-primitives` requires.)
+- ~~**`fixture_tree` / `fixture_registry` / `untar`** lower to *dedicated VIR
+  ops*, not `InvokePrimitive` — there is no request record to shape. The
+  end-state gives `RequestShape` an **op-backend**… (The alternative —
+  promoting them to real primitives — was considered and rejected: they don't
+  cross an authority boundary the way `registered-primitives` requires.)~~
+  **SUPERSEDED.** All three ops are gone and no op-backend was ever built:
+  `untar` became a hermetic registered primitive, and the fixture spellings
+  became harness-injected *constant surfaces* (`ConstantSurfaceDecl` →
+  `Op::DeclaredConst`) with the fixture store an origin adapter behind the
+  seam — see `origin-rail.md`, which supersedes this verdict and records why
+  "doesn't cross an authority boundary" was the wrong test (the fixture store
+  demonstrably *is* an authority: it was the rerun audit's re-verification
+  oracle). Migration step 5 below is likewise superseded.
 
 ## Explicit non-goals
 
@@ -348,8 +356,9 @@ above.
    into a vix module the binder glob-imports at lowest priority; collapse
    `builtin_module_item` / `BUILTIN_TYPES` into that one path-resolution
    mechanism.
-5. **`fixture_*` / `untar` op-backend.** Give `RequestShape` a VIR-op target so
-   these are data-projected.
+5. ~~**`fixture_*` / `untar` op-backend.** Give `RequestShape` a VIR-op target
+   so these are data-projected.~~ **SUPERSEDED** — the ops themselves are gone
+   (`origin-rail.md`); there is nothing left to op-back.
 6. **`decode` / `try_decode`.** After const-fold-through-wrappers (#2500) lands:
    `ArgRole::Const` + `ArgRole::ResultType`, retiring the last hand-lowered arm.
 
