@@ -1,0 +1,70 @@
+// Path components. `Path` carries exactly one axiom method (`to_string`) and is
+// join-only by design (rung 046), so every component question is answered by
+// going out to segments.
+//
+// LANGUAGE GAP, deliberately not papered over here: `Path / segment` requires
+// the segment to be a STRING LITERAL (`compiler.rs`, "dynamic Path segments"),
+// so a `Path` cannot be rebuilt from computed text. That is why this file is
+// all queries and no constructors — a `from_segments`/`with_extension` that
+// returned `Path` is not expressible, and faking one by returning text under a
+// Path-shaped name would hide the gap rather than report it. Computed path TEXT
+// is what argv wants anyway (`--extern name=` fragments are strings), and a
+// computed `Path` VALUE is still reachable where it matters: `Tree.glob` yields
+// `Stream<Path, Path>`, and tree projection accepts a computed `Path` operand.
+
+pub fn segments(path: Path) -> [String] {
+    split(path.to_string()) where { sep: "/" }
+}
+
+pub fn file_name(path: Path) -> Option<String> {
+    last(segments(path))
+}
+
+// The extension of the final segment, without its dot. `None` when the file
+// name carries no dot at all; a dotfile (`.gitignore`) reports `gitignore`,
+// matching the "text after the last dot" rule rather than inventing a
+// hidden-file case the language has no opinion about.
+pub fn extension(path: Path) -> Option<String> {
+    match file_name(path) {
+        Some(name) => extension_of(name),
+        None => None,
+    }
+}
+
+fn extension_of(name: String) -> Option<String> {
+    if name.contains(".") {
+        last(split(name) where { sep: "." })
+    } else {
+        None
+    }
+}
+
+// The final segment with its extension removed — the crate-name half of a
+// `src/lib.rs` walk.
+pub fn stem(path: Path) -> Option<String> {
+    match file_name(path) {
+        Some(name) => Some(stem_of(name)),
+        None => None,
+    }
+}
+
+fn stem_of(name: String) -> String {
+    if name.contains(".") {
+        match (split(name) where { sep: "." }).split_last() {
+            Some((_extension, rest)) => join(rest) where { sep: "." },
+            None => name,
+        }
+    } else {
+        name
+    }
+}
+
+// The parent's TEXT, not a `Path` — see the gap note above. Named `_text` so a
+// caller cannot mistake it for a path-valued `parent` and be surprised that it
+// will not compose with `/`.
+pub fn parent_text(path: Path) -> String {
+    match segments(path).split_last() {
+        Some((_last, rest)) => join(rest) where { sep: "/" },
+        None => "",
+    }
+}

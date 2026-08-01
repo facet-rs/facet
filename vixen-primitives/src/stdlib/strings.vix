@@ -1,0 +1,77 @@
+// String surgery over the `split_once` axiom. `split_once` is FALLIBLE — it
+// raises when the separator is absent — so every function here guards on
+// `contains` first and never lets a missing separator become a failure. That
+// guard is the whole reason these are worth banking: written at the call site
+// it is forgotten, and the forgetting is a raise in the middle of a build.
+//
+// There is no substring or slice op in the language, so `starts_with` is
+// expressed as "the text before the first occurrence is empty" — correct
+// because `split_once` splits at the FIRST occurrence.
+
+fn split_onto(acc: [String]) where { text: String, sep: String } -> [String] {
+    if !(sep == "") && text.contains(sep) {
+        let (head, rest) = text.split_once(sep);
+        split_onto(acc + head) where { text: rest, sep: sep }
+    } else {
+        acc + text
+    }
+}
+
+// Split at EVERY occurrence of `sep`. Absent separator yields the whole text as
+// one element; an empty separator yields the whole text unsplit (rather than
+// failing to terminate).
+pub fn split(text: String) where { sep: String } -> [String] {
+    let empty: [String] = [];
+    split_onto(empty) where { text: text, sep: sep }
+}
+
+pub fn starts_with(text: String) where { prefix: String } -> Bool {
+    if prefix == "" {
+        true
+    } else {
+        if text.contains(prefix) {
+            let (before, _rest) = text.split_once(prefix);
+            before == ""
+        } else {
+            false
+        }
+    }
+}
+
+pub fn ends_with(text: String) where { suffix: String } -> Bool {
+    if suffix == "" {
+        true
+    } else {
+        match last(split(text) where { sep: suffix }) {
+            Some(tail) => tail == "",
+            None => false,
+        }
+    }
+}
+
+pub fn strip_prefix(text: String) where { prefix: String } -> Option<String> {
+    if prefix == "" {
+        Some(text)
+    } else {
+        if text.contains(prefix) {
+            let (before, rest) = text.split_once(prefix);
+            if before == "" {
+                Some(rest)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+}
+
+// Replace every occurrence — split-then-join, which is exactly what replacement
+// means and needs no separate traversal. An empty `from` matches nothing.
+pub fn replace(text: String) where { from: String, to: String } -> String {
+    if from == "" {
+        text
+    } else {
+        join(split(text) where { sep: from }) where { sep: to }
+    }
+}

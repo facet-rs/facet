@@ -198,6 +198,31 @@ fn lint_module(module: &Module) -> Diagnostics {
         let mut consumed = BTreeSet::new();
         for node in &function.nodes {
             consumed.extend(node.inputs.iter().copied());
+            // A branch region's result is NOT an input of the branching node —
+            // it is the region's `output`, reached only through the op. Without
+            // this, the tail expression of every `if`/`match` arm reads as
+            // discarded, and `if c { xs } else { xs + 1 }` warns while the bare
+            // `xs + 1` body it is equivalent to does not.
+            match &node.op {
+                Op::Match { arms } => {
+                    consumed.extend(arms.iter().map(|arm| arm.output));
+                }
+                Op::If {
+                    consequent,
+                    alternative,
+                } => {
+                    consumed.insert(consequent.output);
+                    consumed.insert(alternative.output);
+                }
+                Op::OrderedMatch { arms, fallback } => {
+                    consumed.extend(
+                        arms.iter()
+                            .flat_map(|arm| [arm.condition.output, arm.body.output]),
+                    );
+                    consumed.insert(fallback.output);
+                }
+                _ => {}
+            }
         }
         consumed.extend(function.output);
         consumed.extend(function.yielded_checks.iter().copied());

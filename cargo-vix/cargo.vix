@@ -1,0 +1,153 @@
+// cargo.vix — step one of "reimplement cargo in vix": read a real Cargo
+// manifest, discover the crate's targets the way cargo does with no explicit
+// [lib]/[[bin]] tables, and plan the rustc invocation each one needs.
+//
+// Run it: `vx cargo-vix/cargo.vix`
+//
+// WHAT IS AND IS NOT HERE. Everything up to and including the argv plan is
+// real and runs. The invocation itself does NOT, and the reason is a single
+// missing piece of exec surface rather than anything about cargo: an exec
+// template splices Int, String, and Path only, so there is no way to put an
+// INPUT FILE in front of the process. rustc cannot see src/lib.rs. See the
+// note above `rustc_argv` — the plan it renders is exactly the argv that
+// wants handing to `exec rustc`, so the day inputs can cross, this file
+// changes by one line.
+
+struct CargoPackage {
+    name: String,
+    version: String,
+    edition: Option<String>,
+}
+
+struct CargoManifest {
+    package: CargoPackage,
+}
+
+// A crate name is the package name with dashes turned into underscores. This
+// is the rule rustc enforces and cargo applies silently.
+fn crate_name(package: CargoPackage) -> String {
+    package.name.replace("-", "_")
+}
+
+// Cargo's own default: a manifest with no `edition` key is a 2015 crate.
+fn edition(package: CargoPackage) -> String {
+    package.edition.unwrap_or("2015")
+}
+
+enum TargetKind {
+    Lib,
+    Bin,
+}
+
+struct Unit {
+    name: String,
+    kind: TargetKind,
+    root: Path,
+    edition: String,
+}
+
+fn manifest(source: Tree) -> CargoManifest {
+    toml_decode((source / "Cargo.toml").text())
+}
+
+// Cargo's default target discovery, faithfully: `src/lib.rs` is the library and
+// is named after the package; `src/main.rs` is a binary, also named after the
+// package. (Cargo also auto-discovers `src/bin/*.rs`; that is a second glob and
+// waits for the multi-binary case to be worth its test.)
+fn units(source: Tree) -> [Unit] {
+    let package = manifest(source).package;
+    let roots = source.glob("src/*.rs").collect().values().sorted();
+    roots.fold([], |found, root| match unit_for(root) where { package: package } {
+        Some(unit) => found + unit,
+        None => found,
+    })
+}
+
+fn unit_for(root: Path) where { package: CargoPackage } -> Option<Unit> {
+    let leaf = root.file_name().unwrap_or("");
+    if leaf == "lib.rs" {
+        Some(Unit {
+            name: crate_name(package),
+            kind: TargetKind::Lib,
+            root: root,
+            edition: edition(package),
+        })
+    } else {
+        if leaf == "main.rs" {
+            Some(Unit {
+                name: crate_name(package),
+                kind: TargetKind::Bin,
+                root: root,
+                edition: edition(package),
+            })
+        } else {
+            None
+        }
+    }
+}
+
+fn crate_type_flag(kind: TargetKind) -> String {
+    match kind {
+        TargetKind::Lib => "lib",
+        TargetKind::Bin => "bin",
+    }
+}
+
+// The argv rustc wants for one unit. This is the value that would be handed
+// straight to `exec rustc`; it is rendered as data instead so the plan can be
+// asserted without the process existing.
+//
+// BLOCKED ON: `{root}` here is a Path and would splice fine, but the file it
+// names lives in `source` and an exec has no way to receive a tree. So the
+// invocation is a plan, not a call — see the header note.
+fn rustc_argv(unit: Unit) -> [String] {
+    ["--crate-name", unit.name]
+        + "--edition"
+        + unit.edition
+        + "--crate-type"
+        + crate_type_flag(unit.kind)
+        + unit.root.to_string()
+        + "--out-dir"
+        + "."
+}
+
+#[test]
+fn reads_the_manifest() -> Stream<Check> {
+    let source = fixture_tree("small-crate");
+    let package = manifest(source).package;
+
+    yield expect_eq(package.name, "small-crate");
+    yield expect_eq(package.version, "0.1.0");
+    yield expect_eq(edition(package), "2021");
+    // The dash is not legal in a crate name; cargo rewrites it and so do we.
+    yield expect_eq(crate_name(package), "small_crate");
+}
+
+#[test]
+fn discovers_the_default_targets() -> Stream<Check> {
+    let source = fixture_tree("small-crate");
+    let found = units(source);
+
+    yield expect_eq(found.len(), 2);
+    // Sorted by path, so the library sorts before the binary.
+    yield expect_eq(found[0].root.to_string(), "src/lib.rs");
+    yield expect_eq(found[0].kind, TargetKind::Lib);
+    yield expect_eq(found[1].root.to_string(), "src/main.rs");
+    yield expect_eq(found[1].kind, TargetKind::Bin);
+    yield expect_eq(found[0].name, "small_crate");
+}
+
+#[test]
+fn plans_the_rustc_invocations() -> Stream<Check> {
+    let source = fixture_tree("small-crate");
+    let found = units(source);
+
+    yield expect_eq(
+        rustc_argv(found[0]).join(" "),
+        "--crate-name small_crate --edition 2021 --crate-type lib src/lib.rs --out-dir ."
+    );
+    yield expect_eq(
+        rustc_argv(found[1]).join(" "),
+        "--crate-name small_crate --edition 2021 --crate-type bin src/main.rs --out-dir ."
+    );
+}
