@@ -680,6 +680,17 @@ impl Tree {
         bytes.starts_with(CARRIER_MAGIC)
     }
 
+    /// Whether `bytes` and the carrier magic are prefix-related — i.e. some
+    /// byte string beginning with `bytes` is a carrier. Install-time
+    /// vocabulary: a declared tree-handle namespace that is a proper prefix
+    /// of the magic does not probe as content itself, but handles under it
+    /// could complete the magic and route as carriers instead of to their
+    /// adapter, so such a namespace is rejected at install.
+    #[must_use]
+    pub fn carrier_prefix_related(bytes: &[u8]) -> bool {
+        CARRIER_MAGIC.starts_with(bytes) || bytes.starts_with(CARRIER_MAGIC)
+    }
+
     fn decode_into(cursor: &mut &[u8], depth: u32) -> Result<Tree, TreeDecodeError> {
         // A forged carrier must not be able to blow the stack.
         const MAX_DEPTH: u32 = 256;

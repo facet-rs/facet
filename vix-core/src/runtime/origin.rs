@@ -170,6 +170,14 @@ pub enum OriginInstallError {
     /// would defeat the unclaimed-handle refusal — degenerate, not a
     /// namespace.
     EmptyNamespace { name: String },
+    /// A declaration's tree namespace carries a content-identified tree
+    /// marker — the carrier magic, a canonical entry tag byte, ustar-length
+    /// bytes with the magic in place — or is a prefix of the carrier magic
+    /// that handles could complete. Content recognition runs before
+    /// namespace routing, so such a namespace's handles would route as
+    /// content (and die as malformed content) instead of reaching their
+    /// adapter: a claim no handle could ever ride.
+    ContentMarkedNamespace { name: String },
     /// A declaration listed an empty scheme string: no coordinate spells the
     /// empty scheme, so the entry is unreachable — and an unreachable claim
     /// in the declared set is a configuration lie.
@@ -201,6 +209,12 @@ impl core::fmt::Display for OriginInstallError {
                 formatter,
                 "origin adapter \"{name}\" declares the empty tree-handle namespace, \
                  a wildcard claim over every non-content handle"
+            ),
+            Self::ContentMarkedNamespace { name } => write!(
+                formatter,
+                "origin adapter \"{name}\" declares a tree-handle namespace carrying a \
+                 content-identified tree marker — its handles would route as content, \
+                 never to the adapter"
             ),
             Self::EmptyScheme { name } => write!(
                 formatter,
@@ -251,14 +265,24 @@ impl OriginAdapterSet {
         // unreachable; a self-duplicate scheme is a double claim with one
         // author. Rejected for the same reason overlaps are — routing must
         // be a function of the declaration set, not of what slipped past it.
-        if decl
-            .tree_namespace
-            .as_ref()
-            .is_some_and(|namespace| namespace.is_empty())
-        {
-            return Err(OriginInstallError::EmptyNamespace {
-                name: decl.name.clone(),
-            });
+        if let Some(namespace) = &decl.tree_namespace {
+            if namespace.is_empty() {
+                return Err(OriginInstallError::EmptyNamespace {
+                    name: decl.name.clone(),
+                });
+            }
+            // Content recognition runs before namespace routing
+            // (`route_tree`), so a namespace that probes as content — or
+            // that is a prefix of the carrier magic and could therefore mint
+            // carrier-marked handles — is a claim its adapter would never be
+            // consulted for.
+            if super::tree_resident::is_content_identified_tree(namespace)
+                || super::tree::Tree::carrier_prefix_related(namespace)
+            {
+                return Err(OriginInstallError::ContentMarkedNamespace {
+                    name: decl.name.clone(),
+                });
+            }
         }
         for (index, scheme) in decl.schemes.iter().enumerate() {
             if scheme.is_empty() {
@@ -544,6 +568,43 @@ mod tests {
             set.install(decl("wildcard", &["a"], Some(b"")), Arc::new(NullAdapter)),
             Err(OriginInstallError::EmptyNamespace {
                 name: "wildcard".to_owned(),
+            })
+        );
+    }
+
+    /// r[verify machine.primitive.origin-routing] — content recognition runs
+    /// before namespace routing, so a namespace carrying a content marker
+    /// (here: a canonical entry tag byte) is a claim its handles could never
+    /// ride to the adapter; rejected at install like every other degenerate
+    /// declaration.
+    #[test]
+    fn a_content_marked_tree_namespace_is_rejected_at_install_time() {
+        let mut set = OriginAdapterSet::default();
+        assert_eq!(
+            set.install(
+                decl("tagged", &["a"], Some(b"\x00trees\0")),
+                Arc::new(NullAdapter)
+            ),
+            Err(OriginInstallError::ContentMarkedNamespace {
+                name: "tagged".to_owned(),
+            })
+        );
+    }
+
+    /// r[verify machine.primitive.origin-routing] — a namespace that is a
+    /// PREFIX of the carrier magic does not probe as content itself, but a
+    /// handle under it could complete the magic and route as a carrier;
+    /// rejected the same way.
+    #[test]
+    fn a_carrier_magic_prefix_namespace_is_rejected_at_install_time() {
+        let mut set = OriginAdapterSet::default();
+        assert_eq!(
+            set.install(
+                decl("carrier", &["a"], Some(b"vix-tree")),
+                Arc::new(NullAdapter)
+            ),
+            Err(OriginInstallError::ContentMarkedNamespace {
+                name: "carrier".to_owned(),
             })
         );
     }

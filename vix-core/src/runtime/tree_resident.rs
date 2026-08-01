@@ -224,14 +224,15 @@ const USTAR_MAGIC: &[u8] = b"ustar";
 /// routes as content, never to an adapter" — a recognized resident that then
 /// fails to PARSE is a loud malformed-content error, not a handle to retry
 /// against a backend. Marker recognition and handle namespaces stay disjoint
-/// because a declared namespace is a short printable tag: it cannot begin
-/// with the carrier magic or a 0/1/2 tag byte, and a handle long enough to
-/// carry `ustar` at offset 257 is the embedder's own doing (an
-/// embedder that declares such a namespace collides with its own tree
-/// representations — self-harm the seam does not defend against). What the
-/// seam DOES guarantee is that a routing decision costs a marker probe, not
-/// a full archive parse — and that a content read parses once, not twice
-/// (route, then read), which full-parse recognition used to do.
+/// because `OriginAdapterSet::install` REJECTS a declared namespace that
+/// carries a content marker or prefixes the carrier magic
+/// (`OriginInstallError::ContentMarkedNamespace`); the one residual overlap
+/// — a handle whose NAME stretches past offset 257 and spells `ustar` there
+/// — routes as content and dies loudly as malformed content, the naming
+/// author's own doing. What the seam DOES guarantee is that a routing
+/// decision costs a marker probe, not a full archive parse — and that a
+/// content read parses once, not twice (route, then read), which full-parse
+/// recognition used to do.
 #[must_use]
 pub fn is_content_identified_tree(bytes: &[u8]) -> bool {
     if Tree::is_carrier(bytes) {
