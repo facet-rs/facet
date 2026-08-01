@@ -4160,12 +4160,7 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
         // Unpinned coordinate reads (the registry manifest) share the
         // `Origin` projection vocabulary but are not fetches.
         if memo_policy == PrimitiveMemoPolicy::Pinned {
-            self.counters.fetches_performed += publication
-                .receipt
-                .reads
-                .iter()
-                .filter(|read| matches!(read.projection, ReadProjection::Origin { .. }))
-                .count() as u64;
+            self.counters.fetches_performed += performed_fetch_transfers(&publication.receipt);
         }
         if let Some(root) = root {
             // An EFFECT-marked invocation is hoisted into its own island and
@@ -7382,6 +7377,23 @@ fn primitive_demand_preimage(primitive: &super::PrimitiveId, request: &ValueId) 
         closure: recipe,
         arguments: vec![request.clone()],
     }
+}
+
+/// The origin TRANSFERS a pinned publication's receipt records: coordinate
+/// witnesses whose observation is a served `Value`. Witnessed misses are in
+/// the receipt too (a multi-origin fallthrough records one `Missing` per
+/// tried coordinate — `machine.primitive.witness-reverification`), but a
+/// miss moved no bytes: it is not a fetch performed, and counting it would
+/// make the `fetched(n)` contracts lie about a fallthrough.
+fn performed_fetch_transfers(receipt: &Receipt) -> u64 {
+    receipt
+        .reads
+        .iter()
+        .filter(|read| {
+            matches!(read.projection, ReadProjection::Origin { .. })
+                && matches!(read.observation, ReadObservation::Value(_))
+        })
+        .count() as u64
 }
 
 /// A projection's canonical spelling inside an effect-projection demand
@@ -10939,6 +10951,56 @@ fn passing() -> Stream<Check> {
                 "the wrong-kind read is witnessed as the contradicting kind, not a miss"
             );
             assert_eq!(reads[1].observation, ReadObservation::Missing);
+        }
+    }
+
+    mod fetch_counter {
+        //! `fetches_performed` counts pinned origin TRANSFERS: a witnessed
+        //! miss is in the receipt (every tried coordinate is), but it moved
+        //! no bytes and must not count.
+
+        use super::*;
+        use crate::runtime::{Receipt, ReadWitness};
+
+        /// A multi-origin fallthrough that succeeds on its LAST origin
+        /// performed exactly one fetch: two Missing witnesses and one Value
+        /// witness count 1, and non-coordinate witnesses count 0.
+        #[test]
+        fn a_fallthrough_receipt_counts_one_transfer() {
+            let capability =
+                effect_leaf(&Type::Extern(ExternKind::Registry), b"registry".to_vec()).identity;
+            let served = effect_leaf(&Type::Extern(ExternKind::Blob), b"payload".to_vec()).identity;
+            let coordinate_witness = |coordinate: &str, observation: ReadObservation| ReadWitness {
+                source: capability.clone(),
+                projection: ReadProjection::Origin {
+                    coordinate: coordinate.to_owned(),
+                },
+                observation,
+                provenance: None,
+            };
+            let receipt = Receipt {
+                demand: DemandKey::from_preimage(&DemandPreimage {
+                    closure: RecipeId::from_canonical_vir(b"fetch-counter-test"),
+                    arguments: Vec::new(),
+                }),
+                reads: vec![
+                    coordinate_witness("stub://miss-a", ReadObservation::Missing),
+                    coordinate_witness("stub://miss-b", ReadObservation::Missing),
+                    coordinate_witness("stub://serves", ReadObservation::Value(served.clone())),
+                    // A non-coordinate witness never counts, whatever it saw.
+                    ReadWitness {
+                        source: served,
+                        projection: ReadProjection::Whole,
+                        observation: ReadObservation::Missing,
+                        provenance: None,
+                    },
+                ],
+            };
+            assert_eq!(
+                performed_fetch_transfers(&receipt),
+                1,
+                "two misses and one served transfer is ONE fetch performed"
+            );
         }
     }
 
