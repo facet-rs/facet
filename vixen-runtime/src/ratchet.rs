@@ -170,9 +170,19 @@ fn observe_bundled_invocations(
         let mut literals = Vec::with_capacity(node.inputs.len());
         let mut literal = true;
         for input in &node.inputs {
-            match authored.nodes[input.0 as usize].op {
-                Op::Int(value) => literals.push(WireArg::Int(value)),
-                Op::Bool(value) => literals.push(WireArg::Bool(value)),
+            let argument = &authored.nodes[input.0 as usize];
+            match &argument.op {
+                Op::Int(value) => literals.push(WireArg::Int(*value)),
+                Op::Bool(value) => literals.push(WireArg::Bool(*value)),
+                // A declared constant is a closed literal: encoded exactly as
+                // the selector side (`wire_argument_literal`) encodes it —
+                // the declared type's schema and the declaration's bytes —
+                // so `demanded_once(f(fixture_tree("x")))` matches the
+                // realized invocation instead of observing nothing.
+                Op::DeclaredConst { bytes, .. } => literals.push(WireArg::Constant {
+                    schema: argument.ty.schema_ref(),
+                    bytes: bytes.clone(),
+                }),
                 _ => {
                     literal = false;
                     break;

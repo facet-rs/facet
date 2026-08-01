@@ -4297,9 +4297,19 @@ fn invocation_provenance(function: &Function, node: &Node) -> Option<WireProvena
     let mut literals = Vec::with_capacity(node.inputs.len());
     let mut literal = true;
     for &input in &node.inputs {
-        match function.nodes[input.0 as usize].op {
-            Op::Int(value) => literals.push(WireArg::Int(value)),
-            Op::Bool(value) => literals.push(WireArg::Bool(value)),
+        let argument = &function.nodes[input.0 as usize];
+        match &argument.op {
+            Op::Int(value) => literals.push(WireArg::Int(*value)),
+            Op::Bool(value) => literals.push(WireArg::Bool(*value)),
+            // A declared constant is a closed literal too: its selector-side
+            // twin (`wire_argument_literal`) encodes the SAME schema and
+            // bytes from the declaration, so the two sides agree
+            // byte-for-byte and a call-site selector can match the realized
+            // invocation.
+            Op::DeclaredConst { bytes, .. } => literals.push(WireArg::Constant {
+                schema: argument.ty.schema_ref(),
+                bytes: bytes.clone(),
+            }),
             _ => {
                 literal = false;
                 break;
