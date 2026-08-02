@@ -1,0 +1,47 @@
+// facet.vix — the code half of the facet package. The data half is the
+// sibling package.styx, and the seam between them is one sentence: the
+// manifest NAMES things (fns, paths, pins), this file COMPUTES things.
+// Nothing here is discovered; nothing there is evaluated.
+//
+// Three manifest lines point into this file:
+//
+//   command build { fn facet::build }     — `vx r facet build`
+//   command test  { fn facet::test }      — `vx r facet test`
+//   artifact bins { fn facet::build }     — `vx build facet#bins`
+//
+// A manifest-named fn is a ROOT, with the same standing #[test] fns have
+// today. Its capability parameters ARE its requirement declaration — the
+// manifest never repeats them (vixen.machine.requirements-from-use), and
+// binding resolves them against the declared inputs' exposed programs,
+// failing before any effect if no input provides one
+// (vixen.machine.binding-fails-before-effects).
+
+// An input's name is an importable namespace: `input cargo @package` in the
+// manifest puts the cargo package's modules behind `cargo::`. Code and
+// capabilities travel together — the same input whose `program rustc`
+// satisfies the Rustc parameter below also carries the orchestration fns
+// that drive it. One pin covers both.
+use cargo::{build_workspace, test_workspace};
+
+// `workspace()` is a constant surface (binding::ConstantSurfaceDecl) the
+// embedder declares over its own origin adapter — the promise recorded in
+// vx.rs. It yields this package's own source tree, content-identified. It is
+// the only door to "here": nothing else about the surrounding machine can
+// reach this program, so the same demand on another box is the same demand.
+
+// Build the workspace, hand back the tree of built binaries — bin/fx among
+// them, which is all `program fx` in the manifest needs: a path into this
+// fn's value. `artifact bins` claims this returns a Tree and the claim is
+// checked against this signature at binding (vixen.delivery.result: only
+// Tree and Blob render to a filesystem; anything else would be a guess).
+fn build(rustc: Rustc, sh: Sh) -> Tree {
+    build_workspace(workspace(), rustc, sh)
+}
+
+// Commands may return anything `vx r` knows how to present; a Stream<Check>
+// gets the same rendering the ratchet gives #[test] roots. A future typed
+// argument surface (`vx r facet test --filter …`) is a command-grammar
+// concern and lands on the manifest entry, not here.
+fn test(rustc: Rustc, sh: Sh) -> Stream<Check> {
+    test_workspace(workspace(), rustc, sh)
+}
