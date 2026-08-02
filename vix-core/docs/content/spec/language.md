@@ -69,7 +69,7 @@ literal does not have, so the literal is a `Template`.
 Interpolation and templating are not the same operation. Interpolation names a
 **value** and is eager. A template names a **hole** and keeps it. This replaces
 the earlier `${expression}`-interpolating double-quoted string and the literal
-single-quoted string; `'…'` has no remaining use.
+single-quoted string; `'` becomes reserved rather than repurposed.
 
 |            | no holes            | holes admitted                |
 | ---------- | ------------------- | ----------------------------- |
@@ -82,6 +82,11 @@ single-quoted string; `'…'` has no remaining use.
 > [DESIGN] `"…"` is a `String`: one line, backslash escapes, no holes. A
 > quoted literal never reads a name, so the bytes it denotes are a function of
 > the source text alone.
+>
+> `'` is **unassigned and reserved**. It has never been a string delimiter in
+> this language, and the raw form it was once described as providing is
+> `"""…"""`. If a `Char` type is ever added, `'c'` is the spelling it takes;
+> reserving the character now keeps that available.
 
 > r[lang.literal.block]
 >
@@ -93,7 +98,7 @@ single-quoted string; `'…'` has no remaining use.
 > Block form is raw because the two pressures that make escapes necessary in
 > `"…"` are absent: the delimiter does not occur in ordinary text, and the
 > literal spans lines, so a newline is typed rather than spelled. Embedded
-> foreign text is the common case and must survive verbatim.
+> foreign text is the common case and must survive unchanged.
 
 > r[lang.literal.whitespace]
 >
@@ -131,11 +136,13 @@ single-quoted string; `'…'` has no remaining use.
 > for the text. Flavors are a closed, specified set; an unknown flavor is a
 > typed error, never ignored.
 >
-> On a **string**, a flavor is inert to the value: `@rust"""…"""` denotes the
-> same bytes the unflavored literal does. It drives editor injection,
-> validation, and lints. On a **template** it additionally selects an escaping
-> rule (`r[lang.template.escaping]`). String flavors are therefore a matter of
-> taste and may be revised; template flavors participate in meaning.
+> A flavor drives editor injection, validation, and lints, and it may declare
+> an **escaping discipline** (`r[lang.template.escaping]`). There is one rule
+> for escaping and it applies uniformly: a flavor escapes *spliced values*. A
+> quote-family literal has no splices, so the rule is simply vacuous there —
+> not a second kind of flavor, just a precondition that is never met.
+>
+> A flavor never alters the literal's own text, in either family.
 >
 > `@` is reserved at the head of a literal and has no other use.
 
@@ -211,10 +218,35 @@ single-quoted string; `'…'` has no remaining use.
 
 > r[lang.template.escaping]
 >
-> [DESIGN] A template's flavor may declare an escaping rule, and it applies to
-> **spliced values only, never to the literal's own text**. `@html`, `@xml`,
-> and `@sql` escape what comes through a hole; the surrounding characters are
-> emitted verbatim.
+> [DESIGN] A flavor may declare an **escaping discipline**. When it does, it
+> also names the type it produces: `@html` yields `Html`, `@sql` yields `Sql`,
+> `@xml` yields `Xml`. A flavor with no escaping to declare (`@rust`, `@md`,
+> `@styx`) yields an ordinary `String` and mints no type. The registry gains a
+> field, not a type per entry.
+>
+> Escaping applies to **spliced values only, never to the literal's own text**,
+> and which values are escaped is decided by the hole's type:
+>
+> - a hole typed `String` is **escaped** on splice;
+> - a hole already typed as the flavor's type is **passed through**, because
+>   its type already says it is markup.
+>
+> The second clause is why composition needs no opt-out. An `@html` template
+> produces `Html`, so a template spliced into another template — the ordinary
+> `map`/`join` shape of `r[lang.template.no-control-flow]` — carries markup
+> into markup and nothing is re-escaped.
+>
+> The types are **per flavor**, and deliberately not one shared `Raw`. Escaping
+> is format-specific: a value escaped for SQL is not safe in HTML, and a single
+> unescaped-marker type would erase exactly the information that makes escaping
+> correct. Per-flavor types also give the useful refusal — `Sql` does not splice
+> into an `Html` hole.
+>
+> The bypass, for a `String` from elsewhere that the author asserts is already
+> markup, is a **named conversion** and not a type: `html::verbatim(text)`.
+> A call is greppable — every bypass in a tree is one search — local, and does
+> not propagate the way a marker type flowing through signatures would. The name
+> states the obligation: someone is vouching for these bytes.
 >
 > A hole is precisely the boundary where data meets structured output, so this
 > is injection safety by construction rather than by discipline. Confining it
@@ -226,7 +258,7 @@ single-quoted string; `'…'` has no remaining use.
 > [DESIGN] A hole is **inline** or **block**, decided by whether it is the sole
 > non-whitespace content on its line, and the two lay out differently:
 >
-> - **Inline** (`<td>{name}</td>`): the value is spliced verbatim. There is no
+> - **Inline** (`<td>{name}</td>`): the value is spliced unchanged. There is no
 >   meaningful indentation to inherit; the value continues mid-line.
 > - **Block** (the hole alone on its line, preceded only by whitespace): every
 >   line of the value *after the first* is prefixed with exactly the whitespace
@@ -251,13 +283,13 @@ single-quoted string; `'…'` has no remaining use.
 > whitespace that was meant.
 >
 > **The control is the hole's position, and no modifier exists.** A value
-> wanted at column zero is written at column zero; a value wanted verbatim is
-> written inline. The knob is already visible in the source, so no
-> `{name:verbatim}` spelling is introduced to be forgotten or to rot.
+> wanted at column zero is written at column zero; a value wanted unindented
+> is written inline. The knob is already visible in the source, so no
+> per-hole layout modifier is introduced to be forgotten or to rot.
 >
 > Two details keep it safe: a blank line in the value receives **no** prefix,
 > because indenting it would manufacture trailing whitespace the machine must
-> not invent (rule 5); and the prefix is copied **verbatim** from the source,
+> not invent (rule 5); and the prefix is copied **exactly** from the source,
 > so tabs stay tabs and no tab width is ever assumed. Escaping
 > (`r[lang.template.escaping]`) applies first, layout second.
 
@@ -282,6 +314,13 @@ single-quoted string; `'…'` has no remaining use.
 > package** (`vixen.capability.package-declares-its-holes`), not by a global
 > table: the package already owns the argv dialect, and the collision to avoid
 > is per-tool. It is versioned with the package and enters command identity.
+>
+> A command literal needs **no escaping discipline**, and this is a property of
+> the design rather than an omission. A capability's grammar parses argv into
+> separate roles, so a hole contributes one argv element — there is no string
+> for a value to escape out of, and `r[lang.template.escaping]` has nothing to
+> do. The structure is the escaping. Text generation is where injection lives;
+> commands are safe by construction.
 >
 > `{let x}` in a command literal names a declared `Output<Path>` role of the
 > command grammar. This is not a second meaning of `let`: the command is a
