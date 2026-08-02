@@ -28,8 +28,8 @@ Rules here carry the same confidence markers as the runtime spec: **[SETTLED]**
 (decreed; changing it is a project decision) and **[DESIGN]** (agreed, with
 implementation pending). There are no live **[OPEN]** rules.
 
-The three pages correspond to the three seams the language deliberately refuses
-to reach through:
+The pages correspond to the seams the language deliberately refuses to reach
+through:
 
 - [Capability packages](/spec/vixen/capability-packages) — what a `Rustc` value
   *is*, and where a tool's argv grammar comes from, given that the machine may
@@ -39,3 +39,7 @@ to reach through:
   no second lockfile beside it.
 - [Delivery](/spec/vixen/delivery) — how a demanded value reaches a filesystem,
   given that no program may write one.
+- [The package manifest](/spec/vixen/packages) — what a *package* is, given
+  that no program may describe itself ambiently: pinned inputs, commands and
+  artifacts as bare fn refs, exposed programs as paths into values, and the
+  `vx r` resolution rungs.

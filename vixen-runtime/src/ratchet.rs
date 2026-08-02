@@ -1090,6 +1090,33 @@ impl PreparedRun {
         self
     }
 
+    /// The declared roots (fns with check-stream root standing), by name, in
+    /// declaration order. What a runner may select from; what a refusal lists.
+    #[must_use]
+    pub fn declared_roots(&self) -> Vec<String> {
+        self.compilation
+            .module
+            .tests
+            .iter()
+            .map(|test| test.name.clone())
+            .collect()
+    }
+
+    /// Keep only the named roots — the seam `vx r <command>` runs exactly the
+    /// manifest-named fn through (`vixen.package.run-mvp`), rather than every
+    /// root the file declares. Selection is by declared name; a name that
+    /// matches nothing simply selects nothing, and the CALLER refuses loudly
+    /// (it can name the command and list [`Self::declared_roots`]), because
+    /// only the caller knows why the name was expected to exist.
+    #[must_use]
+    pub fn select_roots(mut self, names: &[&str]) -> Self {
+        self.compilation
+            .module
+            .tests
+            .retain(|test| names.contains(&test.name.as_str()));
+        self
+    }
+
     /// Run every declared test twice over the warm cache. The chaos lane discards
     /// the first running task at an edge safepoint and must publish the same
     /// identities. No compilation happens here: every `get_or_lower` is a hit.

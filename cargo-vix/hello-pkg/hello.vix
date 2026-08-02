@@ -1,0 +1,28 @@
+// hello.vix — the code half of the smallest runnable package. The manifest
+// (package.styx, one directory) names two fns here; nothing else about this
+// file knows it lives in a package.
+
+// `greet` has check-stream root standing, so `vx r <dir> greet` runs it as
+// the selected root — and ONLY it: the runner selects the named root, so
+// `farewell` below stays cold.
+#[test]
+fn greet(sh: Sh) -> Stream<Check> {
+    let ran = exec sh`-c "echo hello from a package"`;
+    yield expect_eq(ran.stdout.text().trim(), "hello from a package");
+}
+
+// A second root, to prove selection: running `greet` must not run this.
+#[test]
+fn farewell(sh: Sh) -> Stream<Check> {
+    let ran = exec sh`-c "echo goodbye"`;
+    yield expect_eq(ran.stdout.text().trim(), "goodbye");
+}
+
+// A value-returning command fn — the shape the real facet package wants
+// (`fn build(…) -> Tree`). It compiles and is nameable, but it has no root
+// standing yet, so the `build` command refuses with the sentence from
+// vixen.package.run-mvp instead of running.
+fn build(sh: Sh) -> Tree {
+    let produced = exec sh`-c "echo built > note.txt"`;
+    produced.tree
+}

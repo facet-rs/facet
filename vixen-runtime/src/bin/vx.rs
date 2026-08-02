@@ -1,8 +1,12 @@
-//! `vx` — a shim that runs one `.vix` file.
+//! `vx` — a shim that runs one `.vix` file, or one package command.
 //!
-//! Deliberately tiny: it reads a file, runs its `#[test]` declarations through
-//! the same production path the ratchet drives, and reports each check. It is
-//! not `cargo`, it has no subcommands, and it defines no on-disk formats.
+//! Deliberately tiny. `vx <file.vix>` reads a file and runs its `#[test]`
+//! declarations through the same production path the ratchet drives;
+//! `vx r <package-dir> <command>` resolves the command through the package's
+//! `package.styx` (`vixen.package.run-mvp`, `/spec/vixen/packages`) and runs
+//! exactly the named root through the same path. The manifest is the ONE
+//! on-disk format this CLI reads, and its shape belongs to
+//! `vix-package-schema`, not to this file.
 //!
 //! # The fixture root is the one real decision here
 //!
@@ -10,8 +14,9 @@
 //! one that exists today is the harness's [`FixtureStore`] — which serves trees
 //! from `<root>/trees/<name>` and a package registry from `<root>/registry`.
 //! So `fixture_tree("x")` in a file run by this shim reads `<root>/trees/x`,
-//! where `<root>` defaults to the directory containing the `.vix` file and is
-//! overridable with `--fixtures`.
+//! where `<root>` defaults to the directory containing the `.vix` file (for a
+//! package command: the package directory) and is overridable with
+//! `--fixtures`.
 //!
 //! That naming is inherited, not chosen: a production embedding would declare
 //! its own constant surface (`workspace()`, say) over its own origin adapter
@@ -26,7 +31,8 @@ use std::sync::Arc;
 use vix::runtime::PrimitiveServices;
 use vixen_runtime::fixture::FixtureStore;
 use vixen_runtime::host_exec::HostExecBackend;
-use vixen_runtime::ratchet::{RatchetReport, prepare_source};
+use vixen_runtime::package::prepare_command;
+use vixen_runtime::ratchet::{PreparedRun, RatchetReport, prepare_source};
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -44,17 +50,44 @@ fn main() -> ExitCode {
         }
     };
 
-    let source = match std::fs::read_to_string(&invocation.source) {
-        Ok(source) => source,
-        Err(error) => {
-            eprintln!("vx: {}: {error}", invocation.source.display());
-            return ExitCode::from(2);
+    // What to run and what to call it in the report: a file's roots, or a
+    // package command's one selected root.
+    let (label, prepared) = match &invocation.action {
+        Action::File { source } => {
+            let text = match std::fs::read_to_string(source) {
+                Ok(text) => text,
+                Err(error) => {
+                    eprintln!("vx: {}: {error}", source.display());
+                    return ExitCode::from(2);
+                }
+            };
+            match prepare_source(&text) {
+                Ok(run) => (source.display().to_string(), run),
+                Err(error) => {
+                    eprintln!("vx: {}: run failed\n{error:#?}", source.display());
+                    return ExitCode::from(1);
+                }
+            }
+        }
+        Action::Command { directory, command } => {
+            match prepare_command(directory, command) {
+                Ok(prepared) => (
+                    format!("{}#{}", prepared.package, prepared.command),
+                    prepared.run,
+                ),
+                // A typed refusal is the product working, not the CLI
+                // misused: exit 1, message rendered whole.
+                Err(refusal) => {
+                    eprintln!("vx: {refusal}");
+                    return ExitCode::from(1);
+                }
+            }
         }
     };
 
     // The two authorities this CLI grants, both named here on purpose. `vix-core`
     // ships neither: it declares the seams and lets the embedder decide. So the
-    // decision that running a `.vix` file may spawn host processes through
+    // decision that running vix code may spawn host processes through
     // `std::process::Command` is THIS FILE's, and swapping in a sandboxing
     // backend later is a one-line change here rather than a change to the
     // machine.
@@ -66,21 +99,19 @@ fn main() -> ExitCode {
         .expect("one origin adapter cannot overlap itself")
         .with_exec_backend(Arc::new(HostExecBackend));
 
-    let report = match prepare_source(&source).and_then(|run| {
-        run.execute_with_primitive_services(services)
-    }) {
+    let report = match execute(prepared, services) {
         Ok(report) => report,
         Err(error) => {
             // The typed diagnostic set IS the error message. Rendering it as a
             // pretty report is a real feature and deliberately not attempted
             // here — a shim that half-renders diagnostics is worse than one
             // that shows them whole.
-            eprintln!("vx: {}: run failed\n{error:#?}", invocation.source.display());
+            eprintln!("vx: {label}: run failed\n{error:#?}");
             return ExitCode::from(1);
         }
     };
 
-    print_report(&invocation.source, &report);
+    print_report(&label, &report);
     if report.passed() {
         ExitCode::SUCCESS
     } else {
@@ -88,10 +119,24 @@ fn main() -> ExitCode {
     }
 }
 
-const USAGE: &str = "usage: vx [--fixtures <dir>] [--] <file.vix>";
+fn execute(
+    prepared: PreparedRun,
+    services: PrimitiveServices,
+) -> Result<RatchetReport, vixen_runtime::ratchet::RunError> {
+    prepared.execute_with_primitive_services(services)
+}
+
+const USAGE: &str = "usage: vx [--fixtures <dir>] [--] <file.vix>\n       vx r [--fixtures <dir>] <package-dir> <command>";
+
+/// What to run: a file's declared roots, or one package command
+/// (`vixen.package.run-mvp`).
+enum Action {
+    File { source: PathBuf },
+    Command { directory: PathBuf, command: String },
+}
 
 struct Invocation {
-    source: PathBuf,
+    action: Action,
     fixtures: PathBuf,
 }
 
@@ -105,6 +150,51 @@ enum Parsed {
 
 impl Invocation {
     fn parse(arguments: &[String]) -> Parsed {
+        // `vx r …` / `vx run …` selects the package-command form; everything
+        // else is the original one-file form.
+        match arguments.first().map(String::as_str) {
+            Some("r" | "run") => Self::parse_command(&arguments[1..]),
+            _ => Self::parse_file(arguments),
+        }
+    }
+
+    fn parse_command(arguments: &[String]) -> Parsed {
+        let mut fixtures: Option<PathBuf> = None;
+        let mut positional: Vec<&str> = Vec::new();
+        let mut rest = arguments.iter();
+        while let Some(argument) = rest.next() {
+            match argument.as_str() {
+                "--fixtures" => match rest.next() {
+                    Some(directory) if fixtures.is_none() => {
+                        fixtures = Some(PathBuf::from(directory));
+                    }
+                    _ => return Parsed::Invalid,
+                },
+                "-h" | "--help" => return Parsed::Help,
+                flag if flag.starts_with('-') => return Parsed::Invalid,
+                value => positional.push(value),
+            }
+        }
+        // Exactly `<package-dir> <command>`. Argument tails are a designed
+        // surface (`vixen.package.run`), not an MVP one — a third positional
+        // is malformed rather than silently dropped.
+        let [directory, command] = positional.as_slice() else {
+            return Parsed::Invalid;
+        };
+        let directory = PathBuf::from(directory);
+        // The package directory is the default fixture root, so a package and
+        // the trees it reads travel together — same rule as the file form.
+        let fixtures = fixtures.unwrap_or_else(|| directory.clone());
+        Parsed::Run(Self {
+            action: Action::Command {
+                directory,
+                command: (*command).to_owned(),
+            },
+            fixtures,
+        })
+    }
+
+    fn parse_file(arguments: &[String]) -> Parsed {
         let mut source: Option<PathBuf> = None;
         let mut fixtures: Option<PathBuf> = None;
         let mut rest = arguments.iter();
@@ -146,7 +236,10 @@ impl Invocation {
                 .filter(|parent| !parent.as_os_str().is_empty())
                 .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
         });
-        Parsed::Run(Self { source, fixtures })
+        Parsed::Run(Self {
+            action: Action::File { source },
+            fixtures,
+        })
     }
 }
 
@@ -155,7 +248,7 @@ impl Invocation {
 /// name, so twelve `site: 0..5` lines carry less than one count does. Labelling
 /// them would need the test names, which means compiling a second time — a real
 /// `vx test` should thread them through the report instead.
-fn print_report(source: &Path, report: &RatchetReport) {
+fn print_report(label: &str, report: &RatchetReport) {
     for warning in &report.warnings.entries {
         println!("warning: {warning:?}");
     }
@@ -191,7 +284,7 @@ fn print_report(source: &Path, report: &RatchetReport) {
     let counters = &report.plain.counters;
     println!(
         "{}: {} checks ({} failed), {} effect spawns — {}",
-        source.display(),
+        label,
         report.plain.checks.len(),
         failed.len(),
         counters.effect_spawns,

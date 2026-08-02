@@ -1,5 +1,12 @@
 # The package manifest seam
 
+The normative home is now the spec page — `/spec/vixen/packages`
+(`vix-core/docs/content/spec/vixen/packages.md`), with the
+`r[vixen.package.*]` rules; this README stays as the working notes beside
+the corpus documents. The MVP runner is `vx r <package-dir> <command>`
+(`vixen-runtime/src/package.rs`, proven over `cargo-vix/hello-pkg/` by
+`vixen-runtime/tests/package_run.rs`).
+
 `package.styx` is vix's flake.nix / package.json — except it takes the flake
 architecture (literal inputs + outputs as pure functions of inputs) and puts
 the data/code boundary at a *file* boundary instead of policing it inside one

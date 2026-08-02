@@ -16,8 +16,12 @@ vix = { path = "../vix-core", package = "vix-core" }
 vixen-primitives = { path = "../vixen-primitives" }
 facet = { path = "../facet" }
 facet-json = { path = "../facet-json" }
+# The package manifest's config-file spelling (`package.styx` via the
+# `vix-package-schema` document types — `vixen.package.manifest-is-data`).
+facet-styx = { workspace = true }
 # The machine manifest's config-file spelling (`manifest::MachineManifest::from_toml`).
 facet-toml = { workspace = true }
+vix-package-schema = { path = "../vix-package-schema" }
 blake3.workspace = true
 # Cross-process resident-set observation for the outer budget runner. Only the
 # unix RSS readers use it, behind typed cfg boundaries in src/budget.rs.

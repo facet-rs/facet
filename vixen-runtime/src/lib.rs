@@ -9,7 +9,8 @@
 //! depend on this one crate for a working system.
 //!
 //! [`module_graph`] loads a directory of `.vix` files into owned module
-//! sources for the compiler and runner.
+//! sources for the compiler and runner. [`package`] resolves a directory's
+//! `package.styx` into a runnable command (`vixen.package.run-mvp`).
 //!
 //! # Re-exports keep the seam visible
 //!
@@ -26,6 +27,7 @@ pub mod fixture;
 pub mod host_exec;
 pub mod manifest;
 pub mod module_graph;
+pub mod package;
 pub mod ratchet;
 
 use std::sync::Arc;

@@ -1,0 +1,20 @@
+// The smallest runnable package — the MVP proof of vixen.package.run-mvp.
+//
+//   vx r cargo-vix/hello-pkg greet
+//
+// runs `hello::greet` through the same production path a #[test] root takes,
+// under the default machine manifest (which offers Sh). The `build` command
+// below names a fn WITHOUT check-stream root standing on purpose: invoking it
+// exercises the MVP's typed refusal, which is part of what this package
+// exists to prove (a deferral you cannot trip over is not stated, it is
+// hidden).
+
+package {
+  name hello
+  version "0.1.0"
+}
+
+command {
+  greet { fn hello::greet }
+  build { fn hello::build }
+}
