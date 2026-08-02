@@ -1,0 +1,45 @@
+// The `Option` combinators. Cargo manifests are a field of absent-with-a-default
+// (`edition`, `version`, `path`), and every one of them is a four-line `match`
+// without these. Pure std vix over `match` — `Option` is an ordinary generic
+// enum in the language (rung 023), so none of this is compiler surface.
+
+pub fn unwrap_or<T>(value: Option<T>) where { fallback: T } -> T {
+    match value {
+        Some(inner) => inner,
+        None => fallback,
+    }
+}
+
+pub fn is_some<T>(value: Option<T>) -> Bool {
+    match value {
+        Some(_inner) => true,
+        None => false,
+    }
+}
+
+pub fn is_none<T>(value: Option<T>) -> Bool {
+    match value {
+        Some(_inner) => false,
+        None => true,
+    }
+}
+
+// LANGUAGE GAP: `map`/`and_then` are NOT here, and not because `Option` is
+// awkward. A type parameter that appears only in a closure's RETURN position
+// cannot be inferred — `fn map<T, U>(value: Option<T>) where { f: fn(T) -> U }`
+// is rejected with "cannot infer type argument `U`", and so is its array twin
+// `fn amap<T, U>(xs: [T]) where { f: fn(T) -> U }`. Instantiation is
+// inference-only (no turbofish, by design), so there is no way to state `U` at
+// the call either. This is why `combinators.vix` is entirely `-> Bool` and
+// `-> Option<T>` shaped: every one of its where-arg closures is U-free. Until
+// closure-return inference lands, mapping is spelled `match` at the call site.
+
+// The fallback-producing twin of `unwrap_or`: the fallback is a where-argument
+// and therefore a wire, so it is demanded only on the `None` branch. Useful
+// when computing the fallback is itself expensive.
+pub fn or_else<T>(value: Option<T>) where { fallback: Option<T> } -> Option<T> {
+    match value {
+        Some(inner) => Some(inner),
+        None => fallback,
+    }
+}

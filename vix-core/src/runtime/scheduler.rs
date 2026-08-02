@@ -5705,8 +5705,12 @@ impl<S: EventSink, Ctx> Runtime<S, Ctx> {
             let mut authority =
                 StagedEffectAuthority::new(vec![(request_id.clone(), request_value.clone())])
                     .with_schema_types(catalog)
-                    .with_origins(self.primitive_services.origins())
-                    .with_exec_backend(self.primitive_services.exec_backend());
+                    .with_origins(self.primitive_services.origins());
+            // No backend installed means no process boundary — the staged
+            // authority simply carries none, and the first `exec` fails loudly.
+            if let Some(backend) = self.primitive_services.exec_backend() {
+                authority = authority.with_exec_backend(backend);
+            }
             if let Some(persistence) = self.primitive_services.value_persistence() {
                 authority = authority.with_value_persistence(persistence);
             }

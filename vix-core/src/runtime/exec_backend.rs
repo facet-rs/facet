@@ -12,10 +12,11 @@
 //!
 //! r[impl machine.primitive.effect-backend-service]
 
-use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+
+use super::EXEC_MOUNT_ROOT;
 
 /// The output protocol the backend streams a command under. Which protocol
 /// applies is a property of the capability package
@@ -49,6 +50,60 @@ pub struct ExecInvocation {
     /// environment, in plan order.
     pub env: Vec<(String, String)>,
     pub protocol: ExecOutputProtocol,
+    /// Input trees to materialize into the workspace before spawning. Each
+    /// mount's `path` is workspace-relative and already named by the argv, so a
+    /// backend writes them where it is told and invents nothing.
+    pub mounts: Vec<ExecMount>,
+}
+
+/// One input tree, flattened to its entries, destined for a workspace-relative
+/// directory. This is a plain entry list rather than a tree value on purpose:
+/// materializing an input is a filesystem act, and the backend is the only
+/// thing that should know a filesystem exists.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecMount {
+    /// Workspace-relative directory the entries land under.
+    pub path: String,
+    /// The tree's entries, in tree order.
+    pub entries: Vec<ExecMountEntry>,
+}
+
+/// One materialized entry of a mount — EVERY entry kind a `TreeEntry` has, not
+/// just files.
+///
+/// Directories and symlinks are carried because they participate in tree
+/// identity: an empty directory is explicitly representable in the tree model
+/// (it is how one process hands structure to a later one), and a symlink's
+/// target is preserved verbatim. Flattening to files alone would mount a tree
+/// that is not the value the request named — a silent difference between what
+/// the identity says and what the process sees.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ExecMountEntry {
+    /// The executable bit is carried because a tree carries it
+    /// (`TreeEntry::File::executable`) and dropping it turns a compiler's
+    /// output into a file the next stage cannot run.
+    File {
+        path: String,
+        bytes: Vec<u8>,
+        executable: bool,
+    },
+    Dir {
+        path: String,
+    },
+    Symlink {
+        path: String,
+        target: String,
+    },
+}
+
+impl ExecMountEntry {
+    /// The entry's tree-relative path, whatever its kind.
+    #[must_use]
+    pub fn path(&self) -> &str {
+        match self {
+            Self::File { path, .. } | Self::Dir { path } | Self::Symlink { path, .. } => path,
+        }
+    }
 }
 
 /// One command-grammar-authorized immutable exec product, snapshotted by the
@@ -137,165 +192,39 @@ pub trait ExecBackend: Send + Sync {
     ) -> Result<ExecWorkspace, String>;
 }
 
-/// The default backend: the current behavior, verbatim — `std::process::Command`
-/// in a fresh workspace, explicitly HOST-TRUSTING. It interposes no VFS and
-/// witnesses no ambient read, so per `machine.primitive.memo-policy` it
-/// supports no `Hermetic` claim: the scheduler records its capability witness
-/// as `ReadObservation::Unverifiable`. A confining backend replaces this one
-/// behind the same demand keys.
-pub struct HostExecBackend;
-
-impl ExecBackend for HostExecBackend {
-    fn begin(
-        &self,
-        invocation: ExecInvocation,
-        events: ExecEventSender,
-    ) -> Result<ExecWorkspace, String> {
-        let ExecInvocation {
-            program,
-            argv,
-            env_remove,
-            env,
-            protocol,
-        } = invocation;
-        let workspace = ExecWorkspace::create()?;
-        let mut command = std::process::Command::new(&program);
-        command.args(&argv);
-        for name in env_remove {
-            command.env_remove(name);
-        }
-        let mut child = command
-            .envs(env)
-            .current_dir(workspace.path())
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|error| format!("spawn `{program}`: {error}"))?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| format!("`{program}` stdout was not piped"))?;
-        let stderr = child
-            .stderr
-            .take()
-            .ok_or_else(|| format!("`{program}` stderr was not piped"))?;
-        let workspace_path = workspace.path().to_path_buf();
-        // `wait_with_output` lives ONLY inside this worker-thread closure; the
-        // scheduler thread never waits on the process boundary.
-        std::thread::spawn(move || {
-            let progress_events = events.clone();
-            let stdout_reader = std::thread::spawn(move || {
-                read_exec_stdout(stdout, protocol, &workspace_path, &progress_events)
-            });
-            let worker_program = program.clone();
-            let stderr_events = events.clone();
-            let stderr_reader = std::thread::spawn(move || {
-                let mut bytes = Vec::new();
-                let mut stderr = stderr;
-                let mut chunk = [0u8; 8192];
-                loop {
-                    let read = chunk_read(&mut stderr, &mut chunk)
-                        .map_err(|error| format!("read `{worker_program}` stderr: {error}"))?;
-                    if read == 0 {
-                        break;
-                    }
-                    (*stderr_events)(ExecEvent::Stream {
-                        stream: EXEC_STDERR_STREAM,
-                        offset: bytes.len() as u64,
-                        bytes: chunk[..read].to_vec(),
-                    });
-                    bytes.extend_from_slice(&chunk[..read]);
-                }
-                Ok::<_, String>(bytes)
-            });
-            let output = (|| {
-                let status = child
-                    .wait()
-                    .map_err(|error| format!("wait `{program}`: {error}"))?;
-                let stdout = stdout_reader
-                    .join()
-                    .map_err(|_| format!("read `{program}` stdout worker panicked"))??;
-                let stderr = stderr_reader
-                    .join()
-                    .map_err(|_| format!("read `{program}` stderr worker panicked"))??;
-                Ok(std::process::Output {
-                    status,
-                    stdout,
-                    stderr,
-                })
-            })();
-            (*events)(ExecEvent::Terminated(output));
-        });
-        Ok(workspace)
-    }
-}
-
-fn read_exec_stdout(
-    stdout: impl Read,
-    protocol: ExecOutputProtocol,
-    workspace: &Path,
-    events: &ExecEventSender,
-) -> Result<Vec<u8>, String> {
-    const READY_PREFIX: &[u8] = b"vix-ready\t";
-    let mut reader = BufReader::new(stdout);
-    let mut output = Vec::new();
-    let mut line = Vec::new();
-    loop {
-        line.clear();
-        let read = reader
-            .read_until(b'\n', &mut line)
-            .map_err(|error| format!("read exec stdout: {error}"))?;
-        if read == 0 {
-            break;
-        }
-        if protocol == ExecOutputProtocol::ProgressiveLinesV1 && line.starts_with(READY_PREFIX) {
-            let mut path = &line[READY_PREFIX.len()..];
-            if path.ends_with(b"\n") {
-                path = &path[..path.len() - 1];
-            }
-            if path.ends_with(b"\r") {
-                path = &path[..path.len() - 1];
-            }
-            let path = core::str::from_utf8(path)
-                .map_err(|_| "progressive exec path was not UTF-8".to_owned())?;
-            validate_exec_product_path(path)?;
-            let bytes = std::fs::read(workspace.join(path)).map_err(|error| {
-                format!("read progressive exec product `{path}` after readiness: {error}")
-            });
-            (*events)(ExecEvent::Product(bytes.map(|bytes| ExecProduct {
-                path: path.to_owned(),
-                bytes,
-            })));
-        } else {
-            (*events)(ExecEvent::Stream {
-                stream: EXEC_STDOUT_STREAM,
-                offset: output.len() as u64,
-                bytes: line.clone(),
-            });
-            output.extend_from_slice(&line);
-        }
-    }
-    Ok(output)
-}
-
-/// One `read` observation, retried through interruptions. Kept out of the
-/// reader loops so both streams share the identical transport discipline.
-fn chunk_read(source: &mut impl Read, chunk: &mut [u8]) -> std::io::Result<usize> {
-    loop {
-        match source.read(chunk) {
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
-            outcome => return outcome,
-        }
-    }
-}
-
 /// Capture a completed workspace as ustar archive bytes — the raw form the exec
-/// outcome's canonical `Tree` is derived from. This is domain code the backend
-/// side of the process boundary owns (the scheduler never touches the
-/// filesystem); it lives here beside the workspace it captures.
-pub fn archive_directory(root: &Path) -> Result<Vec<u8>, String> {
-    fn collect(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+/// outcome's canonical `Tree` is derived from.
+///
+/// This is the one piece of host filesystem code still in `vix-core`, and it is
+/// here because the exec PRIMITIVE calls it (`vixen-primitives` cannot reach
+/// `vixen-runtime`, where the backend lives). A confining backend would want to
+/// capture its own workspace its own way, which is the argument for moving
+/// capture behind the [`ExecBackend`] trait — that changes the trait's shape and
+/// is deliberately not bundled with the backend's relocation.
+pub fn archive_directory(root: &Path, mount_count: usize) -> Result<Vec<u8>, String> {
+    /// One captured entry: everything the tree model can hold, so a workspace
+    /// round-trips to the value it actually is. Files-only capture lost empty
+    /// directories (which the tree model represents deliberately — it is how one
+    /// process hands structure to a later one) and refused symlinks outright.
+    enum Captured {
+        File { path: PathBuf, executable: bool },
+        Dir { path: PathBuf },
+        Symlink { path: PathBuf, target: String },
+    }
+
+    impl Captured {
+        fn path(&self) -> &Path {
+            match self {
+                Self::File { path, .. } | Self::Dir { path } | Self::Symlink { path, .. } => path,
+            }
+        }
+    }
+
+    fn collect(
+        directory: &Path,
+        root: &Path,
+        captured: &mut Vec<Captured>,
+    ) -> Result<(), String> {
         let mut entries = std::fs::read_dir(directory)
             .map_err(|error| {
                 format!(
@@ -308,18 +237,64 @@ pub fn archive_directory(root: &Path) -> Result<Vec<u8>, String> {
         entries.sort_by_key(std::fs::DirEntry::file_name);
         for entry in entries {
             let path = entry.path();
+            // Inputs are not outputs. Mounts live under one reserved top-level
+            // name precisely so capture can drop them here: without this, stage
+            // N's tree carries stage N-1's sources, mounting it into stage N+1
+            // nests them again, and a chain grows quadratically until it hits
+            // the ustar path cap. It would also give two byte-identical
+            // products different identities depending on what they were built
+            // from, which is the opposite of what an output identity is for.
+            //
+            // KNOWN AND BOUNDED: this drops the whole reserved subtree, not just
+            // what was materialized into it. A process that mounted something
+            // AND wrote new files under `.vix-mounts/` loses those files with no
+            // diagnostic — the same silent-loss class the zero-mount refusal
+            // below exists to prevent, and this walk cannot tell the two apart
+            // without the materialized manifest to compare against. The
+            // reservation is what makes it defensible: `.vix-mounts` is not a
+            // name a program may write, and the zero-mount case (where the
+            // process could not have known that) IS refused. Closing it properly
+            // means threading the materialized file list into capture.
+            if directory == root && path.file_name().is_some_and(|name| name == EXEC_MOUNT_ROOT) {
+                continue;
+            }
             let metadata = std::fs::symlink_metadata(&path)
                 .map_err(|error| format!("inspect exec output `{}`: {error}", path.display()))?;
             if metadata.file_type().is_symlink() {
-                return Err(format!(
-                    "exec output symlink `{}` is not yet supported",
-                    path.display()
-                ));
-            }
-            if metadata.is_dir() {
-                collect(&path, files)?;
+                // The target is preserved VERBATIM — dangling targets and `..`
+                // are representable, and resolution is the materializer's
+                // problem, not the value's
+                // (`machine.identity.tree-canonicalization`).
+                let target = std::fs::read_link(&path)
+                    .map_err(|error| format!("read link `{}`: {error}", path.display()))?;
+                let target = target
+                    .to_str()
+                    .ok_or_else(|| {
+                        format!("exec output symlink `{}` has a non-UTF-8 target", path.display())
+                    })?
+                    .to_owned();
+                captured.push(Captured::Symlink { path, target });
+            } else if metadata.is_dir() {
+                // The directory is recorded in its own right, not merely implied
+                // by what is under it, so an EMPTY one survives capture.
+                captured.push(Captured::Dir { path: path.clone() });
+                collect(&path, root, captured)?;
             } else if metadata.is_file() {
-                files.push(path);
+                // Executability is read from the metadata already in hand.
+                // Only the two canonical modes are representable, because the
+                // tree model carries a bool, not a mode word — inventing finer
+                // permissions would claim an identity the value cannot hold.
+                #[cfg(unix)]
+                let executable = {
+                    use std::os::unix::fs::PermissionsExt as _;
+                    // Executable by ANYONE, not just the owner: the tree model
+                    // carries a bool, so the question is "is this runnable", and
+                    // a mode like 0o605 is.
+                    metadata.permissions().mode() & 0o111 != 0
+                };
+                #[cfg(not(unix))]
+                let executable = false;
+                captured.push(Captured::File { path, executable });
             }
         }
         Ok(())
@@ -341,14 +316,38 @@ pub fn archive_directory(root: &Path) -> Result<Vec<u8>, String> {
         Ok(())
     }
 
-    let mut files = Vec::new();
-    collect(root, &mut files)?;
-    files.sort();
+    // A process that mounted nothing and wrote a top-level `.vix-mounts` is
+    // naming the reservation itself. The skip in the walk cannot tell that
+    // output from an input area, and silently dropping it would give two
+    // different runs the same output identity — refuse where the cause is
+    // legible instead.
+    if mount_count == 0 {
+        match std::fs::symlink_metadata(root.join(EXEC_MOUNT_ROOT)) {
+            Ok(_) => {
+                return Err(format!(
+                    "`{EXEC_MOUNT_ROOT}` is reserved for exec input mounts; this invocation \
+                     mounted nothing, so a top-level entry by that name is an output the \
+                     capture cannot represent"
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!(
+                    "inspect reserved exec mount path `{}`: {error}",
+                    root.join(EXEC_MOUNT_ROOT).display()
+                ));
+            }
+        }
+    }
+    let mut captured: Vec<Captured> = Vec::new();
+    collect(root, root, &mut captured)?;
+    captured.sort_by(|left, right| left.path().cmp(right.path()));
     let mut archive = Vec::new();
-    for file in files {
-        let relative = file
+    for entry in captured {
+        let relative = entry
+            .path()
             .strip_prefix(root)
-            .map_err(|_| format!("exec output `{}` escaped its workspace", file.display()))?;
+            .map_err(|_| format!("exec output `{}` escaped its workspace", entry.path().display()))?;
         let relative = relative
             .components()
             .map(|component| component.as_os_str().to_string_lossy())
@@ -357,17 +356,36 @@ pub fn archive_directory(root: &Path) -> Result<Vec<u8>, String> {
         if relative.len() > 100 {
             return Err(format!("exec output path `{relative}` exceeds ustar v1"));
         }
-        let bytes = std::fs::read(&file)
-            .map_err(|error| format!("read exec output `{}`: {error}", file.display()))?;
+        let bytes = match &entry {
+            Captured::File { path, .. } => std::fs::read(path)
+                .map_err(|error| format!("read exec output `{}`: {error}", path.display()))?,
+            Captured::Dir { .. } | Captured::Symlink { .. } => Vec::new(),
+        };
         let mut header = [0u8; 512];
         header[..relative.len()].copy_from_slice(relative.as_bytes());
-        header[100..108].copy_from_slice(b"0000644\0");
+        header[100..108].copy_from_slice(match &entry {
+            Captured::File { executable: true, .. } => b"0000755\0",
+            Captured::File { .. } => b"0000644\0",
+            Captured::Dir { .. } => b"0000755\0",
+            Captured::Symlink { .. } => b"0000777\0",
+        });
         header[108..116].copy_from_slice(b"0000000\0");
         header[116..124].copy_from_slice(b"0000000\0");
         write_octal(&mut header[124..136], bytes.len() as u64)?;
         header[136..148].copy_from_slice(b"00000000000\0");
         header[148..156].fill(b' ');
-        header[156] = b'0';
+        // The typeflags `parse_ustar` admits: regular file, directory, symlink.
+        header[156] = match &entry {
+            Captured::File { .. } => b'0',
+            Captured::Dir { .. } => b'5',
+            Captured::Symlink { .. } => b'2',
+        };
+        if let Captured::Symlink { target, .. } = &entry {
+            if target.len() > 100 {
+                return Err(format!("exec output symlink target `{target}` exceeds ustar v1"));
+            }
+            header[157..157 + target.len()].copy_from_slice(target.as_bytes());
+        }
         header[257..263].copy_from_slice(b"ustar\0");
         header[263..265].copy_from_slice(b"00");
         let checksum: u32 = header.iter().map(|byte| u32::from(*byte)).sum();
@@ -379,22 +397,4 @@ pub fn archive_directory(root: &Path) -> Result<Vec<u8>, String> {
     }
     archive.resize(archive.len() + 1024, 0);
     Ok(archive)
-}
-
-pub(crate) fn validate_exec_product_path(path: &str) -> Result<(), String> {
-    if path.is_empty() {
-        return Err("progressive exec product path was empty".to_owned());
-    }
-    let path = Path::new(path);
-    if path.is_absolute()
-        || path
-            .components()
-            .any(|component| !matches!(component, std::path::Component::Normal(_)))
-    {
-        return Err(format!(
-            "progressive exec product `{}` was not a relative normal path",
-            path.display()
-        ));
-    }
-    Ok(())
 }

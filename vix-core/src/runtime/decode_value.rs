@@ -155,6 +155,19 @@ pub fn primitive_value_from_decoded(
                 body: PrimitiveValueBody::Product(fields),
             })
         }
+        (Type::Array(element), DecodedValue::Array(values)) => {
+            let elements = values
+                .iter()
+                .map(|value| primitive_value_from_decoded(element, value))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(PrimitiveValue {
+                schema: ty.schema_ref(),
+                body: PrimitiveValueBody::Sequence {
+                    element_schema: element.schema_ref(),
+                    elements,
+                },
+            })
+        }
         (_, DecodedValue::OptionSome(value)) if ty.option_inner().is_some() => Ok(result_value(
             ty.clone(),
             0,

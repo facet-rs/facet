@@ -1,0 +1,42 @@
+// Array shaping the cargo port reaches for constantly: joining argv fragments,
+// bounding a list, and collapsing one to its distinct elements. All three are
+// ordinary std vix over `fold` and the collection axioms — no new machine op,
+// no intrinsic. `take` and `to_set` are the two `GAPS-cargo-manifest.md` asks
+// for by name (`take_strings`/`take_versions` were the same fold state written
+// twice; set construction from an array was hand-written at every site).
+
+// Join with a separator BETWEEN elements — no leading or trailing separator,
+// and `[]` joins to `""`. The `Option` accumulator is what distinguishes "no
+// element yet" from "an element that happens to be empty"; folding onto `""`
+// and testing the accumulator would swallow a leading `""` element.
+pub fn join(parts: [String]) where { sep: String } -> String {
+    let start: Option<String> = None;
+    match parts.fold(start, |acc, part| match acc {
+        None => Some(part),
+        Some(joined) => Some(joined + sep + part),
+    }) {
+        None => "",
+        Some(joined) => joined,
+    }
+}
+
+// The first `count` elements, in order. A `count` at or past the end yields the
+// whole array; a negative or zero `count` yields none. The counter rides the
+// accumulator because `fold` presents no index — that is the shape this
+// function exists to stop every caller from rewriting.
+pub fn take<T>(xs: [T]) where { count: Int } -> [T] {
+    let empty: [T] = [];
+    (xs.fold((0, empty), |acc, x| if acc.0 < count {
+        (acc.0 + 1, acc.1 + x)
+    } else {
+        acc
+    })).1
+}
+
+// The distinct elements, in the set's canonical key order — NOT authored order.
+// That is the point: a `Set` is how uniqueness is stated, and its order is
+// structural, so a caller that needs authored order must not route through it.
+pub fn to_set<T>(xs: [T]) -> Set<T> {
+    let empty: Set<T> = %[];
+    xs.fold(empty, |acc, x| acc + x)
+}

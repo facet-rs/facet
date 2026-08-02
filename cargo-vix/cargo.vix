@@ -1,0 +1,309 @@
+// cargo.vix — step one of "reimplement cargo in vix": read a real Cargo.toml
+// AND its Cargo.lock, discover the crate's targets the way cargo does, order
+// the locked packages into a build sequence, and plan the rustc invocation each
+// one needs.
+//
+// Run it: `vx cargo-vix/cargo.vix`
+//
+// The lock is the load-bearing input, not the manifest: the 0.1 north star is
+// "an existing Cargo.lock → a built binary", so nothing here resolves a version
+// or visits an index. The manifest names the root package and its targets; the
+// lock supplies the resolved graph, and its `checksum` is the sha256 that pins
+// every fetch.
+//
+// WHAT IS AND IS NOT HERE. Everything up to and including the argv plan is real
+// and runs. The invocations are still plans HERE, for one reason: mounting a
+// tree into an exec now works (see hello.vix, which really does compile and run
+// a binary), but only for a CONTENT-IDENTIFIED tree. `fixture_tree` is an
+// origin-backed handle, and enumerating one needs a directory verb on the
+// effect authority that does not exist yet. So this file can read a workspace
+// and plan its build, and hello.vix can compile sources it generated — joining
+// the two is the next rung. See cargo-vix/README.md.
+
+// ---------------------------------------------------------------- the manifest
+
+struct CargoPackage {
+    name: String,
+    version: String,
+    edition: Option<String>,
+}
+
+struct CargoManifest {
+    package: CargoPackage,
+}
+
+// A crate name is the package name with dashes turned into underscores — the
+// rule rustc enforces and cargo applies silently.
+fn crate_ident(name: String) -> String {
+    name.replace("-", "_")
+}
+
+// Cargo's own default: a manifest with no `edition` key is a 2015 crate.
+fn edition(package: CargoPackage) -> String {
+    package.edition.unwrap_or("2015")
+}
+
+fn manifest(source: Tree) -> CargoManifest {
+    toml_decode((source / "Cargo.toml").text())
+}
+
+// -------------------------------------------------------------------- the lock
+
+struct LockPackage {
+    name: String,
+    version: String,
+    source: Option<String>,
+    checksum: Option<String>,
+    dependencies: Option<[String]>,
+}
+
+struct Lockfile {
+    version: Int,
+    package: [LockPackage],
+}
+
+fn lockfile(source: Tree) -> Lockfile {
+    toml_decode((source / "Cargo.lock").text())
+}
+
+fn dependencies_of(pkg: LockPackage) -> [String] {
+    let none: [String] = [];
+    pkg.dependencies.unwrap_or(none)
+}
+
+// A package with a `source` came from a registry and must be fetched; one
+// without is the local crate the lock was generated for. The checksum is the
+// fetch pin, and its absence on a local package is the same fact stated twice.
+fn is_vendored(pkg: LockPackage) -> Bool {
+    pkg.source.is_some()
+}
+
+// The self-describing pin `fetch` wants. Cargo.lock records the SHA-256 of the
+// published .crate, which `machine.primitive.fetch-is-pinned` admits as a pin
+// (the 2026-07-26 amendment) precisely so 0.1 needs no second lockfile.
+fn fetch_pin(pkg: LockPackage) -> Option<String> {
+    match pkg.checksum {
+        Some(digest) => Some("sha256:" + digest),
+        None => None,
+    }
+}
+
+// --------------------------------------------------------------- the build order
+
+// The packages whose dependencies are all already ordered, and which are not
+// ordered themselves. One Kahn round.
+fn ready_after(packages: [LockPackage]) where { done: [String] } -> [String] {
+    let none: [String] = [];
+    packages.fold(none, |ready, pkg| if done.contains(pkg.name) {
+        ready
+    } else {
+        if dependencies_of(pkg).all(|dep| done.contains(dep)) {
+            ready + pkg.name
+        } else {
+            ready
+        }
+    })
+}
+
+// Rounds until nothing new becomes ready. A round that adds nothing terminates
+// the walk, so a SHORT order comes back rather than a loop, and the caller sees
+// the truncation by comparing lengths.
+//
+// TWO causes produce a short order, and this walk cannot tell them apart: a
+// genuine cycle, and DUPLICATE PACKAGE NAMES. A real lock may hold one name at
+// two versions, and its `dependencies` entries then read `"name version"`
+// rather than `"name"` — the duplicates collapse in `done` and the names stop
+// matching. Keying on name+version is the fix and it waits for a fixture that
+// needs it; until then the length check is what keeps the failure loud instead
+// of silently building the wrong thing.
+fn order_after(done: [String]) where { packages: [LockPackage] } -> [String] {
+    let ready = ready_after(packages) where { done: done };
+    if ready.len() == 0 {
+        done
+    } else {
+        order_after(done ++ ready) where { packages: packages }
+    }
+}
+
+fn build_order(packages: [LockPackage]) -> [String] {
+    let none: [String] = [];
+    order_after(none) where { packages: packages }
+}
+
+// ------------------------------------------------------------------ the targets
+
+enum TargetKind {
+    Lib,
+    Bin,
+}
+
+struct Unit {
+    name: String,
+    kind: TargetKind,
+    root: Path,
+    edition: String,
+}
+
+// Cargo's default target discovery, faithfully: `src/lib.rs` is the library and
+// is named after the package; `src/main.rs` is a binary, also named after the
+// package. (Cargo also auto-discovers `src/bin/*.rs`; that is a second glob and
+// waits for the multi-binary case to be worth its test.)
+fn units(source: Tree) -> [Unit] {
+    let package = manifest(source).package;
+    let none: [Unit] = [];
+    let roots = source.glob("src/*.rs").collect().values().sorted();
+    roots.fold(none, |found, root| match unit_for(root) where { package: package } {
+        Some(unit) => found + unit,
+        None => found,
+    })
+}
+
+fn unit_for(root: Path) where { package: CargoPackage } -> Option<Unit> {
+    let leaf = root.file_name().unwrap_or("");
+    if leaf == "lib.rs" {
+        Some(Unit {
+            name: crate_ident(package.name),
+            kind: TargetKind::Lib,
+            root: root,
+            edition: edition(package),
+        })
+    } else {
+        if leaf == "main.rs" {
+            Some(Unit {
+                name: crate_ident(package.name),
+                kind: TargetKind::Bin,
+                root: root,
+                edition: edition(package),
+            })
+        } else {
+            None
+        }
+    }
+}
+
+fn crate_type_flag(kind: TargetKind) -> String {
+    match kind {
+        TargetKind::Lib => "lib",
+        TargetKind::Bin => "bin",
+    }
+}
+
+// ------------------------------------------------------------------- the argv
+
+fn rlib_name(name: String) -> String {
+    "lib" + crate_ident(name) + ".rlib"
+}
+
+// One `--extern name=libname.rlib` pair per dependency, in lock order. Two argv
+// elements each, the way cargo spells it.
+fn extern_argv(deps: [String]) -> [String] {
+    let none: [String] = [];
+    deps.fold(none, |argv, dep| argv + "--extern" + (crate_ident(dep) + "=" + rlib_name(dep)))
+}
+
+// The argv rustc wants for one unit. This is the value that would be handed
+// straight to `exec rustc`; it is rendered as data instead so the plan can be
+// asserted without the process existing.
+fn rustc_argv(unit: Unit) where { deps: [String] } -> [String] {
+    ["--crate-name", unit.name]
+        + "--edition"
+        + unit.edition
+        + "--crate-type"
+        + crate_type_flag(unit.kind)
+        + unit.root.to_string()
+        + "--out-dir"
+        + "."
+        ++ extern_argv(deps)
+}
+
+// --------------------------------------------------------------------- checks
+
+#[test]
+fn reads_the_manifest() -> Stream<Check> {
+    let source = fixture_tree("small-crate");
+    let package = manifest(source).package;
+
+    yield expect_eq(package.name, "small-crate");
+    yield expect_eq(package.version, "0.1.0");
+    yield expect_eq(edition(package), "2021");
+    // The dash is not legal in a crate name; cargo rewrites it and so do we.
+    yield expect_eq(crate_ident(package.name), "small_crate");
+}
+
+#[test]
+fn reads_the_lock() -> Stream<Check> {
+    let source = fixture_tree("small-crate");
+    let lock = lockfile(source);
+
+    yield expect_eq(lock.version, 4);
+    yield expect_eq(lock.package.len(), 3);
+    // `[[package]]` is an array-of-tables: one array written across three
+    // headers, in document order.
+    yield expect_eq(lock.package[0].name, "libc");
+    yield expect_eq(lock.package[2].name, "small-crate");
+    // The root package is the one with no registry source and no checksum.
+    yield expect(is_vendored(lock.package[0]));
+    yield expect(!is_vendored(lock.package[2]));
+    yield expect_eq(dependencies_of(lock.package[2]), ["libc", "log"]);
+    yield expect_eq(dependencies_of(lock.package[0]).len(), 0);
+}
+
+#[test]
+fn the_checksum_is_the_fetch_pin() -> Stream<Check> {
+    let source = fixture_tree("small-crate");
+    let lock = lockfile(source);
+    let none: Option<String> = None;
+
+    yield expect_eq(
+        fetch_pin(lock.package[0]),
+        Some("sha256:97b3888a4aecf77e811145cadf6eef5901f4782c53886191b2f693f24761847c")
+    );
+    // The local package is not fetched, so it carries no pin.
+    yield expect_eq(fetch_pin(lock.package[2]), none);
+}
+
+#[test]
+fn orders_the_locked_packages() -> Stream<Check> {
+    let source = fixture_tree("small-crate");
+    let lock = lockfile(source);
+    let order = build_order(lock.package);
+
+    // Every package is ordered — a short order would mean a cycle.
+    yield expect_eq(order.len(), lock.package.len());
+    // Dependencies before the dependent that names them.
+    yield expect_eq(order, ["libc", "log", "small-crate"]);
+}
+
+#[test]
+fn discovers_the_default_targets() -> Stream<Check> {
+    let source = fixture_tree("small-crate");
+    let found = units(source);
+
+    yield expect_eq(found.len(), 2);
+    // Sorted by path, so the library sorts before the binary.
+    yield expect_eq(found[0].root.to_string(), "src/lib.rs");
+    yield expect_eq(found[0].kind, TargetKind::Lib);
+    yield expect_eq(found[1].root.to_string(), "src/main.rs");
+    yield expect_eq(found[1].kind, TargetKind::Bin);
+    yield expect_eq(found[0].name, "small_crate");
+}
+
+#[test]
+fn plans_the_rustc_invocations() -> Stream<Check> {
+    let source = fixture_tree("small-crate");
+    let lock = lockfile(source);
+    let found = units(source);
+    let deps = dependencies_of(lock.package[2]);
+    let none: [String] = [];
+
+    // A dependency compiles with no externs of its own.
+    yield expect_eq(
+        (rustc_argv(found[0]) where { deps: none }).join(" "),
+        "--crate-name small_crate --edition 2021 --crate-type lib src/lib.rs --out-dir ."
+    );
+    // The root binary links every locked dependency by rlib name.
+    yield expect_eq(
+        (rustc_argv(found[1]) where { deps: deps }).join(" "),
+        "--crate-name small_crate --edition 2021 --crate-type bin src/main.rs --out-dir . --extern libc=liblibc.rlib --extern log=liblog.rlib"
+    );
+}

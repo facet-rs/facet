@@ -448,11 +448,30 @@ fn collect_exec_requirements(
         if *primitive != exec {
             continue;
         }
+        // An ABSENT request node is not an invariant break: this scan runs per
+        // island, and partitioning decides which island holds which node, so a
+        // request the current vector cannot see is one another vector carries.
+        // Skipping is right here. A request node that IS present with the wrong
+        // arity is a different claim — see the assert below.
         let Some(request) = node.inputs.first().copied().and_then(node_by_id) else {
             continue;
         };
-        let [capability_id, argv_id] = request.inputs.as_slice() else {
-            continue;
+        // `{capability, argv, mounts}` — the mounts are inputs to the process,
+        // not part of its plan, so the requirement scan reads past them.
+        //
+        // A shape mismatch here is an INVARIANT BREAK, not a case to skip: the
+        // node is already a confirmed exec-primitive invocation, so its request
+        // is the one `lower_exec` built. Skipping quietly is how this scan
+        // reported "no requirements" for programs that had them when the mounts
+        // field landed — a refusal that never happens. Fail where the cause is.
+        assert!(
+            request.inputs.len() == 3,
+            "an exec request has {{capability, argv, mounts}}; found {} inputs. \
+             A request that grows a field must teach this scan what it means.",
+            request.inputs.len()
+        );
+        let [capability_id, argv_id, _mounts_id] = request.inputs.as_slice() else {
+            unreachable!("arity asserted above");
         };
         let Some(ty) =
             node_by_id(*capability_id).and_then(|capability| capability_type_name(&capability.ty))

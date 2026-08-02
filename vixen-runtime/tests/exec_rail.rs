@@ -576,6 +576,17 @@ fn the_effect_demand_key_is_a_pure_function_of_plan_and_capability() {
             ArgRole::Value {
                 expected: Type::Array(Box::new(Type::String)),
             },
+            // The mounts role, matching production. Declaring only
+            // {capability, argv} while the real request carries three fields
+            // makes `declared_effect_preimage` fall back to whole-request
+            // keying for EVERY exec — the capability stops being
+            // `arguments[0]`, which is exactly what the assertions below check.
+            // A two-field request here would pass while production was broken.
+            ArgRole::Value {
+                expected: Type::Array(Box::new(Type::Extern(vix::vir::ExternKind::Host(
+                    vix::binding::TREE,
+                )))),
+            },
         ],
         request_ty: exec_request_type(&capability_ty),
         result: vix::compiler::exec_outcome_type(),
@@ -631,6 +642,19 @@ fn the_effect_demand_key_is_a_pure_function_of_plan_and_capability() {
                     .collect(),
             },
         };
+        // These cases mount nothing; the field must still be PRESENT, because
+        // the preimage derivation keys on the declared arity.
+        let mounts_ty = Type::Array(Box::new(Type::Extern(vix::vir::ExternKind::Host(
+            vix::binding::TREE,
+        ))));
+        let mounts = PrimitiveValue {
+            schema: mounts_ty.schema_ref(),
+            body: PrimitiveValueBody::Sequence {
+                element_schema: Type::Extern(vix::vir::ExternKind::Host(vix::binding::TREE))
+                    .schema_ref(),
+                elements: Vec::new(),
+            },
+        };
         PrimitiveValue {
             schema: shape.request_ty.schema_ref(),
             body: PrimitiveValueBody::Product(vec![
@@ -641,6 +665,10 @@ fn the_effect_demand_key_is_a_pure_function_of_plan_and_capability() {
                 PrimitiveField {
                     schema: argv.schema.clone(),
                     value: PrimitiveFieldValue::Child(Box::new(argv)),
+                },
+                PrimitiveField {
+                    schema: mounts.schema.clone(),
+                    value: PrimitiveFieldValue::Child(Box::new(mounts)),
                 },
             ]),
         }

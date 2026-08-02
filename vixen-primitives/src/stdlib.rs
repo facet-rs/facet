@@ -18,7 +18,14 @@
 //! Order is significant — it affects function ids, module counts, and the
 //! constant-fold of literal decodes — so it must match what the ratchet goldens
 //! were vetted against: `Format`, `json_decode`, `toml_decode`,
-//! `try_json_decode`, `try_toml_decode`.
+//! `try_json_decode`, `try_toml_decode`. New items append at the END, after
+//! `require`, so nothing already vetted shifts.
+//!
+//! `arrays`/`option`/`strings`/`paths` are the derived layer: `arrays` before
+//! `strings` because `replace` is split-then-`join`, and `strings` before
+//! `paths` because a path component question is answered by splitting its
+//! stringified form. The sources are one item set once merged, so the order is
+//! about identity stability, not name resolution.
 
 /// The canonical `std` module assembled from the separately authored Vix items.
 pub const STD_MODULE_SOURCE: &str = concat!(
@@ -31,6 +38,10 @@ pub const STD_MODULE_SOURCE: &str = concat!(
     include_str!("stdlib/combinators.vix"),
     include_str!("stdlib/byte_text.vix"),
     include_str!("stdlib/require.vix"),
+    include_str!("stdlib/arrays.vix"),
+    include_str!("stdlib/option.vix"),
+    include_str!("stdlib/strings.vix"),
+    include_str!("stdlib/paths.vix"),
     "}\n",
 );
 
@@ -46,6 +57,10 @@ pub const PRELUDE_SOURCES: &[&str] = &[
     include_str!("stdlib/combinators.vix"),
     include_str!("stdlib/byte_text.vix"),
     include_str!("stdlib/require.vix"),
+    include_str!("stdlib/arrays.vix"),
+    include_str!("stdlib/option.vix"),
+    include_str!("stdlib/strings.vix"),
+    include_str!("stdlib/paths.vix"),
     STD_MODULE_SOURCE,
 ];
 

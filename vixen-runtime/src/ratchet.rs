@@ -1601,6 +1601,10 @@ fn harness_services_with_overlay(rerun_with: Option<String>) -> PrimitiveService
             Arc::new(FixtureStore::default().with_rerun_overlay(rerun_with)),
         )
         .expect("the harness installs a single origin adapter; its declaration cannot overlap")
+        // The harness runs real processes, so it says so. `vix-core` ships no
+        // exec backend and defaults to none: choosing to spawn is the
+        // embedder's call, and this is the harness making it.
+        .with_exec_backend(Arc::new(crate::host_exec::HostExecBackend))
 }
 
 #[allow(clippy::too_many_arguments)]

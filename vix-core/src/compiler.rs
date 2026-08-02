@@ -201,6 +201,43 @@ fn lint_module(module: &Module) -> Diagnostics {
         }
         consumed.extend(function.output);
         consumed.extend(function.yielded_checks.iter().copied());
+
+        // A branch region's result is NOT an input of the branching node — it is
+        // the region's `output`, reached only through the op. So an arm's tail
+        // expression is used exactly when the BRANCH ITSELF is used: propagating
+        // unconditionally would silence a genuine discard
+        // (`let ignored = if c { xs + 1 } else { xs + 2 };`), and not propagating
+        // at all makes every arm tail read as discarded. Iterate to a fixed
+        // point, because a branch's arm may itself be a branch.
+        let region_outputs = |node: &Node| -> Vec<NodeId> {
+            match &node.op {
+                Op::Match { arms } => arms.iter().map(|arm| arm.output).collect(),
+                Op::If {
+                    consequent,
+                    alternative,
+                } => vec![consequent.output, alternative.output],
+                Op::OrderedMatch { arms, fallback } => arms
+                    .iter()
+                    .flat_map(|arm| [arm.condition.output, arm.body.output])
+                    .chain([fallback.output])
+                    .collect(),
+                _ => Vec::new(),
+            }
+        };
+        loop {
+            let mut grew = false;
+            for node in &function.nodes {
+                if !consumed.contains(&node.id) {
+                    continue;
+                }
+                for output in region_outputs(node) {
+                    grew |= consumed.insert(output);
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
         for node in &function.nodes {
             let operation = match node.op {
                 Op::ArrayAppend => "+",
@@ -6251,6 +6288,28 @@ fn lower_decoded_value(
             ),
             ty: ty.clone(),
         }),
+        // A decoded sequence folds into the same `Op::Array` an authored array
+        // literal lowers to, so a constant-folded `[[package]]` list interns to
+        // the identity a hand-written array of those records would.
+        (DecodedValue::Array(values), Type::Array(element)) => {
+            let elements = values
+                .iter()
+                .map(|value| {
+                    lower_decoded_value(nodes, value, element, span).map(|lowered| lowered.node)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    span,
+                    ty.clone(),
+                    EffectFacts::PURE,
+                    elements,
+                    Op::Array,
+                ),
+                ty: ty.clone(),
+            })
+        }
         (DecodedValue::Variant { index, fields }, Type::Enum(enumeration)) => {
             let variant = enumeration.variants.get(*index as usize).ok_or_else(|| {
                 Diagnostics::one(Diagnostic::unsupported(
@@ -9177,6 +9236,9 @@ fn lower_command(
 enum TemplatePiece {
     Literal(String),
     Value(LoweredValue),
+    /// A `Tree` splice: an input mount. It contributes the tree to the request's
+    /// `mounts` array and renders as that mount's workspace-relative path.
+    Mount(LoweredValue),
 }
 
 /// The ratchet capability packages' command grammar: whitespace-separated
@@ -9281,14 +9343,29 @@ fn parse_command_template(
                         payload: DiagnosticPayload::Name { name: name.clone() },
                     })
                 })?;
-                if !matches!(value.ty, Type::Int | Type::String | Type::Path) {
+                // A `Tree` splice is an INPUT MOUNT, not a rendering: the tree
+                // is materialized into the process's workspace and the element
+                // renders as its deterministic workspace-relative path. This is
+                // what lets a plan hand a compiler its sources —
+                // `rustc {sources}/src/main.rs` fuses the mount path with the
+                // literal suffix through the ordinary adjacency rule, so no
+                // separate path-building surface is needed.
+                let mountable = matches!(
+                    &value.ty,
+                    Type::Extern(ExternKind::Host(name)) if *name == crate::binding::TREE
+                );
+                if !mountable && !matches!(value.ty, Type::Int | Type::String | Type::Path) {
                     return Err(type_mismatch(
                         template.span,
-                        "Int, String, or Path command interpolation",
+                        "Int, String, Path, or Tree command interpolation",
                         value.ty.name(),
                     ));
                 }
-                pieces.push(TemplatePiece::Value(value.clone()));
+                pieces.push(if mountable {
+                    TemplatePiece::Mount(value.clone())
+                } else {
+                    TemplatePiece::Value(value.clone())
+                });
             }
             if !literal.is_empty() || pieces.is_empty() {
                 pieces.push(TemplatePiece::Literal(literal));
@@ -9324,6 +9401,10 @@ fn lower_exec(
     let template = parse_command_template(&exec.command.template, bindings)?;
     let span = exec.span;
     let mut elements = Vec::with_capacity(template.len());
+    // The spliced trees, in splice order. Their positions ARE their mount
+    // paths, so the argv is a function of the plan and the mount list is a
+    // function of the same plan — the two cannot drift.
+    let mut mounts: Vec<NodeId> = Vec::new();
     for pieces in template {
         let mut element: Option<NodeId> = None;
         for piece in pieces {
@@ -9336,6 +9417,29 @@ fn lower_exec(
                     Vec::new(),
                     Op::String(text),
                 ),
+                TemplatePiece::Mount(tree) => {
+                    // One mount per DISTINCT tree: `{src} … {src}` names one
+                    // input twice, not two inputs. Splicing it twice would
+                    // materialize identical bytes at two paths and put the same
+                    // tree in the request twice — harmless under the identity
+                    // model, wasteful in exactly the shape a build walk has
+                    // (a source tree named once per unit).
+                    let index = mounts
+                        .iter()
+                        .position(|mounted| *mounted == tree.node)
+                        .unwrap_or_else(|| {
+                            mounts.push(tree.node);
+                            mounts.len() - 1
+                        });
+                    push_node(
+                        nodes,
+                        span,
+                        Type::String,
+                        EffectFacts::PURE,
+                        Vec::new(),
+                        Op::String(crate::runtime::exec_mount_path(index)),
+                    )
+                }
                 TemplatePiece::Value(value) => match value.ty {
                     Type::String => value.node,
                     Type::Int => push_node(
@@ -9354,7 +9458,10 @@ fn lower_exec(
                         vec![value.node],
                         Op::PathToString,
                     ),
-                    _ => unreachable!("parse_command_template admits Int, String, and Path only"),
+                    _ => unreachable!(
+                        "a Value piece is Int, String, or Path; a Tree splice \
+                         becomes a Mount piece, handled above"
+                    ),
                 },
             };
             element = Some(match element {
@@ -9374,13 +9481,17 @@ fn lower_exec(
     }
     let argv_ty = Type::Array(Box::new(Type::String));
     let argv = push_node(nodes, span, argv_ty, EffectFacts::PURE, elements, Op::Array);
+    let mounts_ty = Type::Array(Box::new(Type::Extern(ExternKind::Host(
+        crate::binding::TREE,
+    ))));
+    let mounts = push_node(nodes, span, mounts_ty, EffectFacts::PURE, mounts, Op::Array);
     let request_ty = exec_request_type(&capability.ty);
     let request = push_node(
         nodes,
         span,
         request_ty,
         EffectFacts::PURE,
-        vec![capability.node, argv],
+        vec![capability.node, argv, mounts],
         Op::Record,
     );
     let ty = exec_outcome_type();
