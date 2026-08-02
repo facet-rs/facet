@@ -368,3 +368,37 @@ fn a_mount_materializes_every_tree_entry_kind() {
         std::path::Path::new("full/note.txt")
     );
 }
+
+#[test]
+fn an_exec_produced_tree_round_trips_dirs_and_symlinks() {
+    // The capture half. Previously `archive_directory` wrote only file entries,
+    // so an empty directory an exec created was lost, and a symlink was a hard
+    // error — meaning an exec-produced tree could never hold what the tree model
+    // says a tree holds. Now capture emits ustar directory (`5`) and symlink
+    // (`2`) members, which `parse_ustar` already understood, so a workspace
+    // round-trips to the value it actually is.
+    expect_pass(
+        "capture-round-trip",
+        r#"
+#[test { budget_wall: 60s, budget_rss: 2048MB }]
+fn t(sh: Sh) -> Stream<Check> {
+    let produced = exec sh`-c "mkdir -p empty full; echo hi > full/note.txt; ln -s full/note.txt link"`;
+    let inputs = produced.tree;
+
+    // An EMPTY directory survives capture and comes back on the mount.
+    let dir = exec sh`-c "test -d {inputs}/empty && echo dir || echo missing"`;
+    yield expect_eq(dir.stdout.text().trim(), "dir");
+
+    // A symlink survives AS a symlink, with its target verbatim.
+    let kind = exec sh`-c "test -L {inputs}/link && echo link || echo notlink"`;
+    yield expect_eq(kind.stdout.text().trim(), "link");
+    let followed = exec sh`-c "cat {inputs}/link"`;
+    yield expect_eq(followed.stdout.text().trim(), "hi");
+
+    // And the ordinary file is still there.
+    let file = exec sh`-c "cat {inputs}/full/note.txt"`;
+    yield expect_eq(file.stdout.text().trim(), "hi");
+}
+"#,
+    );
+}

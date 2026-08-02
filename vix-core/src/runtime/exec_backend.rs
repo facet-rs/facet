@@ -202,10 +202,28 @@ pub trait ExecBackend: Send + Sync {
 /// capture behind the [`ExecBackend`] trait — that changes the trait's shape and
 /// is deliberately not bundled with the backend's relocation.
 pub fn archive_directory(root: &Path, mount_count: usize) -> Result<Vec<u8>, String> {
+    /// One captured entry: everything the tree model can hold, so a workspace
+    /// round-trips to the value it actually is. Files-only capture lost empty
+    /// directories (which the tree model represents deliberately — it is how one
+    /// process hands structure to a later one) and refused symlinks outright.
+    enum Captured {
+        File { path: PathBuf, executable: bool },
+        Dir { path: PathBuf },
+        Symlink { path: PathBuf, target: String },
+    }
+
+    impl Captured {
+        fn path(&self) -> &Path {
+            match self {
+                Self::File { path, .. } | Self::Dir { path } | Self::Symlink { path, .. } => path,
+            }
+        }
+    }
+
     fn collect(
         directory: &Path,
         root: &Path,
-        files: &mut Vec<(PathBuf, bool)>,
+        captured: &mut Vec<Captured>,
     ) -> Result<(), String> {
         let mut entries = std::fs::read_dir(directory)
             .map_err(|error| {
@@ -243,13 +261,24 @@ pub fn archive_directory(root: &Path, mount_count: usize) -> Result<Vec<u8>, Str
             let metadata = std::fs::symlink_metadata(&path)
                 .map_err(|error| format!("inspect exec output `{}`: {error}", path.display()))?;
             if metadata.file_type().is_symlink() {
-                return Err(format!(
-                    "exec output symlink `{}` is not yet supported",
-                    path.display()
-                ));
-            }
-            if metadata.is_dir() {
-                collect(&path, root, files)?;
+                // The target is preserved VERBATIM — dangling targets and `..`
+                // are representable, and resolution is the materializer's
+                // problem, not the value's
+                // (`machine.identity.tree-canonicalization`).
+                let target = std::fs::read_link(&path)
+                    .map_err(|error| format!("read link `{}`: {error}", path.display()))?;
+                let target = target
+                    .to_str()
+                    .ok_or_else(|| {
+                        format!("exec output symlink `{}` has a non-UTF-8 target", path.display())
+                    })?
+                    .to_owned();
+                captured.push(Captured::Symlink { path, target });
+            } else if metadata.is_dir() {
+                // The directory is recorded in its own right, not merely implied
+                // by what is under it, so an EMPTY one survives capture.
+                captured.push(Captured::Dir { path: path.clone() });
+                collect(&path, root, captured)?;
             } else if metadata.is_file() {
                 // Executability is read from the metadata already in hand.
                 // Only the two canonical modes are representable, because the
@@ -259,13 +288,13 @@ pub fn archive_directory(root: &Path, mount_count: usize) -> Result<Vec<u8>, Str
                 let executable = {
                     use std::os::unix::fs::PermissionsExt as _;
                     // Executable by ANYONE, not just the owner: the tree model
-                    // carries a bool, so the question is "is this runnable", and a
-                    // mode like 0o605 is.
+                    // carries a bool, so the question is "is this runnable", and
+                    // a mode like 0o605 is.
                     metadata.permissions().mode() & 0o111 != 0
                 };
                 #[cfg(not(unix))]
                 let executable = false;
-                files.push((path, executable));
+                captured.push(Captured::File { path, executable });
             }
         }
         Ok(())
@@ -299,14 +328,15 @@ pub fn archive_directory(root: &Path, mount_count: usize) -> Result<Vec<u8>, Str
              represent"
         ));
     }
-    let mut files: Vec<(PathBuf, bool)> = Vec::new();
-    collect(root, root, &mut files)?;
-    files.sort();
+    let mut captured: Vec<Captured> = Vec::new();
+    collect(root, root, &mut captured)?;
+    captured.sort_by(|left, right| left.path().cmp(right.path()));
     let mut archive = Vec::new();
-    for (file, executable) in files {
-        let relative = file
+    for entry in captured {
+        let relative = entry
+            .path()
             .strip_prefix(root)
-            .map_err(|_| format!("exec output `{}` escaped its workspace", file.display()))?;
+            .map_err(|_| format!("exec output `{}` escaped its workspace", entry.path().display()))?;
         let relative = relative
             .components()
             .map(|component| component.as_os_str().to_string_lossy())
@@ -315,21 +345,36 @@ pub fn archive_directory(root: &Path, mount_count: usize) -> Result<Vec<u8>, Str
         if relative.len() > 100 {
             return Err(format!("exec output path `{relative}` exceeds ustar v1"));
         }
-        let bytes = std::fs::read(&file)
-            .map_err(|error| format!("read exec output `{}`: {error}", file.display()))?;
+        let bytes = match &entry {
+            Captured::File { path, .. } => std::fs::read(path)
+                .map_err(|error| format!("read exec output `{}`: {error}", path.display()))?,
+            Captured::Dir { .. } | Captured::Symlink { .. } => Vec::new(),
+        };
         let mut header = [0u8; 512];
         header[..relative.len()].copy_from_slice(relative.as_bytes());
-        header[100..108].copy_from_slice(if executable {
-            b"0000755\0"
-        } else {
-            b"0000644\0"
+        header[100..108].copy_from_slice(match &entry {
+            Captured::File { executable: true, .. } => b"0000755\0",
+            Captured::File { .. } => b"0000644\0",
+            Captured::Dir { .. } => b"0000755\0",
+            Captured::Symlink { .. } => b"0000777\0",
         });
         header[108..116].copy_from_slice(b"0000000\0");
         header[116..124].copy_from_slice(b"0000000\0");
         write_octal(&mut header[124..136], bytes.len() as u64)?;
         header[136..148].copy_from_slice(b"00000000000\0");
         header[148..156].fill(b' ');
-        header[156] = b'0';
+        // The typeflags `parse_ustar` admits: regular file, directory, symlink.
+        header[156] = match &entry {
+            Captured::File { .. } => b'0',
+            Captured::Dir { .. } => b'5',
+            Captured::Symlink { .. } => b'2',
+        };
+        if let Captured::Symlink { target, .. } = &entry {
+            if target.len() > 100 {
+                return Err(format!("exec output symlink target `{target}` exceeds ustar v1"));
+            }
+            header[157..157 + target.len()].copy_from_slice(target.as_bytes());
+        }
         header[257..263].copy_from_slice(b"ustar\0");
         header[263..265].copy_from_slice(b"00");
         let checksum: u32 = header.iter().map(|byte| u32::from(*byte)).sum();
