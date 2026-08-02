@@ -201,10 +201,16 @@ pub fn archive_directory(root: &Path, mount_count: usize) -> Result<Vec<u8>, Str
             // products different identities depending on what they were built
             // from, which is the opposite of what an output identity is for.
             //
-            // Dropping it unconditionally would be a silent lie for an
-            // invocation that MOUNTED NOTHING and wrote its own `.vix-mounts`;
-            // that case is refused by name before the walk starts, so by here
-            // the entry can only be ours.
+            // KNOWN AND BOUNDED: this drops the whole reserved subtree, not just
+            // what was materialized into it. A process that mounted something
+            // AND wrote new files under `.vix-mounts/` loses those files with no
+            // diagnostic — the same silent-loss class the zero-mount refusal
+            // below exists to prevent, and this walk cannot tell the two apart
+            // without the materialized manifest to compare against. The
+            // reservation is what makes it defensible: `.vix-mounts` is not a
+            // name a program may write, and the zero-mount case (where the
+            // process could not have known that) IS refused. Closing it properly
+            // means threading the materialized file list into capture.
             if directory == root && path.file_name().is_some_and(|name| name == EXEC_MOUNT_ROOT) {
                 continue;
             }

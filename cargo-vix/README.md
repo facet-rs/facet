@@ -97,6 +97,12 @@ Recorded where they were hit, so they are not rediscovered:
   ships no `ends_with`: the "split on the suffix, is the last piece empty" trick
   is wrong for a suffix that overlaps an earlier occurrence (`"a---"` vs `"--"`),
   and that is the shape extensions and operators take.
+- **`.vix-mounts` is a reserved name, and the reservation is enforced unevenly.**
+  Capture drops that whole top-level subtree, so a process that mounts something
+  AND writes new files under `.vix-mounts/` loses them silently. The zero-mount
+  case — where the program could not have known the name was taken — is refused
+  loudly instead. Closing the gap means threading the materialized file list
+  into capture so it can drop exactly what it wrote and no more.
 - **No `Map` decode target.** `[dependencies]` cannot decode into
   `Map<String, String>` — only into a struct naming each dependency, which a
   general tool cannot write ahead of time. Not on the critical path (the lock's
