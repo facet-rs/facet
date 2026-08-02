@@ -27,6 +27,7 @@ facet = { path = "../facet" }
 vix-wire = { path = "../vix-wire" }
 facet-format = { path = "../facet-format" }
 facet-json = { path = "../facet-json" }
+facet-styx = { path = "../facet-styx" }
 facet-toml = { path = "../facet-toml" }
 facet-reflect = { workspace = true }
 facet-value = { path = "../facet-value", default-features = false, features = ["alloc"] }

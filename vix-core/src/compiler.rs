@@ -5760,6 +5760,7 @@ fn decode_format_label(format: DecodeFormat) -> &'static str {
     match format {
         DecodeFormat::Json => "JSON",
         DecodeFormat::Toml => "TOML",
+        DecodeFormat::Styx => "STYX",
     }
 }
 
@@ -6062,18 +6063,19 @@ fn decode_format_arg(arg: &ast::Expr) -> Result<DecodeFormat, Diagnostics> {
     let ast::Expr::Variant(variant) = arg else {
         return Err(Diagnostics::one(Diagnostic::unsupported(
             expr_span(arg),
-            "a decode format `Format::Json` or `Format::Toml`",
+            "a decode format `Format::Json`, `Format::Toml`, or `Format::Styx`",
         )));
     };
     if !matches_std_qualified_name(&variant.path.type_name.value, "Format") {
         return Err(Diagnostics::one(Diagnostic::unsupported(
             variant.path.span,
-            "a decode format `Format::Json` or `Format::Toml`",
+            "a decode format `Format::Json`, `Format::Toml`, or `Format::Styx`",
         )));
     }
     match variant.path.variant.value.as_str() {
         "Json" => Ok(DecodeFormat::Json),
         "Toml" => Ok(DecodeFormat::Toml),
+        "Styx" => Ok(DecodeFormat::Styx),
         other => Err(Diagnostics::one(Diagnostic::unsupported(
             variant.path.variant.span,
             format!("an unknown decode format `Format::{other}`"),
@@ -6145,6 +6147,7 @@ fn lower_registered_decode_request(
         Op::Int(match format {
             DecodeFormat::Json => 0,
             DecodeFormat::Toml => 1,
+            DecodeFormat::Styx => 2,
         }),
     );
     let target_schema = push_node(
@@ -6307,6 +6310,22 @@ fn lower_decoded_value(
                     elements,
                     Op::Array,
                 ),
+                ty: ty.clone(),
+            })
+        }
+        // A decoded map folds into the same `Op::Map` a `%{}`-plus-adds
+        // spelling reaches: alternating key/value inputs in document order,
+        // with the machine's ordered-insert establishing canonical row order.
+        // The fold therefore interns to the identity a hand-built map of the
+        // same rows would.
+        (DecodedValue::Map(rows), Type::Map { value, .. }) => {
+            let mut inputs = Vec::with_capacity(rows.len() * 2);
+            for (key, row) in rows {
+                inputs.push(push_string_literal(nodes, span, key.clone()));
+                inputs.push(lower_decoded_value(nodes, row, value, span)?.node);
+            }
+            Ok(LoweredValue {
+                node: push_node(nodes, span, ty.clone(), EffectFacts::PURE, inputs, Op::Map),
                 ty: ty.clone(),
             })
         }

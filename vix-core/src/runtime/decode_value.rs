@@ -39,6 +39,7 @@ pub fn decode_request(
     let format = match inline_i64(format)? {
         0 => DecodeFormat::Json,
         1 => DecodeFormat::Toml,
+        2 => DecodeFormat::Styx,
         _ => {
             return Err(PrimitiveMachineError::InvalidRequest {
                 request: request.clone(),
@@ -180,6 +181,32 @@ pub fn primitive_value_from_decoded(
                 fields: Vec::new(),
             },
         }),
+        // Canonical key-ordered rows: the decoder preserved document order,
+        // and THIS is the seam where the map value's own semantics take over.
+        // String keys sort by their bytes — the same total order the
+        // machine's ordered-insert lowering establishes for String map keys —
+        // so the staged `OrderedMap` interns to the identity a vix-built map
+        // of the same rows has.
+        (Type::Map { key, value: entry }, DecodedValue::Map(rows)) => {
+            if !matches!(key.as_ref(), Type::String) {
+                return Err(invalid_field());
+            }
+            let mut sorted: Vec<&(String, DecodedValue)> = rows.iter().collect();
+            sorted.sort_by(|left, right| left.0.as_bytes().cmp(right.0.as_bytes()));
+            let rows = sorted
+                .into_iter()
+                .map(|(row_key, row_value)| {
+                    Ok((
+                        PrimitiveValue::bytes(key.schema_ref(), row_key.as_bytes().to_vec()),
+                        primitive_value_from_decoded(entry, row_value)?,
+                    ))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(PrimitiveValue {
+                schema: ty.schema_ref(),
+                body: PrimitiveValueBody::OrderedMap(rows),
+            })
+        }
         (Type::Enum(enumeration), DecodedValue::Variant { index, fields }) => {
             let variant = enumeration
                 .variants

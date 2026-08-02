@@ -1273,6 +1273,76 @@ impl ExecTask {
             .map_err(|_| invalid(elements.len()))
     }
 
+    /// The ordered-collection counterpart of [`Self::import_dense_host_array`]:
+    /// a scheduler-owned host result of map/set shape materializes into the
+    /// resuming task's molten arena and is read back through the ordinary
+    /// ordered-collection path. Rows must arrive in canonical key order — the
+    /// import builds the balanced tree positionally and never re-sorts, so an
+    /// unsorted import would be a value that disagrees with its own identity.
+    /// Key and value widths are re-checked against the collection's verified
+    /// contract, exactly as the dense import re-checks element widths.
+    pub fn import_ordered_host_rows(
+        &mut self,
+        collection_schema: SchemaRef,
+        rows: &[(Vec<u8>, Option<Vec<u8>>)],
+    ) -> Result<i64, TaskFault> {
+        self.check_not_poisoned()?;
+        let active = match &self.lane {
+            Lane::Interpreter(task) => task.active_function(),
+            Lane::Native(task) => task.active_function(),
+        };
+        let region = self.executable.function(active)?.result;
+        let invalid = |size: usize| TaskFault::InvalidResultShape {
+            entry: active,
+            region,
+            size,
+        };
+        {
+            let contract = self.executable.verified.contract();
+            let collection = contract
+                .schemas
+                .get(collection_schema.0 as usize)
+                .ok_or_else(|| invalid(0))?;
+            let crate::PayloadKind::OrderedCollection(ordered) = &collection.payload else {
+                return Err(invalid(0));
+            };
+            let key = contract
+                .schemas
+                .get(ordered.key.0 as usize)
+                .ok_or_else(|| invalid(0))?;
+            let key_width = key.inline.checked_byte_len().ok_or_else(|| invalid(0))?;
+            let value_width = ordered
+                .value
+                .map(|schema| {
+                    contract
+                        .schemas
+                        .get(schema.0 as usize)
+                        .ok_or_else(|| invalid(0))?
+                        .inline
+                        .checked_byte_len()
+                        .ok_or_else(|| invalid(0))
+                })
+                .transpose()?;
+            for (key_bytes, value_bytes) in rows {
+                if key_bytes.len() != key_width {
+                    return Err(invalid(rows.len()));
+                }
+                match (value_bytes, value_width) {
+                    (Some(bytes), Some(width)) if bytes.len() == width => {}
+                    (None, None) => {}
+                    _ => return Err(invalid(rows.len())),
+                }
+            }
+        }
+        let molten = match &mut self.lane {
+            Lane::Interpreter(task) => task.molten_mut(),
+            Lane::Native(task) => task.molten_mut(),
+        };
+        molten
+            .import_ordered(i64::from(collection_schema.0), rows)
+            .map_err(|_| invalid(rows.len()))
+    }
+
     fn write_entry_word(
         &mut self,
         index: usize,

@@ -152,13 +152,11 @@ pub enum Target {
     Neutral,
     /// The target is an argv flag (`--target <triple>`).
     ArgvFlag { flag: String },
-    /// The target is carried by role-named environment variables.
-    EnvRoles {
-        #[facet(rename = "os-role")]
-        os_role: String,
-        #[facet(rename = "arch-role")]
-        arch_role: String,
-    },
+    /// The target is carried by role-named environment variables. Field
+    /// names are single words on purpose: the vix mirror of this type has no
+    /// rename surface, so a field name must be spellable identically in a
+    /// styx document, a Rust struct, and a vix struct.
+    EnvRoles { os: String, arch: String },
     /// The program only ever produces one target.
     FixedTarget { target: String },
 }

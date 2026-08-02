@@ -9493,6 +9493,7 @@ dependencies = [
  "facet-format",
  "facet-json",
  "facet-reflect",
+ "facet-styx",
  "facet-toml",
  "facet-value",
  "hex",

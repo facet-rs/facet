@@ -16,9 +16,16 @@ Two packages here, the two sides of one seam:
   fetched toolchain tree, and the commands that make `vx r cargo build` the
   no-config cargo build.
 
-The Rust source of truth for the document shape is the `vix-package-schema`
-crate, whose tests decode these very files — the spelling here and the types
-there are one artifact, kept honest by CI.
+This directory is no longer pure fiction — three real artifacts triangulate
+on it, and all three decode THESE files in CI:
+
+- `vix-package-schema` (Rust): the document types, the single source of
+  truth for the shape (`tests/decode_corpus.rs`).
+- `cargo-vix/package.vix` (vix): the language-side reader and handler, over
+  `styx_decode` (`vixen-runtime/tests/package_manifest.rs`).
+- The decode rail itself: `Format::Styx`, variant-tag enum decode, and
+  `Map<String, _>` decode in both lanes
+  (`vixen-runtime/tests/decode_styx.rs`).
 
 ## Spelling constraints (from the real parser)
 
@@ -84,3 +91,8 @@ deterministic rule stated at the decoder.
 - Manifest-named fns as roots (beside `#[test]`) need compiler standing.
 - Publish the schema via `GenerateSchema`/`styx-embed` so styx-lsp validates
   manifests as you type (the dibs pattern).
+- Enum variant paths still don't cross module boundaries in expression
+  position (record-payload *patterns* now do, both `Enum::Variant` inside a
+  module and `module::Enum::Variant` from outside) — which is why
+  `package.vix` interrogates its unions through accessor fns rather than
+  exporting the matches.
