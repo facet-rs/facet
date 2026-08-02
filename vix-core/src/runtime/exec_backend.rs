@@ -321,12 +321,23 @@ pub fn archive_directory(root: &Path, mount_count: usize) -> Result<Vec<u8>, Str
     // output from an input area, and silently dropping it would give two
     // different runs the same output identity — refuse where the cause is
     // legible instead.
-    if mount_count == 0 && root.join(EXEC_MOUNT_ROOT).exists() {
-        return Err(format!(
-            "`{EXEC_MOUNT_ROOT}` is reserved for exec input mounts; this invocation mounted \
-             nothing, so a top-level entry by that name is an output the capture cannot \
-             represent"
-        ));
+    if mount_count == 0 {
+        match std::fs::symlink_metadata(root.join(EXEC_MOUNT_ROOT)) {
+            Ok(_) => {
+                return Err(format!(
+                    "`{EXEC_MOUNT_ROOT}` is reserved for exec input mounts; this invocation \
+                     mounted nothing, so a top-level entry by that name is an output the \
+                     capture cannot represent"
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!(
+                    "inspect reserved exec mount path `{}`: {error}",
+                    root.join(EXEC_MOUNT_ROOT).display()
+                ));
+            }
+        }
     }
     let mut captured: Vec<Captured> = Vec::new();
     collect(root, root, &mut captured)?;

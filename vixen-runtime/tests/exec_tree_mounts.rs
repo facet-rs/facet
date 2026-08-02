@@ -274,6 +274,27 @@ fn t(sh: Sh) -> Stream<Check> {
 }
 
 #[test]
+fn a_dangling_reserved_mount_symlink_without_mounting_is_refused() {
+    // `Path::exists` follows symlinks, so a dangling link answers false even
+    // though the directory entry itself exists. Capture skips the reserved name
+    // before inspecting its kind; using `exists` here would therefore silently
+    // collapse this output to the same tree as an invocation that wrote nothing.
+    let source = r#"
+#[test { budget_wall: 60s, budget_rss: 2048MB }]
+fn t(sh: Sh) -> Stream<Check> {
+    let out = exec sh`-c "ln -s missing .vix-mounts"`;
+    yield expect_eq(out.stdout.text(), "unreachable");
+}
+"#;
+    let error = run(source).expect_err("the dangling reserved symlink is refused");
+    let rendered = format!("{error:?}");
+    assert!(
+        rendered.contains("reserved for exec input mounts"),
+        "the refusal names the reservation: {rendered}"
+    );
+}
+
+#[test]
 fn a_progressive_product_may_not_be_announced_from_the_mount_area() {
     // The mount area is INPUT. Announcing a product from it would replay an
     // input as an output, and capture excludes that area — so the two halves of
