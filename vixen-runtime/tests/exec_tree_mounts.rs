@@ -228,3 +228,25 @@ fn t(sh: Sh) -> Stream<Check> {
 "#,
     );
 }
+
+#[test]
+fn one_tree_spliced_twice_mounts_once() {
+    // `{t} … {t}` names one input twice, not two inputs. Both renders must
+    // resolve to the SAME materialized path, or a build walk that mentions its
+    // source tree once per unit pays for a fresh copy each time.
+    expect_pass(
+        "dedup",
+        r#"
+#[test { budget_wall: 60s, budget_rss: 2048MB }]
+fn t(sh: Sh) -> Stream<Check> {
+    let produced = exec sh`-c "echo once > note.txt"`;
+    let tree = produced.tree;
+    let seen = exec sh`-c "cat {tree}/note.txt {tree}/note.txt; ls -A .vix-mounts | tr '\n' ' '"`;
+    yield expect_eq(seen.stdout.lines()[0], "once");
+    yield expect_eq(seen.stdout.lines()[1], "once");
+    // One mount directory, not two.
+    yield expect_eq(seen.stdout.lines()[2].trim(), "0");
+}
+"#,
+    );
+}

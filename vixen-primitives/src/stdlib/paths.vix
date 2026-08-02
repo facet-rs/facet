@@ -23,7 +23,9 @@ pub fn file_name(path: Path) -> Option<String> {
 // The extension of the final segment, without its dot. `None` when the file
 // name carries no dot at all; a dotfile (`.gitignore`) reports `gitignore`,
 // matching the "text after the last dot" rule rather than inventing a
-// hidden-file case the language has no opinion about.
+// hidden-file case the language has no opinion about. A trailing dot (`foo.`)
+// reports `Some("")` by the same rule — the text after the last dot is empty,
+// and reporting `None` there would mean two different documents answered alike.
 pub fn extension(path: Path) -> Option<String> {
     match file_name(path) {
         Some(name) => extension_of(name),

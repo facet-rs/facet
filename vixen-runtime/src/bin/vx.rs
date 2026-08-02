@@ -88,7 +88,7 @@ fn main() -> ExitCode {
     }
 }
 
-const USAGE: &str = "usage: vx <file.vix> [--fixtures <dir>]";
+const USAGE: &str = "usage: vx [--fixtures <dir>] [--] <file.vix>";
 
 struct Invocation {
     source: PathBuf,
@@ -108,8 +108,19 @@ impl Invocation {
         let mut source: Option<PathBuf> = None;
         let mut fixtures: Option<PathBuf> = None;
         let mut rest = arguments.iter();
+        // Everything after `--` is a path, so a file whose name begins with `-`
+        // is nameable.
+        let mut only_paths = false;
         while let Some(argument) = rest.next() {
+            if only_paths {
+                if source.is_some() {
+                    return Parsed::Invalid;
+                }
+                source = Some(PathBuf::from(argument));
+                continue;
+            }
             match argument.as_str() {
+                "--" => only_paths = true,
                 "--fixtures" => match rest.next() {
                     Some(directory) => fixtures = Some(PathBuf::from(directory)),
                     None => return Parsed::Invalid,

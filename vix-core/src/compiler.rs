@@ -9418,8 +9418,19 @@ fn lower_exec(
                     Op::String(text),
                 ),
                 TemplatePiece::Mount(tree) => {
-                    let index = mounts.len();
-                    mounts.push(tree.node);
+                    // One mount per DISTINCT tree: `{src} … {src}` names one
+                    // input twice, not two inputs. Splicing it twice would
+                    // materialize identical bytes at two paths and put the same
+                    // tree in the request twice — harmless under the identity
+                    // model, wasteful in exactly the shape a build walk has
+                    // (a source tree named once per unit).
+                    let index = mounts
+                        .iter()
+                        .position(|mounted| *mounted == tree.node)
+                        .unwrap_or_else(|| {
+                            mounts.push(tree.node);
+                            mounts.len() - 1
+                        });
                     push_node(
                         nodes,
                         span,

@@ -221,7 +221,10 @@ pub fn archive_directory(root: &Path) -> Result<Vec<u8>, String> {
                 #[cfg(unix)]
                 let executable = {
                     use std::os::unix::fs::PermissionsExt as _;
-                    metadata.permissions().mode() & 0o100 != 0
+                    // Executable by ANYONE, not just the owner: the tree model
+                    // carries a bool, so the question is "is this runnable", and a
+                    // mode like 0o605 is.
+                    metadata.permissions().mode() & 0o111 != 0
                 };
                 #[cfg(not(unix))]
                 let executable = false;

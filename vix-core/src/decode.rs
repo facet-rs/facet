@@ -558,22 +558,25 @@ fn decode_fields<'de>(
                                 && as_array(&existing).is_some()
                                 && as_array(&value).is_some() =>
                             {
-                                let mut first = as_array(&existing)
-                                    .expect("guarded array")
-                                    .clone();
-                                first.extend(
-                                    as_array(&value).expect("guarded array").iter().cloned(),
-                                );
+                                // MOVE both sides in. Cloning the accumulator
+                                // here would deep-copy every record decoded so
+                                // far on each `[[package]]` block — quadratic in
+                                // the block count, on exactly the document this
+                                // work exists to read (a real lock has hundreds).
+                                let (mut first, optional) =
+                                    into_array(existing).expect("guarded by as_array");
+                                let (rest, _) =
+                                    into_array(value).expect("guarded by as_array");
+                                first.extend(rest);
                                 let merged = DecodedValue::Array(first);
                                 // An `Option<[T]>` field wraps its sequence, so
                                 // the merge has to survive the wrapper or whether
                                 // `[[x]]` decodes would depend on whether the
                                 // field is `[T]` or `Option<[T]>`.
-                                slots[index] = Some(match existing {
-                                    DecodedValue::OptionSome(_) => {
-                                        DecodedValue::OptionSome(Box::new(merged))
-                                    }
-                                    _ => merged,
+                                slots[index] = Some(if optional {
+                                    DecodedValue::OptionSome(Box::new(merged))
+                                } else {
+                                    merged
                                 });
                             }
                             Some(_) => {
@@ -634,6 +637,20 @@ fn as_array(value: &DecodedValue) -> Option<&Vec<DecodedValue>> {
         DecodedValue::Array(elements) => Some(elements),
         DecodedValue::OptionSome(inner) => match inner.as_ref() {
             DecodedValue::Array(elements) => Some(elements),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The consuming twin of [`as_array`]: the sequence and whether it was wrapped
+/// in one `Option` layer. Exists so the array-of-tables merge can move its
+/// operands instead of cloning them.
+fn into_array(value: DecodedValue) -> Option<(Vec<DecodedValue>, bool)> {
+    match value {
+        DecodedValue::Array(elements) => Some((elements, false)),
+        DecodedValue::OptionSome(inner) => match *inner {
+            DecodedValue::Array(elements) => Some((elements, true)),
             _ => None,
         },
         _ => None,

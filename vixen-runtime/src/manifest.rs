@@ -448,6 +448,11 @@ fn collect_exec_requirements(
         if *primitive != exec {
             continue;
         }
+        // An ABSENT request node is not an invariant break: this scan runs per
+        // island, and partitioning decides which island holds which node, so a
+        // request the current vector cannot see is one another vector carries.
+        // Skipping is right here. A request node that IS present with the wrong
+        // arity is a different claim — see the assert below.
         let Some(request) = node.inputs.first().copied().and_then(node_by_id) else {
             continue;
         };

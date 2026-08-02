@@ -119,10 +119,15 @@ fn t() -> Stream<Check> {
     yield expect_eq(bare.extension(), no_extension);
     yield expect_eq(bare.stem(), Some("README"));
 
+    // A trailing dot: the text after the last dot is empty, and says so rather
+    // than pretending there was no dot.
+    yield expect_eq((p"foo.").extension(), Some(""));
+    yield expect_eq((p"foo.").stem(), Some("foo"));
+
     // The crate-name shape the build walk needs off a globbed source path.
     yield expect_eq(("libsmall_crate.rlib").split(".")[0], "libsmall_crate");
 }
 "#,
-        10,
+        12,
     );
 }
