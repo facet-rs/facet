@@ -85,6 +85,20 @@ of it is built now.
 >   (`vixen.capability.rustc-is-materializable`), the archive bytes are
 >   transport.
 >
+>   The coordinate's scheme is not magic and not new: it is the routing key
+>   origin adapters already declare (`OriginAdapterDecl.schemes`, one
+>   claimant per scheme, unclaimed ⇒ typed refusal, no default backend).
+>   What IS undecided is which spelling the manifest genre blesses: an
+>   **absolute** coordinate (`https://static.rust-lang.org/dist/…` — fetches
+>   today through the http adapter, self-contained, hash-verified either
+>   way) or a **logical** one (`registry://…` — the machine's installed
+>   adapter decides transport, which is the mirror/vendor/air-gap seam but
+>   makes the manifest depend on machine cooperation; today only the test
+>   harness claims that scheme). `PinnedBlobRef.origins` is a list on the
+>   wire, so logical-first-absolute-fallback is expressible without a new
+>   shape. The corpus examples spell `registry://` to keep the logical seam
+>   visible; the decision is open and this sentence is its marker.
+>
 > There is deliberately **no `@path` arm**. A local directory is an unpinned
 > word in a document whose whole job is to be pinned — the flake `path:`
 > input is the impurity this rule refuses to inherit. Local overrides are

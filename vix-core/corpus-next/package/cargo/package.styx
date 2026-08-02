@@ -17,6 +17,14 @@ package {
 // unpacking. The package's identity contribution is the RESULTING TREE's
 // identity (vixen.capability.rustc-is-materializable); the archive bytes
 // are transport.
+//
+// `registry://` is a LOGICAL coordinate: it routes to whatever installed
+// adapter claims the scheme — today only the harness's offline FixtureStore
+// does; a production registry adapter is the deferred registry. An absolute
+// `https://…` coordinate would fetch today through the http adapter, and a
+// pin's `origins` is a list on the wire, so carrying logical-then-absolute
+// is open. Which spelling the genre blesses is an undischarged decision —
+// see the note on r[vixen.package.inputs-are-provider-pins].
 input {
   rust-dist @fetch{
     origin "registry://rust-1.89.0-x86_64-unknown-linux-gnu.tar.xz"
