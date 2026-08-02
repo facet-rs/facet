@@ -92,11 +92,16 @@ of it is built now.
 
 > r[vixen.package.frontmatter-is-not-code]
 >
-> [DESIGN] The manifest stays **dead data**, and the type system is what keeps
-> it that way rather than doctrine. `manifest` takes a *string* literal, and a
-> string has no interpolation in this language (`r[lang.literal.string]`) —
-> templating there is not forbidden, it is **unrepresentable**. Nothing inside
-> the fence can reference a binding, a constant, or a computed version.
+> [DESIGN] The manifest stays **dead data**, and the grammar is what keeps it
+> that way rather than doctrine. `manifest` takes a **quote-family** block
+> literal, and the quote family admits no holes at all
+> (`r[lang.literal.block]`) — neither the interpolation `{x}` nor the binding
+> `{let x}` is spellable there. Referencing a binding, a constant, or a
+> computed version inside the fence is not forbidden, it is
+> **unrepresentable**.
+>
+> The backtick family is where holes live, and `manifest` does not take one.
+> The distinction is the whole reason the two families exist.
 >
 > This is the structural answer to the failure flake.nix had to patch with a
 > restricted evaluation mode. The fence is lexical, so the wall is held by the

@@ -29,7 +29,7 @@ This page says what one is and what 0.1's looks like.
 > r[vixen.capability.package-declares-its-holes]
 >
 > [DESIGN] A package also declares the **hole delimiter** its command
-> templates use (`lang.template.holes`). This is not a fifth unrelated field:
+> templates use (`lang.template.command-holes`). Not a fifth unrelated field:
 > the package already owns the argv dialect, and how a hole is spelled inside
 > that dialect is the same kind of fact as which flags carry which roles.
 >
