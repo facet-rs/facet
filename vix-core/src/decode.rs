@@ -378,12 +378,14 @@ fn decode_value<'de>(
                     .map_err(|_| DecodeError::of(DecodeErrorKind::IntOutOfRange).with_span(span)),
                 // Styx scalars are all syntactically strings; the format's own
                 // rule is that the TARGET type interprets them (facet-styx
-                // spells the same rule as a reader-side hint). This decoder is
-                // type-directed, so the interpretation happens right here.
+                // spells the same rule as a reader-side hint, which only a
+                // deserializer can send — this decoder drives the parser
+                // itself). The RULES are shared rather than restated, so a
+                // document cannot mean one thing here and another there.
                 ScalarValue::Str(text) if format == DecodeFormat::Styx => {
-                    match text.parse::<i64>() {
-                        Ok(value) => Ok(DecodedValue::Int(value)),
-                        Err(_) => Err(scalar_mismatch("Int", &ScalarValue::Str(text), span)),
+                    match facet_styx::scalar_interp::parse_i64(&text) {
+                        Some(value) => Ok(DecodedValue::Int(value)),
+                        None => Err(scalar_mismatch("Int", &ScalarValue::Str(text), span)),
                     }
                 }
                 other => Err(scalar_mismatch("Int", &other, span)),
@@ -1431,6 +1433,44 @@ mod tests {
                     "test".to_owned(),
                     DecodedValue::Record(vec![DecodedValue::Str("facet::test".to_owned())]),
                 ),
+            ])
+        );
+    }
+
+    #[test]
+    fn styx_numeric_forms_agree_with_facet_styx() {
+        // The interp[interp.int.*] forms reach the vix rail too: the RULES are
+        // facet-styx's, so one document cannot mean two things depending on
+        // which reader opened it.
+        let target = Type::Record(RecordType::new(
+            "Row",
+            vec![
+                RecordField {
+                    name: "readable".to_owned(),
+                    ty: Type::Int,
+                },
+                RecordField {
+                    name: "color".to_owned(),
+                    ty: Type::Int,
+                },
+                RecordField {
+                    name: "mode".to_owned(),
+                    ty: Type::Int,
+                },
+            ],
+        ));
+        let value = decode(
+            DecodeFormat::Styx,
+            "readable 1_000_000\ncolor 0xff5500\nmode 0o755\n",
+            &target,
+        )
+        .expect("spec numeric forms decode on the vix rail");
+        assert_eq!(
+            value,
+            DecodedValue::Record(vec![
+                DecodedValue::Int(1_000_000),
+                DecodedValue::Int(16_733_440),
+                DecodedValue::Int(493),
             ])
         );
     }

@@ -1232,9 +1232,11 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         scalar_type: Option<ScalarType>,
         is_from_str: bool,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
-        // Only hint for non-self-describing formats (e.g., postcard)
-        // Self-describing formats like JSON already know the types
-        if self.is_non_self_describing() {
+        // Hint for formats that cannot type a scalar on their own: a
+        // non-self-describing one (postcard), or a self-describing one whose
+        // scalars are deliberately opaque (Styx). JSON and TOML type their
+        // scalars in the syntax and need no hint.
+        if self.wants_scalar_hints() {
             let shape = wip.shape();
 
             // First, try hint_opaque_scalar for types that may have format-specific

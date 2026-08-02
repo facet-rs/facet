@@ -50,6 +50,7 @@ mod mixed_expr_test;
 #[cfg(test)]
 mod other_variant_test;
 mod parser;
+pub mod scalar_interp;
 mod schema_error;
 mod schema_gen;
 mod schema_meta;

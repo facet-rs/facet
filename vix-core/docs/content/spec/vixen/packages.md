@@ -57,6 +57,34 @@ of it is built now.
 > public names are unique by construction, and enumeration order is the
 > map's canonical order, not authoring order.
 
+### Why a file, and not frontmatter in the entry point
+
+The obvious alternative is to put the manifest at the top of the package's
+entry-point `.vix` file, the way PEP 723 puts script metadata in a comment
+block and cargo-script puts a manifest in a doc comment. For a one-file
+package that is plainly nicer, and it is not ruled out here. The reason to
+start with a file is tooling, not doctrine:
+
+- A standalone `.styx` document is *already* readable by everything that
+  reads styx — `styx fmt`, the LSP's live schema validation and completion,
+  a registry indexer, a bot bumping a pin — with no frontmatter convention
+  to teach any of them first.
+- Frontmatter has to be legal in **both** languages at once, and it is legal
+  in neither: a `---` fence is not vix, and a manifest embedded in `//`
+  comments is not a styx document. One of the two parsers grows a mode, and
+  every tool downstream of it grows the same mode.
+- A pin change stays a diff in a small data file rather than arriving inside
+  a code diff, which is where a reviewer is looking for it.
+
+None of that is permanent. The data model is carrier-independent — the
+schema types decode a styx *document*, not a *file* — so admitting
+frontmatter later is a READER change (find the bytes, decode the same
+shape), not a format change. What it would cost is fixing the entry point's
+name, since a manifest that says which module to load cannot itself be found
+by loading that module: today the fixed name is `package.styx`, and with
+frontmatter it would become `main.vix`. The convention does not disappear,
+it moves onto the code.
+
 > r[vixen.package.inputs-are-provider-pins]
 >
 > [DESIGN] The `input` section is a map of **provider pins**, and explicitly

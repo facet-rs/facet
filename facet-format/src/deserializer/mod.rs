@@ -202,10 +202,17 @@ pub struct FormatDeserializer<'parser, 'input, const BORROW: bool> {
     /// Computed once at construction time.
     is_non_self_describing: bool,
 
+    /// Whether the parser interprets scalars from a hint even though it is
+    /// self-describing (Styx: structurally self-describing, deliberately
+    /// opaque about scalars). Gates `hint_scalar_type` on its own, since the
+    /// other schema-driven hints stay tied to `is_non_self_describing`.
+    /// Computed once at construction time.
+    needs_scalar_hints: bool,
+
     /// Whether to bypass event buffering. True for non-self-describing
-    /// formats and for parsers that need container hints (Lua): hints clear
-    /// or reclassify the parser's peeked event and must take effect
-    /// immediately, which buffered events would defeat.
+    /// formats and for parsers that need container hints (Lua) or scalar
+    /// hints (Styx): hints clear or reclassify the parser's peeked event and
+    /// must take effect immediately, which buffered events would defeat.
     bypass_event_buffer: bool,
 
     _marker: PhantomData<&'input ()>,
@@ -223,13 +230,16 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, true> {
         buffer_capacity: usize,
     ) -> Self {
         let is_non_self_describing = !parser.is_self_describing();
-        let bypass_event_buffer = is_non_self_describing || parser.needs_container_hints();
+        let needs_scalar_hints = parser.needs_scalar_hints();
+        let bypass_event_buffer =
+            is_non_self_describing || parser.needs_container_hints() || needs_scalar_hints;
         Self {
             parser,
             last_span: Span { offset: 0, len: 0 },
             event_buffer: VecDeque::with_capacity(buffer_capacity),
             buffer_capacity,
             is_non_self_describing,
+            needs_scalar_hints,
             bypass_event_buffer,
             _marker: PhantomData,
         }
@@ -248,13 +258,16 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
         buffer_capacity: usize,
     ) -> Self {
         let is_non_self_describing = !parser.is_self_describing();
-        let bypass_event_buffer = is_non_self_describing || parser.needs_container_hints();
+        let needs_scalar_hints = parser.needs_scalar_hints();
+        let bypass_event_buffer =
+            is_non_self_describing || parser.needs_container_hints() || needs_scalar_hints;
         Self {
             parser,
             last_span: Span { offset: 0, len: 0 },
             event_buffer: VecDeque::with_capacity(buffer_capacity),
             buffer_capacity,
             is_non_self_describing,
+            needs_scalar_hints,
             bypass_event_buffer,
             _marker: PhantomData,
         }
@@ -452,6 +465,13 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     #[inline(always)]
     fn is_non_self_describing(&self) -> bool {
         self.is_non_self_describing
+    }
+
+    /// Whether this parser wants scalars interpreted from a type hint — a
+    /// non-self-describing format (which describes nothing) or a
+    /// self-describing one whose SCALARS are opaque (Styx).
+    fn wants_scalar_hints(&self) -> bool {
+        self.is_non_self_describing || self.needs_scalar_hints
     }
 
     /// Read the next event, returning an error if EOF is reached.
