@@ -105,6 +105,19 @@ impl<Ctx> RawPrimitive<Ctx> for ExecPrimitive {
                 ArgRole::Value {
                     expected: Type::Array(Box::new(Type::String)),
                 },
+                // The mounts, declared. This MUST match the request's real
+                // arity: `declared_effect_preimage` compares the two and, on a
+                // mismatch, falls back to keying the whole request — which
+                // makes `arguments[0]` the request identity instead of the
+                // capability's, collapses the plan/capability separation the
+                // rail exists for, and records `CapabilityProgram` against the
+                // wrong source. A shape that under-declares fails silently, so
+                // it is worth more than a comment: see the identity test.
+                ArgRole::Value {
+                    expected: Type::Array(Box::new(Type::Extern(vix::vir::ExternKind::Host(
+                        vix::binding::TREE,
+                    )))),
+                },
             ],
             request_ty: exec_request_type(&capability),
             result: exec_outcome_type(),
@@ -327,24 +340,35 @@ fn parse_mounts(
             }
             let tree = tree_from_resident(resident)
                 .map_err(|_| invalid("a mounted tree's resident bytes were malformed"))?;
-            let mut files = Vec::new();
+            // EVERY entry kind, not just files: empty directories and
+            // symlinks participate in tree identity, so dropping them would
+            // mount a tree that is not the value the request named.
+            let mut entries = Vec::new();
             for (path, entry) in tree.walk() {
-                let vix::runtime::TreeEntry::File { executable, .. } = entry else {
-                    continue;
-                };
-                let bytes = tree
-                    .file_bytes(&path)
-                    .ok_or_else(|| invalid("a mounted tree lost one of its files"))?
-                    .to_vec();
-                files.push(crate::rt::ExecMountFile {
-                    path,
-                    bytes,
-                    executable: *executable,
+                entries.push(match entry {
+                    vix::runtime::TreeEntry::File { executable, .. } => {
+                        let bytes = tree
+                            .file_bytes(&path)
+                            .ok_or_else(|| invalid("a mounted tree lost one of its files"))?
+                            .to_vec();
+                        crate::rt::ExecMountEntry::File {
+                            path,
+                            bytes,
+                            executable: *executable,
+                        }
+                    }
+                    vix::runtime::TreeEntry::Dir(_) => crate::rt::ExecMountEntry::Dir { path },
+                    vix::runtime::TreeEntry::Symlink { target } => {
+                        crate::rt::ExecMountEntry::Symlink {
+                            path,
+                            target: target.clone(),
+                        }
+                    }
                 });
             }
             Ok(crate::rt::ExecMount {
                 path: vix::runtime::exec_mount_path(index),
-                files,
+                entries,
             })
         })
         .collect()

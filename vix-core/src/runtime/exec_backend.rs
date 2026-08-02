@@ -56,28 +56,54 @@ pub struct ExecInvocation {
     pub mounts: Vec<ExecMount>,
 }
 
-/// One input tree, flattened to its files, destined for a workspace-relative
-/// directory. This is a plain file list rather than a tree value on purpose:
+/// One input tree, flattened to its entries, destined for a workspace-relative
+/// directory. This is a plain entry list rather than a tree value on purpose:
 /// materializing an input is a filesystem act, and the backend is the only
 /// thing that should know a filesystem exists.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExecMount {
-    /// Workspace-relative directory the files land under.
+    /// Workspace-relative directory the entries land under.
     pub path: String,
-    /// The tree's files, in tree order.
-    pub files: Vec<ExecMountFile>,
+    /// The tree's entries, in tree order.
+    pub entries: Vec<ExecMountEntry>,
 }
 
-/// One materialized file of a mount. The executable bit is carried because a
-/// tree carries it (`TreeEntry::File::executable`) and dropping it turns a
-/// compiler's output into a file the next stage cannot run — the mode is part
-/// of what the value says about itself, not a filesystem detail.
+/// One materialized entry of a mount — EVERY entry kind a `TreeEntry` has, not
+/// just files.
+///
+/// Directories and symlinks are carried because they participate in tree
+/// identity: an empty directory is explicitly representable in the tree model
+/// (it is how one process hands structure to a later one), and a symlink's
+/// target is preserved verbatim. Flattening to files alone would mount a tree
+/// that is not the value the request named — a silent difference between what
+/// the identity says and what the process sees.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ExecMountFile {
-    /// Tree-relative path.
-    pub path: String,
-    pub bytes: Vec<u8>,
-    pub executable: bool,
+pub enum ExecMountEntry {
+    /// The executable bit is carried because a tree carries it
+    /// (`TreeEntry::File::executable`) and dropping it turns a compiler's
+    /// output into a file the next stage cannot run.
+    File {
+        path: String,
+        bytes: Vec<u8>,
+        executable: bool,
+    },
+    Dir {
+        path: String,
+    },
+    Symlink {
+        path: String,
+        target: String,
+    },
+}
+
+impl ExecMountEntry {
+    /// The entry's tree-relative path, whatever its kind.
+    #[must_use]
+    pub fn path(&self) -> &str {
+        match self {
+            Self::File { path, .. } | Self::Dir { path } | Self::Symlink { path, .. } => path,
+        }
+    }
 }
 
 /// One command-grammar-authorized immutable exec product, snapshotted by the

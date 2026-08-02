@@ -110,3 +110,34 @@ fn a_substituted_backend_receives_the_invocation_instead() {
     assert_eq!(asked[0].program, "sh", "…with the plan the program spelled");
     assert_eq!(asked[0].argv, vec!["-c".to_owned(), "echo ran".to_owned()]);
 }
+
+/// The declared shape's arity MUST equal the request record's field count.
+///
+/// `declared_effect_preimage` compares the two and, on a mismatch, silently
+/// falls back to keying the whole request — the capability stops being
+/// `arguments[0]`, the plan/capability separation the exec rail exists for
+/// collapses, and the receipt records `CapabilityProgram` against the request
+/// value instead of the capability. Nothing fails; it just keys wrong. That is
+/// what happened when the `mounts` field landed and the shape was not updated,
+/// so the agreement is asserted directly rather than left to a test that
+/// happens to construct both halves consistently.
+#[test]
+fn the_declared_exec_shape_matches_the_real_request_arity() {
+    use vix::runtime::RawPrimitive;
+    use vix::vir::Type;
+
+    vixen_primitives::register_host_types();
+    let primitive = vixen_primitives::ExecPrimitive::default();
+    let shape = RawPrimitive::<()>::request_shape(&primitive).expect("exec declares a shape");
+
+    let Type::Record(record) = &shape.request_ty else {
+        panic!("the exec request is a record: {:?}", shape.request_ty);
+    };
+    assert_eq!(
+        shape.args.len(),
+        record.fields.len(),
+        "declared roles {:?} vs request fields {:?}",
+        shape.args.len(),
+        record.fields.iter().map(|f| &f.name).collect::<Vec<_>>()
+    );
+}

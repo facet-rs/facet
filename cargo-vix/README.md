@@ -103,6 +103,13 @@ Recorded where they were hit, so they are not rediscovered:
   case — where the program could not have known the name was taken — is refused
   loudly instead. Closing the gap means threading the materialized file list
   into capture so it can drop exactly what it wrote and no more.
+- **Capture drops empty directories and refuses symlinks.** `archive_directory`
+  writes only file entries into its ustar stream, so an empty directory an exec
+  created is lost, and a symlink is a hard error (`exec output symlink … is not
+  yet supported`). MOUNTING now carries all three kinds faithfully; capture is
+  the remaining half, and until it lands an exec-produced tree can only ever
+  hold files. Real vendored crates contain symlinks, so this blocks the ladder
+  before `untar` of an arbitrary `.crate`.
 - **No `Map` decode target.** `[dependencies]` cannot decode into
   `Map<String, String>` — only into a struct naming each dependency, which a
   general tool cannot write ahead of time. Not on the critical path (the lock's

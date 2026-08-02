@@ -29,7 +29,7 @@ use std::path::Path;
 
 use vix::runtime::{
     EXEC_STDERR_STREAM, EXEC_STDOUT_STREAM, ExecBackend, ExecEvent, ExecEventSender,
-    ExecInvocation, ExecMount, ExecOutputProtocol, ExecProduct, ExecWorkspace,
+    ExecInvocation, ExecMount, ExecMountEntry, ExecOutputProtocol, ExecProduct, ExecWorkspace,
 };
 
 /// The host-trusting backend, EXPLICITLY INSTALLED — `std::process::Command` in
@@ -48,18 +48,18 @@ pub struct HostExecBackend;
 /// something upstream is wrong and silently clamping it would hide that.
 fn materialize_mounts(workspace: &Path, mounts: &[ExecMount]) -> Result<(), String> {
     for mount in mounts {
-        // The mount's own directory is created even when the tree holds no
-        // files. The argv names this path unconditionally, so an empty tree
-        // (an exec that wrote nothing, captured and mounted) would otherwise
-        // hand the process an ENOENT where the model promises a directory.
+        // The mount's own directory is created even when the tree is empty. The
+        // argv names this path unconditionally, so an empty tree (an exec that
+        // wrote nothing, captured and mounted) would otherwise hand the process
+        // an ENOENT where the model promises a directory.
         let root = workspace.join(&mount.path);
         std::fs::create_dir_all(&root)
             .map_err(|error| format!("create `{}`: {error}", root.display()))?;
-        for file in &mount.files {
-            let joined = format!("{}/{}", mount.path, file.path);
+        for entry in &mount.entries {
+            let joined = format!("{}/{}", mount.path, entry.path());
             // Validate through `Path::components`, not by splitting on '/':
             // `Path::join` honours the platform's separators, so a member named
-            // `..\\evil` would slip a '/'-only check and escape on Windows. The
+            // `..\evil` would slip a '/'-only check and escape on Windows. The
             // same discipline `validate_exec_product_path` uses below — a member
             // name is untrusted input, and the paths are otherwise derived from
             // the plan, so an escape means something upstream is wrong and
@@ -71,17 +71,51 @@ fn materialize_mounts(workspace: &Path, mounts: &[ExecMount]) -> Result<(), Stri
                 return Err(format!("mount path `{joined}` escapes the workspace"));
             }
             let target = workspace.join(&joined);
-            if let Some(parent) = target.parent() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|error| format!("create `{}`: {error}", parent.display()))?;
-            }
-            std::fs::write(&target, &file.bytes)
-                .map_err(|error| format!("write `{}`: {error}", target.display()))?;
-            #[cfg(unix)]
-            if file.executable {
-                use std::os::unix::fs::PermissionsExt as _;
-                std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755))
-                    .map_err(|error| format!("chmod `{}`: {error}", target.display()))?;
+            let parent_of = |target: &Path| -> Result<(), String> {
+                if let Some(parent) = target.parent() {
+                    std::fs::create_dir_all(parent)
+                        .map_err(|error| format!("create `{}`: {error}", parent.display()))?;
+                }
+                Ok(())
+            };
+            match entry {
+                ExecMountEntry::File {
+                    bytes, executable, ..
+                } => {
+                    parent_of(&target)?;
+                    std::fs::write(&target, bytes)
+                        .map_err(|error| format!("write `{}`: {error}", target.display()))?;
+                    #[cfg(unix)]
+                    if *executable {
+                        use std::os::unix::fs::PermissionsExt as _;
+                        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755))
+                            .map_err(|error| format!("chmod `{}`: {error}", target.display()))?;
+                    }
+                }
+                // An EMPTY directory is representable in the tree model and is
+                // how one process hands structure to a later one, so it is
+                // created rather than inferred from the files under it.
+                ExecMountEntry::Dir { .. } => {
+                    std::fs::create_dir_all(&target)
+                        .map_err(|error| format!("create `{}`: {error}", target.display()))?;
+                }
+                // The target is preserved verbatim, dangling or not: resolution
+                // is the materializer's problem only in the sense that it must
+                // not invent one (`machine.identity.tree-canonicalization`).
+                ExecMountEntry::Symlink { target: link, .. } => {
+                    parent_of(&target)?;
+                    #[cfg(unix)]
+                    std::os::unix::fs::symlink(link, &target).map_err(|error| {
+                        format!("symlink `{}` -> `{link}`: {error}", target.display())
+                    })?;
+                    // Refusing beats mounting a tree that differs from the value
+                    // the request named.
+                    #[cfg(not(unix))]
+                    return Err(format!(
+                        "mounting the symlink `{}` -> `{link}` is not supported on this platform",
+                        target.display()
+                    ));
+                }
             }
         }
     }

@@ -295,3 +295,76 @@ fn t(sh: ProgressiveSh) -> Stream<Check> {
         "the refusal names the area: {rendered}"
     );
 }
+
+#[test]
+fn a_mount_materializes_every_tree_entry_kind() {
+    // Directories and symlinks participate in tree identity: an EMPTY directory
+    // is explicitly representable (it is how one process hands structure to a
+    // later one) and a symlink's target is preserved verbatim. A mount that
+    // flattened to files alone would materialize something that is not the
+    // value the request named.
+    //
+    // Driven through the backend directly rather than through a vix program,
+    // because the CAPTURE half cannot yet produce such a tree: `archive_directory`
+    // writes only file entries (so an empty directory is lost) and refuses
+    // symlinks outright. Mounting is correct for all three kinds now; capture is
+    // the remaining half, and testing through an exec-produced tree would test
+    // that limitation instead of this fix.
+    use std::sync::Arc;
+    use vix::runtime::{
+        ExecBackend, ExecEvent, ExecInvocation, ExecMount, ExecMountEntry, ExecOutputProtocol,
+    };
+    use vixen_runtime::host_exec::HostExecBackend;
+
+    let invocation = ExecInvocation {
+        program: "sh".to_owned(),
+        argv: vec!["-c".to_owned(), "true".to_owned()],
+        env_remove: Vec::new(),
+        env: Vec::new(),
+        protocol: ExecOutputProtocol::ExitOnly,
+        mounts: vec![ExecMount {
+            path: "m".to_owned(),
+            entries: vec![
+                ExecMountEntry::Dir {
+                    path: "empty".to_owned(),
+                },
+                ExecMountEntry::File {
+                    path: "full/note.txt".to_owned(),
+                    bytes: b"hi\n".to_vec(),
+                    executable: false,
+                },
+                ExecMountEntry::Symlink {
+                    path: "link".to_owned(),
+                    target: "full/note.txt".to_owned(),
+                },
+            ],
+        }],
+    };
+
+    let events: vix::runtime::ExecEventSender = Arc::new(|_event: ExecEvent| {});
+    let workspace = HostExecBackend
+        .begin(invocation, events)
+        .expect("the backend materializes and spawns");
+    let mount = workspace.path().join("m");
+
+    assert!(
+        mount.join("empty").is_dir(),
+        "the empty directory is created, not inferred from files under it"
+    );
+    assert_eq!(
+        std::fs::read_to_string(mount.join("full/note.txt")).expect("the file is written"),
+        "hi\n"
+    );
+    let link = mount.join("link");
+    assert!(
+        std::fs::symlink_metadata(&link)
+            .expect("the symlink exists")
+            .file_type()
+            .is_symlink(),
+        "the symlink is a symlink, not a copy of its target"
+    );
+    assert_eq!(
+        std::fs::read_link(&link).expect("the target is preserved"),
+        std::path::Path::new("full/note.txt")
+    );
+}
