@@ -26,6 +26,24 @@ This page says what one is and what 0.1's looks like.
 > enters command identity, so changing a grammar changes what the recipe means
 > and invalidates honestly.
 
+> r[vixen.capability.package-declares-its-holes]
+>
+> [DESIGN] A package also declares the **hole delimiter** its command
+> templates use (`lang.template.holes`). This is not a fifth unrelated field:
+> the package already owns the argv dialect, and how a hole is spelled inside
+> that dialect is the same kind of fact as which flags carry which roles.
+>
+> It belongs here rather than in a global per-language table because the
+> collision it avoids is per-tool. A delimiter must not occur in the tool's
+> own argv, and only the package knows that argv — a shell package cannot use
+> `{}` (brace expansion, `find -exec {}`), while a package whose argv is styx
+> may use a pair styx has no token for. One global choice would be wrong for
+> someone by construction.
+>
+> The delimiter is versioned with the package and enters command identity with
+> the rest of it, so changing it changes what a recipe means and invalidates
+> honestly — the same promise every other contract here makes.
+
 > r[vixen.capability.packages-ship-in-vixen-primitives]
 >
 > [DESIGN] For 0.1, packages are authored and registered in

@@ -22,20 +22,22 @@ of it is built now.
 
 > r[vixen.package.manifest-is-data]
 >
-> [DESIGN, MVP] A package is described by one styx document, `package.styx`,
-> at the package root. The manifest is **dead data**: every entry is a
-> literal (a name, a version, a pin, a fn path, a path into a tree), it is
-> read by `facet_styx::from_str` with zero evaluation, and anything computed
-> lives in a `.vix` fn the manifest merely names.
+> [DESIGN, MVP] A package is described by one styx document — carried as
+> frontmatter in `main.vix` (`r[vixen.package.frontmatter]`). The manifest is
+> **dead data**: every entry is a literal (a name, a version, a pin, a fn
+> path, a path into a tree), it is read by `facet_styx::from_str` with zero
+> evaluation, and anything computed lives in a `.vix` fn the manifest merely
+> names.
 >
 > This is the flake architecture — literal inputs plus outputs as pure
-> functions of inputs — with the data/code boundary moved to a **file
-> boundary**. Nix polices the same split *inside* flake.nix with a restricted
-> evaluator mode, because the inputs must be readable before anything can be
-> evaluated and the language cannot otherwise promise that; vix has two
-> layers natively (styx is the data layer, `.vix` is the logic layer), so the
-> parser is the police and no restricted mode exists to maintain. The same
-> bootstrap-order argument, resolved structurally instead of procedurally.
+> functions of inputs — with the data/code boundary drawn as a **lexical
+> fence**. Nix polices the same split inside flake.nix with a restricted
+> evaluation mode, because inputs must be readable before anything can be
+> evaluated and the language cannot otherwise promise it. vix has two layers
+> natively (styx is the data layer, `.vix` is the logic layer) and the fence
+> keeps them apart by type, so the parser is the police and no restricted mode
+> exists to maintain. The same bootstrap-order argument, resolved structurally
+> instead of procedurally.
 >
 > The document shape has **one source of truth**: the `vix-package-schema`
 > crate. Its Facet-derived types are the schema; their facet `Shape` is the
@@ -57,33 +59,61 @@ of it is built now.
 > public names are unique by construction, and enumeration order is the
 > map's canonical order, not authoring order.
 
-### Why a file, and not frontmatter in the entry point
+> r[vixen.package.frontmatter]
+>
+> [DESIGN] The manifest is **frontmatter in the package's entry point**,
+> `main.vix`: a `manifest` item carrying a block string literal
+> (`r[lang.literal.block]`) whose content is the styx document.
+>
+> ````vix
+> manifest """
+> package {
+>   name hello
+>   version "0.1.0"
+> }
+>
+> command { greet fn>hello::greet }
+> """
+> ````
+>
+> There is exactly **one carrier**. A separate `package.styx` does not exist,
+> so no reader handles two forms and no precedence rule is needed. Single-file
+> packages are the point: a package is a `.vix` file that says what it is.
+>
+> The item appears at most once, as the first item of `main.vix` (comments and
+> whitespace may precede it). `manifest` in any other file is a typed error.
+> A package whose code lives elsewhere still has a `main.vix`; it is nearly
+> empty, which is cheap and honest.
+>
+> The fixed name does not disappear, it moves onto the code — a manifest that
+> says which module to load cannot be found by loading that module. `main` is
+> already the conventional root (`module_graph::DEFAULT_ROOT_MODULE`), so the
+> convention is met rather than invented.
 
-The obvious alternative is to put the manifest at the top of the package's
-entry-point `.vix` file, the way PEP 723 puts script metadata in a comment
-block and cargo-script puts a manifest in a doc comment. For a one-file
-package that is plainly nicer, and it is not ruled out here. The reason to
-start with a file is tooling, not doctrine:
+> r[vixen.package.frontmatter-is-not-code]
+>
+> [DESIGN] The manifest stays **dead data**, and the type system is what keeps
+> it that way rather than doctrine. `manifest` takes a *string* literal, and a
+> string has no interpolation in this language (`r[lang.literal.string]`) —
+> templating there is not forbidden, it is **unrepresentable**. Nothing inside
+> the fence can reference a binding, a constant, or a computed version.
+>
+> This is the structural answer to the failure flake.nix had to patch with a
+> restricted evaluation mode. The fence is lexical, so the wall is held by the
+> parser instead of by reviewers.
 
-- A standalone `.styx` document is *already* readable by everything that
-  reads styx — `styx fmt`, the LSP's live schema validation and completion,
-  a registry indexer, a bot bumping a pin — with no frontmatter convention
-  to teach any of them first.
-- Frontmatter has to be legal in **both** languages at once, and it is legal
-  in neither: a `---` fence is not vix, and a manifest embedded in `//`
-  comments is not a styx document. One of the two parsers grows a mode, and
-  every tool downstream of it grows the same mode.
-- A pin change stays a diff in a small data file rather than arriving inside
-  a code diff, which is where a reviewer is looking for it.
-
-None of that is permanent. The data model is carrier-independent — the
-schema types decode a styx *document*, not a *file* — so admitting
-frontmatter later is a READER change (find the bytes, decode the same
-shape), not a format change. What it would cost is fixing the entry point's
-name, since a manifest that says which module to load cannot itself be found
-by loading that module: today the fixed name is `package.styx`, and with
-frontmatter it would become `main.vix`. The convention does not disappear,
-it moves onto the code.
+> r[vixen.package.frontmatter-reads-without-vix]
+>
+> [DESIGN] A manifest MUST be extractable without parsing vix: skip trivia,
+> expect `manifest`, read the fence, slice to the matching close, hand the
+> bytes to styx. That property is why the manifest is a *fenced literal* and
+> not a vix value written in vix syntax — a registry indexer, a pin-bumping
+> bot, and an editor must all be able to read a package's word without an
+> evaluator.
+>
+> Extraction MUST carry the block's byte offset so a styx diagnostic inside
+> the fence reports at its true position in the file, never at line 1 of a
+> document that does not exist on disk.
 
 > r[vixen.package.inputs-are-provider-pins]
 >
@@ -101,7 +131,7 @@ it moves onto the code.
 >
 > - `@package { version, hash }` — another vix package, pinned by its
 >   **source-tree identity**. That tree contains the provider's own
->   `package.styx`, so the provider's pins are covered transitively: one
+>   `main.vix`, so the provider's pins are covered transitively: one
 >   hash pins the closure, and no lock file exists to generate, refresh, or
 >   drift (`vixen.pins.come-from-the-ecosystem-lockfile` already covers the
 >   many-pins case; the manifest carries only the few).
@@ -183,7 +213,7 @@ it moves onto the code.
 > 1. the manifest of the package the working directory is inside, when it
 >    declares `<package>` as an input (or is it);
 > 2. otherwise the **machine manifest's default registry pin** — the
->    no-config rung: a bare cargo workspace with no `package.styx` anywhere
+>    no-config rung: a bare cargo workspace with no `main.vix` anywhere
 >    reaches the cargo package here, and that package's `build` command
 >    reads `Cargo.toml`/`Cargo.lock` as data;
 > 3. `vx r cargo@1.89 build` overrides explicitly.
@@ -203,11 +233,12 @@ it moves onto the code.
 > chosen so the seam runs end-to-end today and every deferral is a typed
 > refusal rather than a silent gap:
 >
-> - `vx r <package-dir> <command>` reads `<package-dir>/package.styx`
->   through `vix-package-schema`, resolves `<command>` in the command map
->   (unknown ⇒ refusal listing the declared commands), and follows the fn
->   ref into the package's `.vix` files — the named module becomes the root
->   file, its directory siblings become the module set, exactly the shape
+> - `vx r <package-dir> <command>` extracts the manifest from
+>   `<package-dir>/main.vix` (`r[vixen.package.frontmatter-reads-without-vix]`),
+>   decodes it through `vix-package-schema`, resolves `<command>` in the
+>   command map (unknown ⇒ refusal listing the declared commands), and follows
+>   the fn ref into the package's `.vix` files — the named module becomes the
+>   root file, its directory siblings become the module set, exactly the shape
 >   `module_graph` already gives a directory.
 > - The command fn must have **check-stream root standing** (today: a
 >   `#[test]`-attributed fn). Only the named root runs. Root standing for
@@ -223,10 +254,11 @@ it moves onto the code.
 
 ## What it looks like
 
-The manifest of a source package — every line a literal
-(`corpus-next/package/facet/package.styx` is the CI-pinned original):
+A source package, entire — the manifest is frontmatter, the code it names
+follows it in the same file:
 
-```styx
+````vix
+manifest """
 package {
   name facet
   version "0.1.0"
@@ -240,12 +272,12 @@ input {
 }
 
 command {
-  build { fn facet::build }
-  test { fn facet::test }
+  build fn>facet::build
+  test fn>facet::test
 }
 
 artifact {
-  bins { fn facet::build }  // claims: facet::build returns Tree|Blob
+  bins fn>facet::build     // claims: facet::build returns Tree|Blob
 }
 
 program {
@@ -258,23 +290,28 @@ program {
     target @neutral
   }
 }
-```
+"""
 
-The code half — the fns the manifest names, requirements as parameters:
-
-```
 use cargo::{build_workspace, test_workspace};
 
 fn build(rustc: Rustc, sh: Sh) -> Tree {
     build_workspace(workspace(), rustc, sh)
 }
-```
+
+fn test(rustc: Rustc, sh: Sh) -> Stream<Check> {
+    test_workspace(workspace(), rustc, sh)
+}
+````
+
+One file, and the seam is visible in it: above the fence is data that cannot
+reference code, below it is code whose parameters declare its requirements.
+Neither half restates the other.
 
 The refusal — an unknown command names what exists:
 
 ```
 vx: no command `bulid` in package `facet`
-  package.styx declares: build, test
+  main.vix declares: build, test
 ```
 
 ## Acceptance
@@ -283,7 +320,7 @@ vx: no command `bulid` in package `facet`
    Rust schema (`vix-package-schema/tests/decode_corpus.rs`) and through the
    vix reader (`vixen-runtime/tests/package_manifest.rs`) — same bytes, and
    a drift on any side breaks the suite that names it.
-2. **The MVP run.** A directory holding `package.styx` and a `.vix` file:
+2. **The MVP run.** A directory holding a `main.vix` with frontmatter:
    `vx r <dir> <command>` runs exactly the named command fn through the
    production path and reports its checks. An unknown command, a missing
    manifest, a dangling fn ref, and a fn without root standing each produce
