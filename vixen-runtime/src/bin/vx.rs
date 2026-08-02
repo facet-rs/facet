@@ -121,9 +121,13 @@ impl Invocation {
             }
             match argument.as_str() {
                 "--" => only_paths = true,
+                // Repeating an option is as malformed as repeating the source;
+                // last-wins would silently pick one of two stated intents.
                 "--fixtures" => match rest.next() {
-                    Some(directory) => fixtures = Some(PathBuf::from(directory)),
-                    None => return Parsed::Invalid,
+                    Some(directory) if fixtures.is_none() => {
+                        fixtures = Some(PathBuf::from(directory));
+                    }
+                    _ => return Parsed::Invalid,
                 },
                 "-h" | "--help" => return Parsed::Help,
                 flag if flag.starts_with('-') => return Parsed::Invalid,

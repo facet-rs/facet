@@ -125,6 +125,10 @@ impl<Ctx> RawPrimitive<Ctx> for ExecPrimitive {
             Ok(backend) => backend,
             Err(error) => return complete_with_error(&ctx, error),
         };
+        // Captured before the invocation moves into the backend: capture needs
+        // to know whether the reserved mount area is OURS (skip it) or a real
+        // output the process wrote (refuse, rather than silently lose it).
+        let mount_count = parsed.invocation.mounts.len();
         let (ticket, completer) = ctx.ticket(|| {});
         // One worker thread owns the whole exchange: events are buffered in the
         // channel until the workspace handle is in hand, so a process that
@@ -176,7 +180,7 @@ impl<Ctx> RawPrimitive<Ctx> for ExecPrimitive {
                         Err(error) => break PrimitiveCompletion::MachineError(error),
                     },
                     Ok(ExecEvent::Terminated(Ok(output))) => {
-                        break terminated(&ctx, workspace.path(), &output);
+                        break terminated(&ctx, workspace.path(), &output, mount_count);
                     }
                     Ok(ExecEvent::Terminated(Err(detail))) => {
                         break PrimitiveCompletion::MachineError(
@@ -409,6 +413,7 @@ fn terminated(
     ctx: &EffectCtx,
     workspace: &std::path::Path,
     output: &std::process::Output,
+    mount_count: usize,
 ) -> PrimitiveCompletion {
     if !output.status.success() {
         let termination = match output.status.code() {
@@ -431,7 +436,7 @@ fn terminated(
             diagnostic: output.stderr.clone(),
         };
     }
-    match successful_outcome(ctx, workspace, output) {
+    match successful_outcome(ctx, workspace, output, mount_count) {
         Ok(identity) => PrimitiveCompletion::Ok(identity),
         Err(error) => PrimitiveCompletion::MachineError(error),
     }
@@ -445,9 +450,10 @@ fn successful_outcome(
     ctx: &EffectCtx,
     workspace: &std::path::Path,
     output: &std::process::Output,
+    mount_count: usize,
 ) -> Result<ValueId, PrimitiveMachineError> {
     let unavailable = |detail: String| PrimitiveMachineError::Unavailable { detail };
-    let archived = archive_directory(workspace).map_err(unavailable)?;
+    let archived = archive_directory(workspace, mount_count).map_err(unavailable)?;
     let canonical = canonical_resident_tree(&archived)
         .map_err(|error| unavailable(format!("exec capture does not describe a tree: {error}")))?;
     let tree = tree_from_resident(&canonical)

@@ -175,7 +175,7 @@ pub trait ExecBackend: Send + Sync {
 /// capture its own workspace its own way, which is the argument for moving
 /// capture behind the [`ExecBackend`] trait — that changes the trait's shape and
 /// is deliberately not bundled with the backend's relocation.
-pub fn archive_directory(root: &Path) -> Result<Vec<u8>, String> {
+pub fn archive_directory(root: &Path, mount_count: usize) -> Result<Vec<u8>, String> {
     fn collect(
         directory: &Path,
         root: &Path,
@@ -200,6 +200,11 @@ pub fn archive_directory(root: &Path) -> Result<Vec<u8>, String> {
             // the ustar path cap. It would also give two byte-identical
             // products different identities depending on what they were built
             // from, which is the opposite of what an output identity is for.
+            //
+            // Dropping it unconditionally would be a silent lie for an
+            // invocation that MOUNTED NOTHING and wrote its own `.vix-mounts`;
+            // that case is refused by name before the walk starts, so by here
+            // the entry can only be ours.
             if directory == root && path.file_name().is_some_and(|name| name == EXEC_MOUNT_ROOT) {
                 continue;
             }
@@ -250,6 +255,18 @@ pub fn archive_directory(root: &Path) -> Result<Vec<u8>, String> {
         Ok(())
     }
 
+    // A process that mounted nothing and wrote a top-level `.vix-mounts` is
+    // naming the reservation itself. The skip in the walk cannot tell that
+    // output from an input area, and silently dropping it would give two
+    // different runs the same output identity — refuse where the cause is
+    // legible instead.
+    if mount_count == 0 && root.join(EXEC_MOUNT_ROOT).exists() {
+        return Err(format!(
+            "`{EXEC_MOUNT_ROOT}` is reserved for exec input mounts; this invocation mounted \
+             nothing, so a top-level entry by that name is an output the capture cannot \
+             represent"
+        ));
+    }
     let mut files: Vec<(PathBuf, bool)> = Vec::new();
     collect(root, root, &mut files)?;
     files.sort();

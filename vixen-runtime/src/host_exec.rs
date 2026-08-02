@@ -32,8 +32,10 @@ use vix::runtime::{
     ExecInvocation, ExecMount, ExecOutputProtocol, ExecProduct, ExecWorkspace,
 };
 
-/// The default backend: the current behavior, verbatim — `std::process::Command`
-/// in a fresh workspace, explicitly HOST-TRUSTING. It interposes no VFS and
+/// The host-trusting backend, EXPLICITLY INSTALLED — `std::process::Command` in
+/// a fresh workspace. It is not a default and there is no longer one to be:
+/// `vix-core` ships no backend, and an embedder that wants a process boundary
+/// names this one (see the module docs above). It interposes no VFS and
 /// witnesses no ambient read, so per `machine.primitive.memo-policy` it
 /// supports no `Hermetic` claim: the scheduler records its capability witness
 /// as `ReadObservation::Unverifiable`. A confining backend replaces this one
@@ -241,6 +243,19 @@ fn validate_exec_product_path(path: &str) -> Result<(), String> {
         return Err("progressive exec product path was empty".to_owned());
     }
     let path = Path::new(path);
+    // The mount area is INPUT. Announcing a product from it would replay an
+    // input as an output — and capture excludes that area, so the two halves of
+    // the protocol would disagree about the same bytes.
+    if path
+        .components()
+        .next()
+        .is_some_and(|first| first.as_os_str() == vix::runtime::EXEC_MOUNT_ROOT)
+    {
+        return Err(format!(
+            "progressive exec product `{}` is inside the reserved input-mount area",
+            path.display()
+        ));
+    }
     if path.is_absolute()
         || path
             .components()

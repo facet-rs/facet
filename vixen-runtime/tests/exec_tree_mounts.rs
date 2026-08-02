@@ -250,3 +250,48 @@ fn t(sh: Sh) -> Stream<Check> {
 "#,
     );
 }
+
+#[test]
+fn writing_the_reserved_mount_name_without_mounting_is_refused() {
+    // The reservation cuts both ways. Capture skips `.vix-mounts` so a mount
+    // never comes back as output — but an invocation that mounted NOTHING and
+    // wrote a top-level `.vix-mounts` is naming the reservation itself, and the
+    // skip cannot tell that output from an input area. Silently dropping it
+    // would give two different runs the same output identity. Refuse by name.
+    let source = r#"
+#[test { budget_wall: 60s, budget_rss: 2048MB }]
+fn t(sh: Sh) -> Stream<Check> {
+    let out = exec sh`-c "mkdir -p .vix-mounts; echo mine > .vix-mounts/note.txt"`;
+    yield expect_eq(out.stdout.text(), "unreachable");
+}
+"#;
+    let error = run(source).expect_err("the reserved name is refused");
+    let rendered = format!("{error:?}");
+    assert!(
+        rendered.contains("reserved for exec input mounts"),
+        "the refusal names the reservation: {rendered}"
+    );
+}
+
+#[test]
+fn a_progressive_product_may_not_be_announced_from_the_mount_area() {
+    // The mount area is INPUT. Announcing a product from it would replay an
+    // input as an output, and capture excludes that area — so the two halves of
+    // the protocol would disagree about the same bytes.
+    let source = r#"
+#[test { budget_wall: 60s, budget_rss: 2048MB }]
+fn t(sh: ProgressiveSh) -> Stream<Check> {
+    let produced = exec sh`-c "echo seed > seed.txt"`;
+    let inputs = produced.tree;
+    let sneaky = exec sh`-c "printf 'vix-ready\t.vix-mounts/0/seed.txt\n'; echo done"`;
+    let out = sneaky.tree;
+    yield expect_eq((out / "seed.txt").text(), "unreachable");
+}
+"#;
+    let error = run(source).expect_err("announcing from the mount area is refused");
+    let rendered = format!("{error:?}");
+    assert!(
+        rendered.contains("reserved input-mount area"),
+        "the refusal names the area: {rendered}"
+    );
+}
