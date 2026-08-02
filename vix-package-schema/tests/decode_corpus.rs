@@ -91,6 +91,20 @@ fn the_cargo_tool_package_manifest_decodes() {
 }
 
 #[test]
+fn a_schema_declaration_line_is_tolerated() {
+    // `@schema <ref>` at the document root (schema[schema.declaration]) is
+    // editor/validator metadata; decode skips it. Pinned so a manifest can
+    // grow the line the day the published schema exists without any reader
+    // changing.
+    let manifest: PackageManifest = facet_styx::from_str(
+        "@schema https://example.invalid/schemas/vix-package.styx\n\
+         package {\n  name tiny\n  version \"0.0.1\"\n}\n",
+    )
+    .expect("a leading @schema line decodes away");
+    assert_eq!(manifest.package.name, "tiny");
+}
+
+#[test]
 fn a_minimal_manifest_needs_only_the_package_header() {
     let manifest: PackageManifest = facet_styx::from_str(
         "package {\n  name tiny\n  version \"0.0.1\"\n}\n",

@@ -9,7 +9,9 @@
 // atoms (key + value), so every section is a MAP whose keys are the public
 // names — there is no `command build { … }` three-atom form, and repeated
 // keys are duplicate-key errors, not accumulation. A tag's payload must be
-// adjacent (`@package{…}`, no space). Sequences use parentheses.
+// adjacent (`@package{…}`, no space). Sequences use parentheses. One-field
+// entries use attribute sugar (`build fn>facet::build` is parser[attr.atom]
+// shorthand for `build { fn facet::build }` — same document, same decode).
 
 package {
   name facet
@@ -42,8 +44,8 @@ input {
 // fn's return type decides what `vx r` presents; its parameters declare its
 // requirements; the manifest repeats neither.
 command {
-  build { fn facet::build }
-  test { fn facet::test }
+  build fn>facet::build
+  test fn>facet::test
 }
 
 // `vx build facet#bins` — demand facet::build, materialize the resulting Tree
@@ -53,7 +55,7 @@ command {
 // any effect runs — a record-returning fn fails at binding, not at delivery.
 // The artifact key is committed API; the fn path is private and renameable.
 artifact {
-  bins { fn facet::build }
+  bins fn>facet::build
 }
 
 // The executable this package exposes: a path into an artifact's value, plus

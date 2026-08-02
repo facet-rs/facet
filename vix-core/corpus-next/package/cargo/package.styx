@@ -78,6 +78,6 @@ program {
 // converging on: manifest ingestion → rodin solve → fetch by cksum →
 // extract → build walk → real rustc.
 command {
-  build { fn cargo::build }
-  test { fn cargo::test }
+  build fn>cargo::build
+  test fn>cargo::test
 }

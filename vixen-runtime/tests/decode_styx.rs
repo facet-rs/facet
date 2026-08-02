@@ -147,6 +147,28 @@ fn t() -> Stream<Check> {
 }
 
 #[test]
+fn a_schema_declaration_line_decodes_away_in_vix_too() {
+    // The `@schema <ref>` root line (schema[schema.declaration]) is skipped
+    // by the StyxParser event stream, so the vix rail inherits the tolerance
+    // — pinned here so both readers of one manifest keep agreeing the day
+    // manifests grow the line.
+    run(
+        "@schema tolerance",
+        r#"
+struct PackageMeta { name: String, version: String }
+
+#[test]
+fn t() -> Stream<Check> {
+    let doc = "@schema https://example.invalid/s.styx\nname facet\nversion \"0.1.0\"";
+    let meta: PackageMeta = styx_decode(doc);
+    yield expect_eq(meta.name, "facet");
+}
+"#,
+        1,
+    );
+}
+
+#[test]
 fn a_failed_styx_decode_is_a_typed_result() {
     run(
         "try_styx_decode",
