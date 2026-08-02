@@ -1,8 +1,8 @@
 // package.styx for the cargo TOOL package — the provider side of the seam
 // (../facet is the consumer side). One manifest genre covers both a fetched
 // toolchain and a built-from-source package: a `program` is a path into a
-// tree plus contracts, and only the arrow differs — `from <input>` here,
-// `from-artifact <name>` in facet's manifest. Consumers cannot tell which.
+// tree plus contracts, and only the source arm differs — @input here,
+// @artifact in facet's manifest. Consumers cannot tell which.
 
 package {
   name cargo
@@ -10,40 +10,55 @@ package {
 }
 
 // The @fetch arm of the input union. It decodes toward the existing wire
-// shape PinnedBlobRef { value, origins, upstream }: an origin coordinate, an
-// upstream digest in the pins.md spelling (algorithm inside the value, one
-// field named hash), and the blob→tree unpacking. The package's identity
-// contribution is the RESULTING TREE's identity
-// (vixen.capability.rustc-is-materializable); the archive bytes are
-// transport.
-input rust-dist @fetch {
-  origin registry "rust-1.89.0-x86_64-unknown-linux-gnu.tar.xz"
-  hash "sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-  unpack tar-xz
+// shape PinnedBlobRef { value, origins, upstream }: an origin coordinate
+// (the scheme names the origin adapter, as OriginAdapterDecl already
+// declares coordinate schemes), an upstream digest in the pins.md spelling
+// (algorithm inside the value, one field named hash), and the blob→tree
+// unpacking. The package's identity contribution is the RESULTING TREE's
+// identity (vixen.capability.rustc-is-materializable); the archive bytes
+// are transport.
+input {
+  rust-dist @fetch{
+    origin "registry://rust-1.89.0-x86_64-unknown-linux-gnu.tar.xz"
+    hash "sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdead"
+    unpack @tar-xz
+  }
 }
 
-// Programs this package exposes as capabilities. `program rustc` provides
-// the `Rustc` capability type, and the capability-package contracts ride
-// here: output protocol, target discipline (command and termination grammars
-// when they land — the parsed-but-unlowered `command` items are the waiting
-// vocabulary). Every enum value wears its @tag: a choice from a closed set
-// is visibly a choice.
+// Programs this package exposes as capabilities. `rustc` provides the
+// `Rustc` capability type (a program key maps to its capability type by
+// kebab→Pascal casing — an open question whether that stays implicit), and
+// the capability-package contracts ride here: output protocol, target
+// discipline (command and termination grammars when they land — the
+// parsed-but-unlowered `command` items are the waiting vocabulary).
 //
 // Note the self-provision: cargo::build below demands Rustc, and this very
-// block satisfies it. A package may drink from its own exposures.
-program rustc {
-  from rust-dist "rustc/bin/rustc"
-  protocol @exit-only
-  target @argv-flag { flag "--target" }
-}
+// entry satisfies it. A package may drink from its own exposures.
+program {
+  rustc {
+    source @input{
+      name rust-dist
+      path "rustc/bin/rustc"
+    }
+    protocol @exit-only
+    target @argv-flag{
+      flag "--target"
+    }
+  }
 
-// The real cargo binary, exposed for oracle runs only — demo-1 acceptance
-// compares unit graphs and lockfile selection against it. The commands below
-// never exec it; `build` IS cargo, reimplemented in vix.
-program cargo {
-  from rust-dist "cargo/bin/cargo"
-  protocol @exit-only
-  target @argv-flag { flag "--target" }
+  // The real cargo binary, exposed for oracle runs only — demo-1 acceptance
+  // compares unit graphs and lockfile selection against it. The commands
+  // below never exec it; `build` IS cargo, reimplemented in vix.
+  cargo {
+    source @input{
+      name rust-dist
+      path "cargo/bin/cargo"
+    }
+    protocol @exit-only
+    target @argv-flag{
+      flag "--target"
+    }
+  }
 }
 
 // `vx r cargo build` in a bare cargo workspace — no package.styx anywhere in
@@ -52,7 +67,9 @@ program cargo {
 // checksums being the fetch pins (vixen.pins.come-from-the-ecosystem-
 // lockfile). The no-config cargo build is this line. `fn cargo::build` names
 // the orchestrator that corpus-next/cargo.vix and the demo-1 mission are
-// converging on: manifest ingestion → rodin solve → fetch by cksum → extract
-// → build walk → real rustc.
-command build { fn cargo::build }
-command test  { fn cargo::test }
+// converging on: manifest ingestion → rodin solve → fetch by cksum →
+// extract → build walk → real rustc.
+command {
+  build { fn cargo::build }
+  test { fn cargo::test }
+}

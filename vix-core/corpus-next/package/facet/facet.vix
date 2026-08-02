@@ -3,11 +3,11 @@
 // manifest NAMES things (fns, paths, pins), this file COMPUTES things.
 // Nothing here is discovered; nothing there is evaluated.
 //
-// Three manifest lines point into this file:
+// Three manifest entries point into this file:
 //
-//   command build { fn facet::build }     — `vx r facet build`
-//   command test  { fn facet::test }      — `vx r facet test`
-//   artifact bins { fn facet::build }     — `vx build facet#bins`
+//   command { build { fn facet::build } }   — `vx r facet build`
+//   command { test  { fn facet::test } }    — `vx r facet test`
+//   artifact { bins { fn facet::build } }   — `vx build facet#bins`
 //
 // A manifest-named fn is a ROOT, with the same standing #[test] fns have
 // today. Its capability parameters ARE its requirement declaration — the

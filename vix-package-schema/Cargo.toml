@@ -1,0 +1,12 @@
+[package]
+name = "vix-package-schema"
+version = "0.1.0"
+edition = "2024"
+description = "The vix package manifest (`package.styx`) document types — one Rust source of truth exposing the facet Shape to Rust and vix alike"
+publish = false
+
+[dependencies]
+facet = { path = "../facet" }
+
+[dev-dependencies]
+facet-styx = { path = "../facet-styx" }
