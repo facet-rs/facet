@@ -3,10 +3,10 @@ title = "The package manifest"
 weight = 4
 +++
 
-What one package *is*, as declared data — its pinned inputs, its runnable
-commands, its buildable artifacts, and the programs it exposes — and how
-`vx r cargo build` becomes a no-config cargo build without the machine, the
-language, or the manifest learning anything about cargo.
+What one package *is*, as declared data — its runnable commands, its buildable
+artifacts, and the programs it exposes — and how `vx r cargo build` becomes a
+no-config cargo build without the machine, the language, or the manifest
+learning anything about cargo.
 
 The gap this closes: the system can build, but nothing can *name a package*.
 Capability packages are a const table in `vixen-primitives`
@@ -20,12 +20,18 @@ Scope guard, stated first: **no registry, no daemon, no cross-package
 imports.** The resolution rungs below name where a registry will stand; none
 of it is built now.
 
+Second guard, learned the hard way: **the manifest declares a package's
+surface, not its provenance.** It does not say where anything comes from.
+Fetching is something vix code does, at any time it likes, as an ordinary
+demand — not a fixed list declared up front. An earlier draft of this page had
+a declarative `input` section and it was wrong; see [Retracted](#retracted).
+
 > r[vixen.package.manifest-is-data]
 >
 > [DESIGN, MVP] A package is described by one styx document — carried as
 > frontmatter in `main.vix` (`r[vixen.package.frontmatter]`). The manifest is
-> **dead data**: every entry is a literal (a name, a version, a pin, a fn
-> path, a path into a tree), it is read by `facet_styx::from_str` with zero
+> **dead data**: every entry is a literal (a name, a version, a fn path, a
+> path into a tree), it is read by `facet_styx::from_str` with zero
 > evaluation, and anything computed lives in a `.vix` fn the manifest merely
 > names.
 >
@@ -120,55 +126,6 @@ of it is built now.
 > the fence reports at its true position in the file, never at line 1 of a
 > document that does not exist on disk.
 
-> r[vixen.package.inputs-are-provider-pins]
->
-> [DESIGN] The `input` section is a map of **provider pins**, and explicitly
-> not a requirement list. Requirements stay where they always are — the
-> capability parameters of the fns the other sections name
-> (`vixen.machine.requirements-from-use`); an input answers the *other*
-> question: when those fns demand `Rustc`, which package satisfies it, at
-> which identity. A fn demanding a capability no declared input provides
-> fails at binding, before any effect
-> (`vixen.machine.binding-fails-before-effects`).
->
-> An input is a discriminated union, one arm per way a value can enter a
-> package from outside:
->
-> - `@package { version, hash }` — another vix package, pinned by its
->   **source-tree identity**. That tree contains the provider's own
->   `main.vix`, so the provider's pins are covered transitively: one
->   hash pins the closure, and no lock file exists to generate, refresh, or
->   drift (`vixen.pins.come-from-the-ecosystem-lockfile` already covers the
->   many-pins case; the manifest carries only the few).
-> - `@fetch { origin, hash, unpack }` — a pinned blob: an origin coordinate
->   whose scheme names the origin adapter, an upstream digest in the
->   `vixen.pins.format` spelling, and the blob→tree step. It decodes toward
->   the existing wire shape `PinnedBlobRef`; the resulting tree's identity
->   is the input's identity contribution
->   (`vixen.capability.rustc-is-materializable`), the archive bytes are
->   transport.
->
->   The coordinate's scheme is not magic and not new: it is the routing key
->   origin adapters already declare (`OriginAdapterDecl.schemes`, one
->   claimant per scheme, unclaimed ⇒ typed refusal, no default backend).
->   What IS undecided is which spelling the manifest genre blesses: an
->   **absolute** coordinate (`https://static.rust-lang.org/dist/…` — fetches
->   today through the http adapter, self-contained, hash-verified either
->   way) or a **logical** one (`registry://…` — the machine's installed
->   adapter decides transport, which is the mirror/vendor/air-gap seam but
->   makes the manifest depend on machine cooperation; today only the test
->   harness claims that scheme). `PinnedBlobRef.origins` is a list on the
->   wire, so logical-first-absolute-fallback is expressible without a new
->   shape. The corpus examples spell `registry://` to keep the logical seam
->   visible; the decision is open and this sentence is its marker.
->
-> There is deliberately **no `@path` arm**. A local directory is an unpinned
-> word in a document whose whole job is to be pinned — the flake `path:`
-> input is the impurity this rule refuses to inherit. Local overrides are
-> policy (`vx r --override-input cargo=../cargo`), which may change where
-> work happens but never what a demand means, and an override produces a
-> visibly different demand instead of a manifest that lies.
-
 > r[vixen.package.commands-and-artifacts-are-fn-refs]
 >
 > [DESIGN, MVP] A command and an artifact are both **bare fn refs**: a
@@ -192,20 +149,32 @@ of it is built now.
 >
 > [DESIGN] The `program` section is the on-disk spelling of a capability
 > package (`vixen.capability.package-is-data`) — the distribution format
-> that rule defers. A program is a **path into a tree, plus the four
-> contracts** (for now: output protocol and target discipline; command and
-> termination grammars when they land). Where the tree comes from is a
-> two-arm union — `@input { name, path }` for a fetched distribution,
-> `@artifact { name, path }` for a value this package builds — and the arm
-> is **invisible to consumers**: a capability resolved from a toolchain
-> archive and one carved from a just-built artifact bind identically. That
-> invisibility is the composability seam; it is also why a build script or
-> proc-macro binary needs no special story (the same rule already closes
-> that case for capability values generally).
+> that rule defers. A program is a **path into an artifact this package
+> builds, plus the four contracts** (for now: output protocol and target
+> discipline; command and termination grammars when they land), spelled
+> `@artifact { name, path }`. The named artifact already claims it returns
+> `Tree` or `Blob` (`r[vixen.package.commands-and-artifacts-are-fn-refs]`),
+> so the path is a projection into a value the package produced, not a
+> promise about anything acquired from outside.
 >
-> Every program source must name a declared input or artifact of the same
-> manifest; a dangling source is a manifest-coherence failure raised at
-> binding, before any effect. The program key provides the capability type
+> Which side of the seam a capability came from is **invisible to
+> consumers**: one carved from a just-built artifact and one that arrived
+> some other way bind identically. That invisibility is the composability
+> seam; it is also why a build script or proc-macro binary needs no special
+> story (the same rule already closes that case for capability values
+> generally).
+>
+> **Exposing a program sourced from outside this package has no spelling
+> yet.** The retracted `@input` arm was that spelling, and it rested on a
+> declarative input section that does not survive
+> ([Retracted](#retracted)) and on a materialization claim that was
+> separately wrong. A toolchain a package did not build is *acquirable* —
+> pinned, served at a VFS prefix, identity known a priori from the pin —
+> and how a manifest names one is an open question, not an omission.
+>
+> Every program source must name a declared artifact of the same manifest;
+> a dangling source is a manifest-coherence failure raised at binding,
+> before any effect. The program key provides the capability type
 > (`rustc` ⇒ `Rustc` — the implicit Pascal-casing is an acknowledged open
 > question; an explicit `capability` field is the alternative if a real
 > collision arrives).
@@ -215,8 +184,10 @@ of it is built now.
 > [DESIGN] `vx r <package> <command> [args…]` (alias `vx run`) resolves
 > `<package>` through three rungs, each a stated word and never a probe:
 >
-> 1. the manifest of the package the working directory is inside, when it
->    declares `<package>` as an input (or is it);
+> 1. the manifest of the package the working directory is inside, when
+>    `<package>` names it. Reaching a *different* package by name is the rung
+>    the retracted input section used to answer and currently has no spelling
+>    ([Retracted](#retracted));
 > 2. otherwise the **machine manifest's default registry pin** — the
 >    no-config rung: a bare cargo workspace with no `main.vix` anywhere
 >    reaches the cargo package here, and that package's `build` command
@@ -250,12 +221,12 @@ of it is built now.
 >   value-returning command fns — `fn build(…) -> Tree` demanded as a root
 >   and presented — is the named next rung, not an MVP behavior; a command
 >   naming a fn without standing is refused with exactly that sentence.
-> - Inputs are read and reported but **not resolved**: capabilities come
->   from the machine manifest alone, and a command demanding more fails at
->   binding as always. `@package` input resolution, the registry rung, the
->   `workspace()` surface, artifacts (`vx build <pkg>#<name>`), program
->   exposure, and command argument tails are all deferred — each is listed
->   here so its absence cannot be mistaken for a decision.
+> - Capabilities come from the machine manifest alone, and a command
+>   demanding more fails at binding as always. Cross-package resolution, the
+>   registry rung, the `workspace()` surface, artifacts
+>   (`vx build <pkg>#<name>`), program exposure, and command argument tails
+>   are all deferred — each is listed here so its absence cannot be mistaken
+>   for a decision.
 
 ## What it looks like
 
@@ -267,13 +238,6 @@ manifest """
 package {
   name facet
   version "0.1.0"
-}
-
-input {
-  cargo @package{
-    version "0.1.0"
-    hash "blake3:…"        // cargo's source-tree identity — pins its closure
-  }
 }
 
 command {
@@ -297,20 +261,21 @@ program {
 }
 """
 
-use cargo::{build_workspace, test_workspace};
-
 fn build(rustc: Rustc, sh: Sh) -> Tree {
-    build_workspace(workspace(), rustc, sh)
+    // whatever this package's build is — ordinary vix, fetching whatever it
+    // needs whenever it needs it. The manifest above does not know.
 }
 
 fn test(rustc: Rustc, sh: Sh) -> Stream<Check> {
-    test_workspace(workspace(), rustc, sh)
+    ...
 }
 ````
 
 One file, and the seam is visible in it: above the fence is data that cannot
 reference code, below it is code whose parameters declare its requirements.
-Neither half restates the other.
+Neither half restates the other, and **the manifest says nothing about where
+anything comes from** — that is the fn's business, discharged as ordinary
+demands whenever it likes.
 
 The refusal — an unknown command names what exists:
 
@@ -333,15 +298,46 @@ vx: no command `bulid` in package `facet`
 3. **Coherence is checked, not trusted.** A program sourcing a declared-
    nowhere artifact is reported by name (`dangling_program_sources` in the
    vix reader; the binder's check when binding lands).
-4. **No second lockfile.** Nothing in the MVP or the design writes a
-   generated pin file; the manifest's own hashes are the few, the ecosystem
-   lockfile's the many.
+4. **No second lockfile, and no first one.** Nothing in the MVP or the design
+   writes a generated pin file, and the manifest itself carries no pins —
+   provenance is not its subject.
+
+## Retracted
+
+Recorded so the reasoning is not repeated and the rule IDs are not reused.
+
+**`r[vixen.package.inputs-are-provider-pins]` — struck.** It declared an
+`input` section holding a discriminated union of pinned provenance:
+`@package { version, hash }` for another vix package and
+`@fetch { origin, hash, unpack }` for a pinned blob.
+
+It was wrong at the root, not in its details. Arbitrary vix code can fetch
+anything at any time, as an ordinary demand — a declarative list of sources
+fixed up front is a Nix reflex, and the manifest is not for that. The rule
+also carried two dependent errors: it cited
+`vixen.capability.rustc-is-materializable`, whose verb was separately wrong
+(a toolchain is *acquirable* — pinned, served at a VFS prefix, identity known
+a priori from the pin — not untarred into a tree and mounted), and it folded
+two genuinely different questions into one section. **Source inputs** (what
+bytes does my build need) and **capability-provider pins** (when my code
+demands `Rustc`, which package satisfies it) are not the same question: one
+is discharged by code, the other is configuration. The second is real and
+still needs a home; it does not get one by being smuggled in beside the first.
+
+The `registry://`-versus-absolute coordinate question went with it and is
+recorded in `r[vixen.registry.*]`'s open items, where it belongs.
+
+**The `@input` arm of `r[vixen.package.programs-are-paths-into-values]` —
+struck** as a dependent of the above. The `@artifact` arm survives.
 
 ## Explicitly out
 
-The registry (resolution rung 2's pin source, `@version` overrides,
-distribution); cross-package `use` (an input's name as an importable
-namespace — new module doctrine, today's graph is directory-local); root
+Where capability-provider pins live now that the `input` section is struck
+(the question is real, the answer is not this page's until someone designs
+it); the registry (resolution rung 2's pin source, `@version` overrides,
+distribution — `r[vixen.registry.*]` covers publication, not resolution);
+cross-package `use` (another package's name as an importable namespace — new
+module doctrine, today's graph is directory-local); root
 standing for value-returning fns and `vx build <pkg>#<name>` delivery of
 artifacts; command argument tails (a trailing `[String]` first, the
 parsed-but-unlowered `command` grammar items as the typed surface later);

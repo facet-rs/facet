@@ -35,14 +35,20 @@ not a nicety — it is the first blocker. It is presumably where the parked
 `Arg::{Str, Path, Interpolation}` design lands, and it needs a rule saying
 whether spreading is implicit for a list-typed hole or explicitly spelled.
 
-**GAP 2 — how does code reach a declared input?** The manifest declares
-`input { zlib @fetch{…} }`, and `r[vixen.package.inputs-are-provider-pins]`
-says an input answers *which package satisfies a capability*. But this program
-wants the input as a **Tree** — the unpacked source to compile. The sketch
-writes `input("zlib")`, a constant surface over a string literal, consistent
-with `fixture_tree(…)` and `vixen.machine.requirements-are-static`. Nothing in
-the spec says this exists. Source inputs and capability-provider inputs may be
-two different things wearing one section.
+**GAP 2 — how does code reach a declared input? — RESOLVED, by retraction.**
+The sketch declared `input { zlib @fetch{…} }` and then wanted that input back
+as a **Tree**, writing `input("zlib")` — a surface nothing in the spec
+provided. The gap was real and its answer was that the question was wrong:
+there is no declared input. `r[vixen.package.inputs-are-provider-pins]` has
+been struck, the manifest declares surface and not provenance, and code
+fetches what it needs as an ordinary demand whenever it needs it. The two
+things this gap noticed were "wearing one section" — source inputs and
+capability-provider pins — are indeed different questions; the first is
+discharged by code, and the second still has no home.
+
+The `manifest` block below is therefore stale in exactly this respect and is
+left as written, because the sketch's value is the record of what writing it
+surfaced.
 
 **GAP 3 — output binding vs. names that matter.** `{let obj}` allocates a
 plan-determined path, which is right for object files (nobody cares what a
