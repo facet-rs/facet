@@ -4,7 +4,7 @@ weight = 3
 +++
 
 Normative specification for the **product** half of the system: capability
-packages, the pin file, and artifact delivery. The language spec
+packages, the pin file, artifact delivery, and the registry. The language spec
 ([/spec/language](/spec/language)) and the runtime spec
 ([/spec/machine](/spec/machine)) say what the evaluator must honor about these
 things; this section says what the things *are*.
