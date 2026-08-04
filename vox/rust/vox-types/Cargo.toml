@@ -37,3 +37,7 @@ structstruck.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+# `#[tokio::test]` needs `macros` (the attribute) and `rt-multi-thread` (the
+# runtime it builds); the workspace tokio enables neither. Without this the
+# whole `vox-types` test target failed to compile, so none of its tests ran.
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
