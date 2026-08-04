@@ -212,6 +212,96 @@ settled:
 - **Contraction presentation.** `contraction-is-visible` fixes that it is
   surfaced, not how.
 
+## Deliberately not
+
+Not deferred — refused. Each names the system that does the thing and the
+reason we will not.
+
+- **Elm's `elm bump` and `elm diff`.** The closest living prior art and the
+  strongest objection to this page, because Elm already took the number away
+  from the publisher. `elm diff` compares a package's API against a published
+  version and classifies the change as MAJOR, MINOR, or PATCH; `elm bump`
+  writes the resulting version into `elm.json`; `elm publish` rejects a
+  version that does not match the diff, with an `INVALID VERSION` error. It
+  works, it ships, and the instinct is right. It is also, precisely, the small
+  part. Elm's diff sees types and nothing else, which Elm's own tracker
+  documents: a UI package that "introduced a whole new way of managing the
+  aesthetic / styles" of its components was classified as a minor change,
+  because no signature moved (elm/compiler#2145). *Semantic* breakage runs
+  several times *signature* breakage, and a derived number is read as a claim
+  about behavior — being derived makes it more credible, not more true. We
+  keep the derivation and drop the number: `r[vixen.registry.two-hashes]`
+  diffs declared behavior rather than signatures, and
+  `r[vixen.registry.replay-against-predecessor]` checks the half no diff can
+  see.
+
+- **CI as the registry.** The practice essentially every publisher uses, and
+  which this page has so far declined to name: a tag push triggers a workflow
+  that runs the tests and then `cargo publish` or `npm publish`, and the
+  evidence a consumer actually sees is a green badge in a README.
+  `r[vixen.registry.tests-run-here]` refuses it. A green workflow asserts that
+  a run happened, on a machine the publisher configured, with whatever the
+  runner had installed — it is the publisher's word with a check mark on it.
+  npm's `--provenance` is the strongest form of this and still does not close
+  the gap: it signs a Sigstore attestation binding the tarball to a source
+  repository, commit, and workflow, logged in a public transparency ledger,
+  and npm's own documentation says it "does not guarantee the package has no
+  malicious code". Provenance answers *where this was built*. It says nothing
+  about whether the tests pass, which is the only thing this registry accepts.
+
+- **Go's major-version import paths.** Go writes the compatibility claim into
+  the identifier: "Starting with major version 2, module paths must have a
+  major version suffix like `/v2` that matches the major version", enforcing
+  what the Go reference calls the import compatibility rule — "If an old
+  package and a new package have the same import path, the new package must be
+  backwards compatible with the old package." It is a rename convention, and
+  it is unfalsifiable in exactly the way a version number is: an author who
+  breaks behavior without renaming ships a module every consumer takes
+  silently, and no part of the toolchain can contradict them. It also makes an
+  incompatible change a *rename*, which we cannot do —
+  `r[vixen.registry.no-declared-versions]` identifies a publication by content,
+  and a name is not where claims live.
+
+- **A resolver.** cargo unifies semver-compatible requirements so one build of
+  a dependency serves everyone who asked for it; npm nests `node_modules` so
+  two versions coexist in one program; pub and uv run PubGrub and report an
+  unsatisfiable graph as a derivation tree. Every one of them is machinery for
+  reconciling *publishers' compatibility claims*, and this page removes the
+  claims — so there is nothing left to solve, and nothing to defer either.
+  State the cost with the benefit, because a reader will find it either way:
+  for a vix package there is no version requirement to write, no lockfile to
+  commit (vixen adds none — `r[vixen.pins.come-from-the-ecosystem-lockfile]`),
+  no diamond conflict, and **no diamond resolution**. Nobody unifies two
+  requirements on your behalf, because nobody stated one. Consuming crates.io
+  is untouched; a `Cargo.lock` keeps meaning exactly what cargo means by it.
+
+- **A coverage percentage.** Codecov posts a commit status from
+  `coverage.status.project.default.target` and `threshold`; with `target: auto`
+  the comparison is against the base commit, and `threshold` "allows the
+  coverage to drop by `<number>%`, and posting a `success` status". A number
+  that may fall and still be green is a budget for dead code, denominated in
+  percent. `r[vixen.registry.coverage-or-dead]` is not a number: every branch
+  of a package's own vix code is exercised or the package is not published,
+  there is no target to set and no threshold to tune, and the foreign half is
+  presented as its toolchain's self-report rather than averaged into one
+  figure (`r[vixen.registry.foreign-code-is-replayed-not-covered]`). Nothing
+  here trends.
+
+- **Deleting a publication.** npm allows unpublishing within 72 hours if
+  nothing depends on the package, and after that only if it has no dependents,
+  fewer than 300 downloads in the last week, and a single maintainer — and the
+  tarball goes. crates.io never deletes: `cargo yank --version 1.0.7` "does
+  not delete any data, and the crate will still be available for download via
+  the registry's download link", it only stops resolution from selecting it.
+  We are on the crates.io side of that line and go further than yanking
+  reaches. A publication cannot be removed, because
+  `r[vixen.registry.replay-against-predecessor]` runs the *predecessor's*
+  tests against a successor: a later publication's admissibility is a fact
+  about bytes that must still exist to be checked. Withdrawing a promise
+  already has a mechanism that deletes nothing
+  (`r[vixen.registry.contraction-is-visible]`). A softer signal is merely out
+  for 0.1, below; removal is not on the road at all.
+
 ## Explicitly out
 
 Version requirements, ranges, and the resolver that consumes them — for vix's
