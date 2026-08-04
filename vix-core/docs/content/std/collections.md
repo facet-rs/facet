@@ -36,7 +36,7 @@ An array is closer to a tuple whose elements share a type.
 let versions = %{ "taxon" => v1, "weavy" => v2 };   // Map<String, Version>
 let features = %["default", "std"];                 // Set<String>
 let members  = [a, b, c];                           // [T], keys 0,1,2
-let out      = exec cc`…`;                          // ExecOutcome; out.tree is a Tree
+let out      = exec $cc`…`;                          // ExecOutcome; out.tree is a Tree
 ```
 
 The `%` sigil means *the keys are explicit*. Bare brackets mean *the keys are

@@ -15,7 +15,7 @@ and find.
 ## `exec` is boring
 
 ```vix
-let objects = src.glob("*.c").map(|c| exec cc`-c {src / c} -o {c.with_ext('o')}`).collect();
+let objects = src.glob("*.c").map(|c| exec $cc`-c {src / c} -o {c.with_ext('o')}`).collect();
 ```
 
 `exec` is a primitive, alongside `fetch` and format parsing. It is not an
@@ -63,7 +63,7 @@ subject where one exists and the stable source site, and reporting supplies the
 current span and demand chain.
 
 ```vix
-let out = exec cc`-c {src} -o {obj}`;   // a bad compile poisons whatever demanded it
+let out = exec $cc`-c {src} -o {obj}`;   // a bad compile poisons whatever demanded it
 ```
 
 Anything the grammar does not recognise fails. A conventional command has answer type
@@ -242,7 +242,7 @@ Put them together and the interesting thing happens by itself:
 
 ```vix
 let diagnostics = place {
-    let out = exec rustc`--error-format=json {src}`;
+    let out = exec $rustc`--error-format=json {src}`;
     out.stderr.decode(Utf8).lines().filter(is_error).map(render).collect()
 };
 ```
@@ -297,7 +297,7 @@ Sometimes a demand should be evaluated somewhere else — because that machine h
 the capability, or the bytes, or simply because there are more of them.
 
 ```vix
-let out = place { exec rustc`-c {src} -o out` };
+let out = place { exec $rustc`-c {src} -o out` };
 ```
 
 An island edge carries a *value* between two computations in one evaluator. A
@@ -321,7 +321,7 @@ that it needs something the boundary never accounted for.
 
 ```vix
 let f   = fetch url where { blake3: "b1a4…" };
-let out = place { exec rustc`-c {f} -o out` };
+let out = place { exec $rustc`-c {f} -o out` };
 ```
 
 **On the executor.** Nothing outside the `place` demands `f`'s bytes — the only

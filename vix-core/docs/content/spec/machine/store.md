@@ -88,11 +88,17 @@ memory, freeze/publish, snapshots, and reload semantics.
 > r[machine.store.value-bundle-portability]
 >
 > [DESIGN] Values are portable across executors via a serialized
-> bundle (schema, tier, bytes, content hash, taint — plus code). Bundles
+> bundle (schema, tier, bytes, content hash — plus code). Bundles
 > carry values only: no memo entries, no read-sets. Value portability and
 > warm-memo persistence are two different features with two different trust
-> stories; conflating them is a documented error. (Preserved from
-> `export_value_bundle`/`import_value_bundle`.)
+> stories; conflating them is a documented error.
+>
+> The bundle carries **no taint field**, and must not grow one. Sealing is
+> explicit value structure: `Sealed<T, Policy>` has a distinct schema
+> (`machine.identity.taint-in-identity`), so the `schema` already in this list
+> carries it. A separate field would be exactly the "parallel taint digest to
+> combine or accidentally drop" that rule forbids, and the shadow channel
+> `machine.value.taint-provenance` refuses.
 
 > r[machine.store.construction-services]
 >

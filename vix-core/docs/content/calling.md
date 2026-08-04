@@ -52,7 +52,7 @@ deliberately take a structured subject without acquiring multiple positional
 arguments.
 
 ```vix
-exec cc`-c input.c -o input.o` where { mounts, writable: [p"out"] }
+exec $cc`-c input.c -o input.o` where { mounts, writable: [p"out"] }
 rows.sorted where { order: by_key(|r| r.weight) }
 range where { from: 0, to: n }
 ```

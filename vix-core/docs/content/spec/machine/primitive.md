@@ -220,8 +220,14 @@ primitives reference by identity.
 > the vix identity is the claim (`machine.primitive.fetch-integrity-vs-identity`'s
 > "both digests" made real). The witness vocabulary is persisted in the
 > runtime journal, which gains a format version; journals predating it are
-> intentionally invalidated (a journal is a cache — rejection costs one
-> recompute, never correctness).
+> intentionally invalidated. That is safe because the journal is
+> **regenerable**: discarding one costs a recompute, never correctness.
+>
+> Regenerable is not the same as being a cache, and the journal is not one.
+> `machine.cache.three-kinds` says no fourth cache kind may exist, and
+> `machine.receipt.journal` places the journal outside that count as a
+> *receipt authority* — the banned "fetch journal cache" was a private result
+> cache, which is a different thing wearing the same word.
 
 > r[machine.primitive.fetch-is-an-invocation]
 >
@@ -285,7 +291,7 @@ primitives reference by identity.
 >
 > [SETTLED] Capabilities are referenced by identity, never by process-local
 > handle. A root injects a capability value or a package/toolchain solve returns
-> one; there is no ambient `Rustc::acquire`. The selected identity is captured
+> one; there is no universal `Rustc::acquire`. The selected identity is captured
 > before placement and every executor acquires that exact closure. If no
 > admissible executor can satisfy its execution contract, the demand fails
 > before an effect starts.

@@ -48,7 +48,7 @@ the harness, which stands outside the program, supplies it:
 ```vix
 #[test]
 fn exec_echo(sh: Sh) -> Stream<Check> {
-    let out = exec sh`echo "hello ratchet"`;
+    let out = exec $sh`echo "hello ratchet"`;
     yield expect_eq(out.stdout.decode(Utf8).text().trim(), "hello ratchet");
 }
 ```
@@ -60,7 +60,7 @@ It also means the harness may **forge** a capability — hand the test a fake `S
 whose outputs are fixtures — which is how you test an exec without a toolchain.
 
 And using a tool you did not declare is not a special error. It is an **unbound
-identifier**: `exec cc`…`` cannot resolve `cc` unless `cc: Cc` is a parameter. The
+identifier**: `exec $cc`…`` cannot resolve `cc` unless `cc: Cc` is a parameter. The
 language has nothing to say about undeclared capabilities because it cannot express
 one.
 
