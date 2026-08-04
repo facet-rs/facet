@@ -1,9 +1,9 @@
 +++
-title = "The machine manifest"
+title = "The executor manifest"
 weight = 2
 +++
 
-What one machine can do, as declared data — and how a program that needs more
+What one executor can do, as declared data — and how a program that needs more
 fails before anything runs.
 
 The gap this closes: the runner currently *conjures* a capability value for
@@ -15,14 +15,14 @@ a spawned process discovering the truth. The machine-side law already exists
 satisfy its execution contract, the demand fails before an effect starts");
 this page gives it something to check against.
 
-Scope guard, stated first: **one machine, no solver, no daemon.** The
-distributed-build shape (many machines advertising, a solve choosing) is the
+Scope guard, stated first: **one executor, no solver, no daemon.** The
+distributed-build shape (many executors advertising, a solve choosing) is the
 same model with more candidates; nothing here needs rework to get there, and
 none of it is built now.
 
 > r[vixen.executor.manifest]
 >
-> [DESIGN] A machine's capability set is a declared, typed value — the
+> [DESIGN] An executor's capability set is a declared, typed value — the
 > manifest: the host `Target`, plus one capability value per offered
 > capability type (`Sh`, `Rustc`, …). Each entry carries the tool closure's
 > reference (for 0.1: a program path, host-trusting exactly as the exec
@@ -39,7 +39,7 @@ none of it is built now.
 > type. An unsatisfiable requirement — the type absent, or a required fact the
 > offered value lacks — is a **typed failure raised before any effect
 > starts**: no process spawns, no demand parks, and the diagnostic names both
-> sides (what the program requires, what the machine offers). This is the
+> sides (what the program requires, what the executor offers). This is the
 > vixen half of `machine.primitive.capabilities-by-identity`'s admissibility
 > sentence, which until now had nothing to refuse with.
 
@@ -62,23 +62,23 @@ none of it is built now.
 >
 > **Precision from implementation:** "checks at lowering" landed as
 > *partition-time* extraction checked at bind — still static (the requirement
-> is read from the plan without executing anything) and still pre-effect; a
+> is read off the compiled module without executing anything) and still
+> pre-effect; a
 > lowering-phase diagnostic with a source span is an upgrade, not a different
 > mechanism. A *computed* capture is honestly reported and is not re-checked
-> when the plan materializes at run time — that enforcement point needs a hook
+> when the invocation is built at run time — that enforcement point needs a hook
 > in the effect plane and is deferred, stated here so it cannot be mistaken
 > for implemented.
 
 > r[vixen.executor.facts-are-fields]
 >
-> [DESIGN] Machine-ness is not a set of booleans. "This is a Windows machine"
+> [DESIGN] Executor-ness is not a set of booleans. "This is a Windows executor"
 > is the manifest's `host: Target`; "can produce `.exe`" is the `targets`
-> field of a toolchain capability — machines do not have abilities, toolchains
-> do, and machines have toolchains. 0.1 does no constraint solving: presence
+> field of a toolchain capability — executors do not have abilities, toolchains
+> do, and executors have toolchains. 0.1 does no constraint solving: presence
 > is nominal (the parameter's type), facts are data (typed fields), and every
 > check is equality or containment over typed values. Version *ranges*,
-> alternative satisfaction, and cross-machine choice are solver work
-> (`FV-E3`), deliberately deferred.
+> alternative satisfaction, and cross-executor choice are solver work, deliberately deferred.
 
 > r[vixen.executor.root-surface-is-static]
 >
@@ -119,15 +119,15 @@ The program — the requirement *is* the invocation:
 ```
 #[test]
 fn build(rustc: Rustc) -> Stream<Check> {
-    let out = exec rustc`--target x86_64-pc-windows-msvc main.rs`;
+    let out = exec $rustc`--target x86_64-pc-windows-msvc main.rs`;
     yield expect_eq(out.tree / "main.exe" | exists, true)
 }
 ```
 
-The manifest — this machine's word, as config:
+The manifest — this executor's word, as config:
 
 ```styx
-machine {
+executor {
   host t"x86_64-unknown-linux-gnu"
   capability Rustc {
     toolchain "1.89.0"
@@ -142,8 +142,8 @@ The refusal — typed, pre-effect, both sides named:
 
 ```
 error[capability]: `build` demands Rustc producing x86_64-pc-windows-msvc
-  --> build.vix:3   exec rustc`--target x86_64-pc-windows-msvc main.rs`
-  machine offers: Rustc { toolchain 1.89.0, targets [x86_64-unknown-linux-gnu] }
+  --> build.vix:3   exec $rustc`--target x86_64-pc-windows-msvc main.rs`
+  executor offers: Rustc { toolchain 1.89.0, targets [x86_64-unknown-linux-gnu] }
   no effect was started
 ```
 
@@ -161,7 +161,7 @@ into per-tool data. The same target requirement is spelled, per dialect:
 | go | `GOOS=windows GOARCH=amd64` | **env** roles → `Target` |
 | mingw gcc / `cl.exe` | none — the binary/environment *is* the target | capability fact, no capture |
 
-The machine and the manifest never learn a dialect; they compare `Target`
+The executor and the manifest never learn a dialect; they compare `Target`
 values. A target-neutral invocation (`dotnet build`, `javac`) captures no
 target role, imposes no target requirement, and runs wherever its SDK exists —
 which is the correct semantics, not a special case. The honest stress test for
@@ -189,6 +189,6 @@ env-role package and a fact-only package must exercise the same check.
 
 The solver (ranges, alternatives, choice), the daemon
 (advertise/watch/poison — ambient-toolchain territory, 0.1 has none),
-package distribution, and any second machine. The manifest format is the
+package distribution, and any second executor. The manifest format is the
 embedder's config concern (a typed facet value; the styx spelling above is
 illustrative, not normative).

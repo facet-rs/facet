@@ -101,8 +101,8 @@ fn libpng(cc: Cc, ar: Ar) -> Built {
 // -------------------------------------------------- the program we generate
 
 // The parameters of the image, as a record. It is also the hole set of the
-// template below, which is the whole point of `Template<P>`: a template is a
-// function P -> String, so the struct that describes the picture IS the
+// template below, which is the whole point: a template IS a function, so its
+// type is a function type and the struct that describes the picture IS the
 // struct that fills the source (r[lang.template.is-a-function]).
 struct Image {
     width: Int,
@@ -113,8 +113,8 @@ struct Image {
 // A C program that renders a Mandelbrot set and encodes it as a PNG.
 //
 // This is a TEMPLATE, not a string: it has `{let …}` bindings, so its type is
-// `Template<Image>` and it is applied like the function it is. The `@c` flavor
-// declares no escaping discipline, so it yields an ordinary String
+// `fn(Image) -> String` and it is applied like the function it is. The `@c`
+// flavor declares no escaping discipline, so the result is an ordinary String
 // (r[lang.template.escaping]) — C has no injection boundary here because
 // every hole is an Int.
 //
@@ -123,7 +123,7 @@ struct Image {
 // (r[lang.template.holes]). This is the case that made `{}`-in-guest-text a
 // design problem, and it is why the hole delimiter is per-package data rather
 // than one global choice.
-fn mandelbrot() -> Template<Image> {
+fn mandelbrot() -> fn(Image) -> String {
     @c```
         #include <png.h>
         #include <stdio.h>

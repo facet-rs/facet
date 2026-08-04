@@ -16,9 +16,13 @@ disagreed with what the spec says.
 
 ## What it validates
 
-- **A template is a function.** `Template<Image>` is applied as
-  `mandelbrot()(Image { … })`; the struct describing the picture *is* the
-  struct filling the source. No fill-API was needed.
+- **A template is a function**, and writing this is what eventually killed the
+  `Template<P>` type constructor. The sketch applied `mandelbrot()(Image { … })`
+  — the struct describing the picture *is* the struct filling the source, and no
+  fill-API was needed. If application is an ordinary call, the type is an
+  ordinary function type: `fn(Image) -> String`. A one-parameter constructor had
+  nowhere to put the result type, so it could not tell `fn(Row) -> Html` from
+  `fn(Row) -> String`.
 - **The `{}` collision is real and the design survives it.** The C program is
   dense with braces and none of them are holes — which is the case that forced
   hole delimiters to be per-capability data rather than one global choice.
