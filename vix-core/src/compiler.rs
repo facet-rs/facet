@@ -191,7 +191,7 @@ impl Default for Compiler {
     }
 }
 
-// r[impl lang.diagnostic.must-use]
+// r[impl lang.diagnostics.must-use]
 fn lint_module(module: &Module) -> Diagnostics {
     let mut entries = Vec::new();
     for function in &module.functions {

@@ -40,7 +40,7 @@ a proven-strict island under the as-if rule in the runtime specification.
 
 Parentheses group. They are not function-call punctuation. Literals are
 specified under [Literals and templates](#literals-and-templates): the quote
-family is raw text, the backtick family admits holes, and a hole that *binds*
+family is hole-free, the backtick family admits holes, and a hole that *binds*
 rather than *reads* makes the literal a template.
 
 Unary minus binds tighter than binary operators but is not a juxtaposition atom:
@@ -59,7 +59,8 @@ Two independent questions decide this whole area, and conflating them is the
 mistake every templating system makes.
 
 **Can this literal have holes?** The delimiter answers: the **quote family is
-raw text**, the **backtick family admits holes**.
+hole-free**, the **backtick family admits holes**. Raw is a different and
+narrower axis: `"…"` processes backslash escapes, and only `"""…"""` is raw.
 
 **Is it a string or a template?** The holes answer: a hole that *reads* a name
 (`{x}`) is interpolation, resolved where it is written, so the literal is
@@ -68,8 +69,9 @@ literal does not have, so the literal is a `Template`.
 
 Interpolation and templating are not the same operation. Interpolation names a
 **value** and is eager. A template names a **hole** and keeps it. This replaces
-the earlier `${expression}`-interpolating double-quoted string and the literal
-single-quoted string; `'` becomes reserved rather than repurposed.
+the earlier `${expression}`-interpolating double-quoted string; `'` is left
+unassigned (`r[lang.literal.string]`) rather than pressed into service as a
+second string delimiter.
 
 |            | no holes            | holes admitted                |
 | ---------- | ------------------- | ----------------------------- |
@@ -106,10 +108,13 @@ single-quoted string; `'` becomes reserved rather than repurposed.
 > never of the checkout, the editor, or invisible characters. Six rules make
 > that true, and they apply to every fenced literal, quote or backtick:
 >
-> 1. **Header.** Everything after the opening fence on that line is header
->    (flavor). Content begins after the first newline. Anything the header
->    does not admit is an error, not content.
-> 2. **Leading newline.** The newline ending the header line is a separator,
+> 1. **Opening line.** Nothing follows the opening fence on its line. A flavor
+>    is a prefix sigil, written *before* the delimiter
+>    (`r[lang.literal.flavor]`), so there is no header to parse and no header
+>    grammar to specify. Content begins after the first newline, and anything
+>    other than whitespace between the opening fence and that newline is an
+>    error, never content.
+> 2. **Leading newline.** The newline ending the opening line is a separator,
 >    not content.
 > 3. **Trailing newline.** Each content line keeps its own newline; the
 >    closing fence's line contributes nothing. Three visible lines produce
@@ -145,6 +150,13 @@ single-quoted string; `'` becomes reserved rather than repurposed.
 > A flavor never alters the literal's own text, in either family.
 >
 > `@` is reserved at the head of a literal and has no other use.
+
+The set itself is not enumerated anywhere on this page, and the rule that
+closes it does not close anything until it is. That is a specification bug in
+the sense of the preamble, not a licence to invent one: the roster — each entry
+with its escaping discipline and produced type (`r[lang.template.escaping]`) —
+is normative content and must land here before an implementation or a corpus
+program admits a flavor name.
 
 > r[lang.literal.path]
 >
@@ -338,9 +350,11 @@ single-quoted string; `'` becomes reserved rather than repurposed.
 > Output<Path>})` — so which role is bound follows from which alternative
 > matched.
 >
-> A bound output path MUST be a function of the plan alone, exactly as
-> `machine.exec.mount-path` requires of mounts. A path minted per run would
-> enter the recipe and make every build a memo miss.
+> A bound output path MUST be a function of the plan alone. It is part of WHAT
+> WOULD RUN — the axis `machine.primitive.exec-identity` requires to match
+> exactly, unlike mounts and reads — so it enters the normalized plan that
+> `machine.primitive.exec-plan-normalized` hashes. A path minted per run would
+> change that plan on every run and make every build a memo miss.
 
 ## Functions and arguments
 
@@ -707,7 +721,8 @@ Capability values are ordinary parameters:
 ```vix
 #[test]
 fn check() where { rustc: Rustc, target: Target } -> Stream<Check> {
-    let out = exec rustc`--target {target} -c {source}`;
+    let source = p"main.rs";
+    let out = exec $rustc`--target {target} -c {source}`;
     yield expect_present(out.tree / p"artifact.o");
 }
 ```
@@ -726,7 +741,7 @@ the command recipe.
 The command grammar parses argv roles and normalization. `Arg` is one argv
 element made of typed fragments (`Text`, `Path`, `TreePath`, `Blob`, or a
 capability-defined symbol); interpolation never stringifies a dependency.
-A `command` declaration spells `Arg` boundaries directly: whitespace separates
+A `grammar` declaration spells `Arg` boundaries directly: whitespace separates
 argv elements, adjacent atoms fuse into one element's fragments
 (`-D{define: String}` is one `Arg`, `-D {define: String}` is two), and a
 quoted atom carries characters the bare literal reserves (`"{}"`, `"a b"`).
@@ -782,7 +797,7 @@ fn arithmetic() -> Stream<Check> {
 }
 ```
 
-> r[lang.diagnostic.must-use]
+> r[lang.diagnostics.must-use]
 >
 > `must_use` is a warning contract. When a value or operation marked `must_use`
 > produces a result that is not consumed, the compiler warns; the program
