@@ -481,7 +481,17 @@ fn test_attr_non_sync_struct_literal() {
     let test = CompilationTest {
         name: "attr_non_sync_struct_literal",
         source: include_str!("fixtures/non_sync_attr_literal.rs"),
-        expected_errors: &["fields `ns`, `key` and `data` of struct `facet::Attr` are private"],
+        // Deliberately does NOT pin how rustc spells the struct. It names a
+        // type by the shortest path it can see, and the derive brings facet's
+        // `𝟋` prelude into scope — so the same error reads `facet::Attr` on
+        // one target and `𝟋Attr` on another. That divergence is real: this
+        // test passes on x86_64 and fails on the Linux ARM64 lane, which is
+        // the whole reason it is being touched.
+        //
+        // The subject is the privacy error, not the renderer. Asserting the
+        // field list and the privacy verdict separately (array elements are
+        // AND) survives any path rendering, including future rustc changes.
+        expected_errors: &["fields `ns`, `key` and `data`", "are private"],
     };
 
     run_compilation_test(&test);
