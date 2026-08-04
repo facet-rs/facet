@@ -149,6 +149,86 @@ real, and has no home.
 - **Running a package.** `vx r` is gone with the manifest it read. Demanding
   a named export is the obvious replacement and has no spelling yet.
 
+## Deliberately not
+
+Not deferred — refused. Each names the system that does the thing and the
+reason we will not.
+
+- **A field that lists the package's runnable items.** cargo's `[[bin]]`,
+  npm's `"exports"`, Python's `[project.scripts]`. npm's is the strictest:
+  "When the `exports` field is defined, all subpaths of the package are
+  encapsulated and no longer available to importers", and `require('pkg/x.js')`
+  for an unlisted subpath throws `ERR_PACKAGE_PATH_NOT_EXPORTED`. Python's is
+  the loosest, and shows the failure mode: a `[project.scripts]` entry naming
+  `broken:does_not_exist` installs with exit 0, generates a wrapper whose body
+  is `from broken import does_not_exist`, and raises `ImportError` the first
+  time a user runs the command. All three are a second copy of the export list
+  in a format the checker does not check, so the two copies can disagree —
+  strictly (npm), silently (Python), or by drifting (cargo's `path`). Under
+  `r[vixen.package.is-a-module]` there is no second copy to keep in sync.
+
+- **Bazel's `BUILD` files.** A rule names its `srcs`, `hdrs`, and `deps` as
+  literal lists, so loading can parse "all the necessary BUILD files for the
+  initial targets, and their transitive closure of dependencies" and analysis
+  can perform "the construction of a build dependency graph, and the
+  determination of exactly what work is to be done in each step of the build"
+  — all of it before one action runs. `bazel query` then answers questions
+  about that graph "over the results of Bazel's loading phase", without
+  building anything. This is the sharpest contrast in the system and nothing
+  in vix corresponds: **a package's requirements are not readable without
+  executing it.** Plans do not exist until evaluation, and a statically typed
+  but interpreted language cannot enumerate its dependencies without running
+  (`r[vixen.executor.root-surface-is-static]` fixes how narrow the honest
+  static claim is). We will not add a declaration file to recover the graph,
+  because a file a tool reads and code that does something else are two
+  descriptions of one thing, and the tool believes the wrong one.
+
+- **cargo's `[features]`.** "When a dependency is used by multiple packages,
+  Cargo will use the union of all features enabled on that dependency when
+  building it" — so a feature name changes what a package exports, from
+  outside, and `default-features = false` in your manifest "may not ensure the
+  default features are disabled" if anything else in the graph asks for them.
+  The surface a consumer receives is a property of the whole graph rather than
+  of the package. A manifest field that rewrites the export list is a surface
+  that is not the export list, and the export list is the only surface
+  `r[vixen.package.is-a-module]` admits. Compiling differently under different
+  configuration is a language question; it is not a metadata field.
+
+- **npm's `"scripts"`.** `npm run build` executes a string from the
+  `"scripts"` object in `/bin/sh` (`cmd.exe` on Windows, `script-shell` to
+  change it), with `node_modules/.bin` prepended to `PATH`. A package's
+  most-used entry points are therefore shell strings: no parameters the
+  checker knows about, no return type, and the result is whatever they left on
+  the filesystem. In vix a runnable thing is an exported fn — its parameters
+  are its arguments, its return type is its result — and the shell does not
+  get to be a second language living in a metadata field.
+
+- **A tier of the package that is read without running the package.**
+  `flake.nix` splits into `inputs` and `outputs`, and `outputs` is a *function
+  of* the fetched inputs, so `inputs` has to be readable and resolvable before
+  `outputs` can be called at all. Nix pays for that fence with pure evaluation
+  mode, which is the default and is where a flake lives: `builtins.getEnv
+  "HOME"` returns `""`, `builtins.currentSystem` is `error: attribute
+  'currentSystem' missing`, and an unlocked fetch is `error: in pure
+  evaluation mode, 'fetchGit' will not fetch unlocked input`. Every one of
+  those checks is correct for Nix and none of them are free — they exist
+  because one language has to serve two tiers with different rules. vix has no
+  bootstrap ordering problem (see **Retracted**, "Readable without an
+  evaluator"), so it has no second tier, no fence around one, and no `--impure`
+  to leave it by.
+
+- **A catalog of other people's software.** nixpkgs describes zlib at
+  `pkgs/development/libraries/zlib/default.nix`; zlib's own tree has never
+  heard of nixpkgs. Guix does the same in `gnu/packages/*.scm`. The
+  consequences are structural: the recipe's author is not the software's
+  author, the unit of versioning is a revision of the monorepo rather than of
+  the package, and fixing one package means a pull request into a repository
+  that holds every other one. vix packages foreign software — a package that
+  builds a C library is exactly that — but as **a package**: published on its
+  own, covering its own vix code (`r[vixen.registry.coverage-or-dead]`),
+  pinned to its own recorded behavior. There is no central tree of recipes and
+  nobody merging into it.
+
 ## Explicitly out
 
 Cross-package `use`; the registry's resolution half
