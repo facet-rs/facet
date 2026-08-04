@@ -29,8 +29,8 @@ none of it is built now.
 > backend is) and the capability's *facts* as ordinary typed fields —
 > toolchain version, offered targets. The embedder loads the manifest as
 > config; nothing is discovered ambiently, nothing is probed to mint identity
-> (`vixen.capability.rustc-is-materializable` already rules 0.1 identity
-> a-priori). The manifest is the single source of the machine's word, and the
+> (`r[vixen.capability.rustc-is-acquirable]` already rules 0.1 identity
+> a-priori, from the pin). The manifest is the single source of the executor's word, and the
 > capability values it yields are what root capability parameters bind to.
 
 > r[vixen.executor.binding-fails-before-effects]

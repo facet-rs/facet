@@ -101,12 +101,26 @@ argument to `fetch`. It is not a file vixen maintains.
 
 > r[vixen.pins.toolchain]
 >
-> [DESIGN] A materializable toolchain (`vixen.capability.rustc-is-materializable`)
-> is pinned by the same mechanism. Upstream publishes a digest beside the
-> distribution archive; that digest is the pin, written where the root declares
-> its toolchain. No separate pin store, no discovery.
+> [DESIGN] An **acquirable** toolchain
+> (`r[vixen.capability.rustc-is-acquirable]`) is pinned by the same mechanism.
+> Upstream publishes a digest beside the distribution archive; that digest is
+> the pin. No separate pin store, no discovery.
+>
+> **An ambient toolchain cannot be pinned at all** — that is what makes it
+> ambient. This rule is scoped to the acquirable class and says nothing about
+> the other one; `r[vixen.capability.host-cc-is-ambient]` owns that case and
+> states its cost.
+>
+> Where the pin is *written* is open. An earlier draft said "where the root
+> declares its toolchain", meaning a manifest field, and there is no manifest
+> (`r[vixen.package.*]`).
 
-What remains true, and is the whole point: a build **never** reaches an unpinned
-artifact. There is no code path from a build to a network read whose result is
-not already named by a digest a stranger can check. `observe` — a read whose
-result nobody can predict — stays out of 0.1 and stays a different primitive.
+What remains true of **network reads**, and is the whole point: a build never
+reaches an unpinned *fetch*. There is no code path from a build to a network
+read whose result is not already named by a digest a stranger can check.
+`observe` — a read whose result nobody can predict — stays out of 0.1 and stays
+a different primitive.
+
+The stronger claim — that a build never reaches an unpinned *input* — is false
+in 0.1 and the exception is named: the host linker and its libc are ambient,
+undigested, and reached by every link step.
