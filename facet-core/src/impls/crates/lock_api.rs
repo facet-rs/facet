@@ -17,7 +17,7 @@ use crate::{
 // ============================================================================
 
 fn type_name_mutex<'a, T: Facet<'a>>(
-    _shape: &'static Shape,
+    _shape: &Shape,
     f: &mut core::fmt::Formatter<'_>,
     opts: TypeNameOpts,
 ) -> core::fmt::Result {
@@ -130,7 +130,7 @@ unsafe impl<'a, R: RawMutex + 'a, T: Facet<'a>> Facet<'a> for Mutex<R, T> {
 // ============================================================================
 
 fn type_name_rwlock<'a, T: Facet<'a>>(
-    _shape: &'static Shape,
+    _shape: &Shape,
     f: &mut core::fmt::Formatter<'_>,
     opts: TypeNameOpts,
 ) -> core::fmt::Result {
@@ -275,7 +275,7 @@ unsafe impl<'a, R: RawRwLock + 'a, T: Facet<'a>> Facet<'a> for RwLock<R, T> {
 // ============================================================================
 
 fn type_name_mutex_guard<'a, T: Facet<'a>>(
-    _shape: &'static Shape,
+    _shape: &Shape,
     f: &mut core::fmt::Formatter<'_>,
     opts: TypeNameOpts,
 ) -> core::fmt::Result {
@@ -357,7 +357,7 @@ unsafe impl<'a, R: RawMutex + 'a, T: Facet<'a>> Facet<'a> for MutexGuard<'a, R, 
 // ============================================================================
 
 fn type_name_rwlock_read_guard<'a, T: Facet<'a>>(
-    _shape: &'static Shape,
+    _shape: &Shape,
     f: &mut core::fmt::Formatter<'_>,
     opts: TypeNameOpts,
 ) -> core::fmt::Result {
@@ -441,7 +441,7 @@ unsafe impl<'a, R: RawRwLock + 'a, T: Facet<'a>> Facet<'a> for RwLockReadGuard<'
 // ============================================================================
 
 fn type_name_rwlock_write_guard<'a, T: Facet<'a>>(
-    _shape: &'static Shape,
+    _shape: &Shape,
     f: &mut core::fmt::Formatter<'_>,
     opts: TypeNameOpts,
 ) -> core::fmt::Result {

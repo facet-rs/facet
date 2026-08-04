@@ -155,7 +155,7 @@ const fn build_type_ops<T>() -> facet_core::TypeOpsIndirect {
 }
 
 fn type_name_mat<T: Facet<'static>>(
-    _shape: &'static facet_core::Shape,
+    _shape: &facet_core::Shape,
     f: &mut core::fmt::Formatter<'_>,
     opts: facet_core::TypeNameOpts,
 ) -> core::fmt::Result {

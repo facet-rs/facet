@@ -16,7 +16,7 @@ use crate::{
 
 /// Type name formatter for `Rc<T>`
 fn rc_type_name<'a, T: Facet<'a>>(
-    _shape: &'static Shape,
+    _shape: &Shape,
     f: &mut core::fmt::Formatter<'_>,
     opts: TypeNameOpts,
 ) -> core::fmt::Result {
@@ -147,7 +147,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Rc<T> {
 
 /// Type name formatter for `Rc<str>`
 fn rc_str_type_name(
-    _shape: &'static Shape,
+    _shape: &Shape,
     f: &mut core::fmt::Formatter<'_>,
     opts: TypeNameOpts,
 ) -> core::fmt::Result {
@@ -290,7 +290,7 @@ fn slice_builder_free<'a, U: Facet<'a>>(builder: PtrMut) {
 
 /// Type name formatter for `Rc<[U]>`
 fn rc_slice_type_name<'a, U: Facet<'a>>(
-    _shape: &'static Shape,
+    _shape: &Shape,
     f: &mut core::fmt::Formatter<'_>,
     opts: TypeNameOpts,
 ) -> core::fmt::Result {
@@ -426,7 +426,7 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Rc<[U]> {
 
 /// Type name formatter for `Weak<T>`
 fn weak_type_name<'a, T: Facet<'a>>(
-    _shape: &'static Shape,
+    _shape: &Shape,
     f: &mut core::fmt::Formatter<'_>,
     opts: TypeNameOpts,
 ) -> core::fmt::Result {
@@ -547,7 +547,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Weak<T> {
 
 /// Type name formatter for `Weak<str>`
 fn weak_str_type_name(
-    _shape: &'static Shape,
+    _shape: &Shape,
     f: &mut core::fmt::Formatter<'_>,
     opts: TypeNameOpts,
 ) -> core::fmt::Result {
@@ -641,7 +641,7 @@ unsafe impl<'a> Facet<'a> for Weak<str> {
 
 /// Type name formatter for `Weak<[U]>`
 fn weak_slice_type_name<'a, U: Facet<'a>>(
-    _shape: &'static Shape,
+    _shape: &Shape,
     f: &mut core::fmt::Formatter<'_>,
     opts: TypeNameOpts,
 ) -> core::fmt::Result {

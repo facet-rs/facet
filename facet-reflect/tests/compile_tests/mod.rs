@@ -407,6 +407,33 @@ fn test_partial_untrusted_shape() {
     run_compilation_test(&test);
 }
 
+/// Soundness test: `impl Display for Shape` used to `transmute` its receiver to
+/// `&'static Shape` on the (false) claim that every `Shape` is a const static.
+///
+/// `ShapeBuilder::build()` returns an owned `Shape` by value and
+/// `ShapeBuilder::type_name()` installs a caller-supplied `TypeNameFn`, so safe
+/// code could stash a `&'static Shape` pointing into a dead stack frame — SIGSEGV
+/// natively, use-after-free under Miri, with `#![forbid(unsafe_code)]` on.
+///
+/// After the fix `TypeNameFn` takes `&Shape`, so a callback demanding
+/// `&'static Shape` is no longer a valid `TypeNameFn` and this must not compile.
+///
+/// The runtime companion is
+/// `facet-core/tests/integration/shape_display_no_static_laundering.rs`.
+#[test]
+#[cfg(not(miri))]
+fn test_shape_display_static_laundering() {
+    let test = CompilationTest {
+        name: "shape_display_static_laundering",
+        source: include_str!("fixtures/shape_display_static_laundering.rs"),
+        expected_errors: &[
+            "one type is more general than the other OR error[E0308]: mismatched types",
+        ],
+    };
+
+    run_compilation_test(&test);
+}
+
 /// Soundness test for GitHub issue #1573 — the `Attr::new` path.
 ///
 /// Attr stores its payload as a type-erased OxRef but is Send + Sync by a

@@ -225,11 +225,7 @@ impl Shape {
     /// If the type has a custom type_name function, it will be used.
     /// Otherwise, falls back to the type_identifier.
     #[inline]
-    pub fn write_type_name(
-        &'static self,
-        f: &mut fmt::Formatter<'_>,
-        opts: TypeNameOpts,
-    ) -> fmt::Result {
+    pub fn write_type_name(&self, f: &mut fmt::Formatter<'_>, opts: TypeNameOpts) -> fmt::Result {
         if let Some(type_name_fn) = self.type_name {
             type_name_fn(self, f, opts)
         } else {

@@ -270,7 +270,7 @@ where
 
         const fn build_type_name<'a, T: Facet<'a> + ?Sized + ToOwned>() -> TypeNameFn {
             fn type_name_impl<'a, T: Facet<'a> + ?Sized + ToOwned>(
-                _shape: &'static Shape,
+                _shape: &Shape,
                 f: &mut core::fmt::Formatter<'_>,
                 opts: TypeNameOpts,
             ) -> core::fmt::Result {

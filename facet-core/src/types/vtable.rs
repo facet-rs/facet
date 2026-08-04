@@ -70,8 +70,23 @@ impl TypeNameOpts {
 /// Takes the shape (for accessing type params) and formatting options.
 /// This lives on `Shape`, not in the vtable, because it's about the type itself,
 /// not about values of the type.
+///
+/// # Why `&Shape` and not `&'static Shape`
+///
+/// A `Shape` is *usually* a `const` static produced by the derive macro, but that
+/// is a convention, not something the type system enforces: `ShapeBuilder::build`
+/// is safe, public, and returns an owned `Shape` by value, so a `Shape` can live
+/// on the stack. A `&'static Shape` parameter here would let a safe callback stash
+/// a reference that outlives such a `Shape` — see
+/// `facet-core/tests/integration/shape_display_no_static_laundering.rs`.
+///
+/// The higher-ranked `for<'a> fn(&'a Shape, ..)` this alias desugars to accepts a
+/// `&'static Shape` at every call site that has one, and costs nothing: the
+/// `Shape` fields a `TypeNameFn` reads (`type_params`, `type_identifier`, ..) are
+/// themselves `&'static`, so reborrowing through a shorter reference still yields
+/// `'static` data.
 pub type TypeNameFn =
-    fn(shape: &'static crate::Shape, f: &mut fmt::Formatter<'_>, opts: TypeNameOpts) -> fmt::Result;
+    fn(shape: &crate::Shape, f: &mut fmt::Formatter<'_>, opts: TypeNameOpts) -> fmt::Result;
 
 //////////////////////////////////////////////////////////////////////
 // HashProxy - Type-erased Hasher for vtable use

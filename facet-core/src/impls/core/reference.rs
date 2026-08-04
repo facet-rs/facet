@@ -10,7 +10,7 @@ use crate::{
 
 /// Type-erased type_name for &T - reads the pointee type from the shape
 fn ref_type_name(
-    shape: &'static Shape,
+    shape: &Shape,
     f: &mut fmt::Formatter<'_>,
     opts: TypeNameOpts,
 ) -> fmt::Result {
@@ -34,7 +34,7 @@ fn ref_type_name(
 
 /// Type-erased type_name for &mut T - reads the pointee type from the shape
 fn ref_mut_type_name(
-    shape: &'static Shape,
+    shape: &Shape,
     f: &mut fmt::Formatter<'_>,
     opts: TypeNameOpts,
 ) -> fmt::Result {

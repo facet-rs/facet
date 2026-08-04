@@ -5,15 +5,18 @@ use crate::{ConstParam, Def, Shape, ShapeLayout, TypeParam};
 // Helper struct to format the name for display
 impl fmt::Display for Shape {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // SAFETY: All Shape instances are guaranteed to be 'static because they're
-        // always references to const statics created by the Facet derive macro or
-        // manual implementations. The lifetime is erased in the Display trait signature,
-        // but we can safely restore it here.
-        let static_self: &'static Shape = unsafe { core::mem::transmute(self) };
-
+        // NOTE: this used to `transmute` `self` to `&'static Shape`, on the claim
+        // that "all Shape instances are guaranteed to be 'static". They are not:
+        // `ShapeBuilder::build` is safe, public, and returns an owned `Shape` by
+        // value, so `Shape`s live on the stack. Formatting one handed the
+        // `TypeNameFn` callback — which safe code installs via the equally public
+        // `ShapeBuilder::type_name` — a `&'static Shape` pointing into a frame
+        // about to die. `TypeNameFn` now takes `&Shape`, so no laundering is
+        // needed and the output is unchanged.
+        //
         // Use write_type_name if available to include generic parameters,
         // otherwise fall back to type_identifier
-        static_self.write_type_name(f, crate::TypeNameOpts::default())
+        self.write_type_name(f, crate::TypeNameOpts::default())
     }
 }
 

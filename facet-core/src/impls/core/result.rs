@@ -38,7 +38,7 @@ unsafe fn result_get_err_ptr(def: &ResultDef, ptr: PtrConst) -> Option<PtrConst>
 }
 
 fn result_type_name(
-    shape: &'static Shape,
+    shape: &Shape,
     f: &mut core::fmt::Formatter<'_>,
     opts: crate::TypeNameOpts,
 ) -> core::fmt::Result {

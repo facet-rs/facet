@@ -18,7 +18,7 @@ const fn get_option_def(shape: &'static Shape) -> Option<&'static OptionDef> {
 }
 
 fn option_type_name(
-    shape: &'static Shape,
+    shape: &Shape,
     f: &mut core::fmt::Formatter<'_>,
     opts: crate::TypeNameOpts,
 ) -> core::fmt::Result {

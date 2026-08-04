@@ -6,7 +6,7 @@ use num_complex::Complex;
 
 // Named function for type_name
 fn type_name_fn<'facet, T: Facet<'facet>>(
-    _shape: &'static Shape,
+    _shape: &Shape,
     f: &mut core::fmt::Formatter,
     opts: TypeNameOpts,
 ) -> core::fmt::Result {
