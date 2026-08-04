@@ -1,5 +1,5 @@
 //! The machine manifest's acceptance tests
-//! (`vix-core/docs/content/spec/vixen/machine.md`, "Acceptance").
+//! (`vix-core/docs/content/spec/vixen/executor.md`, "Acceptance").
 //!
 //! Every refusal test pins the same three facts: the failure is TYPED (a
 //! `CapabilityRefusal` naming both sides — what the program requires, what
@@ -109,8 +109,8 @@ fn build(rustc: Rustc) -> Stream<Check> {
 /// Acceptance 1: **missing type.** A root requiring a capability type the
 /// manifest lacks fails typed, pre-effect, naming both sides.
 ///
-/// r[verify vixen.machine.manifest]
-/// r[verify vixen.machine.binding-fails-before-effects]
+/// r[verify vixen.executor.manifest]
+/// r[verify vixen.executor.binding-fails-before-effects]
 #[test]
 fn a_capability_type_absent_from_the_manifest_refuses_before_any_effect() {
     // The harness default offers Echo/Sh/ProgressiveSh — no Rustc.
@@ -137,8 +137,8 @@ fn a_capability_type_absent_from_the_manifest_refuses_before_any_effect() {
 /// offered targets. Typed refusal before any process exists, and the
 /// diagnostic names both sides in `Target` vocabulary.
 ///
-/// r[verify vixen.machine.binding-fails-before-effects]
-/// r[verify vixen.machine.requirements-from-use]
+/// r[verify vixen.executor.binding-fails-before-effects]
+/// r[verify vixen.executor.requirements-from-use]
 #[test]
 fn the_exe_case_refuses_pre_effect_on_a_linux_only_manifest() {
     let linux_only = manifest(vec![offer(
@@ -166,8 +166,8 @@ fn the_exe_case_refuses_pre_effect_on_a_linux_only_manifest() {
 /// offers the target — it runs, through a fake rustc that produces the
 /// artifact the program checks.
 ///
-/// r[verify vixen.machine.manifest]
-/// r[verify vixen.machine.requirements-from-use]
+/// r[verify vixen.executor.manifest]
+/// r[verify vixen.executor.requirements-from-use]
 #[test]
 fn the_exe_case_runs_when_the_manifest_offers_the_target() {
     let tools = tempfile::tempdir().expect("tool dir");
@@ -245,8 +245,8 @@ fn build(go: Go) -> Stream<Check> {
 /// GOARCH=amd64` normalizes to `x86_64-pc-windows-gnu` through the package's
 /// grammar; a Linux-only `Go` offer refuses pre-effect.
 ///
-/// r[verify vixen.machine.requirements-from-use]
-/// r[verify vixen.machine.binding-fails-before-effects]
+/// r[verify vixen.executor.requirements-from-use]
+/// r[verify vixen.executor.binding-fails-before-effects]
 #[test]
 fn an_env_role_target_refuses_pre_effect_on_a_linux_only_manifest() {
     let linux_only = manifest(vec![offer(
@@ -271,7 +271,7 @@ fn an_env_role_target_refuses_pre_effect_on_a_linux_only_manifest() {
 /// program checks, so the declared env roles demonstrably reached the
 /// spawned process.
 ///
-/// r[verify vixen.machine.requirements-from-use]
+/// r[verify vixen.executor.requirements-from-use]
 #[test]
 fn an_env_role_target_runs_and_the_roles_reach_the_process_environment() {
     const ENV_CASE_HOST: &str = r#"
@@ -342,7 +342,7 @@ fn build(go: Go) -> Stream<Check> {
 /// offering no targets at all. Roles come from the grammar, never from
 /// string-sniffing the plan (`machine.capability.no-argv-dialect`).
 ///
-/// r[verify vixen.machine.requirements-from-use]
+/// r[verify vixen.executor.requirements-from-use]
 #[test]
 fn a_target_neutral_invocation_imposes_no_target_requirement() {
     const NEUTRAL: &str = r#"
@@ -369,7 +369,7 @@ fn neutral(sh: Sh) -> Stream<Check> {
 /// module without executing anything, in exactly the "needs `Rustc`
 /// producing `x86_64-pc-windows-msvc`" shape.
 ///
-/// r[verify vixen.machine.requirements-are-static]
+/// r[verify vixen.executor.requirements-are-static]
 #[test]
 fn the_requirement_set_is_reported_without_executing() {
     let module = vixen_runtime::default_compiler()
@@ -399,7 +399,7 @@ fn the_requirement_set_is_reported_without_executing() {
 /// value is reported as "decided at run time", never silently dropped and
 /// never guessed.
 ///
-/// r[verify vixen.machine.requirements-are-static]
+/// r[verify vixen.executor.requirements-are-static]
 #[test]
 fn a_computed_capture_degrades_honestly_in_the_static_report() {
     const COMPUTED: &str = r#"
@@ -436,8 +436,8 @@ fn build(rustc: Rustc) -> Stream<Check> {
 /// native-only offer refuses pre-effect; the cross-target offer runs on a
 /// Linux host.
 ///
-/// r[verify vixen.machine.requirements-from-use]
-/// r[verify vixen.machine.facts-are-fields]
+/// r[verify vixen.executor.requirements-from-use]
+/// r[verify vixen.executor.facts-are-fields]
 #[test]
 fn a_fact_shaped_capability_is_checked_against_its_own_target_facts() {
     const FACT_CASE: &str = r#"
@@ -476,11 +476,11 @@ fn compile(gcc: MingwGcc) -> Stream<Check> {
     }
 }
 
-/// The embedder-loads-config half of `vixen.machine.manifest`: the TOML
+/// The embedder-loads-config half of `vixen.executor.manifest`: the TOML
 /// spelling round-trips into the same typed value the tests construct
 /// directly.
 ///
-/// r[verify vixen.machine.manifest]
+/// r[verify vixen.executor.manifest]
 #[test]
 fn the_manifest_loads_from_its_toml_config_spelling() {
     let manifest = MachineManifest::from_toml(
@@ -530,8 +530,8 @@ targets = ["x86_64-unknown-linux-gnu"]
 /// manifest LOADED from a config file refuses the exe case exactly as the
 /// directly-constructed value does — typed, pre-effect, naming both sides.
 ///
-/// r[verify vixen.machine.manifest]
-/// r[verify vixen.machine.binding-fails-before-effects]
+/// r[verify vixen.executor.manifest]
+/// r[verify vixen.executor.binding-fails-before-effects]
 #[test]
 fn a_manifest_loaded_from_a_config_file_refuses_the_exe_case() {
     let dir = tempfile::tempdir().expect("manifest dir");
@@ -557,7 +557,7 @@ fn a_manifest_loaded_from_a_config_file_refuses_the_exe_case() {
 /// `run_source` entrypoint — no `with_manifest`, no Rust-side value — binds
 /// against the file's machine word and refuses the exe case pre-effect.
 ///
-/// r[verify vixen.machine.manifest]
+/// r[verify vixen.executor.manifest]
 #[test]
 fn the_environment_declared_manifest_reaches_the_runnable_system() {
     let dir = tempfile::tempdir().expect("manifest dir");
@@ -583,7 +583,7 @@ fn the_environment_declared_manifest_reaches_the_runnable_system() {
 /// distinction between `Err` and `Ok(refusal)` is exactly the loudness this
 /// pins.
 ///
-/// r[verify vixen.machine.manifest]
+/// r[verify vixen.executor.manifest]
 #[test]
 fn a_missing_declared_manifest_is_a_loud_typed_error_never_a_silent_default() {
     let dir = tempfile::tempdir().expect("manifest dir");
@@ -607,7 +607,7 @@ fn a_missing_declared_manifest_is_a_loud_typed_error_never_a_silent_default() {
     assert_eq!(path, missing, "the error names the declared path");
 }
 
-/// The explicit requirement fallback (`vixen.machine.requirements-from-use`):
+/// The explicit requirement fallback (`vixen.executor.requirements-from-use`):
 /// a fact the command grammar cannot extract — here the tool's own runtime
 /// self-report — is stated by the program itself through the stdlib
 /// `require(condition) where { message }`, over the ordinary `fail`
@@ -615,7 +615,7 @@ fn a_missing_declared_manifest_is_a_loud_typed_error_never_a_silent_default() {
 /// value identity — schema and message content — is pinned Rust-side, so the
 /// author's message provably reaches the failure payload.
 ///
-/// r[verify vixen.machine.requirements-from-use]
+/// r[verify vixen.executor.requirements-from-use]
 #[test]
 fn an_unsatisfied_require_raises_the_typed_failure_with_the_message() {
     const SOURCE: &str = r#"
@@ -670,7 +670,7 @@ fn guarded(sh: Sh) -> Stream<Check> {
 /// reports is an ordinary `true` — the program runs and passes, and the
 /// message wire is never demanded.
 ///
-/// r[verify vixen.machine.requirements-from-use]
+/// r[verify vixen.executor.requirements-from-use]
 #[test]
 fn a_satisfied_require_is_an_ordinary_passing_check() {
     const SOURCE: &str = r#"
@@ -691,7 +691,7 @@ fn guarded(sh: Sh) -> Stream<Check> {
 /// a typed `Malformed` error naming the path, with the parse detail carried,
 /// and a `Display` rendering that says what happened.
 ///
-/// r[verify vixen.machine.manifest]
+/// r[verify vixen.executor.manifest]
 #[test]
 fn a_malformed_declared_manifest_is_a_loud_typed_error() {
     let dir = tempfile::tempdir().expect("manifest dir");

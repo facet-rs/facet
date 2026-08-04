@@ -20,7 +20,7 @@ distributed-build shape (many machines advertising, a solve choosing) is the
 same model with more candidates; nothing here needs rework to get there, and
 none of it is built now.
 
-> r[vixen.machine.manifest]
+> r[vixen.executor.manifest]
 >
 > [DESIGN] A machine's capability set is a declared, typed value — the
 > manifest: the host `Target`, plus one capability value per offered
@@ -33,7 +33,7 @@ none of it is built now.
 > a-priori). The manifest is the single source of the machine's word, and the
 > capability values it yields are what root capability parameters bind to.
 
-> r[vixen.machine.binding-fails-before-effects]
+> r[vixen.executor.binding-fails-before-effects]
 >
 > [DESIGN] Root capability parameters bind against the manifest by declared
 > type. An unsatisfiable requirement — the type absent, or a required fact the
@@ -43,7 +43,7 @@ none of it is built now.
 > vixen half of `machine.primitive.capabilities-by-identity`'s admissibility
 > sentence, which until now had nothing to refuse with.
 
-> r[vixen.machine.requirements-from-use]
+> r[vixen.executor.requirements-from-use]
 >
 > [DESIGN] A requirement finer than presence is never spelled beside the code
 > that implies it — it is **extracted from use**. The capability package's
@@ -69,7 +69,7 @@ none of it is built now.
 > in the effect plane and is deferred, stated here so it cannot be mistaken
 > for implemented.
 
-> r[vixen.machine.facts-are-fields]
+> r[vixen.executor.facts-are-fields]
 >
 > [DESIGN] Machine-ness is not a set of booleans. "This is a Windows machine"
 > is the manifest's `host: Target`; "can produce `.exe`" is the `targets`
@@ -80,7 +80,7 @@ none of it is built now.
 > alternative satisfaction, and cross-machine choice are solver work
 > (`FV-E3`), deliberately deferred.
 
-> r[vixen.machine.requirements-are-static]
+> r[vixen.executor.requirements-are-static]
 >
 > [DESIGN] A program's requirement set is readable without executing it: the
 > root's capability parameter types, plus every literal role capture its plans

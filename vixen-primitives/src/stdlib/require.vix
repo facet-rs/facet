@@ -1,5 +1,5 @@
 // `require(condition) where { message }` — the explicit requirement fallback
-// the machine-manifest design names (`vixen.machine.requirements-from-use`):
+// the machine-manifest design names (`vixen.executor.requirements-from-use`):
 // when a requirement cannot be extracted from use — a fact the capability
 // package's command grammar cannot see — the program states it itself, over
 // the ordinary `fail` mechanism (issue 2600). The failure is typed, a

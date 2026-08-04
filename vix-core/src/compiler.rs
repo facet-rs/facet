@@ -5715,7 +5715,7 @@ fn lower_request_shape(
 /// The literal constraint is checked here, with a diagnostic naming the
 /// surface: a computed argument is rejected at compile time, never
 /// evaluated — a surface with coordinate-like arguments keeps a program's
-/// requirement set static (`vixen.machine.requirements-are-static`).
+/// requirement set static (`vixen.executor.requirements-are-static`).
 fn lower_constant_surface(
     nodes: &mut Vec<Node>,
     call: &ast::Call,

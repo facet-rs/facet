@@ -186,7 +186,7 @@ pub struct CapabilityTypeDecl {
 /// names the surface. The constraint is deliberate vocabulary, not an
 /// implementation shortcut — the constant folds at compile time, and a
 /// surface with coordinate-like arguments keeps a program's requirement set
-/// static (`vixen.machine.requirements-are-static`): a computed coordinate is
+/// static (`vixen.executor.requirements-are-static`): a computed coordinate is
 /// rejected at compile time, never evaluated.
 // Equality on the thunks is pointer identity — good enough for its one use
 // (`CompilerConfig` equality; see `PrimitiveMethodDecl`).

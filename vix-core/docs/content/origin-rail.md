@@ -219,7 +219,7 @@ fixture uses leave; the rest are exec/tree-read/schema machinery that stays).
   surface would silently begin accepting arbitrary `String` expressions —
   a language behavior change nobody asked for, and one that would make a
   harness's fixture requirement set non-static (against the spirit of
-  `vixen.machine.requirements-are-static`). Dynamic fixture coordinates are
+  `vixen.executor.requirements-are-static`). Dynamic fixture coordinates are
   *not* intended: the injected-surface mechanism gains a declared
   literal-argument constraint, checked at lowering with the same diagnostic
   quality as today's, and `fixture_tree` declares it. (The constraint is

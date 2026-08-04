@@ -293,7 +293,7 @@ pub enum RunError {
     /// The machine manifest the invoker DECLARED (`VIX_MACHINE_MANIFEST`)
     /// failed to load. Loud and typed by design: the harness default serves
     /// only the undeclared case, never a declared file that cannot be read
-    /// or parsed (`vixen.machine.manifest`).
+    /// or parsed (`vixen.executor.manifest`).
     Manifest(crate::manifest::ManifestLoadError),
 }
 
@@ -608,7 +608,7 @@ pub struct SuiteRun {
     pub all_demands_ready: bool,
     pub all_tasks_terminal: bool,
     /// Typed pre-effect capability refusals
-    /// (`vixen.machine.binding-fails-before-effects`): a test listed here had
+    /// (`vixen.executor.binding-fails-before-effects`): a test listed here had
     /// a root capability parameter the machine manifest could not satisfy, so
     /// NONE of its islands were submitted — no check ran, no demand parked,
     /// no process spawned. Non-empty refusals fail the report.
@@ -718,7 +718,7 @@ pub struct PreparedRun {
     compilation: vix::compiler::Compilation,
     cache: LoweringCache,
     /// The machine manifest the run binds root capability parameters against
-    /// (`vixen.machine.manifest`). Resolved at preparation through
+    /// (`vixen.executor.manifest`). Resolved at preparation through
     /// [`crate::manifest::declared_manifest`]: the file `VIX_MACHINE_MANIFEST`
     /// explicitly declares, or [`MachineManifest::ratchet_default`] when
     /// nothing is declared. [`PreparedRun::with_manifest`] substitutes an
@@ -783,7 +783,7 @@ pub fn run_source(source: &str) -> Result<RatchetReport, RunError> {
 
 /// Run under an explicit machine manifest instead of the harness default —
 /// the embedder's declared machine word, which root capability parameters
-/// bind against before anything runs (`vixen.machine.manifest`).
+/// bind against before anything runs (`vixen.executor.manifest`).
 pub fn run_source_with_manifest(
     source: &str,
     manifest: crate::manifest::MachineManifest,
@@ -1731,7 +1731,7 @@ fn run_lane(
         // any island is submitted: no check runs, no demand parks, no process
         // spawns (the acceptance tests pin this by counter).
         //
-        // r[impl vixen.machine.binding-fails-before-effects]
+        // r[impl vixen.executor.binding-fails-before-effects]
         let requirements = crate::manifest::test_requirements(&partitioned);
         let test_refusals = manifest.bind(&requirements);
         if !test_refusals.is_empty() {
