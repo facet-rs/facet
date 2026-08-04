@@ -9,10 +9,9 @@ right).
 
 > r[machine.memo.indexed-by-location]
 >
-> [DESIGN] **The memo is
-> INDEXED by location**, not by content. A location is the path of *names* from the
-> demand root: content-free, known at demand time, and unchanged when a file's
-> bytes change.
+> [DESIGN] **The memo is INDEXED by location**, not by content. A location is the
+> path of *names* from the demand root: content-free, known at demand time, and
+> unchanged when a file's bytes change.
 >
 > A `DemandKey` (`machine.memo.demand-key`) is a digest over argument *content*
 > hashes. If it were the index, the two-step dance could not happen: the input

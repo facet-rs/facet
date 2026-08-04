@@ -25,15 +25,15 @@ driver.
 > r[machine.identity.canonical-memory]
 >
 > [STRUCK — superseded by the content-hash ruling.] The one content-hash
-> definition is the schema-specialized framed
-> walked encoding (`machine.identity.framed-encoding`), computed once at
-> intern and carried on the store entry (entry-carried identity), read as a
-> load thereafter. Flat-memory hashing was rejected because the structural
-> hash of a value must never depend on the ABI: layout exists to be changed
-> for performance, and coupling identity to it was an implementation-plane
-> leak into the semantic plane. Zero-padding remains hygiene (and a canary),
-> not identity-load-bearing. This rule id is retained struck so stale
-> references fail loudly rather than silently meaning the old thing.
+> definition is the schema-specialized framed walked encoding
+> (`machine.identity.framed-encoding`), computed once at intern and carried on
+> the store entry (entry-carried identity), read as a load thereafter.
+> Flat-memory hashing was rejected because the structural hash of a value must
+> never depend on the ABI: layout exists to be changed for performance, and
+> coupling identity to it was an implementation-plane leak into the semantic
+> plane. Zero-padding remains hygiene (and a canary), not
+> identity-load-bearing. This rule id is retained struck so stale references
+> fail loudly rather than silently meaning the old thing.
 
 > r[machine.identity.value-identity-pair]
 >
@@ -160,13 +160,13 @@ driver.
 
 > r[machine.identity.never-consults-order]
 >
-> [SETTLED] A value's identity is a function of
-> its content alone; no program value may move it. `<=>` is the STRUCTURAL
-> comparison — derived from a type's fields in declaration order, total, and not
-> overridable — so it is itself a function of content and a canonical encoding
-> may use it. What may never enter identity is an `Order<T>`: orders are ordinary
-> program values passed to ranking operations, and an encoding keyed on one would
-> make a value's identity depend on unrelated user code. (An earlier draft stated
+> [SETTLED] A value's identity is a function of its content alone; no program
+> value may move it. `<=>` is the STRUCTURAL comparison — derived from a type's
+> fields in declaration order, total, and not overridable — so it is itself a
+> function of content and a canonical encoding may use it. What may never enter
+> identity is an `Order<T>`: orders are ordinary program values passed to
+> ranking operations, and an encoding keyed on one would make a value's identity
+> depend on unrelated user code. (An earlier draft stated
 > this as "no content hash may be defined in terms of `<=>`", on the premise that
 > `<=>` was user-overridable. That premise was retracted; the law survives, the
 > reason changed.)
@@ -181,8 +181,8 @@ driver.
 
 > r[machine.identity.merkle-tree]
 >
-> [DESIGN] A workspace is a value, so it has an identity, so it must be
-> hashed. A `Tree` (recursive, `machine.identity.tree-model`) is therefore identified as a
+> [DESIGN] A workspace is a value, so it has an identity, so it must be hashed.
+> A `Tree` (recursive, `machine.identity.tree-model`) is therefore identified as a
 > **Merkle map** over its semantic encoding — not over the store's chunking
 > (`machine.identity.tree-hash-is-not-node-hash`):
 > change one file, rehash one path. This is not an optimization — it is what makes
@@ -192,8 +192,8 @@ driver.
 
 > r[machine.identity.streams-cross-island-edges]
 >
-> [SETTLED] Codata may cross an island edge. The edge's
-> semantic content is the VALUE the stream drains to; the incremental view is as-if. A
+> [SETTLED] Codata may cross an island edge. The edge's semantic content is the
+> VALUE the stream drains to; the incremental view is as-if. A
 > stream therefore has recipe identity and no value identity of its own: its elements are
 > ordinary demands, memoized individually; the aggregate has no content hash until resolved.
 > A stream may not be a map key, and may not be sorted or compared.
