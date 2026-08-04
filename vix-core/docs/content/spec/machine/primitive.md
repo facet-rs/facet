@@ -110,8 +110,14 @@ primitives reference by identity.
 > (`machine.capability.fingerprint-in-identity`): the DAEMON advertises the
 > fingerprint as the source of truth; a backend probe VERIFIES the advertised
 > fingerprint (or emits a poison event on mismatch) and never silently mints a
-> competing identity. For a materializable toolchain the "probe" is just
-> hashing the mounted content.
+> competing identity.
+>
+> An **acquirable** toolchain (`vixen.package.two-toolchain-classes`) needs no
+> probe for identity at all: it is a pinned fetch served at a VFS prefix, so its
+> identity is **the pin's**, known a priori before a byte moves. A probe over it
+> is a verification like any other and may never mint an identity. Hashing what
+> was served would re-derive by observation, after the fact, exactly what the pin
+> already named.
 
 > r[machine.primitive.exec-hermetic-traps]
 >
@@ -279,7 +285,7 @@ primitives reference by identity.
 > [SETTLED] Capabilities are referenced by identity, never by process-local
 > handle. A root injects a capability value or a package/toolchain solve returns
 > one; there is no ambient `Rustc::acquire`. The selected identity is captured
-> before placement and every executor materializes that exact closure. If no
+> before placement and every executor acquires that exact closure. If no
 > admissible executor can satisfy its execution contract, the demand fails
 > before an effect starts.
 

@@ -102,7 +102,7 @@ cached locally where allowed.
 Executor admission checks two distinct support records. Weavy support names the
 bytecode vocabulary epoch, registered intrinsic ABIs, interpreter/JIT lanes,
 target architectures, and resource limits. Tool capabilities name rustc, clang,
-SDKs, runners, and other ambient or materialized executable closures. Weavy has
+SDKs, runners, and other acquirable or ambient executable closures. Weavy has
 no language-level `CapabilitySet`; its support record says which lowered
 instructions it can execute, while the Vix capability set says which effects the
 placed demand may request.

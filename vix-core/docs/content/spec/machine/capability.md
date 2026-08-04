@@ -3,8 +3,9 @@ title = "Capabilities"
 weight = 12
 +++
 
-The machine-side boundary with capabilities — daemon-advertised toolchains
-carrying command grammars. The capability packages themselves (discovery,
+The machine-side boundary with capabilities — toolchains carrying command
+grammars, whether pinned and served or ambient and advertised. The capability
+packages themselves (discovery,
 fingerprinting, grammars-as-data, the daemon) are `vixen.*` spec territory,
 specified at [/spec/vixen/capability-packages](/spec/vixen/capability-packages);
 this page covers only what the MACHINE must honor about them.
@@ -12,11 +13,25 @@ this page covers only what the MACHINE must honor about them.
 > r[machine.capability.two-classes]
 >
 > [SETTLED] Two toolchain classes exist and the machine treats them
-> differently. MATERIALIZABLE toolchains (rustc-class) are ordinary
-> content-addressed inputs — a-priori identity, hash what you mount, not
-> deeply capabilities at all. AMBIENT toolchains (Xcode/MSVC-class — legally
-> or technically un-materializable) are capabilities proper: a-posteriori
-> identity, daemon-advertised, fingerprinted, continuously re-verified.
+> differently. The axis is **whether reads can go through the VFS**, and
+> everything else follows from it.
+>
+> **ACQUIRABLE** toolchains (rustc-class) are pinned fetches **served at a VFS
+> prefix**. Identity is **a priori, from the pin** — known before a byte moves,
+> so no read tracking is needed to establish it and no probe mints it. These
+> are ordinary content-addressed inputs, not deeply capabilities at all.
+>
+> **AMBIENT** toolchains (Xcode/MSVC-class — legally or technically impossible
+> to acquire) **cannot go through the VFS, therefore cannot be observed.** No
+> read-set can be recorded, so the only sound assumption is that all of the
+> image is used. These are capabilities proper: a-posteriori identity,
+> daemon-advertised, fingerprinted, continuously re-verified, and poisoned
+> wholesale on any change.
+>
+> The word for the first class was MATERIALIZABLE and its mechanism was "hash
+> what you mount". Both are struck: identity comes from the pin rather than
+> from hashing extracted bytes afterward, and nothing is untarred into a tree
+> and mounted to obtain it (`r[vixen.package.two-toolchain-classes]`).
 
 > r[machine.capability.fingerprint-in-identity]
 >
@@ -38,9 +53,19 @@ this page covers only what the MACHINE must honor about them.
 >
 > [SETTLED] When the daemon poisons an in-flight build (the watched toolchain
 > mutated underfoot), the machine fails the affected executions loudly and
-> does not memoize their results. Advertise ⇒ watch ⇒ poison is what keeps
-> receipts honest over toolchains we can only observe; the machine's half of
-> the contract is refusing to launder a poisoned run into the memo.
+> does not memoize their results. The machine's half of the contract is
+> refusing to launder a poisoned run into the memo.
+>
+> Advertise ⇒ watch ⇒ poison exists **because** an ambient toolchain cannot be
+> observed. Its reads do not go through the VFS, so there is no read-set to
+> record and no way to ask afterward what was used — the only remaining move is
+> to watch the whole image and invalidate everything on any change. Poison is
+> what stands in for observation where observation is impossible; it is not a
+> refinement of it.
+>
+> (An earlier draft said this kept receipts honest "over toolchains we can only
+> observe", which inverts the mechanism: these are the toolchains we *cannot*
+> observe, and that is the entire reason the machinery exists.)
 
 > r[machine.capability.no-argv-dialect]
 >
