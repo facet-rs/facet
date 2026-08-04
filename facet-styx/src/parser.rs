@@ -112,6 +112,13 @@ pub struct StyxParser<'de> {
     tag_has_payload_stack: Vec<bool>,
     /// Hint for the next scalar type expected by the deserializer.
     scalar_type_hint: Option<ScalarTypeHint>,
+    /// A scalar the deserializer asked for as a number, whose text is not one
+    /// in Styx: its span, its text, and the form that was wanted. Raised by
+    /// the next `next_event` rather than at the point of discovery, because
+    /// interpretation can happen while the event is already cached (see
+    /// `hint_scalar_type`) where there is nothing to return an error to.
+    /// Held as parts because `ParseError` is not `Clone` and this parser is.
+    pending_interp_error: Option<(ReflectSpan, String, &'static str)>,
 }
 
 impl<'de> StyxParser<'de> {
@@ -124,6 +131,7 @@ impl<'de> StyxParser<'de> {
             complete: false,
             tag_has_payload_stack: Vec::new(),
             scalar_type_hint: None,
+            pending_interp_error: None,
             pending_doc: Vec::new(),
             saved_state: None,
             at_implicit_root: true,
@@ -143,6 +151,7 @@ impl<'de> StyxParser<'de> {
             complete: false,
             tag_has_payload_stack: Vec::new(),
             scalar_type_hint: None,
+            pending_interp_error: None,
             pending_doc: Vec::new(),
             saved_state: None,
             at_implicit_root: false, // Expression mode doesn't have implicit root
@@ -188,7 +197,57 @@ impl<'de> StyxParser<'de> {
     fn parse_scalar(&mut self, value: Cow<'de, str>, _kind: StyxScalarKind) -> ScalarValue<'de> {
         // Take the hint (it's consumed after use)
         let hint = self.scalar_type_hint.take();
+        self.interpret_or_reject(value, hint)
+    }
 
+    /// The Styx grammar a numeric hint asks for, for the rejection message.
+    /// `None` for hints that impose no numeric form (a string, bytes, …).
+    fn numeric_form(hint: ScalarTypeHint) -> Option<&'static str> {
+        match hint {
+            ScalarTypeHint::I8
+            | ScalarTypeHint::I16
+            | ScalarTypeHint::I32
+            | ScalarTypeHint::I64
+            | ScalarTypeHint::I128
+            | ScalarTypeHint::Isize
+            | ScalarTypeHint::U8
+            | ScalarTypeHint::U16
+            | ScalarTypeHint::U32
+            | ScalarTypeHint::U64
+            | ScalarTypeHint::U128
+            | ScalarTypeHint::Usize => Some("an integer"),
+            ScalarTypeHint::F32 | ScalarTypeHint::F64 => Some("a float"),
+            _ => None,
+        }
+    }
+
+    /// Interpret `value` under `hint`, remembering a rejection.
+    ///
+    /// A numeric hint that does not interpret is a REJECTION, not a pass to
+    /// the next reader. Leaving it as a string would hand the decision to the
+    /// target type's `FromStr`, whose grammar is a different one — that is how
+    /// `Infinity` and `NaN` used to decode into an `f64` field although
+    /// `interp[interp.float.special]` defines a closed, case-sensitive set.
+    fn interpret_or_reject(
+        &mut self,
+        value: Cow<'de, str>,
+        hint: Option<ScalarTypeHint>,
+    ) -> ScalarValue<'de> {
+        let interpreted = Self::interpret_scalar(value, hint);
+        if let (Some(hint), ScalarValue::Str(text)) = (hint, &interpreted)
+            && let Some(expected) = Self::numeric_form(hint)
+        {
+            self.pending_interp_error =
+                Some((self.event_span(), text.as_ref().to_string(), expected));
+        }
+        interpreted
+    }
+
+    /// Interpret one scalar's text under a target-type hint. Split out of
+    /// [`Self::parse_scalar`] because a hint can also arrive *after* the
+    /// scalar was converted (see [`Self::hint_scalar_type`]), and both entry
+    /// points must reach exactly the same rules.
+    fn interpret_scalar(value: Cow<'de, str>, hint: Option<ScalarTypeHint>) -> ScalarValue<'de> {
         // All scalar kinds are treated the same - the hint determines interpretation
         match hint {
             Some(ScalarTypeHint::String) | None => ScalarValue::Str(value),
@@ -202,6 +261,10 @@ impl<'de> StyxParser<'de> {
                     ScalarValue::Str(value)
                 }
             }
+            // The numeric forms are `interp[interp.int.*]` and
+            // `interp[interp.float.*]`, not Rust's `str::parse` — they admit
+            // readability underscores and radix prefixes, and they hold the
+            // special float names to the spec's closed case-sensitive set.
             Some(
                 ScalarTypeHint::I8
                 | ScalarTypeHint::I16
@@ -209,13 +272,10 @@ impl<'de> StyxParser<'de> {
                 | ScalarTypeHint::I64
                 | ScalarTypeHint::I128
                 | ScalarTypeHint::Isize,
-            ) => {
-                if let Ok(n) = value.parse::<i64>() {
-                    ScalarValue::I64(n)
-                } else {
-                    ScalarValue::Str(value)
-                }
-            }
+            ) => match crate::scalar_interp::parse_i64(&value) {
+                Some(n) => ScalarValue::I64(n),
+                None => ScalarValue::Str(value),
+            },
             Some(
                 ScalarTypeHint::U8
                 | ScalarTypeHint::U16
@@ -223,18 +283,14 @@ impl<'de> StyxParser<'de> {
                 | ScalarTypeHint::U64
                 | ScalarTypeHint::U128
                 | ScalarTypeHint::Usize,
-            ) => {
-                if let Ok(n) = value.parse::<u64>() {
-                    ScalarValue::U64(n)
-                } else {
-                    ScalarValue::Str(value)
-                }
-            }
+            ) => match crate::scalar_interp::parse_u64(&value) {
+                Some(n) => ScalarValue::U64(n),
+                None => ScalarValue::Str(value),
+            },
             Some(ScalarTypeHint::F32 | ScalarTypeHint::F64) => {
-                if let Ok(n) = value.parse::<f64>() {
-                    ScalarValue::F64(n)
-                } else {
-                    ScalarValue::Str(value)
+                match crate::scalar_interp::parse_f64(&value) {
+                    Some(n) => ScalarValue::F64(n),
+                    None => ScalarValue::Str(value),
                 }
             }
             Some(ScalarTypeHint::Char) => {
@@ -520,6 +576,18 @@ impl<'de> StyxParser<'de> {
 
 impl<'de> FormatParser<'de> for StyxParser<'de> {
     fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, ParseError> {
+        // A scalar the deserializer asked for as a number, whose text is not
+        // one, fails HERE — the point where there is an error channel.
+        if let Some((span, text, expected)) = self.pending_interp_error.take() {
+            return Err(ParseError::new(
+                span,
+                DeserializeErrorKind::UnexpectedToken {
+                    got: text.into(),
+                    expected,
+                },
+            ));
+        }
+
         // Return queued event if any (FIFO - take from front)
         if !self.peeked_events.is_empty() {
             let event = self.peeked_events.remove(0);
@@ -628,7 +696,40 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
         Some(self.inner.input().as_bytes())
     }
 
+    /// Record the target type the next scalar should be read as.
+    ///
+    /// A hint may arrive AFTER the scalar it describes has already been
+    /// converted: `peek_event` pulls an event through `convert_event` — with
+    /// no hint yet — and caches it, and the deserializer peeks to decide what
+    /// it is looking at before it announces the type it wants. Storing the
+    /// hint for "the next scalar" would therefore apply it to the wrong
+    /// scalar, or to none: a cached `Scalar` is already past.
+    ///
+    /// Styx scalars are opaque text, so nothing is lost by re-reading one —
+    /// the cached value still carries the source text. A hint that lands on
+    /// an already-converted scalar reinterprets it in place, and only a hint
+    /// with nothing to reinterpret is stored for the scalar still to come.
+    /// Styx is self-describing about STRUCTURE and deliberately opaque about
+    /// SCALARS (`interp[interp.coerce.none]`: "the target type determines
+    /// interpretation"). Without this the deserializer would skip
+    /// `hint_scalar_type` as it does for JSON, every scalar would reach it as
+    /// a string, and numbers would be read by the target type's `FromStr`
+    /// rather than by `interp[interp.int.*]`/`interp[interp.float.*]`.
+    fn needs_scalar_hints(&self) -> bool {
+        true
+    }
+
     fn hint_scalar_type(&mut self, hint: ScalarTypeHint) {
+        if let Some(ParseEvent {
+            kind: ParseEventKind::Scalar(ScalarValue::Str(text)),
+            ..
+        }) = self.peeked_events.first()
+        {
+            let text = text.clone();
+            let reinterpreted = self.interpret_or_reject(text, Some(hint));
+            self.peeked_events[0].kind = ParseEventKind::Scalar(reinterpreted);
+            return;
+        }
         self.scalar_type_hint = Some(hint);
     }
 }
