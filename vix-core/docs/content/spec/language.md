@@ -213,8 +213,7 @@ single-quoted string; `'` becomes reserved rather than repurposed.
 > This is the load-bearing restraint. Every template system that grew loops
 > grew a second, worse language inside its strings — untyped, untooled, with
 > its own scoping and its own bugs. Vix already is the language; templates are
-> leaves and vix is the combinator. It is the same rule that keeps a manifest
-> from computing (`vixen.package.frontmatter-is-not-code`), one level down.
+> leaves and vix is the combinator.
 
 > r[lang.template.escaping]
 >

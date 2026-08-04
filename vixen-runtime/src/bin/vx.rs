@@ -1,12 +1,15 @@
-//! `vx` — a shim that runs one `.vix` file, or one package command.
+//! `vx` — a shim that runs one `.vix` file.
 //!
 //! Deliberately tiny. `vx <file.vix>` reads a file and runs its `#[test]`
-//! declarations through the same production path the ratchet drives;
-//! `vx r <package-dir> <command>` resolves the command through the package's
-//! `package.styx` (`vixen.package.run-mvp`, `/spec/vixen/packages`) and runs
-//! exactly the named root through the same path. The manifest is the ONE
-//! on-disk format this CLI reads, and its shape belongs to
-//! `vix-package-schema`, not to this file.
+//! declarations through the same production path the ratchet drives. This
+//! CLI reads no on-disk format of its own.
+//!
+//! It briefly grew a `vx r <package-dir> <command>` form that resolved
+//! through a `package.styx` manifest document. That whole genre is retired: a
+//! package is an entry-point module with exports, and running one means
+//! demanding an export, not consulting a sidecar document. The replacement is
+//! undesigned, so the subcommand is gone rather than left pointing at a
+//! format that no longer exists.
 //!
 //! # The fixture root is the one real decision here
 //!
@@ -31,7 +34,6 @@ use std::sync::Arc;
 use vix::runtime::PrimitiveServices;
 use vixen_runtime::fixture::FixtureStore;
 use vixen_runtime::host_exec::HostExecBackend;
-use vixen_runtime::package::prepare_command;
 use vixen_runtime::ratchet::{PreparedRun, RatchetReport, prepare_source};
 
 fn main() -> ExitCode {
@@ -50,38 +52,20 @@ fn main() -> ExitCode {
         }
     };
 
-    // What to run and what to call it in the report: a file's roots, or a
-    // package command's one selected root.
-    let (label, prepared) = match &invocation.action {
-        Action::File { source } => {
-            let text = match std::fs::read_to_string(source) {
-                Ok(text) => text,
-                Err(error) => {
-                    eprintln!("vx: {}: {error}", source.display());
-                    return ExitCode::from(2);
-                }
-            };
-            match prepare_source(&text) {
-                Ok(run) => (source.display().to_string(), run),
-                Err(error) => {
-                    eprintln!("vx: {}: run failed\n{error:#?}", source.display());
-                    return ExitCode::from(1);
-                }
-            }
+    // What to run and what to call it in the report.
+    let source = &invocation.source;
+    let text = match std::fs::read_to_string(source) {
+        Ok(text) => text,
+        Err(error) => {
+            eprintln!("vx: {}: {error}", source.display());
+            return ExitCode::from(2);
         }
-        Action::Command { directory, command } => {
-            match prepare_command(directory, command) {
-                Ok(prepared) => (
-                    format!("{}#{}", prepared.package, prepared.command),
-                    prepared.run,
-                ),
-                // A typed refusal is the product working, not the CLI
-                // misused: exit 1, message rendered whole.
-                Err(refusal) => {
-                    eprintln!("vx: {refusal}");
-                    return ExitCode::from(1);
-                }
-            }
+    };
+    let (label, prepared) = match prepare_source(&text) {
+        Ok(run) => (source.display().to_string(), run),
+        Err(error) => {
+            eprintln!("vx: {}: run failed\n{error:#?}", source.display());
+            return ExitCode::from(1);
         }
     };
 
@@ -126,17 +110,10 @@ fn execute(
     prepared.execute_with_primitive_services(services)
 }
 
-const USAGE: &str = "usage: vx [--fixtures <dir>] [--] <file.vix>\n       vx r [--fixtures <dir>] <package-dir> <command>";
-
-/// What to run: a file's declared roots, or one package command
-/// (`vixen.package.run-mvp`).
-enum Action {
-    File { source: PathBuf },
-    Command { directory: PathBuf, command: String },
-}
+const USAGE: &str = "usage: vx [--fixtures <dir>] [--] <file.vix>";
 
 struct Invocation {
-    action: Action,
+    source: PathBuf,
     fixtures: PathBuf,
 }
 
@@ -150,51 +127,6 @@ enum Parsed {
 
 impl Invocation {
     fn parse(arguments: &[String]) -> Parsed {
-        // `vx r …` / `vx run …` selects the package-command form; everything
-        // else is the original one-file form.
-        match arguments.first().map(String::as_str) {
-            Some("r" | "run") => Self::parse_command(&arguments[1..]),
-            _ => Self::parse_file(arguments),
-        }
-    }
-
-    fn parse_command(arguments: &[String]) -> Parsed {
-        let mut fixtures: Option<PathBuf> = None;
-        let mut positional: Vec<&str> = Vec::new();
-        let mut rest = arguments.iter();
-        while let Some(argument) = rest.next() {
-            match argument.as_str() {
-                "--fixtures" => match rest.next() {
-                    Some(directory) if fixtures.is_none() => {
-                        fixtures = Some(PathBuf::from(directory));
-                    }
-                    _ => return Parsed::Invalid,
-                },
-                "-h" | "--help" => return Parsed::Help,
-                flag if flag.starts_with('-') => return Parsed::Invalid,
-                value => positional.push(value),
-            }
-        }
-        // Exactly `<package-dir> <command>`. Argument tails are a designed
-        // surface (`vixen.package.run`), not an MVP one — a third positional
-        // is malformed rather than silently dropped.
-        let [directory, command] = positional.as_slice() else {
-            return Parsed::Invalid;
-        };
-        let directory = PathBuf::from(directory);
-        // The package directory is the default fixture root, so a package and
-        // the trees it reads travel together — same rule as the file form.
-        let fixtures = fixtures.unwrap_or_else(|| directory.clone());
-        Parsed::Run(Self {
-            action: Action::Command {
-                directory,
-                command: (*command).to_owned(),
-            },
-            fixtures,
-        })
-    }
-
-    fn parse_file(arguments: &[String]) -> Parsed {
         let mut source: Option<PathBuf> = None;
         let mut fixtures: Option<PathBuf> = None;
         let mut rest = arguments.iter();
@@ -236,10 +168,7 @@ impl Invocation {
                 .filter(|parent| !parent.as_os_str().is_empty())
                 .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
         });
-        Parsed::Run(Self {
-            action: Action::File { source },
-            fixtures,
-        })
+        Parsed::Run(Self { source, fixtures })
     }
 }
 

@@ -9512,14 +9512,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "vix-package-schema"
-version = "0.1.0"
-dependencies = [
- "facet",
- "facet-styx",
-]
-
-[[package]]
 name = "vix-wire"
 version = "0.1.0"
 dependencies = [
@@ -9555,7 +9547,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "vix-core",
- "vix-package-schema",
  "vixen-primitives",
  "weavy",
  "windows-sys 0.61.2",

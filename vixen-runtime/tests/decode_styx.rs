@@ -1,4 +1,11 @@
-//! Typed decode of STYX documents — the format the package manifest speaks.
+//! Typed decode of STYX documents — one of the decode rail's three formats,
+//! beside Json and Toml.
+//!
+//! The package manifest was this rail's motivating consumer and is gone; the
+//! rail is not, because decoding a styx document from vix code stands on its
+//! own exactly as decoding a TOML one does. The variant-tag and `Map` work
+//! below arrived with the manifest and outlived it — both are general decode
+//! capabilities that no format-specific caller owns.
 //!
 //! Three seams under test, each with a differential that pins identity, not
 //! just shape:

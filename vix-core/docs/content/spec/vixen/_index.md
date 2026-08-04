@@ -39,7 +39,10 @@ through:
   no second lockfile beside it.
 - [Delivery](/spec/vixen/delivery) — how a demanded value reaches a filesystem,
   given that no program may write one.
-- [The package manifest](/spec/vixen/packages) — what a *package* is, given
-  that no program may describe itself ambiently: pinned inputs, commands and
-  artifacts as bare fn refs, exposed programs as paths into values, and the
-  `vx r` resolution rungs.
+- [Packages](/spec/vixen/packages) — what a *package* is: an entry-point
+  module that exports items, one of which is `_pkg`. The manifest-document
+  genre that stood here is retracted entire, and the page records why so it
+  is not rebuilt.
+- [The registry](/spec/vixen/registry) — how a package is published without
+  anyone choosing a version number, and what is checked before a publication
+  is accepted.

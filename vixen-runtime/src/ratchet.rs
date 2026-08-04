@@ -1102,9 +1102,9 @@ impl PreparedRun {
             .collect()
     }
 
-    /// Keep only the named roots — the seam `vx r <command>` runs exactly the
-    /// manifest-named fn through (`vixen.package.run-mvp`), rather than every
-    /// root the file declares. Selection is by declared name; a name that
+    /// Keep only the named roots, rather than every root the file declares —
+    /// the seam a caller that wants to run one named entry point goes
+    /// through. Selection is by declared name; a name that
     /// matches nothing simply selects nothing, and the CALLER refuses loudly
     /// (it can name the command and list [`Self::declared_roots`]), because
     /// only the caller knows why the name was expected to exist.

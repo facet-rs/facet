@@ -1,10 +1,14 @@
 # zlib + libpng, as a single-file vix package
 
 Design fiction, written to pressure the literal/template design
-(`r[lang.literal.*]`, `r[lang.template.*]`) and the frontmatter manifest
-(`r[vixen.package.frontmatter]`) against a build that has all the awkward
-parts: pinned foreign source, per-file compilation, a generated config
+(`r[lang.literal.*]`, `r[lang.template.*]`) against a build that has all the
+awkward parts: pinned foreign source, per-file compilation, a generated config
 header, a generated program, and a link step consuming earlier outputs.
+
+It was also written to pressure a frontmatter manifest, which is retired — a
+package is an entry-point module with exports, not a document. The manifest
+block is gone from `main.vix` and nothing else in the sketch moved, which is
+its own small finding: the build never needed the manifest to exist.
 
 Nothing here runs. The value is the list below — writing it surfaced four
 things the spec does not answer, and two places where writing real code
@@ -12,8 +16,6 @@ disagreed with what the spec says.
 
 ## What it validates
 
-- **Frontmatter carries a real manifest.** Two `@fetch` inputs with upstream
-  digests, one command. The whole package is one file.
 - **A template is a function.** `Template<Image>` is applied as
   `mandelbrot()(Image { … })`; the struct describing the picture *is* the
   struct filling the source. No fill-API was needed.

@@ -3,7 +3,6 @@ members = [
   "gingembre-snark-spike",
   "snark-ts-diff",
   "vix-core",
-  "vix-package-schema",
   "vix-wire",
   "vixen-primitives",
   "vixen-runtime",
