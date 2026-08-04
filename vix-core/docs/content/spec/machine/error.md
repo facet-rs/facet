@@ -105,7 +105,7 @@ the string `"unwrap on None"` and no location, no subject, no demand chain.
 
 > r[machine.error.failure-is-a-value]
 >
-> [DESIGN, round 11] A failure **is a value**. It has a schema and a content hash
+> [DESIGN] A failure **is a value**. It has a schema and a content hash
 > like anything else (`machine.identity.value-identity-pair`), so it can be stored,
 > memoized, put in a record, and returned. "The demand has no answer" is rhetoric;
 > the demand's answer is a `Failure`.
@@ -147,7 +147,7 @@ the string `"unwrap on None"` and no location, no subject, no demand chain.
 
 > r[machine.error.chain-not-in-identity]
 >
-> [SETTLED, round 11 — forced by `failure-is-a-value`] The **demand chain is not part
+> [SETTLED — forced by `machine.error.failure-is-a-value`] The **demand chain is not part
 > of a failure's content identity.** A failure's identity is intrinsic:
 > typed payload, optional subject value identity, and stable source-site
 > identity (`machine.error.failure-source-site-identity`). The chain is
@@ -156,9 +156,8 @@ the string `"unwrap on None"` and no location, no subject, no demand chain.
 > Were the chain in the identity, the same failing computation demanded from two
 > places would be two different values, and the memo would never hit. The chain is
 > instead **reconstructed at the moment of observation**, by reading the live demand
-> map (round-5 verdict: "error demand-chain = read of live demand map at failure
-> time; no retention"). `machine.error.carries-context` is satisfied at the point of
-> report, not at the point of construction.
+> map at failure time; nothing is retained. `machine.error.carries-context` is
+> satisfied at the point of report, not at the point of construction.
 >
 > Raw byte spans follow the same rule: they are per-compilation observation
 > context, not stable identity. A whitespace-only or span-only edit preserves the
@@ -167,7 +166,7 @@ the string `"unwrap on None"` and no location, no subject, no demand chain.
 
 > r[machine.error.failures-are-cached-and-cut-off]
 >
-> [DESIGN, round 11] Because a failure is a value and an outcome is memoized, a
+> [DESIGN] Because a failure is a value and an outcome is memoized, a
 > failing demand is an ordinary memo entry — with its read-set.
 >
 > Consequences, and the second one is a product property nobody else has:

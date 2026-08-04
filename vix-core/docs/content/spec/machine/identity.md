@@ -25,8 +25,8 @@ driver.
 
 > r[machine.identity.canonical-memory]
 >
-> [STRUCK — superseded by the content-hash ruling, changelog round 5 final
-> addendum.] The one content-hash definition is the schema-specialized framed
+> [STRUCK — superseded by the content-hash ruling.] The one content-hash
+> definition is the schema-specialized framed
 > walked encoding (`machine.identity.framed-encoding`), computed once at
 > intern and carried on the store entry (entry-carried identity), read as a
 > load thereafter. Flat-memory hashing was rejected because the structural
@@ -67,7 +67,7 @@ driver.
 > the invariant: the padding law is enforced, not asserted. Facet-discovered values canonicalize
 > at the bridge. `is_padding_range` proofs demote to canary/verification machinery.
 >
-> ROUND-10 CORRECTION: this rule used to conclude "flat-byte hashing is valid
+> CORRECTION: this rule used to conclude "flat-byte hashing is valid
 > unconditionally for canonical layouts." That is the conclusion of
 > `machine.identity.canonical-memory`, which is **STRUCK** — and which
 > `machine.identity.framed-encoding` [SETTLED] replaces outright. Zero padding is
@@ -129,15 +129,15 @@ driver.
 > [SETTLED] `HandleTier` (pending/realized scheduling state) never enters hash
 > bytes. That is the whole rule.
 >
-> ROUND-10 CORRECTION: this rule used to continue "a `Pending<T>` and its eventual
+> CORRECTION: this rule used to continue "a `Pending<T>` and its eventual
 > realized value share declared identity … this is what lets a waiter recognize the
 > value it awaited." That clause **directly contradicted**
 > `machine.identity.pending-identity` eight lines below, which says they do NOT
-> share a content hash and that recognition is served by the memo. The round-5
-> reconciliation identified this clause as the two planes smeared together and
-> ordered it deleted; the sweep hit `pending-identity` and `store.dedup` and missed
-> this one. A pending invocation is identified by its **recipe** (`DemandKey`); the
-> realized value by its **content**. They are different planes and different bytes.
+> share a content hash and that recognition is served by the memo. It was the two
+> planes smeared together, and the sweep that deleted it from `pending-identity`
+> and `store.dedup` missed this one. A pending invocation is identified by its
+> **recipe** (`DemandKey`); the realized value by its **content**. They are
+> different planes and different bytes.
 
 > r[machine.identity.pending-identity]
 >
@@ -161,13 +161,13 @@ driver.
 
 > r[machine.identity.never-consults-order]
 >
-> [SETTLED, round 7 as amended in round 9] A value's identity is a function of
+> [SETTLED] A value's identity is a function of
 > its content alone; no program value may move it. `<=>` is the STRUCTURAL
 > comparison — derived from a type's fields in declaration order, total, and not
 > overridable — so it is itself a function of content and a canonical encoding
 > may use it. What may never enter identity is an `Order<T>`: orders are ordinary
 > program values passed to ranking operations, and an encoding keyed on one would
-> make a value's identity depend on unrelated user code. (Round 7 first stated
+> make a value's identity depend on unrelated user code. (An earlier draft stated
 > this as "no content hash may be defined in terms of `<=>`", on the premise that
 > `<=>` was user-overridable. That premise was retracted; the law survives, the
 > reason changed.)
@@ -182,7 +182,7 @@ driver.
 
 > r[machine.identity.merkle-tree]
 >
-> [DESIGN, round 10] A workspace is a value, so it has an identity, so it must be
+> [DESIGN] A workspace is a value, so it has an identity, so it must be
 > hashed. A `Tree` (recursive, `machine.identity.tree-model`) is therefore identified as a
 > **Merkle map** over its semantic encoding — not over the store's chunking
 > (`machine.identity.tree-hash-is-not-node-hash`):
@@ -193,7 +193,7 @@ driver.
 
 > r[machine.identity.streams-cross-island-edges]
 >
-> [SETTLED, round 10; corrected round 12] Codata may cross an island edge. The edge's
+> [SETTLED] Codata may cross an island edge. The edge's
 > semantic content is the VALUE the stream drains to; the incremental view is as-if. A
 > stream therefore has recipe identity and no value identity of its own: its elements are
 > ordinary demands, memoized individually; the aggregate has no content hash until resolved.
@@ -249,7 +249,7 @@ driver.
 
 > r[machine.identity.tree-model]
 >
-> [DESIGN, round 12] **A `Tree` is not `Map<Path, Blob>`.** That spelling was an
+> [DESIGN] **A `Tree` is not `Map<Path, Blob>`.** That spelling was an
 > oversimplification: it cannot represent a directory (in particular an empty one), a
 > symlink, or an executable bit, all of which the store models today.
 >
@@ -273,7 +273,7 @@ driver.
 
 > r[machine.identity.tree-hash-is-not-node-hash]
 >
-> [DESIGN, round 12] **Vix's `TreeHash` and Vixen's storage `NodeHash` are different
+> [DESIGN] **Vix's `TreeHash` and Vixen's storage `NodeHash` are different
 > identities over different preimages. They may not be conflated.**
 >
 > `DirectoryEntryKind` distinguishes `SmallFile { content_hash, size, executable }` from

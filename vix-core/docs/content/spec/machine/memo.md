@@ -9,7 +9,7 @@ right).
 
 > r[machine.memo.indexed-by-location]
 >
-> [DESIGN, round 10 — the rule round 5 promised and never wrote] **The memo is
+> [DESIGN] **The memo is
 > INDEXED by location**, not by content. A location is the path of *names* from the
 > demand root: content-free, known at demand time, and unchanged when a file's
 > bytes change.

@@ -331,7 +331,7 @@ primitives reference by identity.
 
 > r[machine.primitive.fetch-returns-a-blob]
 >
-> [DESIGN, round 12] **`fetch` returns a `Blob`, never a `Tree`.** An archive is a file.
+> [DESIGN] **`fetch` returns a `Blob`, never a `Tree`.** An archive is a file.
 > Unpacking is a separate demand (`extract`), whose result is a `Tree` whose identity is
 > the canonical tree encoding (`machine.identity.tree-model`).
 >
@@ -372,7 +372,7 @@ primitives reference by identity.
 
 > r[machine.primitive.exec-is-placement-agnostic]
 >
-> [SETTLED, round 12] **`exec` and `place` are decoupled and neither mentions the other.**
+> [SETTLED] **`exec` and `place` are decoupled and neither mentions the other.**
 >
 > `exec` is an execution primitive. It returns an ordinary struct
 > (`machine.primitive.exec-outcome`) whose `stdout`/`stderr` fields are codata. It has no

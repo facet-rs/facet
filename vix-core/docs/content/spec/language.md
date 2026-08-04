@@ -176,10 +176,12 @@ program admits a flavor name.
 > - `{let x}` **binds** a name the literal does not have. Outward: `x` is
 >   determined by the literal's *use*, not by its surroundings.
 >
-> A literal whose holes are all reads is a `String` (or `Path`, or `Command`) —
-> everything is known, so it is simply built. A literal with any `{let …}` is a
-> **template**. Mixing is admissible: the reads are resolved at construction and
-> the bindings remain.
+> A literal whose holes are all reads has the type its delimiter and flavor
+> already give it — `String`, `Path`, `Command<A>`, or a flavor's type such as
+> `Html` (`r[lang.template.escaping]`). Everything is known, so it is simply
+> built. A literal with any `{let …}` is a **template**: a function *to* that
+> same type (`r[lang.template.is-a-function]`). Mixing is admissible: the reads
+> are resolved at construction and the bindings remain.
 >
 > There is no other construct inside a literal — no conditionals, no loops, no
 > filters, no expressions beyond a name. See `r[lang.template.no-control-flow]`.
