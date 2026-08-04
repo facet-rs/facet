@@ -2752,7 +2752,11 @@ fn lower_generator_match(
 /// Lower a yielded `if` into a generator [`GeneratorStep::If`]: real two-way
 /// dispatch on a Bool condition whose taken branch is a nested generator body.
 ///
-/// r[impl machine.test.generator-step]
+/// Carried an `r[impl machine.test.generator-step]` reference to a rule that
+/// has never existed — there is no `machine.test.*` namespace, and nothing in
+/// the spec governs generator-step lowering. The reference is removed rather
+/// than repointed, because repointing it at a near-miss rule would hide the
+/// actual state: this mechanism is implemented and unspecified.
 fn lower_generator_if(
     nodes: &mut Vec<Node>,
     yielded_checks: &mut Vec<NodeId>,
