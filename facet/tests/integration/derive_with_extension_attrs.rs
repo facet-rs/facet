@@ -28,7 +28,7 @@ fn test_extension_attr_without_derive() {
     let attr = shape
         .attributes
         .iter()
-        .find(|a| a.ns == Some("testattrs") && a.key == "positional");
+        .find(|a| a.ns() == Some("testattrs") && a.key() == "positional");
     assert!(
         attr.is_some(),
         "Extension attribute should be present without derive"
@@ -41,7 +41,7 @@ fn test_extension_attr_with_derive() {
     let attr = shape
         .attributes
         .iter()
-        .find(|a| a.ns == Some("testattrs") && a.key == "positional");
+        .find(|a| a.ns() == Some("testattrs") && a.key() == "positional");
     // BUG: This currently fails because the attribute is dropped when derive is present
     assert!(
         attr.is_some(),

@@ -17,7 +17,7 @@ struct ConstTuplePayload<const N: usize>(#[facet(testattrs::generic_size = N)] [
 fn read_generic_size(attrs: &[facet::Attr]) -> usize {
     let attr = attrs
         .iter()
-        .find(|a| a.ns == Some("testattrs") && a.key == "generic_size")
+        .find(|a| a.ns() == Some("testattrs") && a.key() == "generic_size")
         .expect("generic extension attribute should be present");
     let typed = attr
         .get_as::<testattrs::Attr>()
@@ -36,7 +36,7 @@ fn namespaced_extension_attrs_on_tuple_fields() {
         shape
             .attributes
             .iter()
-            .any(|a| a.ns == Some("testattrs") && a.key == "named"),
+            .any(|a| a.ns() == Some("testattrs") && a.key() == "named"),
         "container-level namespaced attribute should be present"
     );
 
@@ -49,7 +49,7 @@ fn namespaced_extension_attrs_on_tuple_fields() {
     let short_attr = fields[0]
         .attributes
         .iter()
-        .find(|a| a.ns == Some("testattrs") && a.key == "short")
+        .find(|a| a.ns() == Some("testattrs") && a.key() == "short")
         .expect("first tuple field should have short attribute");
     let decoded = short_attr
         .get_as::<testattrs::Attr>()
@@ -63,7 +63,7 @@ fn namespaced_extension_attrs_on_tuple_fields() {
         fields[1]
             .attributes
             .iter()
-            .any(|a| a.ns == Some("testattrs") && a.key == "positional"),
+            .any(|a| a.ns() == Some("testattrs") && a.key() == "positional"),
         "second tuple field should have positional attribute"
     );
 }

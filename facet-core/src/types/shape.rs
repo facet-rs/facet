@@ -465,7 +465,7 @@ impl Shape {
     pub fn has_builtin_attr(&self, key: &str) -> bool {
         self.attributes
             .iter()
-            .any(|attr| attr.ns.is_none() && attr.key == key)
+            .any(|attr| attr.ns().is_none() && attr.key() == key)
     }
 
     /// Returns true if this shape is transparent.
@@ -576,10 +576,10 @@ impl Shape {
         key: &str,
     ) -> Option<T> {
         self.attributes.iter().find_map(|attr| {
-            if attr.ns.is_none() && attr.key == key {
+            if attr.ns().is_none() && attr.key() == key {
                 // Try to get the data as the requested type
                 // Safety: We're checking that the shape matches T::SHAPE
-                unsafe { attr.data.get_as::<T>(T::SHAPE).copied() }
+                unsafe { attr.data().get_as::<T>(T::SHAPE).copied() }
             } else {
                 None
             }

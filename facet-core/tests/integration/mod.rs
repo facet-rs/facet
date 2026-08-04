@@ -1,3 +1,4 @@
+mod attr_sync_invariant;
 mod list_from_raw_parts;
 mod pointer;
 mod simd;

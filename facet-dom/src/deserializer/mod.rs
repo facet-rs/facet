@@ -261,7 +261,7 @@ where
             .shape()
             .attributes
             .iter()
-            .find(|attr| attr.ns == Some("xml") && attr.key == "ns_all")
+            .find(|attr| attr.ns() == Some("xml") && attr.key() == "ns_all")
             .and_then(|attr| attr.get_as::<&str>().copied());
 
         // Check if deny_unknown_fields is set

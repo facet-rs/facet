@@ -1466,7 +1466,7 @@ fn debug_shape_variants() {
         for v in e.variants {
             eprintln!("Variant name: {}", v.name);
             for attr in v.attributes {
-                eprintln!("  Attr ns={:?} key={}", attr.ns, attr.key);
+                eprintln!("  Attr ns={:?} key={}", attr.ns(), attr.key());
             }
         }
     }

@@ -191,8 +191,8 @@ pub fn extract_requirements<R: Facet<'static>>(
 fn find_origin_attribute(field: &Field) -> Option<&'static str> {
     // The attribute data for args::origin is stored directly as &str
     for field_attr in field.attributes {
-        if field_attr.ns == Some("args")
-            && field_attr.key == "origin"
+        if field_attr.ns() == Some("args")
+            && field_attr.key() == "origin"
             && let Some(s) = field_attr.get_as::<&str>()
         {
             return Some(s);

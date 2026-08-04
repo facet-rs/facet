@@ -744,8 +744,8 @@ fn write_third_party_attrs_colored(
     // Group attributes by namespace
     let mut by_namespace: BTreeMap<&'static str, Vec<&'static str>> = BTreeMap::new();
     for attr in attributes {
-        if let Some(ns) = attr.ns {
-            by_namespace.entry(ns).or_default().push(attr.key);
+        if let Some(ns) = attr.ns() {
+            by_namespace.entry(ns).or_default().push(attr.key());
         }
     }
 
@@ -1378,8 +1378,8 @@ fn write_third_party_attrs(
     // Group attributes by namespace
     let mut by_namespace: BTreeMap<&'static str, Vec<&'static str>> = BTreeMap::new();
     for attr in attributes {
-        if let Some(ns) = attr.ns {
-            by_namespace.entry(ns).or_default().push(attr.key);
+        if let Some(ns) = attr.ns() {
+            by_namespace.entry(ns).or_default().push(attr.key());
         }
     }
 

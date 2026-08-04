@@ -407,12 +407,17 @@ fn test_partial_untrusted_shape() {
     run_compilation_test(&test);
 }
 
-/// Soundness test for GitHub issue #1573
+/// Soundness test for GitHub issue #1573 — the `Attr::new` path.
 ///
-/// Before the fix, Attr could store non-Sync data like Rc<T>, but Attr itself
-/// was Sync, allowing data races when accessed from multiple threads.
+/// Attr stores its payload as a type-erased OxRef but is Send + Sync by a
+/// hand-written unsafe impl, so non-Sync data behind an Attr is a data race
+/// reachable from safe code. 1524e017a closed this entry point with a
+/// `T: Sync` bound.
 ///
-/// After the fix, Attr::new requires T: Sync, so this code should fail to compile.
+/// The expectation names the bound specifically: the previous fixture matched
+/// only on "cannot be shared between threads safely", which its own
+/// `static RC: LazyLock<Rc<i32>>` produced on its own — so it would have passed
+/// with the bound removed.
 ///
 /// See: https://github.com/facet-rs/facet/issues/1573
 #[test]
@@ -421,7 +426,35 @@ fn test_attr_non_sync_data() {
     let test = CompilationTest {
         name: "attr_non_sync_data",
         source: include_str!("fixtures/non_sync_data.rs"),
-        expected_errors: &["Rc<i32>` cannot be shared between threads safely"],
+        expected_errors: &[
+            "`std::rc::Rc<i32>` cannot be shared between threads safely",
+            "required by a bound in `facet::Attr::new`",
+        ],
+    };
+
+    run_compilation_test(&test);
+}
+
+/// Soundness test for GitHub issue #1573 — the struct-literal path.
+///
+/// This is the half 1524e017a missed: the fields were `pub`, so
+/// `Attr { ns, key, data: OxRef::from_ref(rc) }` skipped the constructor and its
+/// bound, and reproduced the issue's data race verbatim from a crate with
+/// `#![forbid(unsafe_code)]`. The fields are private now.
+///
+/// The general invariant — that the set of Attr constructors is exactly the set
+/// that checks or delegates the Sync obligation — is asserted, and runs by
+/// default, in facet-core/tests/integration/attr_sync_invariant.rs. This test
+/// only runs under `--features slow-tests`.
+///
+/// See: https://github.com/facet-rs/facet/issues/1573
+#[test]
+#[cfg(not(miri))]
+fn test_attr_non_sync_struct_literal() {
+    let test = CompilationTest {
+        name: "attr_non_sync_struct_literal",
+        source: include_str!("fixtures/non_sync_attr_literal.rs"),
+        expected_errors: &["fields `ns`, `key` and `data` of struct `facet::Attr` are private"],
     };
 
     run_compilation_test(&test);
