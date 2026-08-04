@@ -369,7 +369,7 @@ fn neutral(sh: Sh) -> Stream<Check> {
 /// module without executing anything, in exactly the "needs `Rustc`
 /// producing `x86_64-pc-windows-msvc`" shape.
 ///
-/// r[verify vixen.executor.requirements-are-static]
+/// r[verify vixen.executor.root-surface-is-static]
 #[test]
 fn the_requirement_set_is_reported_without_executing() {
     let module = vixen_runtime::default_compiler()
@@ -399,7 +399,7 @@ fn the_requirement_set_is_reported_without_executing() {
 /// value is reported as "decided at run time", never silently dropped and
 /// never guessed.
 ///
-/// r[verify vixen.executor.requirements-are-static]
+/// r[verify vixen.executor.root-surface-is-static]
 #[test]
 fn a_computed_capture_degrades_honestly_in_the_static_report() {
     const COMPUTED: &str = r#"

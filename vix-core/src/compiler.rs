@@ -5714,8 +5714,8 @@ fn lower_request_shape(
 ///
 /// The literal constraint is checked here, with a diagnostic naming the
 /// surface: a computed argument is rejected at compile time, never
-/// evaluated — a surface with coordinate-like arguments keeps a program's
-/// requirement set static (`vixen.executor.requirements-are-static`).
+/// evaluated, so the coordinate is readable off this call site alone
+/// (`vixen.executor.root-surface-is-static`).
 fn lower_constant_surface(
     nodes: &mut Vec<Node>,
     call: &ast::Call,

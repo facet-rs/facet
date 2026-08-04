@@ -45,7 +45,7 @@ impl core::fmt::Display for Target {
 /// One argv element of an exec plan as static analysis sees it: a literal the
 /// program spelled, or a value computed at run time. Literal captures are
 /// therefore checkable before anything executes; computed captures degrade
-/// honestly (`vixen.executor.requirements-are-static`).
+/// honestly (`vixen.executor.root-surface-is-static`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PlanElement {
     Literal(String),

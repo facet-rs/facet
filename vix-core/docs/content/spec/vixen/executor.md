@@ -80,14 +80,31 @@ none of it is built now.
 > alternative satisfaction, and cross-machine choice are solver work
 > (`FV-E3`), deliberately deferred.
 
-> r[vixen.executor.requirements-are-static]
+> r[vixen.executor.root-surface-is-static]
 >
-> [DESIGN] A program's requirement set is readable without executing it: the
-> root's capability parameter types, plus every literal role capture its plans
-> contain. The runner (and eventually `vix check`) can therefore report "needs
-> `Rustc` producing `x86_64-pc-windows-msvc`; this machine's `Rustc` offers
-> `[x86_64-unknown-linux-gnu]`" as a static verdict. Computed captures
-> degrade honestly to "needs `Rustc`, target decided at run time".
+> [DESIGN] **A root's own requirement surface** is readable without executing
+> it: its declared capability parameters, plus the literal role captures **in
+> its own body**. Both are syntactic facts about one function, read off the
+> compiled module. The runner can therefore report "needs `Rustc` producing
+> `x86_64-pc-windows-msvc`; this executor's `Rustc` offers
+> `[x86_64-unknown-linux-gnu]`" for that root. A computed capture degrades
+> honestly to "target decided at run time" — never dropped, never guessed.
+>
+> **What is NOT static, and must never be reported as though it were: anything
+> reachable through a call.** A root that calls a fn that demands a capability
+> the root's own body never mentions has a requirement no reader can see, and
+> no amount of looking will surface it. Discovering it requires evaluating, and
+> the report must be honest that its scope is one function's surface rather
+> than a program's needs.
+>
+> This rule replaces `r[vixen.executor.requirements-are-static]`, which claimed
+> "a program's requirement set is readable without executing it" and named the
+> mechanism as reading "every literal role capture its **plans** contain". That
+> is the plan phase — Bazel's model — and vix does not have one: plans do not
+> exist until evaluation, and a statically-typed but interpreted language
+> cannot enumerate its dependencies without running. The narrow claim survived
+> the strike because it is true and implemented; the word that had to go was
+> *a program's*.
 
 ## What it looks like
 
@@ -162,8 +179,11 @@ env-role package and a fact-only package must exercise the same check.
    environment roles hits the same refusal and the same pass — proving the
    mechanism is not flag-shaped.
 4. **Neutral tools run anywhere.** No target capture ⇒ no target requirement.
-5. **The static report.** Requirements (types + literal captures) are
-   reported without executing the program.
+5. **The static report, honestly scoped.** One root's own surface (its
+   capability parameters + the literal captures in its own body) is reported
+   without executing anything, and a computed capture degrades to "decided at
+   run time". A requirement that only a callee imposes does **not** appear —
+   and the report does not pretend the absence means there is none.
 
 ## Explicitly out
 

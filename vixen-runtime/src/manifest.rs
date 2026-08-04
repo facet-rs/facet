@@ -367,12 +367,18 @@ pub fn capability_type_name(ty: &Type) -> Option<&str> {
     }
 }
 
-/// The static requirement report for every test of a compiled module: the
-/// root's capability parameter types plus every literal role capture its
-/// plans contain, with computed captures degraded honestly. Nothing is
-/// executed, demanded, or interned to produce this.
+/// Each root's own requirement surface, read off a compiled module: its
+/// declared capability parameters plus the literal role captures **in its own
+/// body**, with computed captures degraded honestly. Nothing is executed,
+/// demanded, or interned to produce this.
 ///
-/// r[impl vixen.executor.requirements-are-static]
+/// The scope is one function, and the name is a trap worth reading twice.
+/// This is NOT a program's requirement set: a root that calls a fn demanding
+/// a capability its own body never mentions has a requirement that does not
+/// appear here and cannot be made to. Finding it means evaluating. A caller
+/// that treats an empty report as "needs nothing" is wrong.
+///
+/// r[impl vixen.executor.root-surface-is-static]
 pub fn static_requirements(
     module: &Module,
 ) -> Result<Vec<TestRequirements>, vix::diagnostic::Diagnostics> {

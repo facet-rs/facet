@@ -108,9 +108,9 @@ fn the_std_spelling_resolves_like_any_injected_surface() {
 
 /// The literal-argument constraint is declared and checked at lowering: a
 /// computed coordinate-like argument is rejected with a diagnostic naming
-/// the surface, so a program's constant-surface requirement set stays static
-/// (the origin-rail note's review amendment;
-/// `vixen.executor.requirements-are-static`).
+/// the surface, so each constant-surface coordinate is readable off its own
+/// call site (the origin-rail note's review amendment;
+/// `vixen.executor.root-surface-is-static`).
 #[test]
 fn a_computed_argument_is_a_diagnostic_naming_the_surface() {
     let error = compiler()
