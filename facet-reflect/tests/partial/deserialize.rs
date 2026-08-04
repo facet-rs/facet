@@ -1,6 +1,6 @@
 use facet_testhelpers::{IPanic, test};
 
-use facet::{Facet, Opaque};
+use facet::{Facet, OpaqueBorrow};
 use facet_reflect::{Partial, ReflectErrorKind};
 
 #[test]
@@ -34,7 +34,7 @@ fn wip_opaque_custom_deserialize() -> Result<(), IPanic> {
 
     let mut partial: Partial<'_> = Partial::alloc::<Container>()?;
     partial = partial.begin_field("inner")?;
-    partial = partial.set(Opaque(NotDerivingFacet(35)))?;
+    partial = partial.set(OpaqueBorrow::new(NotDerivingFacet(35)))?;
     partial = partial.end()?;
     let result = partial.build()?.materialize::<Container>()?;
 
@@ -169,7 +169,7 @@ fn wip_opaque_custom_deserialize_enum_tuple() -> Result<(), IPanic> {
     let mut partial: Partial<'_> = Partial::alloc::<Choices>()?;
     partial = partial.select_variant_named("Opaque")?;
     partial = partial.begin_nth_field(0)?;
-    partial = partial.set(Opaque(NotDerivingFacet(35)))?;
+    partial = partial.set(OpaqueBorrow::new(NotDerivingFacet(35)))?;
     partial = partial.end()?;
     let result = partial.build()?.materialize::<Choices>()?;
 
@@ -226,7 +226,7 @@ fn wip_opaque_custom_deserialize_enum_fields() -> Result<(), IPanic> {
     let mut partial: Partial<'_> = Partial::alloc::<Choices>()?;
     partial = partial.select_variant_named("Opaque")?;
     partial = partial.begin_field("f1")?;
-    partial = partial.set(Opaque(NotDerivingFacet(35)))?;
+    partial = partial.set(OpaqueBorrow::new(NotDerivingFacet(35)))?;
     partial = partial.end()?;
     let result = partial.build()?.materialize::<Choices>()?;
 
@@ -305,7 +305,7 @@ fn wip_custom_deserialize_errors() -> Result<(), IPanic> {
         {
             assert_eq!(message, "35 is not allowed!");
             assert_eq!(src_shape, NotDerivingFacetProxy::SHAPE);
-            assert_eq!(dst_shape, Opaque::<NotDerivingFacet>::SHAPE);
+            assert_eq!(dst_shape, OpaqueBorrow::<'_, NotDerivingFacet>::SHAPE);
         } else {
             panic!("expected custom deserialization error, got: {err:?}");
         }

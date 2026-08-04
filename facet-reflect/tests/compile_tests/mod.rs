@@ -366,6 +366,27 @@ fn test_poke_opaque_insufficient_lifetime() {
     run_compilation_test(&test);
 }
 
+/// Soundness test for GitHub issue #1563, second door.
+///
+/// The fixture above names the one entry point from the bug report,
+/// `Opaque(&mut s)`, and kept passing while cd254d928 (#2087) reopened the hole
+/// through `OpaqueBorrow`. `OpaqueBorrow<'x, T>` is `Facet<'facet>` only for
+/// `'facet == 'x`, so growing that lifetime must be a borrow-check error — the
+/// `ShapeId` cannot see it, because `ConstTypeId` erases lifetimes.
+#[test]
+#[cfg(not(miri))]
+fn test_poke_opaque_borrow_insufficient_lifetime() {
+    let test = CompilationTest {
+        name: "opaque_borrow_insufficient_lifetime",
+        source: include_str!("fixtures/opaque_borrow_insufficient_lifetime.rs"),
+        expected_errors: &[
+            "error[E0521]: borrowed data escapes outside of function OR error: lifetime may not live long enough",
+        ],
+    };
+
+    run_compilation_test(&test);
+}
+
 /// Soundness test for GitHub issue #1663
 ///
 /// Before the fix, Partial::alloc_shape() was safe but accepted untrusted shapes,

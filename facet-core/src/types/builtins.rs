@@ -43,6 +43,10 @@ use core::{marker::PhantomData, ptr::NonNull};
 
 /// Wrapper for struct fields whose types we don't want to expose.
 /// Prevents direct access while preserving layout.
+///
+/// Its `Facet` impl requires `T: 'static`, so it cannot hold borrowed data. The
+/// borrowed counterpart is [`OpaqueBorrow`], and the two deliberately have
+/// **different shapes** — see [`OpaqueBorrow`] for why that matters.
 #[repr(transparent)]
 pub struct Opaque<T: ?Sized>(pub T);
 
@@ -51,6 +55,21 @@ pub struct Opaque<T: ?Sized>(pub T);
 /// This lets derive-generated shapes describe borrowed opaque fields without
 /// requiring `'static`, while still tying the wrapper to the active `Facet`
 /// lifetime.
+///
+/// # Why this is not just `Opaque<T>` with a looser bound
+///
+/// `Opaque<T>` implements `Facet<'facet>` for *every* `'facet` (it is bounded
+/// `T: 'static` instead), so its `Facet` bound constrains nothing at a
+/// `Poke::get_mut::<Opaque<_>>()` call site. `OpaqueBorrow<'x, T>` implements
+/// `Facet<'facet>` only for `'facet == 'x`, so the bound pins the requested
+/// lifetime to the one the value actually has. That pin is the entire safety
+/// argument, because `ConstTypeId` erases lifetimes and the shape id cannot tell
+/// `OpaqueBorrow<'a, _>` from `OpaqueBorrow<'static, _>`.
+///
+/// It follows that these two types must **not** share a shape identity: giving the
+/// unconstrained-bound type the borrowed type's id makes `self.shape != T::SHAPE`
+/// pass and lets safe code launder `&'a mut T` into `&'static mut T`. That is
+/// issue [#1563](https://github.com/facet-rs/facet/issues/1563).
 #[repr(transparent)]
 pub struct OpaqueBorrow<'facet, T>(pub T, pub(crate) PhantomData<fn(&'facet ()) -> &'facet ()>);
 

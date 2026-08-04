@@ -14,9 +14,23 @@ unsafe impl<'facet, T: 'static> Facet<'facet> for Opaque<T> {
 // wrappers so borrowed fields can stay tied to the active Facet lifetime.
 unsafe impl<'facet, T: 'facet> Facet<'facet> for OpaqueBorrow<'facet, T> {
     const SHAPE: &'static Shape = &const {
-        // Reuse Opaque<T>'s shape identity for compatibility with APIs/tests that
-        // set field-level opaque values via Opaque<T>.
-        Shape::builder_for_sized::<Opaque<T>>("Opaque")
+        // MUST be built for `OpaqueBorrow<'facet, T>`, *not* `Opaque<T>`.
+        //
+        // `ConstTypeId` erases lifetimes by design, so `Opaque<&'a mut String>` and
+        // `Opaque<&'static mut String>` are one and the same `ShapeId`. What keeps
+        // `Poke::get_mut::<U>()` honest is not the id on its own — it is the id
+        // *together with* the `U: Facet<'facet>` bound. `OpaqueBorrow<'x, T>` only
+        // implements `Facet<'facet>` for `'facet == 'x`, so the bound pins the
+        // requested lifetime to the one the value actually has. `Opaque<T>`
+        // implements `Facet<'facet>` for *every* `'facet` (it is `T: 'static`
+        // instead), so it offers no such pin.
+        //
+        // Handing `OpaqueBorrow` `Opaque`'s id therefore let safe code ask a
+        // `Poke<'_, 'a>` over an `OpaqueBorrow<'a, &'a mut String>` for an
+        // `&mut Opaque<&'static mut String>`: the ids compare equal, the bound is
+        // vacuous, and both are `#[repr(transparent)]` over the same layout. That is
+        // issue #1563 verbatim — fixed in bdf1dcfa6, reopened by cd254d928 (#2087).
+        Shape::builder_for_sized::<OpaqueBorrow<'facet, T>>("Opaque")
             .variance(VarianceDesc::INVARIANT)
             .build()
     };

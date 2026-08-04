@@ -260,9 +260,16 @@ struct Config {
 }
 ```
 
-**Note:** Field-level `#[facet(opaque)]` supports borrowed field types via an internal
-lifetime-aware wrapper. Direct use of `facet::Opaque<T>` still requires `T: 'static`,
-which keeps `Poke::get_mut` sound.
+**Note:** Field-level `#[facet(opaque)]` supports borrowed field types: the derive wraps
+them in `facet::OpaqueBorrow<'_, T>`, which ties the wrapper to the active `Facet`
+lifetime. Direct use of `facet::Opaque<T>` still requires `T: 'static`.
+
+The two wrappers have **distinct shapes**, and that distinctness is load-bearing:
+`ConstTypeId` erases lifetimes, so a shared shape identity would let `Poke::get_mut`
+hand out `Opaque<&'static mut T>` for a value that only ever held `&'a mut T`
+(issue [#1563](https://github.com/facet-rs/facet/issues/1563)). If you drive an opaque
+field through `Partial`/`Poke` by hand, use `OpaqueBorrow::new(value)` — `Opaque(value)`
+will be rejected with a shape mismatch.
 
 **When `assert_same!` encounters an opaque type**, it returns `Sameness::Opaque` — you cannot structurally compare opaque values.
 
