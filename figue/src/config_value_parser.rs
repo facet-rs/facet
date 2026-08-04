@@ -5,7 +5,7 @@
 
 use std::vec::Vec;
 
-use facet_core::{Facet, Shape, Type, UserType};
+use facet_core::{Def, Facet, Shape, Type, UserType};
 // Note: Shape is still used by fill_defaults_from_shape and coerce_types_from_shape
 use facet_format::{
     ContainerKind, FieldKey, FieldLocationHint, FormatDeserializer, FormatParser, ParseError,
@@ -951,7 +951,10 @@ fn get_default_config_value(
     // may mishandle Null for flattened fields inside enum variants.
     // Instead, leave the field missing and let facet apply the natural
     // Default for Option<T>, which is None.
-    if shape.type_identifier.contains("Option") {
+    // `Def::Option` is the structured answer; the old `type_identifier.contains("Option")`
+    // also swallowed any type whose bare name merely *contained* "Option"
+    // (`OptionSet`, `MyOptions`, ...), silently dropping their defaults.
+    if matches!(shape.def, Def::Option(_)) {
         return None;
     }
 

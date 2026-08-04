@@ -184,20 +184,23 @@ fn is_exact_scalar_match(scalar: &ScalarValue<'_>, shape: &'static facet_core::S
         }
         ScalarValue::F64(_) => matches!(scalar_type, Some(ScalarType::F32 | ScalarType::F64)),
         ScalarValue::Str(_) => {
-            if matches!(scalar_type, Some(ScalarType::Str | ScalarType::Char)) {
-                return true;
-            }
-
-            let type_id = shape.type_identifier;
-            if type_id == "String"
-                || type_id.ends_with("::String")
-                || type_id.contains("Cow<str")
-                || type_id.contains("Cow<'_, str")
-            {
-                return true;
-            }
-
-            false
+            // The string-shaped scalars are exactly these four. This used to sniff
+            // `shape.type_identifier` for `"::String"` and `"Cow<str"`, which could
+            // never match: `type_identifier` is the *bare* name — no module path and
+            // no generics — so it reads `"String"` and `"Cow"`, never `"Cow<str>"`.
+            // (`"Cow<str>"` is what `format!("{shape}")` renders; the two are not the
+            // same thing.) The upshot was that `Cow<'_, str>` fell through to `false`
+            // and got ranked a *coercive* rather than exact match, losing untagged
+            // enum variant selection to anything that scored exact.
+            matches!(
+                scalar_type,
+                Some(
+                    ScalarType::Str
+                        | ScalarType::Char
+                        | ScalarType::String
+                        | ScalarType::CowStr
+                )
+            )
         }
         ScalarValue::Null => {
             matches!(scalar_type, Some(ScalarType::Unit))
@@ -205,5 +208,58 @@ fn is_exact_scalar_match(scalar: &ScalarValue<'_>, shape: &'static facet_core::S
         }
         ScalarValue::Unit => matches!(scalar_type, Some(ScalarType::Unit)),
         ScalarValue::Bytes(_) => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate alloc;
+
+    use super::*;
+    use crate::ScalarValue;
+    use alloc::borrow::Cow;
+    use facet_core::Facet;
+
+    /// Every string-shaped type must rank as an *exact* match for a string
+    /// scalar — not merely a coercive one.
+    ///
+    /// `Cow<'_, str>` used to fail this. The check sniffed `type_identifier` for
+    /// `"Cow<str"`, but `type_identifier` is the *bare* name and reads `"Cow"`;
+    /// `"Cow<str>"` is only what `Display` renders. So `Cow<'_, str>` scored 1
+    /// (coercive) instead of 0 (exact) and lost untagged enum variant selection
+    /// to any sibling that scored 0.
+    ///
+    /// Asserted as a table so a fifth string type cannot be added without a row.
+    #[test]
+    fn string_shaped_types_are_exact_matches_for_str_scalars() {
+        let rows: &[(&str, &'static facet_core::Shape)] = &[
+            ("String", <alloc::string::String as Facet>::SHAPE),
+            ("Cow<'_, str>", <Cow<'_, str> as Facet>::SHAPE),
+            ("&str", <&str as Facet>::SHAPE),
+            ("char", <char as Facet>::SHAPE),
+        ];
+
+        let scalar = ScalarValue::Str(Cow::Borrowed("hello"));
+
+        let failures: alloc::vec::Vec<&str> = rows
+            .iter()
+            .filter(|(_, shape)| !is_exact_scalar_match(&scalar, shape))
+            .map(|(label, _)| *label)
+            .collect();
+
+        assert!(
+            failures.is_empty(),
+            "these string-shaped types were not treated as exact matches for a \
+             string scalar, so they lose untagged-enum selection to anything that \
+             is: {failures:?}"
+        );
+    }
+
+    /// The guard above is only meaningful if non-string types still fail it.
+    #[test]
+    fn non_string_types_are_not_exact_matches_for_str_scalars() {
+        let scalar = ScalarValue::Str(Cow::Borrowed("hello"));
+        assert!(!is_exact_scalar_match(&scalar, <u32 as Facet>::SHAPE));
+        assert!(!is_exact_scalar_match(&scalar, <bool as Facet>::SHAPE));
     }
 }

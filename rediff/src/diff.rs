@@ -63,10 +63,17 @@ pub fn diff_new_peek_with_options<'mem, 'facet>(
     let from = deref_if_pointer(from);
     let to = deref_if_pointer(to);
 
-    // Check for equality if both shapes have the same type_identifier and implement PartialEq
-    // This handles cases where shapes are structurally equivalent but have different IDs
-    // (e.g., after deserialization)
-    let same_type = from.shape().type_identifier == to.shape().type_identifier;
+    // Gate the fast "they're just equal" path on actual type identity.
+    //
+    // This used to compare `type_identifier`, the *bare* type name — so two
+    // unrelated `Config`s from different crates counted as the same type. Names
+    // carry no uniqueness guarantee; `Shape::id` is the documented field for
+    // "type equality checks and hash map keys".
+    //
+    // Note this only really bites the `float_equal` arm below: `Peek`'s `==`
+    // already refuses mismatched shapes and yields `false`, so `values_equal`
+    // could never have been true across two different types anyway.
+    let same_type = from.shape().id == to.shape().id;
     let from_has_partialeq = from.shape().is_partial_eq();
     let to_has_partialeq = to.shape().is_partial_eq();
     let values_equal = from == to;
