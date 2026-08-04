@@ -169,7 +169,7 @@ not a thousand tasks.
 > budget may kill parked tasks (least-progressed first, or by policy),
 > reclaiming their frames and molten arenas entirely; the killed executions
 > re-enter as queued demands and replay later. Parked-task memory is a cache
-> with an eviction policy. Migration is the same move across machines: kill
+> with an eviction policy. Migration is the same move across executors: kill
 > locally, ship the DemandKey, restart remotely against warm memo.
 
 > r[machine.scheduler.chaos-kill-oracle]

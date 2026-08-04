@@ -237,7 +237,7 @@ primitives reference by identity.
 > the identity.
 > Demanding a fetch therefore resolves an identity (local store, peer, shared
 > store, and only then the origin) rather than performing a network read; on a
-> machine already holding the blob, nothing transfers. This is what makes a
+> executor already holding the blob, nothing transfers. This is what makes a
 > fetched value verifiable by a stranger, and it is the precondition for
 > `machine.placement.identity-crosses`.
 >

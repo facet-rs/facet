@@ -88,7 +88,7 @@ memory, freeze/publish, snapshots, and reload semantics.
 
 > r[machine.store.value-bundle-portability]
 >
-> [DESIGN] Values are portable across machine instances via a serialized
+> [DESIGN] Values are portable across executors via a serialized
 > bundle (schema, tier, bytes, content hash, taint — plus code). Bundles
 > carry values only: no memo entries, no read-sets. Value portability and
 > warm-memo persistence are two different features with two different trust

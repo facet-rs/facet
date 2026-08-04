@@ -118,7 +118,7 @@ about what a build did; a vixen receipt is the observed read-set."
 > CONSEQUENCE, and it is why the two must not share a function: **an observation
 > made inside a `place` was made by someone else.** The executor's pin becomes
 > your receipt's authority and there is nothing to check it against. A pinned
-> fetch is trust-free on any machine, including one you do not administer; an
+> fetch is trust-free on any executor, including one you do not administer; an
 > observation is not. See `machine.placement.identity-crosses`.
 
 > r[machine.receipt.reveal-is-journaled]

@@ -74,7 +74,7 @@ Distinguish two boundaries that are easy to fuse and must not be:
 > **An ambient read is an observation. An input is a pin.**
 >
 > This constrains the *program*, not the operator. Placement policy — which
-> machines are admissible, which are preferred — lives outside the language and
+> executors are admissible, which are preferred — lives outside the language and
 > may be as explicit as its owner likes, precisely because it cannot change a
 > value.
 
