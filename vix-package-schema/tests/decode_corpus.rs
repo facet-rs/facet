@@ -1,32 +1,31 @@
-//! The corpus manifests and the schema types are one artifact: these tests
-//! decode the actual files under `vix-core/corpus-next/package/` against
-//! [`vix_package_schema::PackageManifest`], so a respelling on either side
+//! The corpus packages and the schema types are one artifact: these tests
+//! take the actual `main.vix` files under `vix-core/corpus-next/package/`,
+//! slice the manifest out of the frontmatter fence, and decode it against
+//! [`vix_package_schema::PackageManifest`] — so a respelling on either side
 //! fails here rather than drifting.
+//!
+//! Extraction is exercised on real files on purpose. It is the whole content
+//! of `r[vixen.package.frontmatter-reads-without-vix]`: a package's word must
+//! be readable without an evaluator, and a test that pasted the styx inline
+//! would prove nothing about that.
 
-use vix_package_schema::{
-    Input, PackageManifest, ProgramSource, Protocol, Target, Unpack,
-};
+use vix_package_schema::{PackageManifest, ProgramSource, Protocol, Target, frontmatter};
 
-const FACET_MANIFEST: &str =
-    include_str!("../../vix-core/corpus-next/package/facet/package.styx");
-const CARGO_MANIFEST: &str =
-    include_str!("../../vix-core/corpus-next/package/cargo/package.styx");
+const FACET_SOURCE: &str = include_str!("../../vix-core/corpus-next/package/facet/main.vix");
+const CARGO_SOURCE: &str = include_str!("../../vix-core/corpus-next/package/cargo/main.vix");
+
+/// Slice and decode, the way any reader without a vix evaluator must.
+fn read(source: &str, what: &str) -> PackageManifest {
+    let fm = frontmatter::extract(source).unwrap_or_else(|e| panic!("{what}: {e:?}"));
+    facet_styx::from_str(fm.styx).unwrap_or_else(|e| panic!("{what} decodes: {e}"))
+}
 
 #[test]
-fn the_facet_source_package_manifest_decodes() {
-    let manifest: PackageManifest =
-        facet_styx::from_str(FACET_MANIFEST).expect("facet/package.styx decodes");
+fn the_facet_source_package_decodes_from_its_frontmatter() {
+    let manifest = read(FACET_SOURCE, "facet/main.vix");
 
     assert_eq!(manifest.package.name, "facet");
     assert_eq!(manifest.package.version, "0.1.0");
-
-    // One @package input, pinned by the provider's tree identity.
-    assert_eq!(manifest.input.len(), 1);
-    let Input::Package { version, hash } = &manifest.input["cargo"] else {
-        panic!("the cargo input is the @package arm");
-    };
-    assert_eq!(version, "0.1.0");
-    assert!(hash.starts_with("blake3:"));
 
     // Commands and artifacts are bare fn refs.
     assert_eq!(manifest.command["build"].r#fn, "facet::build");
@@ -47,47 +46,45 @@ fn the_facet_source_package_manifest_decodes() {
 }
 
 #[test]
-fn the_cargo_tool_package_manifest_decodes() {
-    let manifest: PackageManifest =
-        facet_styx::from_str(CARGO_MANIFEST).expect("cargo/package.styx decodes");
+fn the_cargo_tool_package_decodes_from_its_frontmatter() {
+    let manifest = read(CARGO_SOURCE, "cargo/main.vix");
 
     assert_eq!(manifest.package.name, "cargo");
-
-    // The @fetch input arm: origin coordinate + pins.md digest + unpack.
-    let Input::Fetch {
-        origin,
-        hash,
-        unpack,
-    } = &manifest.input["rust-dist"]
-    else {
-        panic!("rust-dist is the @fetch arm");
-    };
-    assert!(origin.starts_with("registry://"));
-    assert!(hash.starts_with("sha256:"));
-    assert_eq!(*unpack, Unpack::TarXz);
-
-    // Programs carved out of the fetched tree, with their contracts.
-    let rustc = &manifest.program["rustc"];
-    assert_eq!(
-        rustc.source,
-        ProgramSource::Input {
-            name: "rust-dist".to_owned(),
-            path: "rustc/bin/rustc".to_owned(),
-        }
-    );
-    assert_eq!(rustc.protocol, Protocol::ExitOnly);
-    assert_eq!(
-        rustc.target,
-        Target::ArgvFlag {
-            flag: "--target".to_owned(),
-        }
-    );
-    assert!(manifest.program.contains_key("cargo"));
-
     assert_eq!(manifest.command["build"].r#fn, "cargo::build");
-
-    // The cargo package exposes no artifacts; the absent section defaults.
+    assert_eq!(manifest.command["test"].r#fn, "cargo::test");
     assert!(manifest.artifact.is_empty());
+}
+
+#[test]
+fn the_cargo_package_cannot_yet_declare_its_programs() {
+    // Not an aspiration test — a pin on a known hole. cargo exposes `rustc`
+    // and `cargo` from a fetched toolchain, and a program sourced from
+    // outside the package has no spelling since the `@input` arm was struck
+    // with `r[vixen.package.inputs-are-provider-pins]`. The surviving arm
+    // names one of the package's OWN artifacts, which a fetched toolchain is
+    // not.
+    //
+    // When the acquirable-toolchain spelling lands, this assertion is the one
+    // that fails, and the corpus file is the one to fix.
+    let manifest = read(CARGO_SOURCE, "cargo/main.vix");
+    assert!(
+        manifest.program.is_empty(),
+        "cargo's programs became expressible — see the Retracted section of \
+         /spec/vixen/packages and update the corpus"
+    );
+}
+
+#[test]
+fn the_extracted_offset_points_into_the_real_file() {
+    // The reason extraction carries an offset: a styx diagnostic inside the
+    // fence must report at its true position in main.vix, never at line 1 of
+    // a document that does not exist on disk.
+    let fm = frontmatter::extract(FACET_SOURCE).expect("facet has frontmatter");
+    assert_eq!(&FACET_SOURCE[fm.offset..fm.offset + fm.styx.len()], fm.styx);
+    assert!(
+        FACET_SOURCE[..fm.offset].contains("manifest"),
+        "the offset must fall after the opening fence"
+    );
 }
 
 #[test]
@@ -106,12 +103,10 @@ fn a_schema_declaration_line_is_tolerated() {
 
 #[test]
 fn a_minimal_manifest_needs_only_the_package_header() {
-    let manifest: PackageManifest = facet_styx::from_str(
-        "package {\n  name tiny\n  version \"0.0.1\"\n}\n",
-    )
-    .expect("sections default to empty");
+    let manifest: PackageManifest =
+        facet_styx::from_str("package {\n  name tiny\n  version \"0.0.1\"\n}\n")
+            .expect("sections default to empty");
     assert_eq!(manifest.package.name, "tiny");
-    assert!(manifest.input.is_empty());
     assert!(manifest.command.is_empty());
     assert!(manifest.artifact.is_empty());
     assert!(manifest.program.is_empty());

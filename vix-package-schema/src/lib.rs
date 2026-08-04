@@ -1,4 +1,16 @@
-//! The vix package manifest (`package.styx`) document types.
+//! The vix package manifest document types.
+//!
+//! The manifest is frontmatter in a package's `main.vix`
+//! (`r[vixen.package.frontmatter]`) — a `manifest` item carrying a
+//! quote-family block literal whose content is the styx document these types
+//! describe. There is exactly one carrier; a separate `package.styx` does not
+//! exist.
+//!
+//! The manifest declares a package's **surface, not its provenance**. It does
+//! not say where anything comes from: fetching is something vix code does, as
+//! an ordinary demand, whenever it likes. An earlier draft carried a
+//! declarative `input` section of pinned sources; it was struck
+//! (`r[vixen.package.*]`, the Retracted section) and these types followed.
 //!
 //! One Rust source of truth for the manifest genre sketched in
 //! `vix-core/corpus-next/package/`: these types ARE the schema, and their
@@ -21,30 +33,28 @@
 //! vix decoder applies the same kebab rule to variant identifiers, so the
 //! two sides agree without a rename surface in vix.
 
+pub mod frontmatter;
+
+pub use frontmatter::{Frontmatter, FrontmatterError};
+
 use std::collections::BTreeMap;
 
-/// A whole `package.styx` document. Sections are `BTreeMap`s: styx spells
-/// them as maps keyed by public name, and the sorted map keeps every
-/// enumeration of the manifest deterministic without a canonicalization
-/// pass.
+/// A whole manifest document. Sections are `BTreeMap`s: styx spells them as
+/// maps keyed by public name, and the sorted map keeps every enumeration of
+/// the manifest deterministic without a canonicalization pass.
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct PackageManifest {
     pub package: PackageMeta,
-    /// Provider pins, keyed by input name. NOT a requirement list —
-    /// requirements are the capability parameters of the fns the other
-    /// sections name; an input answers *which package satisfies them, at
-    /// which identity*.
-    #[facet(default)]
-    pub input: BTreeMap<String, Input>,
     /// `vx r <pkg> <name>` entry points: bare fn refs.
     #[facet(default)]
     pub command: BTreeMap<String, Command>,
     /// `vx build <pkg>#<name>` outputs: bare fn refs whose fns must return
-    /// Tree or Blob (the materializability claim, checked at binding).
+    /// Tree or Blob (the claim `vixen.delivery.result` requires, checked at
+    /// binding).
     #[facet(default)]
     pub artifact: BTreeMap<String, Artifact>,
-    /// Exposed executables: a path into a tree, plus the capability-package
-    /// contracts.
+    /// Exposed executables: a path into an artifact this package builds, plus
+    /// the capability-package contracts.
     #[facet(default)]
     pub program: BTreeMap<String, Program>,
 }
@@ -54,39 +64,6 @@ pub struct PackageManifest {
 pub struct PackageMeta {
     pub name: String,
     pub version: String,
-}
-
-/// One arm per way a value can enter a package from outside. Deliberately no
-/// `Path` arm: a local directory is an unpinned word, and overrides belong
-/// to policy (`vx r --override-input`), never to the manifest.
-#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
-#[repr(u8)]
-#[facet(rename_all = "kebab-case")]
-pub enum Input {
-    /// Another vix package, pinned by its source-tree identity. That tree
-    /// contains the provider's own manifest, so its pins are covered
-    /// transitively — one hash pins the closure.
-    Package { version: String, hash: String },
-    /// A pinned blob fetch — decodes toward the wire shape `PinnedBlobRef`:
-    /// the coordinate's scheme names the origin adapter, the hash is the
-    /// upstream digest in the pins.md spelling (`"<alg>:<hex>"`, algorithm
-    /// inside the value), and `unpack` is the blob→tree step whose result
-    /// carries the identity.
-    Fetch {
-        origin: String,
-        hash: String,
-        unpack: Unpack,
-    },
-}
-
-/// How a fetched archive becomes a Tree. The resulting tree's identity is
-/// the input's identity contribution; the archive bytes are transport.
-#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u8)]
-#[facet(rename_all = "kebab-case")]
-pub enum Unpack {
-    TarGz,
-    TarXz,
 }
 
 /// A `vx r` entry point: nothing but a public name (the map key) bound to a
@@ -117,16 +94,20 @@ pub struct Program {
     pub target: Target,
 }
 
-/// Where a program's tree comes from. Invisible to consumers: a capability
-/// resolved from a fetched toolchain and one carved from a built artifact
-/// bind identically.
+/// Where a program's bytes come from. Which side of the seam a capability
+/// came from is invisible to consumers: one carved from a just-built artifact
+/// and one that arrived some other way bind identically.
+///
+/// One arm today. It stays an enum rather than collapsing to a struct because
+/// the styx spelling is a tagged payload (`source @artifact{…}`) and because
+/// the second arm is a named gap, not an absence: exposing a program sourced
+/// from *outside* this package has no spelling yet. The retracted `@input`
+/// arm was that spelling, and it rested on a declarative input section that
+/// did not survive.
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 #[repr(u8)]
 #[facet(rename_all = "kebab-case")]
 pub enum ProgramSource {
-    /// A path into a declared input's tree (`input` names the entry in the
-    /// `input` section).
-    Input { name: String, path: String },
     /// A path into one of this package's own artifacts.
     Artifact { name: String, path: String },
 }
