@@ -110,7 +110,7 @@ fn the_std_spelling_resolves_like_any_injected_surface() {
 /// computed coordinate-like argument is rejected with a diagnostic naming
 /// the surface, so a program's constant-surface requirement set stays static
 /// (the origin-rail note's review amendment;
-/// `vixen.machine.requirements-are-static`).
+/// `vixen.executor.requirements-are-static`).
 #[test]
 fn a_computed_argument_is_a_diagnostic_naming_the_surface() {
     let error = compiler()

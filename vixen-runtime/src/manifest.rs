@@ -1,6 +1,6 @@
 //! The machine manifest: what THIS machine offers, as declared typed data —
 //! and the binding check that lets a program fail before anything runs
-//! (`vix-core/docs/content/spec/vixen/machine.md`).
+//! (`vix-core/docs/content/spec/vixen/executor.md`).
 //!
 //! The manifest replaces the runner's capability *conjuring*: until now the
 //! demand root minted a capability value for whatever type a test named
@@ -15,7 +15,7 @@
 //! ([`vixen_primitives::capability_package`]) and normalized to [`Target`]
 //! values — the manifest never learns a tool's dialect.
 //!
-//! r[impl vixen.machine.manifest]
+//! r[impl vixen.executor.manifest]
 
 use std::collections::BTreeMap;
 
@@ -53,9 +53,9 @@ pub fn host_target() -> Target {
 /// tool's reference is a program path (host-trusting exactly as the exec
 /// backend is, for 0.1); the rest are the capability's *facts* as typed
 /// fields — machine-ness is never a set of booleans
-/// (`vixen.machine.facts-are-fields`).
+/// (`vixen.executor.facts-are-fields`).
 ///
-/// r[impl vixen.machine.facts-are-fields]
+/// r[impl vixen.executor.facts-are-fields]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CapabilityOffer {
     /// The capability type's nominal name (`Sh`, `Rustc`, …).
@@ -100,7 +100,7 @@ impl CapabilityOffer {
 /// tests as a plain Rust value, or loaded as config via [`Self::from_toml`]),
 /// and it is the single thing root capability parameters bind against.
 ///
-/// r[impl vixen.machine.manifest]
+/// r[impl vixen.executor.manifest]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MachineManifest {
     pub host: Target,
@@ -191,7 +191,7 @@ impl MachineManifest {
     /// requirement is not checkable at bind time and imposes nothing here —
     /// the static report already degraded it honestly.
     ///
-    /// r[impl vixen.machine.binding-fails-before-effects]
+    /// r[impl vixen.executor.binding-fails-before-effects]
     #[must_use]
     pub fn bind(&self, requirements: &TestRequirements) -> Vec<CapabilityRefusal> {
         let mut refusals = Vec::new();
@@ -226,7 +226,7 @@ impl MachineManifest {
 /// The environment variable through which an invoker DECLARES the machine
 /// manifest file: an explicit path, read once at the embedder entrypoint.
 /// This is a declaration, not discovery — no path is probed, no directory
-/// walked, no fallback location tried (`vixen.machine.manifest`: a machine's
+/// walked, no fallback location tried (`vixen.executor.manifest`: a machine's
 /// word is stated, never conjured from its surroundings).
 pub const MANIFEST_ENV: &str = "VIX_MACHINE_MANIFEST";
 
@@ -326,7 +326,7 @@ pub struct TestRequirements {
 /// naming both sides. `offered: None` means the type is absent from the
 /// manifest entirely.
 ///
-/// r[impl vixen.machine.binding-fails-before-effects]
+/// r[impl vixen.executor.binding-fails-before-effects]
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct CapabilityRefusal {
     pub test: String,
@@ -372,7 +372,7 @@ pub fn capability_type_name(ty: &Type) -> Option<&str> {
 /// plans contain, with computed captures degraded honestly. Nothing is
 /// executed, demanded, or interned to produce this.
 ///
-/// r[impl vixen.machine.requirements-are-static]
+/// r[impl vixen.executor.requirements-are-static]
 pub fn static_requirements(
     module: &Module,
 ) -> Result<Vec<TestRequirements>, vix::diagnostic::Diagnostics> {
@@ -386,11 +386,11 @@ pub fn static_requirements(
 /// One partitioned test's requirement set, extracted from use: presence from
 /// the declared capability parameters, target requirements from every exec
 /// plan's role captures under the owning package's command grammar
-/// (`vixen.machine.requirements-from-use`). Literal captures are read
+/// (`vixen.executor.requirements-from-use`). Literal captures are read
 /// directly off the partitioned VIR — this is partition-time knowledge, ahead
 /// of bind time and of any execution.
 ///
-/// r[impl vixen.machine.requirements-from-use]
+/// r[impl vixen.executor.requirements-from-use]
 #[must_use]
 pub fn test_requirements(partitioned: &PartitionedTest) -> TestRequirements {
     // Presence rows, one per declared capability parameter, in declaration
