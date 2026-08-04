@@ -36,22 +36,47 @@ are undesigned and are named as such rather than sketched.
 
 ## What a capability is not
 
-A capability is **not a straight export**, and the distinction is not
-pedantry. A capability is *live*: it has to be **acquired** (fetched and
-served, or ambient), work is **scheduled against** it, and it carries the four
-contracts a capability package declares. A value of a capability type is
-therefore not a `pub const` that a module happens to hand back, and the
-machinery that acquires and schedules is not something the export list
-subsumes.
+> r[vixen.package.three-things]
+>
+> [SETTLED] A **capability**, a **command grammar**, and an **exported fn** are
+> three different things. They were previously wearing one word, and every
+> retraction on this page follows from separating them.
+>
+> | | what it is |
+> |---|---|
+> | **capability** | *live* — acquired, served, scheduled against, carrying the four contracts |
+> | **command grammar** | how an invocation *against* a capability is spelled; belongs to a capability, is not one |
+> | **an exported fn** | a runnable item of this package; needs no genre at all |
+>
+> A capability is therefore **not a straight export**, and the distinction is
+> not pedantry. It has to be **acquired** — fetched and served, or ambient —
+> work is **scheduled against** it, and it carries contracts. A value of a
+> capability type is not a `pub const` a module happens to hand back, and the
+> machinery that acquires and schedules is not something an export list
+> subsumes.
+>
+> This rule exists because the distinction spent its first draft as prose.
+> Nothing could cite it, and `r[vixen.capability.*]` demonstrably did not
+> absorb it.
 
-Three things that were previously wearing one word, kept apart here on
-purpose:
-
-| | what it is |
-|---|---|
-| **capability** | live — acquired, served, scheduled against, four contracts |
-| **command grammar** | how an invocation *against* a capability is spelled; belongs to a capability, is not one |
-| **an exported fn** | a runnable item of this package; needs no genre at all |
+> r[vixen.package.two-toolchain-classes]
+>
+> [SETTLED] A toolchain a package did not build is **acquirable** or
+> **ambient**, and the two are not variations of one thing.
+>
+> An **acquirable** toolchain is a pinned fetch **served at a VFS prefix**. Its
+> identity is known *a priori from the pin*, before any byte moves — no read
+> tracking is needed to establish it, and no probe mints it.
+>
+> An **ambient** toolchain **cannot go through the VFS and therefore cannot be
+> observed**. There is no read-set to record, so the only sound assumption is
+> that **100% of it is used**: watch the whole image with filesystem change
+> events and **poison everything on any change**. This is *why* poison exists.
+> Nothing may be written that implies an ambient toolchain is observed.
+>
+> The word **materializable** is struck, and so is its verb: an acquirable
+> toolchain is not "untarred into a `Tree` and mounted", and its identity is
+> not that tree's identity computed after the fact.
 
 ## Retracted
 
@@ -109,6 +134,14 @@ real, and has no home.
   cannot state about itself. Version is excluded by rule. Name is doubtful —
   the registry coordinate is where a package is published, not something the
   package asserts about itself.
+- **The `std` namespace itself.** `r[vixen.package.metadata-export]` names
+  `std::PackageMetadata` and nothing in this spec defines `std`. The decree is
+  the export and its type; where the standard library is specified, and what
+  else is in it, is unwritten.
+- **Package identity.** With no declared name and the coordinate undecided
+  (`r[vixen.registry.*]`), a package currently has no way to be addressed at
+  all. Nothing downstream — provider resolution, cross-package reference,
+  publication — can be finished before this is.
 - **Provider resolution.** Binding a `Rustc` parameter must find *which
   package's* capability. Named above; undesigned.
 - **How a package provides a capability at all**, given that a capability is

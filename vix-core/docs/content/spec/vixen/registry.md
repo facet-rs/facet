@@ -10,10 +10,12 @@ The gap this closes: every other registry asks the publisher to do two things
 no publisher can reliably do — pick a number, and classify their own change.
 The number is unfalsifiable (nothing can contradict `1.2.4`) and the
 classification is a guess made at release time about work done weeks earlier.
-Semver compliance measures at 83.4% in the literature's best replication, and
-*semantic* breakage runs 2–4× *signature* breakage — the part a type system can
-check is the small part. This page removes both asks and replaces them with
-facts the registry derives and claims it can falsify.
+Measured semver compliance falls well short of total, and *semantic* breakage
+runs several times *signature* breakage — the part a type system can check is
+the small part. (The figures behind those two sentences, and their sources, are
+in the design notes; they are evidence for this page, not claims of it.) This
+page removes both asks and replaces them with facts the registry derives and
+claims it can falsify.
 
 Scope guard, stated first: **this is vix's own registry.** Consuming crates.io
 is unchanged — version requirements, semver, the existing resolver, exactly as
@@ -69,14 +71,21 @@ file is not.
 
 > r[vixen.registry.coverage-or-dead]
 >
-> [DESIGN] Every branch of the package's **own vix code** reachable from its
-> exports must be exercised by its tests. **Used and covered, or dead and
-> removed before publication** — there is no third category. This is a dead-code
-> mandate, not a unit-test mandate: integration tests exercise internals, and
-> under demand-driven evaluation "this node was demanded" is very nearly "this
-> node contributed to a recorded output". Branches unreachable from any export
-> cannot affect a consumer and are provably exempt. Branch coverage, not path
-> coverage: paths are infinite, branches are finite and structural.
+> [DESIGN] Every branch of the package's **own vix code** must be exercised by
+> its tests. **Used and covered, or dead and removed before publication** —
+> there is **no third category and no exemption**. This is a dead-code mandate,
+> not a unit-test mandate: integration tests exercise internals, and under
+> demand-driven evaluation a node that was demanded is a node that contributed
+> to a recorded output. Branch coverage, not path coverage: paths are infinite,
+> branches are finite and structural.
+>
+> An earlier draft exempted branches "unreachable from any export". That
+> exemption is struck: deciding reachability without running the program is a
+> whole-program static analysis, which is the plan phase vix does not have and
+> cannot have. A branch the tests never reached is *indistinguishable* from a
+> branch that cannot be reached, so the exemption would have to be taken on the
+> author's word — and this page exists to stop taking authors at their word.
+> Delete it or cover it.
 
 > r[vixen.registry.coverage-is-per-target]
 >
@@ -182,23 +191,32 @@ and which part is somebody else's word.
 These are decisions, not rules, and are recorded so they are not mistaken for
 settled:
 
-- **The `registry://` coordinate** — logical or absolute. Carried over from
-  `r[vixen.package.*]`; the only genuinely undecided item in the mechanism.
+- **The `registry://` coordinate** — logical or absolute. It came from the
+  package-manifest work, which is retracted; nothing carries it now, and a
+  package currently has no addressable identity at all. This is the only
+  genuinely undecided item in the mechanism and also the one everything else
+  waits on.
 - **Mutation testing.** Coverage plus recorded outputs says a branch ran and
   what it returned; mutation says whether *any* change to it would move a
   recorded output — whether the corpus pins behavior or merely observes it.
   Normally unaffordable; hermetic, memoized, and parallel over a pure IR it may
   not be. A quality signal, not adopted as a gate.
-- **Consumer-side evidence.** The registry runs dependents' tests too and can
-  therefore observe when a change breaks them. Whether that returns to the
-  publisher as advice or as something stronger is undecided.
+- **Consumer-side evidence.** If one package can depend on another, the
+  registry runs dependents' tests too and can observe when a change breaks
+  them. Whether that returns to the publisher as advice or as something
+  stronger is undecided — and it is moot until packages can reference each
+  other at all, which `r[vixen.package.*]` currently puts explicitly out. The
+  same caveat applies to `two-hashes`' word *transitively*: within one
+  package's tree it is exact, and across packages it describes a mechanism
+  that does not yet exist.
 - **Contraction presentation.** `contraction-is-visible` fixes that it is
   surfaced, not how.
 
 ## Explicitly out
 
 Version requirements, ranges, and the resolver that consumes them — for vix's
-own packages. Consuming crates.io is untouched (`r[…]` in the pin file
-continues to mean what it means). Yanking, ownership, and transfer. Any
-mechanism by which a publisher asserts compatibility rather than having it
-derived or falsified.
+own packages. Consuming crates.io is untouched: a `Cargo.lock` keeps meaning
+exactly what cargo means by it, and `r[vixen.pins.come-from-the-ecosystem-lockfile]`
+is where that reading lives. Yanking, ownership, and transfer. Any mechanism by
+which a publisher asserts compatibility rather than having it derived or
+falsified.
