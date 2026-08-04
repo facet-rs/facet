@@ -290,7 +290,7 @@ pub enum RunError {
         context: Option<FailureContext>,
     },
     PersistentRuntime(Box<PersistentRuntimeJournalError>),
-    /// The machine manifest the invoker DECLARED (`VIX_MACHINE_MANIFEST`)
+    /// The executor manifest the invoker DECLARED (`VIX_EXECUTOR_MANIFEST`)
     /// failed to load. Loud and typed by design: the harness default serves
     /// only the undeclared case, never a declared file that cannot be read
     /// or parsed (`vixen.executor.manifest`).
@@ -719,11 +719,11 @@ pub struct PreparedRun {
     cache: LoweringCache,
     /// The machine manifest the run binds root capability parameters against
     /// (`vixen.executor.manifest`). Resolved at preparation through
-    /// [`crate::manifest::declared_manifest`]: the file `VIX_MACHINE_MANIFEST`
-    /// explicitly declares, or [`MachineManifest::ratchet_default`] when
+    /// [`crate::manifest::declared_manifest`]: the file `VIX_EXECUTOR_MANIFEST`
+    /// explicitly declares, or [`ExecutorManifest::ratchet_default`] when
     /// nothing is declared. [`PreparedRun::with_manifest`] substitutes an
     /// explicit machine word.
-    manifest: crate::manifest::MachineManifest,
+    manifest: crate::manifest::ExecutorManifest,
 }
 
 /// Execution lifecycle boundaries exposed to the outer budget runner. Each
@@ -786,7 +786,7 @@ pub fn run_source(source: &str) -> Result<RatchetReport, RunError> {
 /// bind against before anything runs (`vixen.executor.manifest`).
 pub fn run_source_with_manifest(
     source: &str,
-    manifest: crate::manifest::MachineManifest,
+    manifest: crate::manifest::ExecutorManifest,
 ) -> Result<RatchetReport, RunError> {
     prepare_source_with_config(source, crate::default_config())?
         .with_manifest(manifest)
@@ -1070,7 +1070,7 @@ fn prepare_modules_with_cache(
     }
 
     // The machine word this run binds against: the manifest the invoker
-    // DECLARED through `VIX_MACHINE_MANIFEST`, or the harness default when
+    // DECLARED through `VIX_EXECUTOR_MANIFEST`, or the harness default when
     // nothing is declared. A declared file that fails to load is a loud typed
     // error here at the entrypoint — never a silent default.
     // `PreparedRun::with_manifest` still substitutes an explicit Rust value.
@@ -1085,7 +1085,7 @@ impl PreparedRun {
     /// Substitute the machine manifest the run binds against — the embedder's
     /// declared machine word replacing the harness default.
     #[must_use]
-    pub fn with_manifest(mut self, manifest: crate::manifest::MachineManifest) -> Self {
+    pub fn with_manifest(mut self, manifest: crate::manifest::ExecutorManifest) -> Self {
         self.manifest = manifest;
         self
     }
@@ -1651,7 +1651,7 @@ fn run_lane(
     persistent_journal_report: Option<&mut PersistentRuntimeJournalLoadReport>,
     source_revision: Option<&str>,
     primitive_services: Option<&PrimitiveServices>,
-    manifest: &crate::manifest::MachineManifest,
+    manifest: &crate::manifest::ExecutorManifest,
 ) -> Result<SuiteRun, RunError> {
     let mut journal_load_report = None;
     let mut runtime = if let Some(journal) = persistent_journal_in {

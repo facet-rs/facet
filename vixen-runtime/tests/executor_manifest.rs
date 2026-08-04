@@ -19,15 +19,15 @@ use vix::runtime::{
 };
 use vixen_primitives::capability_package::Target;
 use vixen_runtime::manifest::{
-    CapabilityOffer, MachineManifest, TargetRequirement, host_target, static_requirements,
+    CapabilityOffer, ExecutorManifest, TargetRequirement, host_target, static_requirements,
 };
 use vixen_runtime::ratchet::{RatchetReport, prepare_source, run_source_with_manifest};
 
 /// A manifest offering `capabilities` on an `x86_64-unknown-linux-gnu`-style
 /// host — the design note's "Linux-only machine", spelled with the actual
 /// host triple so diagnostics carry the runner's declared host fact.
-fn manifest(capabilities: Vec<CapabilityOffer>) -> MachineManifest {
-    MachineManifest {
+fn manifest(capabilities: Vec<CapabilityOffer>) -> ExecutorManifest {
+    ExecutorManifest {
         host: host_target(),
         capabilities,
     }
@@ -114,7 +114,7 @@ fn build(rustc: Rustc) -> Stream<Check> {
 #[test]
 fn a_capability_type_absent_from_the_manifest_refuses_before_any_effect() {
     // The harness default offers Echo/Sh/ProgressiveSh — no Rustc.
-    let report = run_source_with_manifest(EXE_CASE, MachineManifest::ratchet_default())
+    let report = run_source_with_manifest(EXE_CASE, ExecutorManifest::ratchet_default())
         .expect("a binding refusal is a report verdict, never a runner error");
     let refusal = assert_refused(&report);
     assert_eq!(refusal.test, "build");
@@ -352,7 +352,7 @@ fn neutral(sh: Sh) -> Stream<Check> {
     yield expect_eq(out.stdout.lines(), ["done"]);
 }
 "#;
-    let report = run_source_with_manifest(NEUTRAL, MachineManifest::ratchet_default())
+    let report = run_source_with_manifest(NEUTRAL, ExecutorManifest::ratchet_default())
         .expect("a neutral invocation runs anywhere its tool exists");
     assert!(
         report.passed(),
@@ -483,7 +483,7 @@ fn compile(gcc: MingwGcc) -> Stream<Check> {
 /// r[verify vixen.executor.manifest]
 #[test]
 fn the_manifest_loads_from_its_toml_config_spelling() {
-    let manifest = MachineManifest::from_toml(
+    let manifest = ExecutorManifest::from_toml(
         r#"
 host = "x86_64-unknown-linux-gnu"
 
@@ -553,7 +553,7 @@ fn a_manifest_loaded_from_a_config_file_refuses_the_exe_case() {
 }
 
 /// The runnable system reads the DECLARED manifest: with
-/// `VIX_MACHINE_MANIFEST` naming a Linux-only manifest file, the ordinary
+/// `VIX_EXECUTOR_MANIFEST` naming a Linux-only manifest file, the ordinary
 /// `run_source` entrypoint — no `with_manifest`, no Rust-side value — binds
 /// against the file's machine word and refuses the exe case pre-effect.
 ///

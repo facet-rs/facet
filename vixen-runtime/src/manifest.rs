@@ -1,11 +1,11 @@
-//! The machine manifest: what THIS machine offers, as declared typed data —
+//! The executor manifest: what THIS executor offers, as declared typed data —
 //! and the binding check that lets a program fail before anything runs
 //! (`vix-core/docs/content/spec/vixen/executor.md`).
 //!
 //! The manifest replaces the runner's capability *conjuring*: until now the
 //! demand root minted a capability value for whatever type a test named
 //! (`publish_capability`, unconditionally), so nothing could fail. Now the
-//! manifest is the single source of the machine's word — the host `Target`
+//! manifest is the single source of the executor's word — the host `Target`
 //! plus one offer per capability type, each carrying the tool's program and
 //! its facts as ordinary typed fields — and root capability parameters bind
 //! against it by declared type before any island of the test is submitted.
@@ -49,10 +49,10 @@ pub fn host_target() -> Target {
     Target::new(format!("{arch}-{os}"))
 }
 
-/// One capability offer: the machine's word for one capability type. The
+/// One capability offer: the executor's word for one capability type. The
 /// tool's reference is a program path (host-trusting exactly as the exec
 /// backend is, for 0.1); the rest are the capability's *facts* as typed
-/// fields — machine-ness is never a set of booleans
+/// fields — executor-ness is never a set of booleans
 /// (`vixen.executor.facts-are-fields`).
 ///
 /// r[impl vixen.executor.facts-are-fields]
@@ -70,7 +70,7 @@ pub struct CapabilityOffer {
 }
 
 impl CapabilityOffer {
-    /// Render the offer's facts for a diagnostic — the "machine offers" side.
+    /// Render the offer's facts for a diagnostic — the "executor offers" side.
     #[must_use]
     pub fn rendered(&self) -> String {
         let mut facts = Vec::new();
@@ -94,7 +94,7 @@ impl CapabilityOffer {
     }
 }
 
-/// A machine's capability set as a declared, typed value: the host `Target`
+/// An executor's capability set as a declared, typed value: the host `Target`
 /// plus one offer per capability type. Nothing is discovered ambiently and
 /// nothing is probed to mint identity — the embedder states this value (in
 /// tests as a plain Rust value, or loaded as config via [`Self::from_toml`]),
@@ -102,12 +102,12 @@ impl CapabilityOffer {
 ///
 /// r[impl vixen.executor.manifest]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MachineManifest {
+pub struct ExecutorManifest {
     pub host: Target,
     pub capabilities: Vec<CapabilityOffer>,
 }
 
-impl MachineManifest {
+impl ExecutorManifest {
     /// The manifest the ratchet harness runs under by default: the offers the
     /// runner used to conjure, now stated as data. The programs (`echo`,
     /// `sh`) are byte-identical to the parameter names the retired conjuring
@@ -130,7 +130,7 @@ impl MachineManifest {
         }
     }
 
-    /// The machine's offer for one capability type, by nominal name.
+    /// The executor's offer for one capability type, by nominal name.
     #[must_use]
     pub fn offer(&self, ty: &str) -> Option<&CapabilityOffer> {
         self.capabilities.iter().find(|offer| offer.ty == ty)
@@ -223,16 +223,16 @@ impl MachineManifest {
     }
 }
 
-/// The environment variable through which an invoker DECLARES the machine
+/// The environment variable through which an invoker DECLARES the executor
 /// manifest file: an explicit path, read once at the embedder entrypoint.
 /// This is a declaration, not discovery — no path is probed, no directory
 /// walked, no fallback location tried (`vixen.executor.manifest`: a machine's
 /// word is stated, never conjured from its surroundings).
-pub const MANIFEST_ENV: &str = "VIX_MACHINE_MANIFEST";
+pub const MANIFEST_ENV: &str = "VIX_EXECUTOR_MANIFEST";
 
 /// A typed manifest-loading failure. A declared file that cannot be read or
 /// parsed is THIS error at the entrypoint — never a silent fall-back to the
-/// harness default, which would run the program under a machine word the
+/// harness default, which would run the program under an executor word the
 /// invoker explicitly replaced.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ManifestLoadError {
@@ -247,37 +247,37 @@ impl core::fmt::Display for ManifestLoadError {
         match self {
             Self::Unreadable { path, detail } => write!(
                 f,
-                "error[manifest]: declared machine manifest `{path}` cannot be read: {detail}"
+                "error[manifest]: declared executor manifest `{path}` cannot be read: {detail}"
             ),
             Self::Malformed { path, detail } => write!(
                 f,
-                "error[manifest]: declared machine manifest `{path}` is not a manifest document: {detail}"
+                "error[manifest]: declared executor manifest `{path}` is not a manifest document: {detail}"
             ),
         }
     }
 }
 
 /// Load the manifest an explicit path declares: read the file, parse it as
-/// the [`MachineManifest::from_toml`] document. Both failure sides are loud
+/// the [`ExecutorManifest::from_toml`] document. Both failure sides are loud
 /// and typed, naming the declared path.
-pub fn load_manifest(path: &str) -> Result<MachineManifest, ManifestLoadError> {
+pub fn load_manifest(path: &str) -> Result<ExecutorManifest, ManifestLoadError> {
     let source = std::fs::read_to_string(path).map_err(|error| ManifestLoadError::Unreadable {
         path: path.to_owned(),
         detail: error.to_string(),
     })?;
-    MachineManifest::from_toml(&source).map_err(|detail| ManifestLoadError::Malformed {
+    ExecutorManifest::from_toml(&source).map_err(|detail| ManifestLoadError::Malformed {
         path: path.to_owned(),
         detail,
     })
 }
 
-/// Resolve this process's machine word: the manifest file
+/// Resolve this process's executor word: the manifest file
 /// [`MANIFEST_ENV`] explicitly declares, or
-/// [`MachineManifest::ratchet_default`] when nothing is declared. A declared
+/// [`ExecutorManifest::ratchet_default`] when nothing is declared. A declared
 /// file that is missing, unreadable, malformed — or a declared path that is
 /// not even UTF-8 — is a loud typed error; the default serves only the
 /// UNDECLARED case.
-pub fn declared_manifest() -> Result<MachineManifest, ManifestLoadError> {
+pub fn declared_manifest() -> Result<ExecutorManifest, ManifestLoadError> {
     match std::env::var_os(MANIFEST_ENV) {
         Some(path) => {
             let path = path.to_str().ok_or_else(|| ManifestLoadError::Unreadable {
@@ -286,7 +286,7 @@ pub fn declared_manifest() -> Result<MachineManifest, ManifestLoadError> {
             })?;
             load_manifest(path)
         }
-        None => Ok(MachineManifest::ratchet_default()),
+        None => Ok(ExecutorManifest::ratchet_default()),
     }
 }
 
@@ -335,7 +335,7 @@ pub struct CapabilityRefusal {
     pub required_type: String,
     /// …and the required target, when the refusal is finer than presence.
     pub required_target: Option<String>,
-    /// What the machine offers for that type, facts rendered; `None` when the
+    /// What the executor offers for that type, facts rendered; `None` when the
     /// manifest has no offer of the type.
     pub offered: Option<String>,
 }
@@ -351,8 +351,8 @@ impl core::fmt::Display for CapabilityRefusal {
             write!(f, " producing {target}")?;
         }
         match &self.offered {
-            Some(offered) => write!(f, "\n  machine offers: {offered}")?,
-            None => write!(f, "\n  machine offers no {}", self.required_type)?,
+            Some(offered) => write!(f, "\n  executor offers: {offered}")?,
+            None => write!(f, "\n  executor offers no {}", self.required_type)?,
         }
         write!(f, "\n  no effect was started")
     }
