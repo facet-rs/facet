@@ -7,7 +7,7 @@
 
 use std::collections::HashSet;
 
-use facet_core::{ScalarType, Shape};
+use facet_core::{Def, ScalarType, Shape, StructKind, Type, UserType};
 use vox_types::{
     EnumInfo, ShapeKind, StructInfo, VariantKind, classify_shape, classify_variant, is_bytes,
 };
@@ -210,19 +210,25 @@ fn transparent_named_alias(shape: &'static Shape) -> Option<(&'static str, &'sta
     if !shape.is_transparent() {
         return None;
     }
-    let name = extract_type_name(shape.type_identifier)?;
+    let name = extract_type_name(shape)?;
     let inner = shape.inner?;
     Some((name, inner))
 }
 
-fn extract_type_name(type_identifier: &'static str) -> Option<&'static str> {
-    if type_identifier.is_empty()
-        || type_identifier.starts_with('(')
-        || type_identifier.starts_with('[')
-    {
+/// The declared name of a shape, or `None` for structurally anonymous types
+/// (tuples, arrays, slices) which have no name to give.
+///
+/// This used to test the *name* for a leading `(` or `[`, which leans on how an
+/// anonymous type's identifier happens to be synthesised. `Type`/`Def` say it
+/// outright.
+fn extract_type_name(shape: &'static Shape) -> Option<&'static str> {
+    let anonymous = matches!(shape.def, Def::Array(_) | Def::Slice(_))
+        || matches!(shape.ty, Type::User(UserType::Struct(s)) if s.kind == StructKind::Tuple);
+
+    if anonymous || shape.type_identifier.is_empty() {
         return None;
     }
-    Some(type_identifier)
+    Some(shape.type_identifier)
 }
 
 /// Convert a Shape to a TypeScript type string for wire protocol types.

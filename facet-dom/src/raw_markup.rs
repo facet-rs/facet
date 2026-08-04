@@ -105,8 +105,10 @@ unsafe impl facet_core::Facet<'_> for RawMarkup {
     };
 }
 
-/// Check if a shape is the RawMarkup type.
+/// Check if a shape is the [`RawMarkup`] type.
 pub fn is_raw_markup(shape: &facet_core::Shape) -> bool {
-    // Just check the type name - module path is set by macro
-    shape.type_identifier == "RawMarkup"
+    // Compare type identity, not the bare name. Matching on `type_identifier ==
+    // "RawMarkup"` meant any user type that happened to be called `RawMarkup`
+    // was silently routed into raw-markup capture during deserialization.
+    shape.id == <RawMarkup as facet_core::Facet>::SHAPE.id
 }

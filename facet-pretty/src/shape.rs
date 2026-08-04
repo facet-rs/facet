@@ -843,12 +843,15 @@ fn write_type_name_colored(shape: &Shape, output: &mut String) -> core::fmt::Res
             )?;
         }
         Def::Map(map_def) => {
-            let map_name = if shape.type_identifier.contains("BTreeMap") {
-                "BTreeMap"
-            } else {
-                "HashMap"
-            };
-            write!(output, "{}", map_name.style(colors::themed::container()))?;
+            // `type_identifier` already *is* the bare name ("HashMap", "BTreeMap",
+            // "IndexMap", ...), so print it. Sniffing for the substring "BTreeMap"
+            // and otherwise falling back to a hardcoded "HashMap" mislabels every
+            // other map type — an `IndexMap<K, V>` printed as `HashMap<K, V>`.
+            write!(
+                output,
+                "{}",
+                shape.type_identifier.style(colors::themed::container())
+            )?;
             write!(output, "{}", "<".style(colors::themed::punctuation()))?;
             write_type_name_colored(map_def.k, output)?;
             write!(output, "{} ", ",".style(colors::themed::punctuation()))?;
@@ -1443,12 +1446,10 @@ fn write_type_name(shape: &Shape, output: &mut String) -> core::fmt::Result {
             write!(output, "; {}]", array_def.n)?;
         }
         Def::Map(map_def) => {
-            let map_name = if shape.type_identifier.contains("BTreeMap") {
-                "BTreeMap"
-            } else {
-                "HashMap"
-            };
-            write!(output, "{map_name}<")?;
+            // See the colored twin above: `type_identifier` is already the bare
+            // name, so print it rather than sniffing for one map type and
+            // mislabelling every other as "HashMap".
+            write!(output, "{}<", shape.type_identifier)?;
             write_type_name(map_def.k, output)?;
             write!(output, ", ")?;
             write_type_name(map_def.v, output)?;
