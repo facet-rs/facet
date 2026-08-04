@@ -65,7 +65,8 @@ narrower axis: `"…"` processes backslash escapes, and only `"""…"""` is raw.
 **Is it a string or a template?** The holes answer: a hole that *reads* a name
 (`{x}`) is interpolation, resolved where it is written, so the literal is
 still a `String`. A hole that *binds* a name (`{let x}`) is a parameter the
-literal does not have, so the literal is a `Template`.
+literal does not have, so the literal is a **template** — a function taking
+those parameters and returning what it would otherwise have been.
 
 Interpolation and templating are not the same operation. Interpolation names a
 **value** and is eager. A template names a **hole** and keeps it. This replaces
@@ -188,24 +189,35 @@ program admits a flavor name.
 
 > r[lang.template.is-a-function]
 >
-> [DESIGN] A template's holes **are a record**, and its type is
-> `Template<P>` for that record type `P`. This needs nothing new: vix already
-> has records, and the hole set is checked against an ascribed `P` by ordinary
-> typing.
+> [DESIGN] A template **is a function**, so its type is the function type
+> `fn(P) -> T`. Its `{let …}` holes **are a record** — that is `P` — and `T` is
+> what the same literal would have been with no bindings: `String`, `Path`,
+> `Command<A>`, or a flavor's type (`r[lang.template.escaping]`). This needs
+> nothing new: vix already has records and functions, and the hole set is
+> checked against an ascribed `P` by ordinary typing.
 >
 > ```vix
 > struct Row { name: String, version: String }
 >
-> let row: Template<Row> = @html`<tr><td>{let name}</td><td>{let version}</td></tr>`;
+> let row: fn(Row) -> Html = @html`<tr><td>{let name}</td><td>{let version}</td></tr>`;
 > ```
 >
-> A `Template<P>` **is a function `P -> String`**, and is applied like one. It
-> is therefore not a new kind of value needing its own combinators: `map`,
-> `fold`, and `join` take one exactly as they take any function.
+> A template is applied by ordinary call — `row r` — so it is not a new kind of
+> value needing its own combinators: `map`, `fold`, and `join` take one exactly
+> as they take any function. There is no fill API, and no filling vocabulary:
+> a template is called.
 >
-> A literal with no bindings is a `String`, not a `Template<{}>` — the common
-> case is not taxed with a fill. The conversion exists in the other direction
-> (applying `Template<{}>`) and is a curiosity.
+> **There is no `Template<P>` type constructor**, and minting one would be the
+> error the rest of this rule avoids. It has one parameter and two things to
+> say — the holes and the result — so `Template<Row>` cannot distinguish
+> `fn(Row) -> Html` from `fn(Row) -> String`, and cannot spell a `Path` or
+> command template at all. Declaring a template to be a function and then
+> giving it a type that is not a function type is how that contradiction got
+> in.
+>
+> A literal with no bindings is not a nullary template; it is the value —
+> a `String`, a `Path`, a `Command<A>`, an `Html`. The common case is not taxed
+> with an application.
 
 > r[lang.template.no-control-flow]
 >
@@ -214,8 +226,8 @@ program admits a flavor name.
 > `join` in the language, spliced through an ordinary hole.
 >
 > ```vix
-> fn table(rows: [Row]) -> String {
->     let body = rows.map(row).join("\n");
+> fn table(rows: [Row]) -> Html {
+>     let body = rows.map(row).join(@html"\n");
 >     @html```
 >         <table>
 >           <tbody>{body}</tbody>
@@ -223,6 +235,13 @@ program admits a flavor name.
 >     ```
 > }
 > ```
+>
+> The types line up without a cast. `row` is the `fn(Row) -> Html` template of
+> `r[lang.template.is-a-function]`, so `rows.map(row)` is `[Html]`; the
+> separator is written `@html"\n"`, a hole-free `@html` literal whose escaping
+> discipline is therefore vacuous (`r[lang.literal.flavor]`), so the join stays
+> in `Html`; and the enclosing `@html` literal yields `Html` too, which is what
+> the function returns.
 >
 > This is the load-bearing restraint. Every template system that grew loops
 > grew a second, worse language inside its strings — untyped, untooled, with
@@ -245,9 +264,10 @@ program admits a flavor name.
 >   its type already says it is markup.
 >
 > The second clause is why composition needs no opt-out. An `@html` template
-> produces `Html`, so a template spliced into another template — the ordinary
-> `map`/`join` shape of `r[lang.template.no-control-flow]` — carries markup
-> into markup and nothing is re-escaped.
+> returns `Html`, so its results — mapped and joined by the ordinary
+> `map`/`join` shape of `r[lang.template.no-control-flow]`, and spliced into
+> the `@html` literal that assembles them — carry markup into markup, and
+> nothing is re-escaped.
 >
 > The types are **per flavor**, and deliberately not one shared `Raw`. Escaping
 > is format-specific: a value escaped for SQL is not safe in HTML, and a single
@@ -337,10 +357,11 @@ program admits a flavor name.
 >
 > `{let x}` in a command literal names a declared `Output<Path>` role of the
 > command grammar. This is not a second meaning of `let`: the command is a
-> template, and **`exec` is a filler that knows how to fill it** — by
-> allocating the workspace path — after which the outcome carries the binding.
-> Who fills a hole depends on who consumes the template; nothing about `let`
-> changes.
+> template — a `fn({obj: Output<Path>}) -> Command<A>` — and **`exec` applies
+> it**, supplying the argument by allocating the workspace path, after which
+> the outcome carries the binding. Who supplies a template's argument depends
+> on who applies it; nothing about `let` changes, and no filling machinery is
+> introduced (`r[lang.template.is-a-function]`).
 >
 > ```vix
 > let out = exec $gcc`-c {source} -o {let obj}`;
