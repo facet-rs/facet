@@ -154,7 +154,7 @@ second string delimiter.
 
 The set itself is not enumerated anywhere on this page, and the rule that
 closes it does not close anything until it is. That is a specification bug in
-the sense of the preamble, not a licence to invent one: the roster — each entry
+the sense of the preamble, not a license to invent one: the roster — each entry
 with its escaping discipline and produced type (`r[lang.template.escaping]`) —
 is normative content and must land here before an implementation or a corpus
 program admits a flavor name.
