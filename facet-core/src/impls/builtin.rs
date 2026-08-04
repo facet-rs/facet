@@ -30,7 +30,12 @@ unsafe impl<'facet, T: 'facet> Facet<'facet> for OpaqueBorrow<'facet, T> {
         // `&mut Opaque<&'static mut String>`: the ids compare equal, the bound is
         // vacuous, and both are `#[repr(transparent)]` over the same layout. That is
         // issue #1563 verbatim — fixed in bdf1dcfa6, reopened by cd254d928 (#2087).
-        Shape::builder_for_sized::<OpaqueBorrow<'facet, T>>("Opaque")
+        //
+        // The identifier is "OpaqueBorrow" and not "Opaque" so that a rejection
+        // can name what it rejected. While both wrappers answered to "Opaque",
+        // the (correct) refusal to interchange them rendered as the useless
+        // `Wrong shape: expected Opaque, but got Opaque`.
+        Shape::builder_for_sized::<OpaqueBorrow<'facet, T>>("OpaqueBorrow")
             .variance(VarianceDesc::INVARIANT)
             .build()
     };

@@ -355,3 +355,31 @@ fn table_is_populated_and_paired() {
         );
     }
 }
+
+/// A rejection must be able to *name* what it rejected.
+///
+/// The shapes were already distinct (that is the soundness fix above), but both
+/// carried `type_identifier: "Opaque"`, so the correct refusal to interchange
+/// them rendered as `Wrong shape: expected Opaque, but got Opaque` — true, and
+/// useless. Distinct ids are what keeps this sound; distinct *names* are what
+/// makes it debuggable, and nothing else in the type system enforces the latter.
+#[test]
+fn opaque_wrappers_are_distinguishable_by_name() {
+    let mut wrapper: OpaqueBorrow<'_, u64> = OpaqueBorrow::new(35);
+    let mut poke = Poke::new(&mut wrapper);
+
+    // `Opaque<u64>` is not `Debug`, so no `expect_err` here.
+    let Err(err) = poke.get_mut::<Opaque<u64>>() else {
+        panic!("Opaque<u64> must not be accepted for an OpaqueBorrow<'_, u64>");
+    };
+    let rendered = format!("{err}");
+
+    assert!(
+        !rendered.contains("expected Opaque, but got Opaque"),
+        "the rejection does not say which shape is which: {rendered}"
+    );
+    assert!(
+        rendered.contains("OpaqueBorrow"),
+        "the rejection should name OpaqueBorrow so the reader can act on it: {rendered}"
+    );
+}

@@ -483,7 +483,11 @@ fn opaque_arc() {
             assert_eq!(sk.fields.len(), 1);
             let field = sk.fields[0];
             let shape_name = format!("{}", field.shape());
-            assert_eq!(shape_name, "Opaque");
+            // The derive emits `OpaqueBorrow` for every `#[facet(opaque)]` field,
+            // including owned ones like this `Arc`, and `OpaqueBorrow` names
+            // itself — sharing `Opaque`'s name is what made mismatches read
+            // "expected Opaque, but got Opaque".
+            assert_eq!(shape_name, "OpaqueBorrow");
             eprintln!("Shape {shape} looks correct");
         }
         _ => unreachable!(),
@@ -508,7 +512,7 @@ fn opaque_borrowed_reference() {
     match shape.ty {
         Type::User(UserType::Struct(sk)) => {
             assert_eq!(sk.fields.len(), 1);
-            assert_eq!(format!("{}", sk.fields[0].shape()), "Opaque");
+            assert_eq!(format!("{}", sk.fields[0].shape()), "OpaqueBorrow");
         }
         _ => unreachable!(),
     }

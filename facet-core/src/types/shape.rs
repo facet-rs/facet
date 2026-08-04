@@ -172,6 +172,32 @@ pub struct Shape {
 
     /// Type name without generic parameters (e.g. `Vec`, not `Vec<String>`).
     /// For the full name with generics, use `vtable.type_name`.
+    ///
+    /// # This is a display token — do not branch on it
+    ///
+    /// It is a *name*, and names guarantee nothing: they are not unique (any two
+    /// crates may both define a `Config`), they carry no module path (that is
+    /// [`Shape::module_path`]), and they carry no generic arguments. In
+    /// particular `Cow<'_, str>` reads `"Cow"` here — `"Cow<str>"` is only what
+    /// `Display` renders, and the two are not interchangeable.
+    ///
+    /// So it is sound to *render* and to emit as a codegen identifier, and wrong
+    /// to make a decision with. Reach for the field that states what you mean:
+    ///
+    /// | To ask | Use |
+    /// |---|---|
+    /// | "are these the same type?" | [`Shape::id`] |
+    /// | "same declaration, different type arguments?" | [`Shape::decl_id`] |
+    /// | "is this an option / list / map / pointer?" | [`Shape::def`] |
+    /// | "is this a struct / enum / tuple?" | [`Shape::ty`] |
+    /// | "which scalar is this?" | [`Shape::scalar_type`] |
+    /// | "what does this format call the type?" | [`Shape::type_tag`] |
+    ///
+    /// Testing the name instead tends to fail quietly rather than loudly: a
+    /// substring check treats `OptionSet` as an `Option`, an equality check
+    /// conflates two unrelated `Config`s, and a check for text this field never
+    /// contains (`"::String"`, `"Cow<str>"`) is simply dead. All three shipped —
+    /// see the commit that added this note.
     pub type_identifier: &'static str,
 
     /// Module path where this type is defined (e.g. `"std::collections"`).
