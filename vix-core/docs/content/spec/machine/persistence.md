@@ -5,9 +5,8 @@ weight = 4
 
 Cross-process persistence of values, memo entries, and claims. Today the
 machine persists nothing (memo) and values only via bundles; this page is
-the interface those facts grow into — designed now, backed by vx-store at
-R8. Building cargo without a persistent cache is building cargo without a
-cache.
+the interface those facts grow into — designed now, backed by vx-store.
+Building cargo without a persistent cache is building cargo without a cache.
 
 > r[machine.persistence.trait-boundary]
 >
@@ -61,8 +60,8 @@ cache.
 > r[machine.persistence.memo-interface-day-one]
 >
 > [DESIGN] The memo and store expose persistability interfaces from the first
-> commit (the trait, not the backing). LED's "no serialization exists" is the
-> gap being closed, not a license to design in-memory-only.
+> commit (the trait, not the backing). "No serialization exists" is the gap
+> being closed, not a license to design in-memory-only.
 
 > r[machine.persistence.four-lifetimes]
 >

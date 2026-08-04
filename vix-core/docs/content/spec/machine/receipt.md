@@ -63,10 +63,9 @@ about what a build did; a vixen receipt is the observed read-set."
 > r[machine.receipt.exposed-to-programs]
 >
 > [DESIGN] The machine exposes a demanded function's read-set to vix code (the
-> demand's certificate is itself demandable). This closes doc-90's gap 1 by
-> construction and is what makes read-set widening (doc 50) expressible.
-> Field-level consumption tracking (which *fields* of an index row were read,
-> warm-facts §5) is the forward-looking requirement on this same surface.
+> demand's certificate is itself demandable). This is what makes read-set
+> widening expressible. Field-level consumption tracking — which *fields* of an
+> index row were read — is the forward-looking requirement on this same surface.
 > Demanding a certificate is a machine-meta demand: it does NOT itself produce a
 > second-order receipt (no receipt-of-receipt recursion), and reading a receipt
 > value is not an input observation of the reader's own computation.

@@ -20,8 +20,7 @@ driver.
 >
 > [SETTLED] All machine content hashes are blake3. This is load-bearing for
 > persistence: a vix value IS a vx-store object by digest only if the hash
-> families match. (Supersedes the stale SHA-256 recommendation in
-> `vx-store-as-vix-memo.md`.)
+> families match.
 
 > r[machine.identity.canonical-memory]
 >
@@ -155,9 +154,9 @@ driver.
 >
 > [SETTLED] Content-hashing is a free, always-available property of any
 > DAG-shaped value the machine builds — never something a consumer
-> re-implements. (Warm-facts' `proof_digest` is meant to be the demand
-> machine's own content hash of the proof structure; this rule is the
-> substrate obligation that makes proof-bearing facts affordable.)
+> re-implements. (A cached fact's `proof_digest` is the demand machine's own
+> content hash of the proof structure; this rule is the substrate obligation
+> that makes proof-bearing facts affordable.)
 
 > r[machine.identity.never-consults-order]
 >

@@ -45,7 +45,7 @@ memory, freeze/publish, snapshots, and reload semantics.
 > bytes (`machine.identity.tier-not-in-hash`); a pending slot's `ContentHash`
 > component is its promise identity, a realized slot's is its value identity,
 > and they are NOT equal (`machine.identity.pending-identity`), so the two
-> never contend for one slot. Doc-90's two-element key is a documented error.
+> never contend for one slot. A two-element key omitting tier is a documented error.
 > Note: only realized-tier values persist (`machine.persistence...`), so tier
 > is constant at the persistence boundary and the persistence key needs no tier
 > axis.
@@ -61,8 +61,7 @@ memory, freeze/publish, snapshots, and reload semantics.
 >
 > [SETTLED] "Molten" means mutable, in-flight, not interned. Molten arenas die
 > at freeze or publish-once. The molten→interned transition is named
-> `freeze`/`publish`; a name like `intern_molten_word` violates Law 8 and this
-> rule.
+> `freeze`/`publish`; a name like `intern_molten_word` violates this rule.
 
 > r[machine.store.publish-once]
 >
@@ -92,7 +91,7 @@ memory, freeze/publish, snapshots, and reload semantics.
 > bundle (schema, tier, bytes, content hash, taint — plus code). Bundles
 > carry values only: no memo entries, no read-sets. Value portability and
 > warm-memo persistence are two different features with two different trust
-> stories; conflating them is the documented doc-90 error. (Preserved from
+> stories; conflating them is a documented error. (Preserved from
 > `export_value_bundle`/`import_value_bundle`.)
 
 > r[machine.store.construction-services]
@@ -109,7 +108,7 @@ memory, freeze/publish, snapshots, and reload semantics.
 > before the island edge is never hashed or interned.
 >
 > **Edge publication** — freeze/publish, tag, collect — is the
-> scheduler-service surface (census class C). It runs exactly once when a value
+> scheduler-service surface. It runs exactly once when a value
 > actually crosses an island edge and computes identity by the canonical framed
 > walk (`machine.identity.framed-encoding`), never over ABI payload bytes. Each
 > service is witness-typed where it reads (`machine.receipt.witness-reads`) and

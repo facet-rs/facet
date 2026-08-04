@@ -27,7 +27,7 @@ not a thousand tasks.
 > memo-prologue, then direct invocation, same task; memoization happens on
 > the unwind. Task boundaries exist at exactly three places: a join (the
 > needed demand is already running in another path), an effect wait, and a
-> deliberate parallel split (deferred to Stage B).
+> deliberate parallel split (deferred).
 
 > r[machine.scheduler.demand-map]
 >
@@ -112,10 +112,10 @@ not a thousand tasks.
 
 > r[machine.scheduler.demand-services]
 >
-> [DESIGN] The scheduler-as-primitive surface includes the demand/call services
-> (census class C): invoke, pending alloc/coerce/invoke, tree project, tree
-> text, array-map-pending. Each mutates passive scheduler data; none opens a
-> private cache or a side channel.
+> [DESIGN] The scheduler-as-primitive surface includes the demand/call services:
+> invoke, pending alloc/coerce/invoke, tree project, tree text,
+> array-map-pending. Each mutates passive scheduler data; none opens a private
+> cache or a side channel.
 
 > r[machine.scheduler.observation-recording]
 >
@@ -146,7 +146,7 @@ not a thousand tasks.
 > r[machine.scheduler.suspension-is-acceleration]
 >
 > [SETTLED] Executions run as weavy tasks — pending = yield, completion =
-> resume; the substrate owns suspension (Law 20) — and a suspended task's
+> resume; the substrate owns suspension — and a suspended task's
 > state is a DISCARDABLE CACHE of replay progress, never the source of truth.
 > This is the executor's interp/JIT relationship applied to the scheduler
 > (the slow honest mechanism defines semantics; the fast one must be
@@ -175,7 +175,7 @@ not a thousand tasks.
 > r[machine.scheduler.chaos-kill-oracle]
 >
 > [SETTLED — day one] The replay/suspension equivalence is enforced by a
-> standing chaos oracle from R0: a test mode that randomly kills parked and
+> standing chaos oracle: a test mode that randomly kills parked and
 > running tasks mid-suite and asserts results identical to the unkilled run.
 > It runs always (CI-standing, not opt-in); the kill-anytime invariant rots
 > silently without it, and every future scheduler feature must pass it.
@@ -184,8 +184,8 @@ not a thousand tasks.
 >
 > [DESIGN] Effect requests are spawned-and-parked; serial inline draining of
 > effect queues is banned. An audit-with-receipts enumerates every drain site
-> (the old machine's Stage A covered one lane and left another serial —
-> reviews must quote sites, not claims).
+> (the old machine covered one lane and left another serial — reviews must
+> quote sites, not claims).
 
 > r[machine.scheduler.no-test-phase]
 >
@@ -197,4 +197,4 @@ not a thousand tasks.
 >
 > [DESIGN] Oracle-enforced counters on pure-solve inner loops: hostcalls per
 > iteration = 0, scheduler requests per iteration = 0. These are gate
-> criteria, wired through the observability spine from R0.
+> criteria, wired through the observability spine.
