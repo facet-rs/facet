@@ -9650,6 +9650,7 @@ dependencies = [
  "tracing-subscriber",
  "vox",
  "vox-core",
+ "vox-rt",
  "vox-stream",
  "vox-types",
 ]

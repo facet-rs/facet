@@ -114,6 +114,7 @@ impl<R, W> StreamLink<R, W> {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl StreamLink<tokio::net::tcp::OwnedReadHalf, tokio::net::tcp::OwnedWriteHalf> {
     /// Wrap a [`TcpStream`](tokio::net::TcpStream).
     pub fn tcp(stream: tokio::net::TcpStream) -> Self {
@@ -131,8 +132,10 @@ pub struct TcpLinkSource {
 }
 
 /// Default DNS resolution timeout.
+#[cfg(not(target_arch = "wasm32"))]
 const DEFAULT_RESOLVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 /// Default TCP connect timeout.
+#[cfg(not(target_arch = "wasm32"))]
 const DEFAULT_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -195,6 +198,7 @@ impl LinkSource for TcpLinkSource {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl StreamLink<tokio::io::Stdin, tokio::io::Stdout> {
     /// Wrap stdio (stdin for reading, stdout for writing).
     pub fn stdio() -> Self {
@@ -465,6 +469,7 @@ pub type LocalServerStream = tokio::net::windows::named_pipe::NamedPipeServer;
 /// This is a thin cross-platform wrapper:
 /// - Unix: a Unix domain socket listener
 /// - Windows: a named pipe acceptor with one pending server instance
+#[cfg(not(target_arch = "wasm32"))]
 pub struct LocalListener {
     #[cfg(unix)]
     inner: tokio::net::UnixListener,
@@ -474,6 +479,7 @@ pub struct LocalListener {
     next_server: tokio::net::windows::named_pipe::NamedPipeServer,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl LocalListener {
     /// Bind to a local endpoint.
     #[cfg(unix)]
@@ -617,6 +623,7 @@ pub struct LocalLink {
     inner: StreamLink<BoxReader, BoxWriter>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl LocalLink {
     /// Connect to a local endpoint by address.
     #[cfg(unix)]
@@ -662,20 +669,24 @@ impl Link for LocalLink {
 /// Each call to `next_link` connects to the same local endpoint and yields an
 /// initiator attachment.
 // r[impl transport.stream.local]
+#[cfg(not(target_arch = "wasm32"))]
 pub struct LocalLinkSource {
     addr: String,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn local_link_source(addr: impl Into<String>) -> LocalLinkSource {
     LocalLinkSource::new(addr)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl LocalLinkSource {
     pub fn new(addr: impl Into<String>) -> Self {
         Self { addr: addr.into() }
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl LinkSource for LocalLinkSource {
     type Link = LocalLink;
 
@@ -691,6 +702,7 @@ impl LinkSource for LocalLinkSource {
 
 /// Accepts incoming [`LocalLink`] connections.
 // r[impl transport.stream.local]
+#[cfg(not(target_arch = "wasm32"))]
 pub struct LocalLinkAcceptor {
     #[cfg(unix)]
     listener: tokio::net::UnixListener,
@@ -761,6 +773,7 @@ pub fn try_local_lock(addr: &str) -> io::Result<LocalLockOutcome> {
     }))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl LocalLinkAcceptor {
     /// Bind to a local address with exclusive file locking.
     ///

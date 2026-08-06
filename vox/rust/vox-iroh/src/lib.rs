@@ -6,6 +6,7 @@ use iroh::{
     Endpoint, EndpointAddr, EndpointId,
     endpoint::{Connection, RecvStream, SendStream},
 };
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::task::JoinSet;
 use vox_core::{Attachment, LinkSource};
 use vox_stream::{StreamLink, StreamLinkRx, StreamLinkTx};
@@ -74,8 +75,10 @@ impl LinkTx for IrohLinkTx {
     async fn close(self) -> io::Result<()> {
         let Self { inner, connection } = self;
         let result = inner.close().await;
-        tokio::spawn(async move {
-            let _ = tokio::time::timeout(GRACEFUL_CLOSE_WINDOW, connection.closed()).await;
+        // Portable spawn + timeout (vox-rt maps to tokio natively and to
+        // wasm-bindgen-futures + a timer-backed sleep in the browser).
+        vox_rt::spawn(async move {
+            let _ = vox_rt::time::timeout(GRACEFUL_CLOSE_WINDOW, connection.closed()).await;
         });
         result
     }
@@ -135,12 +138,14 @@ impl LinkSource for IrohLinkSource {
 /// Each accepted QUIC connection is allowed to wait for its first
 /// bidirectional stream independently, so one stalled peer cannot stop the
 /// endpoint from accepting other peers.
+#[cfg(not(target_arch = "wasm32"))]
 pub struct IrohListener {
     endpoint: Endpoint,
     pending: JoinSet<io::Result<Attachment<IrohLink>>>,
     endpoint_closed: bool,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl IrohListener {
     #[must_use]
     pub fn new(endpoint: Endpoint) -> Self {
@@ -157,6 +162,7 @@ impl IrohListener {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl vox::VoxListener for IrohListener {
     type Link = IrohLink;
 
