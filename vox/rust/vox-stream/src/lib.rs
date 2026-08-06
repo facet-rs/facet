@@ -7,8 +7,8 @@
 use std::io;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
-use tokio::sync::{mpsc, oneshot};
-use tokio::task::JoinHandle;
+use vox_rt::sync::{mpsc, oneshot};
+use vox_rt::task::JoinHandle;
 
 use vox_types::{Backing, Link, LinkRx, LinkTx};
 
@@ -238,13 +238,12 @@ where
     type Rx = StreamLinkRx<BufReader<R>>;
 
     fn split(self) -> (Self::Tx, Self::Rx) {
-        let (tx_chan, mut rx_chan) = mpsc::channel::<QueuedFrame>(128);
-        let (read_tx, read_rx) = mpsc::channel::<io::Result<Option<Backing>>>(128);
+        let (tx_chan, mut rx_chan) = mpsc::channel::<QueuedFrame>("stream_link_tx", 128);
+        let (read_tx, read_rx) = mpsc::channel::<io::Result<Option<Backing>>>("stream_link_rx", 128);
         let mut reader = BufReader::new(self.reader);
         let mut writer = BufWriter::new(self.writer);
 
-        let reader_task = tokio::spawn(async move {
-            // Validate the peer's link prologue before any framing.
+        let reader_task = vox_rt::spawn(async move {
             let mut prologue = [0u8; LINK_PROLOGUE_LEN];
             match read_frame_exact(&mut reader, &mut prologue, "link prologue").await {
                 Ok(ReadExactOutcome::Complete) => {
@@ -293,7 +292,7 @@ where
             }
         });
 
-        let writer_task = tokio::spawn(async move {
+        let writer_task = vox_rt::spawn(async move {
             // Announce the link prologue before any framed message, and flush so the peer
             // can validate immediately rather than blocking until the first real frame.
             writer.write_all(&link_prologue(false)).await?;
@@ -353,7 +352,7 @@ impl LinkTx for StreamLinkTx {
         let permit = self.tx.clone().reserve_owned().await.map_err(|_| {
             io::Error::new(io::ErrorKind::ConnectionReset, "stream writer task stopped")
         })?;
-        let (flushed, wait_for_flush) = oneshot::channel();
+        let (flushed, wait_for_flush) = oneshot::channel("stream_link_flushed");
         drop(permit.send(QueuedFrame { bytes, flushed }));
         wait_for_flush.await.map_err(|_| {
             io::Error::new(
