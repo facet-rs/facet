@@ -529,18 +529,95 @@ pub fn to_self_describing<'a, T: Facet<'a>>(value: &T) -> Result<Vec<u8>, Error>
     Ok(out)
 }
 
+/// Length sentinel marking a **compact schema reference**: the message names its
+/// schema by `u64` root id where [`to_self_describing`] would carry the whole closure.
+///
+/// The field it replaces is a real `u32` byte count, and no closure is four
+/// gigabytes — `schema_bytes` of the entire vox `Message` graph is ten kilobytes — so
+/// the sentinel can never collide with a length. A reader that predates the compact
+/// form reads it as a length and fails on the very next `read_slice`: a clean decode
+/// error, never a misparse. That is a *detectable* failure and not a survivable one,
+/// which is why a peer may only send this form to an end that has already named the
+/// same id (`Hello::compact_handshake_root`).
+pub const COMPACT_SCHEMA_REF: u32 = u32::MAX;
+
+/// The content-derived root id of `T`'s schema closure — the id a peer names in
+/// [`to_self_describing_by_root`] instead of shipping the closure.
+///
+/// # Errors
+/// [`Error`] if `T` cannot be lowered to a phon schema.
+pub fn schema_root_id<'a, T: Facet<'a>>() -> Result<u64, Error> {
+    let d = of::<T>().map_err(|e| derive_error(T::SHAPE, e))?;
+    Ok(d.root.as_u64())
+}
+
+/// Encode `value` naming its schema by **root id** instead of carrying the closure:
+/// [`COMPACT_SCHEMA_REF`], the `u64` root, then the compact value.
+///
+/// Sound only because phon schema ids are content-derived: a reader whose own root id
+/// for `T` equals the one on the wire has, by construction, the identical closure, so
+/// it can supply from its own derive the bytes the writer did not send. A reader that
+/// does not recognise the id cannot decode the message at all, so the sender carries
+/// the whole obligation — use this only against a peer that has named the same id.
+///
+/// # Errors
+/// [`Error`] if `T` cannot be derived or encoded.
+pub fn to_self_describing_by_root<'a, T: Facet<'a>>(value: &T) -> Result<Vec<u8>, Error> {
+    let root = schema_root_id::<T>()?;
+    let value_bytes = crate::to_vec(value)?;
+    let mut out = Vec::with_capacity(12 + value_bytes.len());
+    out.extend_from_slice(&COMPACT_SCHEMA_REF.to_le_bytes());
+    out.extend_from_slice(&root.to_le_bytes());
+    out.extend_from_slice(&value_bytes);
+    Ok(out)
+}
+
 /// Decode a self-contained message produced by [`to_self_describing`] into an OWNED
 /// `T`: parse the embedded writer schema closure, build a compatibility decode
 /// program against `T`, and decode the value. The handshake decode — so even the
 /// bootstrap message uses writer→reader planning rather than assuming same-version.
 ///
+/// Also accepts the compact form from [`to_self_describing_by_root`], where the
+/// closure is replaced by the writer's root id. Equal content-derived ids imply equal
+/// closures, so the reader stands in its own; an id it does not recognise is refused
+/// rather than guessed at.
+///
 /// # Errors
-/// [`Error`] for malformed framing, an undecodable schema, or incompatible schemas.
+/// [`Error`] for malformed framing, an undecodable schema, an unrecognised compact
+/// root, or incompatible schemas.
 pub fn from_self_describing<T: Facet<'static>>(bytes: &[u8]) -> Result<T, Error> {
     let mut r = Reader::new(bytes);
-    let schema_len =
-        r.read_u32()
-            .map_err(|e| Error(format!("self-describing schema length: {e:?}")))? as usize;
+    let schema_len = r
+        .read_u32()
+        .map_err(|e| Error(format!("self-describing schema length: {e:?}")))?;
+
+    if schema_len == COMPACT_SCHEMA_REF {
+        let writer_root = r
+            .read_u64()
+            .map_err(|e| Error(format!("compact schema reference root: {e:?}")))?;
+        let reader = of::<T>().map_err(|e| derive_error(T::SHAPE, e))?;
+        if writer_root != reader.root.as_u64() {
+            return Err(Error(format!(
+                "compact schema reference names {} root {writer_root:#x}, not this reader's \
+                 {:#x} — a writer may only name an id the reader has published",
+                shape_name(T::SHAPE),
+                reader.root.as_u64()
+            )));
+        }
+        // Equal ids, so the writer's closure IS the reader's. Still routed through
+        // `lower_decode` against a bundle rebuilt from the reader's own derive: the
+        // same-version case stays the degenerate output of the one program rather
+        // than becoming a second decode path that could drift from it.
+        let writer = SchemaBundle {
+            root: reader.root,
+            schemas: reader.schemas.clone(),
+            auxiliary_roots: Vec::new(),
+        };
+        let program = build_decode_program::<T>(&writer)?;
+        return decode_owned_with_program::<T>(&program, &bytes[12..]);
+    }
+
+    let schema_len = schema_len as usize;
     let schema = r
         .read_slice(schema_len)
         .map_err(|e| Error(format!("self-describing schema body: {e:?}")))?;
@@ -628,6 +705,67 @@ mod tests {
         assert_eq!(
             program.uses_native_jit(),
             cfg!(all(target_os = "macos", target_arch = "aarch64"))
+        );
+    }
+
+    #[test]
+    // r[verify schema.format.delivery]
+    fn a_named_schema_decodes_to_the_same_value_as_a_carried_one() {
+        let value = Reader2 {
+            a: 5,
+            b: 7,
+            added: 9,
+        };
+        let carried = to_self_describing(&value).expect("carry the closure");
+        let named = to_self_describing_by_root(&value).expect("name the closure");
+
+        assert_eq!(
+            &named[..4],
+            &COMPACT_SCHEMA_REF.to_le_bytes(),
+            "the named form must be tagged with the sentinel"
+        );
+        assert_eq!(
+            named.len(),
+            carried.len() - schema_bytes::<Reader2>().expect("closure").len() + 8,
+            "the named form is the carried form with the closure replaced by eight bytes"
+        );
+
+        let from_carried: Reader2 = from_self_describing(&carried).expect("decode carried");
+        let from_named: Reader2 = from_self_describing(&named).expect("decode named");
+        assert_eq!(from_carried, value);
+        assert_eq!(from_named, value);
+    }
+
+    #[test]
+    // r[verify schema.principles.self-describing]
+    fn a_named_schema_the_reader_does_not_know_is_refused() {
+        let value = Reader2 {
+            a: 1,
+            b: 2,
+            added: 3,
+        };
+        let mut named = to_self_describing_by_root(&value).expect("name the closure");
+        // Flip one bit of the root: a different type, as far as content-derived ids go.
+        named[4] ^= 1;
+
+        let error = from_self_describing::<Reader2>(&named)
+            .expect_err("a root the reader has not published must not resolve");
+        assert!(
+            error.0.contains("compact schema reference names"),
+            "unhelpful error: {}",
+            error.0
+        );
+    }
+
+    #[test]
+    /// The sentinel can never be mistaken for a length by a reader that predates it:
+    /// it is `u32::MAX` and the closure it stands in for is five orders of magnitude
+    /// smaller. So an old reader fails loudly on the next read rather than misparsing.
+    fn the_compact_sentinel_cannot_collide_with_a_real_closure_length() {
+        let closure = schema_bytes::<Writer>().expect("writer closure");
+        assert!(
+            (closure.len() as u64) < u64::from(COMPACT_SCHEMA_REF),
+            "a closure long enough to collide with the sentinel would be 4 GiB"
         );
     }
 

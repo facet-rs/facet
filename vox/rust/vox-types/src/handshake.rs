@@ -35,6 +35,18 @@ pub struct Hello {
     // r[impl rpc.metadata.records]
     #[facet(default)]
     pub metadata: Metadata,
+    /// Content-derived root id of the sender's own `HandshakeMessage` schema.
+    ///
+    /// Absent means *this peer predates compact schema references* — which is
+    /// the only thing absence can mean, and why it is an `Option` and not a
+    /// defaulted `u64`: zero is a legal root id and would claim a match.
+    #[facet(default)]
+    pub compact_handshake_root: Option<u64>,
+    /// Content-derived root id of the sender's own `Message` schema — the same
+    /// id that opens `message_payload_schema`, hoisted out so it can be read
+    /// when that field is empty.
+    #[facet(default)]
+    pub compact_message_root: Option<u64>,
 }
 
 // r[impl connection.handshake]
@@ -54,6 +66,14 @@ pub struct HelloYourself {
     // r[impl rpc.metadata.records]
     #[facet(default)]
     pub metadata: Metadata,
+    /// Content-derived root id of the sender's own `HandshakeMessage` schema.
+    /// See [`Hello::compact_handshake_root`].
+    #[facet(default)]
+    pub compact_handshake_root: Option<u64>,
+    /// Content-derived root id of the sender's own `Message` schema.
+    /// See [`Hello::compact_message_root`].
+    #[facet(default)]
+    pub compact_message_root: Option<u64>,
 }
 
 // r[impl connection.handshake]

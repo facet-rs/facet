@@ -96,15 +96,47 @@ struct TransportReject {
 pub async fn initiate_transport<L: Link>(
     link: L,
 ) -> Result<SplitLink<L::Tx, L::Rx>, TransportPrologueError> {
-    let (tx, mut rx) = link.split();
+    let mut link = begin_transport(link).await?;
+    finish_transport(&mut link.rx).await?;
+    Ok(link)
+}
+
+/// Send `TransportHello` and return **without** waiting for `TransportAccept`.
+///
+/// The accept carries a magic, a version and three zero bytes — all constants, none of
+/// them an input to anything the initiator says next. Splitting the exchange lets the
+/// caller put the phon `Hello` on the wire in the same flight and collect both replies
+/// together, recovering a whole round trip that the sequential form spends waiting to
+/// be told a constant.
+///
+/// The acceptor is unchanged and cannot tell: it reads its two frames in the order
+/// they were always going to arrive (`accept_transport`, then `handshake_as_acceptor`),
+/// and a stream is a stream whether or not the second frame was already in flight. So
+/// this is safe against every peer already deployed, which is the reason it is done
+/// here and not by making the acceptor smarter.
+///
+/// The caller **must** still [`finish_transport`] before treating the link as
+/// established — skipping it would step over a `TransportReject`.
+// r[impl transport.prologue]
+// r[impl transport.prologue.request]
+pub async fn begin_transport<L: Link>(
+    link: L,
+) -> Result<SplitLink<L::Tx, L::Rx>, TransportPrologueError> {
+    let (tx, rx) = link.split();
     let hello = TransportHello {
         magic: LeU32::new(TRANSPORT_HELLO_MAGIC),
         version: TRANSPORT_VERSION,
         reserved: RESERVED_ZERO,
     };
     send_message(&tx, &hello).await?;
+    Ok(SplitLink { tx, rx })
+}
 
-    let raw = recv_bytes(&mut rx).await?;
+/// Read and validate the peer's answer to [`begin_transport`].
+// r[impl transport.prologue.accept]
+// r[impl transport.prologue.reject-close]
+pub async fn finish_transport<Rx: LinkRx>(rx: &mut Rx) -> Result<(), TransportPrologueError> {
+    let raw = recv_bytes(rx).await?;
     let bytes = raw.as_bytes();
     let magic = bytes
         .get(..4)
@@ -129,7 +161,7 @@ pub async fn initiate_transport<L: Link>(
                 "transport accept reserved bytes must be zero".into(),
             ));
         }
-        return Ok(SplitLink { tx, rx });
+        return Ok(());
     }
 
     if magic == TRANSPORT_REJECT_MAGIC {

@@ -30,11 +30,11 @@ use vox_rt::sync::SyncMutex;
 
 pub mod schema;
 pub use schema::{
-    AuxiliaryRoot, DecodeProgram, Decoded, SchemaBundle, build_decode_program, decode_compat,
-    decode_owned_with_program, decode_with_program, decode_with_program_retained,
+    AuxiliaryRoot, COMPACT_SCHEMA_REF, DecodeProgram, Decoded, SchemaBundle, build_decode_program,
+    decode_compat, decode_owned_with_program, decode_with_program, decode_with_program_retained,
     from_self_describing, parse_schema_bytes, recursive_schema_ids_for_shape, schema_bytes,
     schema_bytes_for_shape, schema_bytes_for_shape_with_auxiliary_roots, schema_id_for_shape,
-    to_self_describing,
+    schema_root_id, to_self_describing, to_self_describing_by_root,
 };
 
 /// Opaque-passthrough sentinel: build an `OpaqueSerialize` that emits already-encoded

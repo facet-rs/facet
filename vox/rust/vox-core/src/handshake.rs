@@ -50,15 +50,80 @@ fn message_schema() -> Vec<u8> {
         .expect("derive phon schema for Message envelope")
 }
 
-/// Send a handshake message on a raw link, self-describing (it carries its own phon
-/// schema closure, so the peer can decode it without a prior exchange).
-async fn send_handshake<Tx: LinkTx>(tx: &Tx, msg: &HandshakeMessage) -> Result<(), HandshakeError> {
-    let bytes =
-        vox_phon::to_self_describing(msg).map_err(|e| HandshakeError::Encode(e.to_string()))?;
+/// Content-derived root id of our own `Message` schema — the first eight bytes of
+/// [`message_schema`], hoisted so it can be compared when the closure is absent.
+fn message_root() -> u64 {
+    vox_phon::schema_root_id::<vox_types::Message<'static>>()
+        .expect("derive phon schema root for Message envelope")
+}
+
+/// Content-derived root id of our own `HandshakeMessage` schema — the closure
+/// `to_self_describing` embeds in every handshake frame.
+fn handshake_root() -> u64 {
+    vox_phon::schema_root_id::<HandshakeMessage>()
+        .expect("derive phon schema root for HandshakeMessage")
+}
+
+// r[impl connection.handshake.protocol-schema.connection-scoped]
+/// Whether a peer that sent these two root ids can decode our compact form.
+///
+/// Both must match. The `HandshakeMessage` root gates the envelope (the peer must be
+/// able to supply the closure `to_self_describing_by_root` leaves out), the `Message`
+/// root gates the omitted `message_payload_schema`. Absent — which is what every peer
+/// built before these fields existed sends — is a mismatch, so the full form is used,
+/// which is the whole reason the fields are `Option` and not defaulted `u64`s.
+fn peer_accepts_compact(peer_handshake_root: Option<u64>, peer_message_root: Option<u64>) -> bool {
+    peer_handshake_root == Some(handshake_root()) && peer_message_root == Some(message_root())
+}
+
+/// The peer's `Message` schema closure, whether it sent one or named ours by id.
+///
+/// A compact sender leaves `message_payload_schema` empty and puts its root in
+/// `compact_message_root`; equal content-derived ids mean its closure is byte-for-byte
+/// the one we just derived, so we stand in our own. Everything downstream —
+/// `validate_message_writer_schema`, `MessagePlan`, `HandshakeResult::peer_schema` —
+/// then sees exactly what it would have seen from a peer that sent the bytes.
+fn resolve_peer_message_schema(
+    carried: Vec<u8>,
+    claimed_root: Option<u64>,
+    our_schema: &[u8],
+) -> Result<Vec<u8>, String> {
+    if !carried.is_empty() {
+        return Ok(carried);
+    }
+    match claimed_root {
+        Some(root) if root == message_root() => Ok(our_schema.to_vec()),
+        Some(root) => Err(format!(
+            "peer omitted its Message schema and named root {root:#x}, which is not ours \
+             ({:#x}); a peer may only omit the closure when it has named our id",
+            message_root()
+        )),
+        None => Err("peer sent an empty Message schema and named no root id".to_string()),
+    }
+}
+
+/// Send a handshake message on a raw link.
+///
+/// `compact` names the schema by root id instead of carrying the whole closure — 4,215
+/// bytes of `HandshakeMessage` descriptor that the peer, having published the same id,
+/// already has. It is only ever passed `true` after the peer said so in the message
+/// before this one, so the first frame in each direction is never compact.
+async fn send_handshake<Tx: LinkTx>(
+    tx: &Tx,
+    msg: &HandshakeMessage,
+    compact: bool,
+) -> Result<(), HandshakeError> {
+    let bytes = if compact {
+        vox_phon::to_self_describing_by_root(msg)
+    } else {
+        vox_phon::to_self_describing(msg)
+    }
+    .map_err(|e| HandshakeError::Encode(e.to_string()))?;
     vox_types::dlog!(
-        "[handshake] send {:?} ({} bytes)",
+        "[handshake] send {:?} ({} bytes{})",
         handshake_tag(msg),
-        bytes.len()
+        bytes.len(),
+        if compact { ", compact" } else { "" }
     );
     tx.send(bytes).await.map_err(HandshakeError::Io)
 }
@@ -153,19 +218,70 @@ pub async fn handshake_as_initiator_with_policy<Tx: LinkTx, Rx: LinkRx>(
     peer_evidence: PeerEvidence,
     identity_resolver: &dyn crate::IdentityResolver,
 ) -> Result<HandshakeResult, HandshakeError> {
+    handshake_as_initiator_pipelined(
+        tx,
+        rx,
+        settings,
+        metadata,
+        peer_evidence,
+        identity_resolver,
+        async |_rx| Ok(()),
+    )
+    .await
+}
+
+// r[impl connection.handshake]
+// r[impl transport.prologue.first-payload]
+/// The initiator handshake, with a hook that runs **after `Hello` is sent and before
+/// `HelloYourself` is awaited**.
+///
+/// That gap is the only place a caller can put work that must follow the Hello onto
+/// the wire but must precede reading the reply — which is exactly the shape of
+/// `finish_transport`. Letting the builder pass it in here is what turns the transport
+/// prologue and the phon handshake from two sequential round trips into one: `VOTH` and
+/// `Hello` leave together, `VOTA` and `HelloYourself` come back together.
+///
+/// The hook takes `&mut Rx` because completing the prologue means reading a frame, and
+/// the handshake owns the receiver for the duration.
+pub async fn handshake_as_initiator_pipelined<Tx: LinkTx, Rx: LinkRx, F>(
+    tx: &Tx,
+    rx: &mut Rx,
+    settings: ConnectionSettings,
+    metadata: Metadata,
+    peer_evidence: PeerEvidence,
+    identity_resolver: &dyn crate::IdentityResolver,
+    after_hello: F,
+) -> Result<HandshakeResult, HandshakeError>
+where
+    F: AsyncFnOnce(&mut Rx) -> Result<(), HandshakeError>,
+{
     validate_initial_channel_credit(&settings)?;
 
     let our_schema = message_schema();
 
+    // The initiator's Hello is the one message that can never be compact: it is
+    // written before anything has been heard back, and the transport prologue that
+    // precedes it carries no room to ask — `TransportHello::version` is compared for
+    // strict equality (`transport_prologue.rs:176`) and its `reserved` bytes must be
+    // zero (`:182`), so neither can carry a capability without a flag day. So this
+    // sends the full closure, forever, and only *publishes* the ids that let the
+    // acceptor's reply be compact.
     let hello = vox_types::Hello {
         parity: settings.parity,
         connection_settings: settings.clone(),
         message_payload_schema: our_schema.clone(),
         metadata,
+        compact_handshake_root: Some(handshake_root()),
+        compact_message_root: Some(message_root()),
     };
 
     // Step 1: Send Hello
-    send_handshake(tx, &HandshakeMessage::Hello(hello)).await?;
+    send_handshake(tx, &HandshakeMessage::Hello(hello), false).await?;
+
+    // Step 1b: whatever had to follow Hello onto the wire but precede the reply —
+    // in practice, collecting the `TransportAccept` whose wait this Hello just
+    // overlapped.
+    after_hello(rx).await?;
 
     // Step 2: Receive HelloYourself or Sorry
     let response = recv_handshake(rx).await?;
@@ -179,6 +295,9 @@ pub async fn handshake_as_initiator_with_policy<Tx: LinkTx, Rx: LinkRx>(
             ));
         }
     };
+    // Whether our LetsGo may name its schema instead of carrying it. Decided from what
+    // the acceptor just published, never assumed.
+    let compact_reply = peer_accepts_compact(hy.compact_handshake_root, hy.compact_message_root);
     if hy.connection_settings.initial_channel_credit == 0 {
         let reason = INITIAL_CHANNEL_CREDIT_ZERO_ERROR.to_string();
         send_handshake(
@@ -186,10 +305,29 @@ pub async fn handshake_as_initiator_with_policy<Tx: LinkTx, Rx: LinkRx>(
             &HandshakeMessage::Sorry(vox_types::Sorry {
                 reason: reason.clone(),
             }),
+            compact_reply,
         )
         .await?;
         return Err(HandshakeError::Protocol(reason));
     }
+    let peer_schema = match resolve_peer_message_schema(
+        hy.message_payload_schema,
+        hy.compact_message_root,
+        &our_schema,
+    ) {
+        Ok(schema) => schema,
+        Err(reason) => {
+            send_handshake(
+                tx,
+                &HandshakeMessage::Sorry(vox_types::Sorry {
+                    reason: reason.clone(),
+                }),
+                compact_reply,
+            )
+            .await?;
+            return Err(HandshakeError::Protocol(reason));
+        }
+    };
 
     let peer_identity = match resolve_peer_identity(
         ConnectionRole::Initiator,
@@ -199,31 +337,42 @@ pub async fn handshake_as_initiator_with_policy<Tx: LinkTx, Rx: LinkRx>(
     ) {
         Ok(identity) => identity,
         Err(decline) => {
-            send_handshake(tx, &HandshakeMessage::Decline(decline.clone())).await?;
+            send_handshake(
+                tx,
+                &HandshakeMessage::Decline(decline.clone()),
+                compact_reply,
+            )
+            .await?;
             return Err(HandshakeError::Declined(decline));
         }
     };
 
-    if let Err(reason) = crate::validate_message_writer_schema(&hy.message_payload_schema) {
+    if let Err(reason) = crate::validate_message_writer_schema(&peer_schema) {
         send_handshake(
             tx,
             &HandshakeMessage::Sorry(vox_types::Sorry {
                 reason: reason.clone(),
             }),
+            compact_reply,
         )
         .await?;
         return Err(HandshakeError::Protocol(reason));
     }
 
     // Step 3: Send LetsGo
-    send_handshake(tx, &HandshakeMessage::LetsGo(vox_types::LetsGo {})).await?;
+    send_handshake(
+        tx,
+        &HandshakeMessage::LetsGo(vox_types::LetsGo {}),
+        compact_reply,
+    )
+    .await?;
 
     Ok(HandshakeResult {
         role: ConnectionRole::Initiator,
         our_settings: settings,
         peer_settings: hy.connection_settings,
         our_schema,
-        peer_schema: hy.message_payload_schema,
+        peer_schema,
         peer_metadata: hy.metadata,
         peer_evidence,
         peer_identity,
@@ -283,6 +432,13 @@ pub async fn handshake_as_acceptor_with_policy<Tx: LinkTx, Rx: LinkRx>(
         HandshakeMessage::Hello(h) => h,
         _ => return Err(HandshakeError::Protocol("expected Hello".into())),
     };
+    // The acceptor decides compaction for the whole rest of the exchange, and it
+    // decides it here: after reading the initiator's Hello and before writing a single
+    // byte back. That ordering is what makes the change deployable in one release —
+    // every reply is conditioned on what the peer published, so an initiator that
+    // published nothing keeps getting the form it was built to read.
+    let compact_reply =
+        peer_accepts_compact(hello.compact_handshake_root, hello.compact_message_root);
     if hello.connection_settings.initial_channel_credit == 0 {
         let reason = INITIAL_CHANNEL_CREDIT_ZERO_ERROR.to_string();
         send_handshake(
@@ -290,6 +446,7 @@ pub async fn handshake_as_acceptor_with_policy<Tx: LinkTx, Rx: LinkRx>(
             &HandshakeMessage::Sorry(vox_types::Sorry {
                 reason: reason.clone(),
             }),
+            compact_reply,
         )
         .await?;
         return Err(HandshakeError::Protocol(reason));
@@ -303,17 +460,44 @@ pub async fn handshake_as_acceptor_with_policy<Tx: LinkTx, Rx: LinkRx>(
     ) {
         Ok(identity) => identity,
         Err(decline) => {
-            send_handshake(tx, &HandshakeMessage::Decline(decline.clone())).await?;
+            send_handshake(
+                tx,
+                &HandshakeMessage::Decline(decline.clone()),
+                compact_reply,
+            )
+            .await?;
             return Err(HandshakeError::Declined(decline));
         }
     };
 
-    if let Err(reason) = crate::validate_message_writer_schema(&hello.message_payload_schema) {
+    let our_schema = message_schema();
+
+    let peer_schema = match resolve_peer_message_schema(
+        hello.message_payload_schema,
+        hello.compact_message_root,
+        &our_schema,
+    ) {
+        Ok(schema) => schema,
+        Err(reason) => {
+            send_handshake(
+                tx,
+                &HandshakeMessage::Sorry(vox_types::Sorry {
+                    reason: reason.clone(),
+                }),
+                compact_reply,
+            )
+            .await?;
+            return Err(HandshakeError::Protocol(reason));
+        }
+    };
+
+    if let Err(reason) = crate::validate_message_writer_schema(&peer_schema) {
         send_handshake(
             tx,
             &HandshakeMessage::Sorry(vox_types::Sorry {
                 reason: reason.clone(),
             }),
+            compact_reply,
         )
         .await?;
         return Err(HandshakeError::Protocol(reason));
@@ -325,15 +509,22 @@ pub async fn handshake_as_acceptor_with_policy<Tx: LinkTx, Rx: LinkRx>(
         ..settings
     };
 
-    let our_schema = message_schema();
-
-    // Step 2: Send HelloYourself
+    // Step 2: Send HelloYourself. When the initiator published our ids, this drops
+    // 14,193 bytes to a couple of hundred: the 4,215-byte `HandshakeMessage` closure
+    // becomes an 8-byte root id, and the 9,957-byte `Message` closure is left out
+    // entirely in favour of `compact_message_root`.
     let hy = vox_types::HelloYourself {
         connection_settings: our_settings.clone(),
-        message_payload_schema: our_schema.clone(),
+        message_payload_schema: if compact_reply {
+            Vec::new()
+        } else {
+            our_schema.clone()
+        },
         metadata,
+        compact_handshake_root: Some(handshake_root()),
+        compact_message_root: Some(message_root()),
     };
-    send_handshake(tx, &HandshakeMessage::HelloYourself(hy)).await?;
+    send_handshake(tx, &HandshakeMessage::HelloYourself(hy), compact_reply).await?;
 
     // Step 3: Receive LetsGo or Sorry
     let response = recv_handshake(rx).await?;
@@ -353,7 +544,7 @@ pub async fn handshake_as_acceptor_with_policy<Tx: LinkTx, Rx: LinkRx>(
         our_settings,
         peer_settings: hello.connection_settings,
         our_schema,
-        peer_schema: hello.message_payload_schema,
+        peer_schema,
         peer_metadata: hello.metadata,
         peer_evidence,
         peer_identity,
@@ -432,7 +623,10 @@ mod tests {
                 connection_settings: acceptor_settings,
                 message_payload_schema: acceptor_schema.clone(),
                 metadata: acceptor_metadata.clone(),
+                compact_handshake_root: None,
+                compact_message_root: None,
             }),
+            false,
         )
         .await
         .expect("send hello-yourself");
@@ -531,7 +725,10 @@ mod tests {
                 connection_settings: settings(Parity::Even, 16),
                 message_payload_schema: message_schema(),
                 metadata: peer_metadata.clone(),
+                compact_handshake_root: None,
+                compact_message_root: None,
             }),
+            false,
         )
         .await
         .expect("send hello-yourself");
@@ -596,7 +793,10 @@ mod tests {
                 connection_settings: settings(Parity::Odd, 16),
                 message_payload_schema: message_schema(),
                 metadata: vox_types::metadata().str("auth", "nope").build(),
+                compact_handshake_root: None,
+                compact_message_root: None,
             }),
+            false,
         )
         .await
         .expect("send hello");
@@ -664,7 +864,10 @@ mod tests {
                 connection_settings: settings(Parity::Even, 16),
                 message_payload_schema: message_schema(),
                 metadata: vox_types::metadata().str("server-auth", "bad").build(),
+                compact_handshake_root: None,
+                compact_message_root: None,
             }),
+            false,
         )
         .await
         .expect("send hello-yourself");
@@ -721,7 +924,10 @@ mod tests {
                 connection_settings: settings(Parity::Odd, 16),
                 message_payload_schema: incompatible_schema,
                 metadata: vox_types::Metadata::default(),
+                compact_handshake_root: None,
+                compact_message_root: None,
             }),
+            false,
         )
         .await
         .expect("send hello");
@@ -741,6 +947,187 @@ mod tests {
             matches!(result, Err(HandshakeError::Protocol(ref reason)) if reason.contains("peer Message schema is incompatible")),
             "expected acceptor protocol error for incompatible peer schema, got: {result:?}"
         );
+    }
+
+    // r[verify connection.handshake.protocol-schema.connection-scoped]
+    // r[verify connection.handshake.unversioned]
+    /// The old-peer cell of the wire table: an initiator that publishes no root ids
+    /// is a peer built before they existed, and it must keep receiving the closure it
+    /// was built to read.
+    ///
+    /// This is the cell that cannot be recovered from in production. A `HelloYourself`
+    /// compacted at an initiator that cannot expand it is not a degraded connection,
+    /// it is a connection that never establishes — so the assertion is on the frame
+    /// SIZE, which is the thing an old peer actually experiences, not on a flag.
+    #[tokio::test]
+    async fn acceptor_sends_the_full_closure_to_an_initiator_that_published_no_roots() {
+        let (client_link, server_link) = crate::memory_link_pair(4);
+        let (client_tx, mut client_rx) = client_link.split();
+        let (server_tx, mut server_rx) = server_link.split();
+
+        let acceptor = tokio::spawn(async move {
+            handshake_as_acceptor(
+                &server_tx,
+                &mut server_rx,
+                settings(Parity::Even, 16),
+                vox_types::Metadata::default(),
+            )
+            .await
+        });
+
+        send_handshake(
+            &client_tx,
+            &HandshakeMessage::Hello(vox_types::Hello {
+                parity: Parity::Odd,
+                connection_settings: settings(Parity::Odd, 16),
+                message_payload_schema: message_schema(),
+                metadata: vox_types::Metadata::default(),
+                // Exactly what a peer from before this change writes.
+                compact_handshake_root: None,
+                compact_message_root: None,
+            }),
+            false,
+        )
+        .await
+        .expect("send hello");
+
+        let frame = client_rx
+            .recv()
+            .await
+            .expect("recv hello-yourself")
+            .expect("hello-yourself frame");
+        let bytes = frame.as_bytes();
+        assert_ne!(
+            u32::from_le_bytes(bytes[..4].try_into().unwrap()),
+            vox_phon::COMPACT_SCHEMA_REF,
+            "an initiator that published no roots must not be sent a compact envelope"
+        );
+        assert!(
+            bytes.len() > 10_000,
+            "expected the full closure ({} bytes is too small to carry one)",
+            bytes.len()
+        );
+        let hy = vox_phon::from_self_describing::<HandshakeMessage>(bytes).expect("decode");
+        let HandshakeMessage::HelloYourself(hy) = hy else {
+            panic!("expected HelloYourself");
+        };
+        assert!(
+            !hy.message_payload_schema.is_empty(),
+            "the Message closure must be carried, not named, for a peer that cannot resolve a name"
+        );
+
+        send_handshake(
+            &client_tx,
+            &HandshakeMessage::LetsGo(vox_types::LetsGo {}),
+            false,
+        )
+        .await
+        .expect("send lets-go");
+        let result = acceptor.await.expect("acceptor task").expect("handshake");
+        assert!(
+            !result.peer_schema.is_empty(),
+            "the acceptor still ends up holding the initiator's Message schema"
+        );
+    }
+
+    // r[verify connection.handshake.protocol-schema.connection-scoped]
+    /// The new/new cell: when the initiator publishes ids the acceptor recognises as
+    /// its own, the reply names the schemas instead of carrying them — and the
+    /// handshake still produces the identical `peer_schema` it would have parsed off
+    /// the wire, which is what makes this invisible to everything downstream.
+    #[tokio::test]
+    async fn acceptor_names_the_schemas_for_an_initiator_that_published_matching_roots() {
+        let (client_link, server_link) = crate::memory_link_pair(4);
+        let (client_tx, mut client_rx) = client_link.split();
+        let (server_tx, mut server_rx) = server_link.split();
+
+        let acceptor = tokio::spawn(async move {
+            handshake_as_acceptor(
+                &server_tx,
+                &mut server_rx,
+                settings(Parity::Even, 16),
+                vox_types::Metadata::default(),
+            )
+            .await
+        });
+
+        send_handshake(
+            &client_tx,
+            &HandshakeMessage::Hello(vox_types::Hello {
+                parity: Parity::Odd,
+                connection_settings: settings(Parity::Odd, 16),
+                message_payload_schema: message_schema(),
+                metadata: vox_types::Metadata::default(),
+                compact_handshake_root: Some(handshake_root()),
+                compact_message_root: Some(message_root()),
+            }),
+            false,
+        )
+        .await
+        .expect("send hello");
+
+        let frame = client_rx
+            .recv()
+            .await
+            .expect("recv hello-yourself")
+            .expect("hello-yourself frame");
+        let bytes = frame.as_bytes();
+        assert_eq!(
+            u32::from_le_bytes(bytes[..4].try_into().unwrap()),
+            vox_phon::COMPACT_SCHEMA_REF,
+            "expected a compact envelope"
+        );
+        assert!(
+            bytes.len() < 1_200,
+            "the point of the exercise is one datagram; got {} bytes",
+            bytes.len()
+        );
+
+        let hy = vox_phon::from_self_describing::<HandshakeMessage>(bytes).expect("decode");
+        let HandshakeMessage::HelloYourself(hy) = hy else {
+            panic!("expected HelloYourself");
+        };
+        assert!(
+            hy.message_payload_schema.is_empty(),
+            "closure must be named, not sent"
+        );
+        assert_eq!(
+            resolve_peer_message_schema(
+                hy.message_payload_schema,
+                hy.compact_message_root,
+                &message_schema()
+            )
+            .expect("resolve named schema"),
+            message_schema(),
+            "a named schema must resolve to exactly the bytes a full peer would have sent"
+        );
+
+        send_handshake(
+            &client_tx,
+            &HandshakeMessage::LetsGo(vox_types::LetsGo {}),
+            true,
+        )
+        .await
+        .expect("send compact lets-go");
+        acceptor
+            .await
+            .expect("acceptor task")
+            .expect("acceptor accepts a compact LetsGo");
+    }
+
+    // r[verify connection.handshake.protocol-schema.connection-scoped]
+    /// A root id the reader does not recognise is refused, not guessed at. This is the
+    /// safety net under the whole scheme: compaction is only ever sound because equal
+    /// content-derived ids imply equal closures, so an unequal id must never resolve.
+    #[test]
+    fn a_named_schema_that_is_not_ours_is_refused() {
+        let error = resolve_peer_message_schema(Vec::new(), Some(message_root() ^ 1), &[])
+            .expect_err("a foreign root must not resolve");
+        assert!(error.contains("not ours"), "unhelpful error: {error}");
+
+        let error = resolve_peer_message_schema(Vec::new(), None, &[])
+            .expect_err("an empty schema with no root must not resolve");
+        assert!(error.contains("named no root"), "unhelpful error: {error}");
     }
 
     // r[verify rpc.flow-control.credit.initial.zero]
@@ -791,7 +1178,10 @@ mod tests {
                 connection_settings: settings(Parity::Odd, 0),
                 message_payload_schema: message_schema(),
                 metadata: vox_types::Metadata::default(),
+                compact_handshake_root: None,
+                compact_message_root: None,
             }),
+            false,
         )
         .await
         .expect("send hello");

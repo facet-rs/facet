@@ -11,9 +11,9 @@ use vox_types::{
 
 use crate::{Attachment, LinkSource};
 use crate::{
-    BareConduit, IntoConduit, accept_transport, handshake_as_acceptor,
-    handshake_as_acceptor_with_policy, handshake_as_initiator, handshake_as_initiator_with_policy,
-    initiate_transport,
+    BareConduit, IntoConduit, accept_transport, begin_transport, finish_transport,
+    handshake_as_acceptor, handshake_as_acceptor_with_policy, handshake_as_initiator,
+    handshake_as_initiator_pipelined,
 };
 
 use super::{
@@ -315,7 +315,15 @@ fn handshake_details_from_error(error: &crate::HandshakeError) -> EstablishmentD
 }
 
 // r[impl rpc.observability.establishment]
-async fn initiate_transport_observed<L: Link>(
+// r[impl transport.prologue.first-payload]
+/// Put `TransportHello` on the wire without waiting for the accept.
+///
+/// The `VoxTransportPrologue` phase therefore now times a send and nothing else, and
+/// the round trip it used to own is folded into `ConnectionHandshake`, where
+/// `finish_transport` is collected alongside `HelloYourself`. The phases still sum to
+/// establishment; one of them is simply near zero now, and that is the change rather
+/// than an instrumentation artefact.
+async fn begin_transport_observed<L: Link>(
     link: L,
     observer: Option<&VoxObserverHandle>,
 ) -> Result<SplitLink<L::Tx, L::Rx>, ConnectionError> {
@@ -325,7 +333,7 @@ async fn initiate_transport_observed<L: Link>(
         EstablishmentPhase::VoxTransportPrologue,
         None,
     );
-    match initiate_transport(link).await {
+    match begin_transport(link).await {
         Ok(link) => {
             observe_establishment_finished(
                 observer,
@@ -409,13 +417,28 @@ async fn handshake_as_initiator_observed<Tx: LinkTx, Rx: LinkRx>(
         resolver: identity_resolver,
         observer: observer.cloned(),
     };
-    match handshake_as_initiator_with_policy(
+    // `begin_transport_observed` sent `TransportHello` and did not wait. Collect the
+    // accept here, after `Hello` has been handed to the transport — so the two waits
+    // are one wait. A rejection is stashed rather than flattened into `HandshakeError`,
+    // because `TransportPrologueError::Rejected` names a reason the handshake's error
+    // type has no room for and the caller has always been shown.
+    let mut prologue_error: Option<crate::TransportPrologueError> = None;
+    let after_hello = async |rx: &mut Rx| match finish_transport(rx).await {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let message = error.to_string();
+            prologue_error = Some(error);
+            Err(crate::HandshakeError::Protocol(message))
+        }
+    };
+    match handshake_as_initiator_pipelined(
         tx,
         rx,
         settings,
         metadata,
         peer_evidence,
         &observed_resolver,
+        after_hello,
     )
     .await
     {
@@ -440,7 +463,13 @@ async fn handshake_as_initiator_observed<Tx: LinkTx, Rx: LinkRx>(
                 started_at,
                 handshake_details_from_error(&error),
             );
-            Err(connection_error_from_handshake(error))
+            // A prologue failure keeps its own error shape even though it was
+            // discovered inside the handshake phase: what went wrong did not change
+            // just because the wait for it was moved.
+            match prologue_error {
+                Some(prologue) => Err(connection_error_from_transport(prologue)),
+                None => Err(connection_error_from_handshake(error)),
+            }
         }
     }
 }
@@ -761,7 +790,7 @@ impl<S> ConnectionSourceInitiatorBuilder<S> {
                 let attachment = source.next_link().await.map_err(ConnectionError::Io)?;
                 let peer_evidence = attachment.peer_evidence().clone();
                 let link =
-                    initiate_transport_observed(attachment.into_link(), config.observer.as_ref())
+                    begin_transport_observed(attachment.into_link(), config.observer.as_ref())
                         .await?;
                 ConnectionTransportInitiatorBuilder::<S::Link>::finish_with_bare_parts(
                     link,
@@ -895,7 +924,7 @@ impl<L> ConnectionTransportInitiatorBuilder<L> {
         L::Rx: MaybeSend + 'static,
     {
         let Self { link, config } = self;
-        let link = initiate_transport_observed(link, config.observer.as_ref()).await?;
+        let link = begin_transport_observed(link, config.observer.as_ref()).await?;
         Self::finish_with_bare_parts(link, config, PeerEvidence::none()).await
     }
 
@@ -909,7 +938,7 @@ impl<L> ConnectionTransportInitiatorBuilder<L> {
         L::Rx: MaybeSend + 'static,
     {
         let Self { link, config } = self;
-        let link = initiate_transport_observed(link, config.observer.as_ref()).await?;
+        let link = begin_transport_observed(link, config.observer.as_ref()).await?;
         Self::finish_with_bare_parts(link, config, PeerEvidence::none()).await
     }
 
