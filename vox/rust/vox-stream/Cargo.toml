@@ -26,13 +26,24 @@ vox-rt.workspace = true
 vox-core.workspace = true
 vox-types.workspace = true
 tracing.workspace = true
+
+# Native: full byte-stream transports (TCP, Unix, stdio) need tokio `net`
+# (mio) and `io-std`.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { workspace = true, features = ["net", "io-util", "io-std", "rt", "sync"] }
+
+# Browser: `StreamLink` is generic over AsyncRead/AsyncWrite (used by
+# vox-iroh over an iroh QUIC stream); it needs only `io-util`. `net` pulls
+# mio, which has no wasm backend. Explicit version (not workspace inherit)
+# keeps the workspace baseline `rt-multi-thread` out of the wasm unit.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { version = "1", default-features = false, features = ["io-util", "rt", "sync"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 vox-fdpass.workspace = true
 
-[dev-dependencies]
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tempfile.workspace = true
 vox-phon = { path = "../vox-phon" }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "rt"] }

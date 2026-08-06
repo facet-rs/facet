@@ -18,15 +18,32 @@ categories.workspace = true
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-iroh.workspace = true
-tokio = { workspace = true, features = ["io-util", "rt", "sync"] }
 tracing.workspace = true
 vox = { workspace = true, features = ["runtime"] }
 vox-core.workspace = true
+vox-rt.workspace = true
 vox-stream.workspace = true
 vox-types.workspace = true
 
-[dev-dependencies]
+# Native: full iroh (direct connections, hole punching) + a Tokio JoinSet for
+# the server-side listener.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+iroh.workspace = true
+tokio = { workspace = true, features = ["io-util", "rt", "sync"] }
+
+# Browser: iroh's relay-only Wasm build. Default features (which pull
+# `metrics` → tokio net → mio) must be off; see
+# https://docs.iroh.computer/languages/wasm-browser. Explicit versions (not
+# workspace inherits) keep native workspace features out of the wasm unit.
+# No `IrohListener`: browsers cannot accept incoming QUIC.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+iroh = { version = "1", default-features = false }
+tokio = { version = "1", default-features = false, features = ["io-util"] }
+
+# Native-only: the two-endpoint interop tests need iroh `test-utils` (relay
+# server, direct connections) and a multi-thread tokio runtime — neither
+# exists in a browser.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 iroh = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 tracing-subscriber.workspace = true
