@@ -37,6 +37,7 @@ keyword! {
     KShapeType = "shape_type";
     KArbitrary = "arbitrary";
     KPassthrough = "passthrough";
+    KList = "list";
 }
 
 operator! {
@@ -195,6 +196,12 @@ unsynn! {
         _kw: KShapeType,
     }
 
+    /// `list(shape_type)` payload
+    struct ListShapeTypePayload {
+        _kw: KList,
+        inner: ParenthesisGroupContaining<ShapeTypePayload>,
+    }
+
     /// `arbitrary` payload (just the keyword)
     struct ArbitraryPayload {
         _kw: KArbitrary,
@@ -351,6 +358,13 @@ enum VariantKind {
     /// The user's type is converted to `<Type as Facet>::SHAPE`.
     /// Grammar syntax: `Proxy(shape_type)`
     ShapeType,
+    /// A comma-separated list of types, each converted to a Shape reference.
+    /// Unlike `ShapeType`, this is stored wrapped in the generated enum (as
+    /// `&'static [&'static Shape]`), since `&'static [&'static Shape]` already
+    /// implements `Facet` via the existing reference/slice blanket impls.
+    /// Grammar syntax: `LenientWidth(list(shape_type))`
+    /// Call site: `#[facet(ns::lenient_width(f32, i32))]`
+    ListShapeType,
     /// Arbitrary value - accepts any tokens without validation.
     /// Used for compile-time-only attributes where the value is read from raw tokens.
     /// Grammar syntax: `FromRef(arbitrary)`
@@ -579,6 +593,7 @@ fn parse_storage_attr(attrs: &[OuterAttr]) -> std::result::Result<Storage, Strin
 /// - `predicate TypeName` → Predicate
 /// - `fn_ptr TypeName` → FnPtr
 /// - `shape_type` → ShapeType
+/// - `list(shape_type)` → ListShapeType
 /// - Single identifier like `Column` → Struct reference
 /// - Everything else → ArbitraryType
 fn analyze_variant_payload(tokens: &[TokenTree]) -> std::result::Result<VariantKind, String> {
@@ -664,6 +679,14 @@ fn analyze_variant_payload(tokens: &[TokenTree]) -> std::result::Result<VariantK
         {
             let type_name = convert_ident(&parsed.type_name);
             return Ok(VariantKind::FnPtr(quote! { #type_name }));
+        }
+    }
+
+    // list(shape_type) → ListShapeType (must come before the plain shape_type check)
+    {
+        let mut iter = token_stream.clone().to_token_iter();
+        if iter.parse::<ListShapeTypePayload>().is_ok() && iter.next().is_none() {
+            return Ok(VariantKind::ListShapeType);
         }
     }
 
@@ -881,6 +904,16 @@ impl ParsedGrammar {
                         };
                         quote! { #(#attrs)* #name(&'static #shape_path) }
                     }
+                    VariantKind::ListShapeType => {
+                        // Generates a newtype variant holding a slice of Shape references.
+                        // Use crate:: path in builtin mode, ::facet:: otherwise
+                        let shape_path = if self.builtin {
+                            quote! { crate::Shape }
+                        } else {
+                            quote! { ::facet::Shape }
+                        };
+                        quote! { #(#attrs)* #name(&'static [&'static #shape_path]) }
+                    }
                     VariantKind::Arbitrary => {
                         // Arbitrary variants are compile-time only - they don't store runtime data.
                         // The value is read from raw tokens by the derive macro.
@@ -990,6 +1023,13 @@ impl ParsedGrammar {
                     VariantKind::ShapeType => {
                         quote! {
                             (Self::#variant_name(a), Self::#variant_name(b)) => ::core::ptr::eq(*a, *b)
+                        }
+                    }
+                    // ListShapeType: compare slices element-wise by pointer equality
+                    VariantKind::ListShapeType => {
+                        quote! {
+                            (Self::#variant_name(a), Self::#variant_name(b)) =>
+                                a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| ::core::ptr::eq(*x, *y))
                         }
                     }
                     // Arbitrary: unit variant, simple equality
@@ -1109,6 +1149,7 @@ impl ParsedGrammar {
                     VariantKind::Validator(_) => quote! { #name: validator },
                     VariantKind::FnPtr(_) => quote! { #name: fn_ptr },
                     VariantKind::ShapeType => quote! { #name: shape_type },
+                    VariantKind::ListShapeType => quote! { #name: list_shape_type },
                     VariantKind::Arbitrary => quote! { #name: arbitrary },
                     VariantKind::OptionalStr => quote! { #name: opt_str },
                 }
@@ -1805,7 +1846,7 @@ impl ParsedGrammar {
                             }};
                         }
                     }
-                    VariantKind::Newtype(_) | VariantKind::NewtypeOptionChar | VariantKind::ArbitraryType(_) | VariantKind::Struct(_) | VariantKind::FnPtr(_) => {
+                    VariantKind::Newtype(_) | VariantKind::NewtypeOptionChar | VariantKind::ArbitraryType(_) | VariantKind::Struct(_) | VariantKind::FnPtr(_) | VariantKind::ListShapeType => {
                         // For non-unit variants, we need the crate_path to generate proper type references.
                         // The crate_path is passed to the proc macro so it can output e.g. `::figue::Attr::Short(...)`
                         let crate_path = self.crate_path.as_ref().expect(
