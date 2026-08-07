@@ -52,6 +52,7 @@ members = [
   "facet-json-classics",
   "facet-postcard",
   "facet-msgpack",
+  "facet-cbor",
   "facet-toml",
   "facet-yaml",
   "facet-format-suite",
@@ -224,6 +225,7 @@ categories = ["network-programming", "asynchronous"]
 
 [workspace.dependencies]
 facet = { path = "facet", version = "0.50.0-rc.5" }
+facet-cbor = { path = "facet-cbor", version = "0.50.0-rc.5" }
 facet-core = { path = "facet-core", version = "0.50.0-rc.5" }
 facet-default = { path = "facet-default", version = "0.50.0-rc.5" }
 facet-dessert = { path = "facet-dessert", version = "0.50.0-rc.5" }
@@ -538,6 +540,7 @@ facet-json-classics = { path = "facet-json-classics" }
 facet-json-schema = { path = "facet-json-schema" }
 facet-lua = { path = "facet-lua" }
 facet-msgpack = { path = "facet-msgpack" }
+facet-cbor = { path = "facet-cbor" }
 facet-postcard = { path = "facet-postcard" }
 facet-python = { path = "facet-python" }
 facet-singularize = { path = "facet-singularize" }
