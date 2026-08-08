@@ -22,7 +22,7 @@ jobs:
         partition: ["1/3", "2/3", "3/3"]
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 26
       - uses: Swatinem/rust-cache@v2
@@ -47,7 +47,7 @@ jobs:
       image: ghcr.io/facet-rs/facet-ci:latest-arm64
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 26
       - name: Select Rust 1.92
@@ -68,7 +68,7 @@ jobs:
     runs-on: windows-2025
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 26
       - uses: dtolnay/rust-toolchain@stable

@@ -61,7 +61,7 @@ jobs:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 26
       - name: Select Rust 1.92
@@ -82,7 +82,7 @@ jobs:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 26
       - name: Select nightly with coverage tools
