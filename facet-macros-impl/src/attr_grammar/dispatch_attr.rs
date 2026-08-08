@@ -4,6 +4,7 @@
 //! calling other generated macro_rules macros. This avoids the Rust
 //! limitation on macro-expanded macro_export macros.
 
+use crate::VerbatimUntil;
 use proc_macro2::{Span, TokenStream as TokenStream2, TokenTree};
 use quote::{quote, quote_spanned};
 use unsynn::*;
@@ -976,35 +977,15 @@ fn generate_shape_type_value(
     }
 }
 
-/// Split a token stream on top-level commas (commas nested inside a `Group`
-/// delimited by `()`, `[]`, or `{}` are preserved, since a `TokenTree::Group`
-/// is a single token and its interior isn't walked here).
-///
-/// Note: `<>` are not real proc_macro2 `Group` delimiters, so a comma inside
-/// e.g. `HashMap<K, V>` at the top level of the list would be mis-split into
-/// two items. This is a known, accepted limitation - angle-bracket depth is
-/// not tracked.
-fn split_top_level_commas(stream: TokenStream2) -> Vec<TokenStream2> {
-    let mut items = Vec::new();
-    let mut current = TokenStream2::new();
-    for tt in stream {
-        // Comma is never part of a legitimate multi-char Rust operator, so its
-        // `Spacing` (which only reflects whitespace/adjacency to the *next*
-        // token) doesn't matter here - `,,`  still needs to split as two
-        // separators, not get merged because the second comma has
-        // `Spacing::Joint`.
-        if let TokenTree::Punct(p) = &tt
-            && p.as_char() == ','
-        {
-            items.push(std::mem::take(&mut current));
-            continue;
-        }
-        current.extend(std::iter::once(tt));
+unsynn! {
+    /// A single type in a `list(shape_type)` payload - everything up to the next
+    /// top-level comma. Built on `VerbatimUntil<Comma>`, which treats `<...>` as
+    /// an opaque grouping (since `<>` isn't a real proc-macro `Group` delimiter),
+    /// so generic types like `HashMap<K, V>` aren't mis-split at their internal
+    /// comma.
+    struct ListShapeTypeItem {
+        ty: VerbatimUntil<Comma>,
     }
-    if !current.is_empty() {
-        items.push(current);
-    }
-    items
 }
 
 /// Generate code for `list(shape_type)` variants.
@@ -1037,8 +1018,9 @@ fn split_top_level_commas(stream: TokenStream2) -> Vec<TokenStream2> {
 ///   parens are preserved verbatim, so `rest` is a single parenthesized `Group`.
 ///
 /// Either way, once the (possibly implicit) parens are peeled off, the remaining
-/// stream is split on top-level commas - see `split_top_level_commas` for how, and
-/// its caveat about commas nested inside angle brackets (`<>`).
+/// stream is split on top-level commas - see `build_list_shape_type_value` for
+/// how, including its handling of generic types like `HashMap<K, V>` whose
+/// internal commas must not be mistaken for top-level ones.
 fn generate_list_shape_type_value(
     ns_path: &TokenStream2,
     variant_ident: &proc_macro2::Ident,
@@ -1091,6 +1073,12 @@ fn generate_list_shape_type_value(
 /// Split `stream` on top-level commas into shape-type expressions and build the
 /// wrapped enum-variant expression. Shared by both `rest` shapes handled in
 /// `generate_list_shape_type_value`.
+///
+/// Splitting is done by parsing a whole `CommaDelimitedVec<ListShapeTypeItem>` at
+/// once rather than hand-walking `Punct` tokens: each `ListShapeTypeItem` is a
+/// `VerbatimUntil<Comma>`, which treats a `<...>` grouping as opaque (since `<>`
+/// isn't a real proc-macro `Group` delimiter), so a generic type's internal comma
+/// (e.g. `HashMap<K, V>`) is never mistaken for a top-level separator.
 fn build_list_shape_type_value(
     ns_path: &TokenStream2,
     variant_ident: &proc_macro2::Ident,
@@ -1098,21 +1086,33 @@ fn build_list_shape_type_value(
     stream: TokenStream2,
     span: Span,
 ) -> TokenStream2 {
-    let items = split_top_level_commas(stream);
+    let mut token_iter = stream.to_token_iter();
+    let items: Vec<TokenStream2> = match token_iter.parse::<CommaDelimitedVec<ListShapeTypeItem>>()
+    {
+        Ok(parsed) => parsed
+            .into_iter()
+            .map(|delimited| delimited.value.ty.to_token_stream())
+            .collect(),
+        Err(_) => Vec::new(),
+    };
 
-    // Zero items (e.g. `lenient_width()`) is an error - need at least one type.
-    if items.is_empty() {
-        let msg =
-            format!("`{attr_str}` requires at least one type: `{attr_str}(Type1, Type2, ...)`");
+    // Any tokens left unconsumed mean the list was malformed - most commonly a
+    // leading or doubled top-level comma, which puts a comma where an item is
+    // expected next; since `ListShapeTypeItem` requires at least one token, it
+    // can't match there, so `CommaDelimitedVec` stops and leaves it behind.
+    // A trailing comma is not a problem: it's consumed as the last item's
+    // delimiter, leaving nothing behind.
+    if token_iter.next().is_some() {
+        let msg = format!("`{attr_str}` expected a type between commas");
         return quote_spanned! { span =>
             compile_error!(#msg)
         };
     }
 
-    // An empty item means a leading or doubled comma (a trailing comma is
-    // already filtered out by `split_top_level_commas`).
-    if items.iter().any(|item| item.is_empty()) {
-        let msg = format!("`{attr_str}` expected a type between commas");
+    // Zero items (e.g. `lenient_width()`) is an error - need at least one type.
+    if items.is_empty() {
+        let msg =
+            format!("`{attr_str}` requires at least one type: `{attr_str}(Type1, Type2, ...)`");
         return quote_spanned! { span =>
             compile_error!(#msg)
         };
