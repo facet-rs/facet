@@ -1,5 +1,0 @@
----
-source: crates/styx-format/src/cst_format.rs
-expression: "format(\"type @seq(@optional(@string))\")"
----
-type @seq(@optional(@string))

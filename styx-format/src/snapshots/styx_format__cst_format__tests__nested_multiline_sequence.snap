@@ -1,9 +1,0 @@
----
-source: crates/styx-format/src/cst_format.rs
-expression: output
----
-outer (
-    (a b)
-    // between
-    (c d)
-)

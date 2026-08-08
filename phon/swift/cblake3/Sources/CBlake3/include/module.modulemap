@@ -1,4 +1,0 @@
-module CBlake3 {
-    header "blake3.h"
-    export *
-}

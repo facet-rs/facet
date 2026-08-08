@@ -1,9 +1,0 @@
-@schema {id crate:captain-config@1, cli captain}
-
-pre-commit {
-    external-path-deps false
-}
-
-pre-push {
-    doc-tests false
-}

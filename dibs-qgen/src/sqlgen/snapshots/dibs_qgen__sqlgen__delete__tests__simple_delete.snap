@@ -1,8 +1,0 @@
----
-source: crates/dibs-qgen/src/sqlgen/delete.rs
-assertion_line: 95
-expression: result.sql
----
-DELETE FROM "users"
-WHERE "id" = $1
-RETURNING "id"

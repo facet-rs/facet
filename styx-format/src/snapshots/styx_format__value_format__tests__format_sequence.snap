@@ -1,5 +1,0 @@
----
-source: crates/styx-format/src/value_format.rs
-expression: result
----
-items (a b c)

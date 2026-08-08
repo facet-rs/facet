@@ -1,3 +1,0 @@
-pub fn json_decode<T>(text: String) -> T {
-    decode(text, Format::Json)
-}

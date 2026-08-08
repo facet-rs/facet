@@ -1,3 +1,0 @@
-pub fn try_toml_decode<T>(text: String) -> Result<T, DecodeError> {
-    try_decode(text, Format::Toml)
-}
