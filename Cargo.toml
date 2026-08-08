@@ -53,34 +53,27 @@ members = [
   "facet-showcase",
 ]
 
-# Keep root-level cargo commands focused on the Facet surface and the active
-# Weavy/Phon extraction work. Use `--workspace` for full monorepo checks.
+# Keep root-level cargo commands focused on the Facet surface. Use `--workspace`
+# for every crate in the repository.
 default-members = [
   # core
   "facet-core",
   "facet",
 ]
 
-exclude = [
-  # tools/ has its own workspace
-  "tools",
-
-  # imported Vox directories that were not members of the original Vox workspace
-  "vox/fuzz",
-]
 
 resolver = "3"
 
 [workspace.package]
-version = "0.10.0-rc.1"
+version = "0.50.0-rc.5"
 edition = "2024"
 rust-version = "1.92"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/facet-rs/facet"
 homepage = "https://facet.rs"
-documentation = "https://docs.rs/vox"
-keywords = ["rpc", "ipc", "networking", "facet"]
-categories = ["network-programming", "asynchronous"]
+documentation = "https://docs.rs/facet"
+keywords = ["reflection", "serialization", "deserialization"]
+categories = ["encoding", "development-tools"]
 
 [workspace.dependencies]
 facet = { path = "facet", version = "0.50.0-rc.5" }
@@ -265,16 +258,8 @@ codegen-units = 1
 [profile.dev.package.backtrace]
 opt-level = 3
 
-# Keep workspace crates in debug mode, but optimize dependency hot paths that
-# dominate vix's debug test runtime.
-[profile.dev.package.aho-corasick]
-opt-level = 3
+# Optimize dependency hot paths used by the Facet build and test suite.
 
-# The machine itself: measured 6.8x on solve-heavy tests (ring 64: 20.3s -> 3.0s
-# fully optimized). opt-level 2 trades a little rebuild time for most of that.
-
-[profile.dev.package.weavy]
-opt-level = 2
 
 [profile.dev.package.blake3]
 opt-level = 3

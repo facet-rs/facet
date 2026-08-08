@@ -1,8 +1,0 @@
-// Angle brackets in bare scalars
-// Note: < can appear in bare scalars, but > cannot (it's the attribute separator)
-less-than foo<bar
-arrow-left <--
-
-// Valid attribute chains
-greater-than foo>bar
-both-angles foo<bar>baz

@@ -1,6 +1,0 @@
-@schema {id crate:dibs@1, cli dibs}
-
-db {
-    crate my-app-db
-    endpoint "127.0.0.1:7764"
-}

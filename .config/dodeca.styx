@@ -1,24 +1,9 @@
 @schema {id crate:dodeca-config@1, cli ddc}
 
-// Dodeca configuration for the facet docs aggregator.
+// Dodeca configuration for the Facet documentation site.
 //
-// The facet docs are the root `source` (served at /); every other subsite is a
-// `mounts` entry under its own URL prefix so its root-absolute links localize
-// (e.g. styx's /tools/cli -> /styx/tools/cli) and it gets a source identity for
-// cross-links ([[styx:...]]).
-//
-// Each source's chrome is its OWN: templates / sass / static resolve to the
-// content dir's sibling `../{templates,sass,static}`. styx points at its real
-// project `styx-docs/` (its own templates incl. the codemirror/monaco/quiz
-// playgrounds), so it keeps its full identity. facet/picante/dibs all live
-// under docs/ and share docs/templates as the uniform facet baseline. The only
-// uniformized layer across every site is the nav + search (woven into each base
-// template) so the sites are mutually discoverable.
-//
-// `repo` is each mount's "view source" base URL. These are vendored content
-// dirs in this monorepo (no config of their own to compose from), so the URL is
-// declared on the mount; a cloned, standalone source would instead compose it
-// from its own `source { repo … }`.
+// Facet is the root source. Crates that remain in this repository are mounted
+// under their own URL prefixes so their root-absolute links stay local.
 
 source {
     content docs/content
@@ -26,32 +11,8 @@ source {
 }
 
 mounts (
-    { name styx,    path /styx,    local styx-docs/content,      repo "https://github.com/bearcove/styx" }
-    { name picante, path /picante, local docs/picante-content,   repo "https://github.com/bearcove/picante" }
-    { name dibs,    path /dibs,    local docs/dibs-content,      repo "https://github.com/bearcove/dibs" }
-    { name figue,   path /figue,   local figue/docs/content,     repo "https://github.com/bearcove/figue" }
     { name rediff,  path /rediff,  local rediff/docs/content,    repo "https://github.com/bearcove/rediff" }
     { name strid,   path /strid,   local strid/docs/content,     repo "https://github.com/facet-rs/facet/tree/main/strid" }
-    { name fable,   path /fable,   local fable/docs/content,     repo "https://github.com/facet-rs/facet/tree/main/fable" }
-    { name weavy,   path /weavy,   local weavy/docs/content,     repo "https://github.com/facet-rs/facet/tree/main/weavy" }
-    {
-        name vix
-        path /vix
-        local vix-core/docs/content
-        repo "https://github.com/facet-rs/facet/tree/main/vix-core"
-    }
-    {
-        name rodin
-        path /rodin
-        local rodin/docs/content
-        repo "https://github.com/facet-rs/facet/tree/main/rodin"
-    }
-    {
-        name vox
-        path /vox
-        local vox/docs/content
-        repo "https://github.com/facet-rs/facet/tree/main/vox"
-    }
     { name facet-axum,       path /facet-axum,       local facet-axum/docs/content,       repo "https://github.com/facet-rs/facet/tree/main/facet-axum" }
     { name facet-cargo-toml, path /facet-cargo-toml, local facet-cargo-toml/docs/content, repo "https://github.com/facet-rs/facet/tree/main/facet-cargo-toml" }
     { name rusqlite-facet,   path /rusqlite-facet,   local rusqlite-facet/docs/content,   repo "https://github.com/facet-rs/facet/tree/main/rusqlite-facet" }

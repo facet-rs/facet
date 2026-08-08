@@ -1,2 +1,0 @@
-// Tag names cannot start with a dot
-x @.foo

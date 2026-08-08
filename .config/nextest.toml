@@ -9,11 +9,6 @@ command = 'scripts/setup-test-env.sh'
 [scripts.setup.set-env-windows]
 command = 'scripts/setup-test-env.cmd'
 
-[scripts.setup.vox-typescript-unix]
-command = 'scripts/setup-vox-typescript.sh'
-
-[scripts.setup.vox-typescript-windows]
-command = 'scripts/setup-vox-typescript.cmd'
 
 [scripts.wrapper.memcap]
 # Memory watchdog: SIGKILL any test whose RSS exceeds MEMCAP_MB (default
@@ -30,15 +25,6 @@ command = "bash -c 'exec \"$(git rev-parse --show-toplevel)/scripts/memcap-wrapp
 # the run. Genuinely long tests can opt out via per-test overrides.
 slow-timeout = { period = "60s", terminate-after = 3 }
 
-# snark-dsl/snark-playground shell out to a real JS runtime (node, falling
-# back to bun) once per grammar instead of using an in-process Boa evaluator.
-# Left unbounded, nextest's default per-binary concurrency lets dozens of
-# these run at once, spawning a matching pile of node processes on top of
-# already-heavier coverage-instrumented test binaries — plausibly what
-# starved a self-hosted runner of memory. Cap concurrent node-spawning tests
-# instead of letting them pile up.
-[test-groups.node-subprocess]
-max-threads = 4
 
 [[profile.default.scripts]]
 filter = 'all()'
@@ -50,15 +36,6 @@ filter = 'all()'
 platform = { host = "cfg(windows)" }
 setup = 'set-env-windows'
 
-[[profile.default.scripts]]
-filter = 'package(spec-tests) & test(typescript)'
-platform = { host = "cfg(unix)" }
-setup = 'vox-typescript-unix'
-
-[[profile.default.scripts]]
-filter = 'package(spec-tests) & test(typescript)'
-platform = { host = "cfg(windows)" }
-setup = 'vox-typescript-windows'
 
 [scripts.wrapper.valgrind]
 # Run tests under valgrind with leak checking
@@ -134,76 +111,3 @@ retries = 0
 fail-fast = true
 # Short timeout to catch infinite loops quickly
 slow-timeout = { period = "3s", terminate-after = 2 }
-
-# Fable's declared-value/type checker tests are legitimately heavy and
-# time out only under CI coverage instrumentation (observed 3x, always
-# passing locally in 10-24s). Longer leash, assertions untouched.
-[[profile.default.overrides]]
-filter = 'test(declared_value_checker_reports_required_errors) | test(declared_type_checker_rejects_duplicate_and_unknown_names)'
-slow-timeout = { period = "120s", terminate-after = 5 }
-
-[[profile.default.overrides]]
-filter = 'package(vix-core) & binary(reloc_selection)'
-threads-required = "num-cpus"
-
-# This certificate measures the source-declared execution wall/RSS budget after
-# the child has completed compilation and signalled Ready. Sibling nextest jobs
-# are not part of that execution, so reserve the runner while the watchdog is
-# active rather than allowing scheduler contention to consume the program's
-# unchanged five-second wall budget.
-[[profile.default.overrides]]
-filter = 'package(vixen-runtime) & binary(rung050_trace_budget) & test(=rung_050_deep_tail_recursion_runs_under_its_declared_budget)'
-threads-required = "num-cpus"
-
-# The vendored-playground sweeps now shell out to a real JS runtime (node)
-# once per bundle instead of an in-process Boa evaluator, and coverage
-# instrumentation makes subprocess-heavy tests noticeably slower in CI.
-[[profile.default.overrides]]
-filter = 'package(snark-playground) & (test(vendored_playground_samples_parse_from_rust) | test(representative_vendored_playground_samples_parse_from_rust))'
-slow-timeout = { period = "120s", terminate-after = 5 }
-
-# Bound the number of node processes that can be in flight at once; see the
-# node-subprocess test-group definition above.
-[[profile.default.overrides]]
-filter = 'package(snark-dsl) | package(snark-playground)'
-test-group = 'node-subprocess'
-
-# Same coverage-instrumentation slowdown as the fable checker tests above.
-[[profile.default.overrides]]
-filter = 'package(vix-core) & test(ast_structural_projection_contracts_are_pinned)'
-slow-timeout = { period = "120s", terminate-after = 5 }
-
-# The accepted-rungs certificate compiles, verifies, and executes the whole
-# accepted rung ladder through one executable. It runs ~135s on the native lane
-# and completes in ~134s on the interpreter lane in isolation, but under the full
-# WEAVY_JIT=0 suite's parallel load it can drift past the default 180s cap. It is
-# bounded and always passing; give it the same longer leash as the other heavy
-# vix certificates.
-[[profile.default.overrides]]
-filter = 'package(vixen-runtime) & test(accepted_rungs_verify_and_execute_through_one_executable)'
-slow-timeout = { period = "120s", terminate-after = 5 }
-
-# The rung-110 module-boundary identity oracle compiles three module-set
-# spellings, lowers their shared wire island, and runs two spellings through
-# both lanes: ~12s of CPU in isolation, but under full-workspace parallel
-# load its wall time has been observed past the default 180s cap (156s under
-# two concurrent workspace builds). Bounded and always passing; same leash as
-# the other heavy vix certificates.
-[[profile.default.overrides]]
-filter = 'package(vixen-runtime) & test(=rung_110_recipe_identity_is_importer_independent)'
-slow-timeout = { period = "120s", terminate-after = 5 }
-
-# The cross-lane differential (F1) compiles the accepted canonical corpus
-# (through rung 065) once and executes every accepted rung through both an
-# explicitly-selected native Executable and an explicitly-selected interpreter
-# Executable, plain and chaos. It runs the 10M-iteration tail-recursion rung 050
-# and the million-element molten rung 051 through the *interpreter* lane twice
-# (plain + chaos), which dominates the cost: in isolation it is ~123s, but under
-# the parallel load of a full `--workspace` run it has been observed at ~390s,
-# and the coverage-instrumented native leg is slower still. It is bounded and
-# always passing; give it a generous leash (well under a 1200s hard cap) so
-# workspace contention or coverage cannot flake it, on the same shape as the
-# other heavy vix certificates.
-[[profile.default.overrides]]
-filter = 'package(vixen-runtime) & test(accepted_corpus_agrees_across_native_and_interpreter_lanes)'
-slow-timeout = { period = "300s", terminate-after = 4 }

@@ -1,4 +1,0 @@
-// Tag names can mix dashes, underscores, and alphanumerics
-complex @foo_bar_baz-qux
-version @v2_0_0-beta_1
-full @com_example_my_type-v1

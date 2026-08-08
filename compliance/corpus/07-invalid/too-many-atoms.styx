@@ -1,4 +1,0 @@
-// ERROR: entry has 3 atoms, expected at most 2
-// Hint: did you mean `@tag{}`? Whitespace is not allowed between a tag and its payload.
-key @tag{}
-

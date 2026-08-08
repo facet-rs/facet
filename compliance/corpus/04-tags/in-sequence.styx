@@ -1,2 +1,0 @@
-routes (@route{path /} @route{path /api} @route{path /health})
-

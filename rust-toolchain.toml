@@ -1,7 +1,4 @@
 [toolchain]
 channel = "1.96.0"
-# Specify all components needed for CI and development.
-# `llvm-tools` provides `llvm-ar`, needed to archive wasm C objects in the
-# styx-docs / styx-webmd build (the host's BSD `ar` can't — see arborium's
-# wasm build.rs). Without it the wasm link fails with undefined `ts_*` symbols.
+# Components required by the Facet workspace and CI.
 components = ["rust-src", "rustfmt", "clippy", "llvm-tools"]

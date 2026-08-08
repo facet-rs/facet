@@ -103,5 +103,5 @@ context to show.
 
 - [facet-validate](/facet-validate/guide/) — attach constraints that deserializers can enforce
 - [facet-pretty](/facet-pretty/guide/) — inspect parsed values without deriving `Debug`
-- [figue](/figue/guide/) — build CLI and config structs from the same kind of shape
+- [figue](https://github.com/bearcove/figue) — build CLI and config structs from the same kind of shape
 - [Ecosystem](/ecosystem/) — every other facet crate

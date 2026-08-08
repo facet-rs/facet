@@ -1,5 +1,0 @@
-// Heredocs cannot be used as keys
-<<EOF
-text
-EOF
-value

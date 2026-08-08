@@ -1,4 +1,0 @@
-// Tag names can contain dashes
-kebab @my-type
-http @content-type
-multi @foo-bar-baz

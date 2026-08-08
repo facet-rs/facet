@@ -12,7 +12,7 @@ New here? Start with [Getting started](/guide/getting-started/), then [Why facet
 **How-to, by task:**
 
 - [JSON](/facet-json/guide/) — serialize and deserialize with span-aware errors
-- [CLI & config](/figue/guide/) — typed args, env vars, and config files with figue
+- [CLI & config](https://github.com/bearcove/figue) — typed args, env vars, and config files with Figue
 - [Pretty-printing](/facet-pretty/guide/) — readable, redacted, colored output
 - [Custom defaults](/facet-default/guide/) — per-field defaults with `facet-default`
 - [Error types](/facet-error/guide/) — `thiserror`-style errors from doc comments
