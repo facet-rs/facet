@@ -8032,6 +8032,35 @@ fn write_primitive_value(
             }
             Ok(())
         }
+        // A map result (e.g. a styx decode onto `Map<String, T>`) materializes
+        // its canonical rows into the resuming task's molten arena and lands
+        // in the frame as one ordered-collection handle word — the write
+        // counterpart of the ordinary ordered read path. The rows arrive
+        // key-sorted from the primitive (`OrderedMap` is canonical by
+        // definition); the import preserves that order positionally.
+        (Type::Map { key, value: entry }, PrimitiveValueBody::OrderedMap(rows)) => {
+            let collection_schema = abi_schema_for_type(ty, abi_schemas)?;
+            let row_bytes = rows
+                .iter()
+                .map(|(row_key, row_value)| {
+                    Ok((
+                        primitive_inline_bytes(task, key, row_key, store, interned, abi_schemas)?,
+                        Some(primitive_inline_bytes(
+                            task,
+                            entry,
+                            row_value,
+                            store,
+                            interned,
+                            abi_schemas,
+                        )?),
+                    ))
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            let handle = task
+                .import_ordered_host_rows(collection_schema, &row_bytes)
+                .map_err(|fault| format!("primitive map materialization failed: {fault:?}"))?;
+            write_primitive_word(task, region, offset, handle)
+        }
         _ => Err(format!(
             "primitive value body disagrees with frame type {}",
             ty.name()
@@ -8182,6 +8211,32 @@ fn primitive_inline_bytes(
             let handle = task
                 .import_dense_host_array(array_schema, &element_bytes)
                 .map_err(|fault| format!("nested array materialization failed: {fault:?}"))?;
+            Ok(handle.to_le_bytes().to_vec())
+        }
+        // A nested map (a map element of an array, a map field of an inline
+        // aggregate) is one ordered-collection handle word, mirroring the
+        // frame arm in `write_primitive_value`.
+        (Type::Map { key, value: entry }, PrimitiveValueBody::OrderedMap(rows)) => {
+            let collection_schema = abi_schema_for_type(ty, abi_schemas)?;
+            let row_bytes = rows
+                .iter()
+                .map(|(row_key, row_value)| {
+                    Ok((
+                        primitive_inline_bytes(task, key, row_key, store, interned, abi_schemas)?,
+                        Some(primitive_inline_bytes(
+                            task,
+                            entry,
+                            row_value,
+                            store,
+                            interned,
+                            abi_schemas,
+                        )?),
+                    ))
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            let handle = task
+                .import_ordered_host_rows(collection_schema, &row_bytes)
+                .map_err(|fault| format!("nested map materialization failed: {fault:?}"))?;
             Ok(handle.to_le_bytes().to_vec())
         }
         _ => Err(format!(

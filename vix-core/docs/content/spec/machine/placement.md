@@ -16,16 +16,23 @@ Distinguish two boundaries that are easy to fuse and must not be:
 
 > r[machine.placement.value-irrelevant]
 >
-> [SETTLED, round 10] Placement never changes a value. The same demand evaluated
-> on any admissible machine yields a bit-identical result. Consequences: the
+> [SETTLED] Placement never changes a value. The same demand evaluated on any
+> admissible executor yields a bit-identical result. Consequences: the
 > scheduler needs no consensus (duplicate work is a duplicate, not a conflict; a
 > partition is not an outage; a stale advertisement is a rejected dispatch);
-> speculation is always sound; kill-anytime is always sound; and a distributed
-> build has a perfect correctness oracle — the local build.
+> speculation is always sound; and kill-anytime is always sound.
+>
+> **For placed pure work, the local build is a perfect correctness oracle** —
+> run it here, compare, and any difference is a bug in placement. That oracle
+> does **not** extend to a place containing an observation: an observation's
+> result is not predictable from its inputs, so re-running it locally produces
+> another observation rather than a check
+> (`machine.placement.observation-inside-a-place`, which states there is nothing
+> to check it against). The oracle is a property of purity, not of placement.
 
 > r[machine.placement.identity-crosses]
 >
-> [SETTLED, round 10] **A value may cross a `place` boundary only if its identity
+> [SETTLED] **A value may cross a `place` boundary only if its identity
 > is known without evaluating it.** A pinned blob (checksum in the source), a
 > capability identity, a literal, and an input pinned at the demand root all
 > cross. A derived value does not: knowing what `let x = expensive();` *is* means
@@ -33,16 +40,30 @@ Distinguish two boundaries that are easy to fuse and must not be:
 > drawn wider to contain its demand.
 >
 > This is the restriction that makes placement analyzable. Before dispatch, the
-> exact set of things that cross — and their weight — is known. No demand
-> discovers in flight that it needs something the boundary never accounted for.
+> exact **set** of things that may cross is known: no demand discovers in flight
+> that it needs something the boundary never accounted for.
+>
+> Their **weight** is not known, and must not be claimed. A tree crosses as a
+> grant, and blobs are fetched per-file on read
+> (`machine.placement.trees-cross-as-grants`) — a workspace of ten thousand
+> files whose compiler opens two hundred moves two hundred. What is settled
+> before dispatch is *admissibility*, not *bytes*; discovering how much actually
+> moves is the design, not a gap in it.
 
 > r[machine.placement.no-in-program-steering]
 >
-> [SETTLED, round 10] A program cannot name where it runs. A program that could
-> steer placement could make its value depend on the machine it ran on, and the
-> same source would describe different artifacts in different places. This is
-> `machine.scheduler.no-in-program-forcing` applied to location: nothing in a
-> program observes the world.
+> [SETTLED] A program cannot name where it runs. A program that could steer
+> placement could make its value depend on the executor it ran on, and the same
+> source would describe different artifacts in different places. This is
+> `machine.scheduler.no-in-program-forcing` applied to location: **nothing in a
+> program observes where it is**.
+>
+> That is narrower than "nothing observes the world", which an earlier draft
+> said and which is false — `observe` is a primitive
+> (`machine.primitive.fetch-is-pinned`), and
+> `machine.placement.observation-inside-a-place` on this page is entirely about
+> programs observing. What is forbidden is reading a *placement fact*, because
+> placement is the one thing that must never reach the value.
 >
 > Ambient facts arrive as inputs, supplied at the demand root. `Target::host()`,
 > `uname`, `cfg!(target_os)` evaluated inside a recipe are the same bug: they read
@@ -53,27 +74,27 @@ Distinguish two boundaries that are easy to fuse and must not be:
 > **An ambient read is an observation. An input is a pin.**
 >
 > This constrains the *program*, not the operator. Placement policy — which
-> machines are admissible, which are preferred — lives outside the language and
+> executors are admissible, which are preferred — lives outside the language and
 > may be as explicit as its owner likes, precisely because it cannot change a
 > value.
 
 > r[machine.placement.capability-requirements-are-derived]
 >
-> [DESIGN, amended round 12] Placement is constrained along **two independent axes**, and
+> [DESIGN] Placement is constrained along **two independent axes**, and
 > an earlier draft of this rule collapsed them.
 >
 > 1. **Execution-platform contract.** A tool is built for an ABI, an OS and an
->    architecture. A content-addressed `x86_64-linux` binary is *materialized* everywhere
->    and *executable* only on a node that can run `x86_64-linux`. **Materialization removes
->    locality, not platform compatibility.** Both materialized and ambient closures impose
->    this contract.
+>    architecture. A content-addressed `x86_64-linux` binary can be *served* anywhere
+>    and is *executable* only on a node that can run `x86_64-linux`. **Being acquirable
+>    removes locality, not platform compatibility.** Both acquirable and ambient closures
+>    impose this contract.
 > 2. **Host-specific locality.** Only **ambient** closures (Xcode, MSVC, the platform's
 >    system libraries) impose this: they exist solely where a daemon advertises their
 >    fingerprint, so they are runnable exactly on **the set of nodes advertising that
 >    fingerprint** — which may be empty, one, or many. Nothing about an ambient closure
 >    makes it unique to a single node; what constrains it is the advertisement.
 >
-> So a materialized closure admits nodes that **satisfy its execution contract**; an ambient
+> So an acquirable closure admits nodes that **satisfy its execution contract**; an ambient
 > closure admits the nodes that **advertise its fingerprint** — a set, possibly of more than
 > one. The earlier claim, "a materialized closure constrains placement not at all", was
 > false, and would have let the scheduler dispatch a Linux `rustc` to a Mac.
@@ -82,9 +103,21 @@ Distinguish two boundaries that are easy to fuse and must not be:
 > node may satisfy `x86_64-linux` through emulation, a compatibility layer, or a container.
 > Admissibility is the node's claim to satisfy the contract, not an equality of labels.
 >
-> The set of closures reachable in a placed subgraph is syntactic (union over branches,
-> fixpoint over recursion), so both requirements are statically derivable — a conservative
-> over-approximation, costing perf and never correctness.
+> **Both requirements are known without analysis, because a capability is a bound
+> argument rather than a discovered need.** A capability value is injected by the
+> demand root and its capability-role arguments key the demand
+> (`machine.primitive.capabilities-by-identity`), so by the time anything is placed,
+> the closure and its contract are *data the demand is carrying*. The scheduler reads
+> them; it does not infer them.
+>
+> An earlier draft derived them instead: "the set of closures reachable in a placed
+> subgraph is syntactic (union over branches, fixpoint over recursion), so both
+> requirements are statically derivable." That is a whole-program reachability
+> analysis — the plan phase — and vix does not have one: plans do not exist until
+> evaluation, and a statically-typed but interpreted language cannot enumerate what a
+> subgraph will reach without running it. The conclusion survives because the premise
+> was never needed; nothing has to be over-approximated when the value is already in
+> hand.
 >
 > **Three things are being distinguished here, and an earlier draft collapsed two of them.**
 >
@@ -93,7 +126,7 @@ Distinguish two boundaries that are easy to fuse and must not be:
 >    **pinned semantic property of the selected toolchain capability**,
 >    and it enters exec identity via `machine.primitive.exec-probed-toolchain`) **and** a
 >    scheduler **admissibility constraint**. It is not cost-model.
-> 3. **The physical executor** — which machine, of the admissible set, actually ran it.
+> 3. **The physical executor** — which executor, of the admissible set, actually ran it.
 >    Cost-model, unobservable, absent from the semantic receipt
 >    (`machine.placement.no-in-program-steering`).
 >
@@ -103,7 +136,7 @@ Distinguish two boundaries that are easy to fuse and must not be:
 
 > r[machine.placement.results-cross-back]
 >
-> [DESIGN, round 12] `machine.placement.identity-crosses` governs **dispatch**: a value
+> [DESIGN] `machine.placement.identity-crosses` governs **dispatch**: a value
 > captured by, or imported into, a placed subgraph must have an identity known without
 > evaluating that subgraph, because the boundary must know what it is shipping and what it
 > weighs before it ships anything.
@@ -146,8 +179,8 @@ Distinguish two boundaries that are easy to fuse and must not be:
 
 > r[machine.placement.observation-inside-a-place]
 >
-> [SETTLED, round 10] An observation performed inside a `place` was performed by
-> another evaluator, and by `machine.receipt.fetch-observation-pin` its pin
+> [SETTLED] An observation performed inside a `place` was performed by
+> another evaluator, and by `machine.receipt.observation-pin` its pin
 > becomes the receipt's authority. There is nothing to check it against.
 > **Placement is trust-free exactly when everything inside it is
 > content-addressed.** A placed subgraph containing an observation is therefore a

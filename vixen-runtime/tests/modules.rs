@@ -230,3 +230,51 @@ fn root() -> Int { inner::answer() }
         }
     );
 }
+
+#[test]
+fn record_variant_patterns_rename_across_the_module_seam() {
+    // The record-payload twin of a tuple variant pattern travels as a
+    // `TypePath` (`Shape::Circle { radius }`), not a `VariantPath`, and the
+    // module rewrite used to skip its enum segment: a library's own `match`
+    // arms were left typed against the unrenamed spelling and no longer
+    // unified with the library's own (renamed) enum. Both spellings are
+    // pinned here: the module matching its own enum, and the root matching
+    // through the qualified `module::Enum::Variant` path.
+    const SHAPES: &str = r#"
+pub enum Shape {
+    Point,
+    Circle { radius: Int },
+}
+
+pub fn area_ish(shape: Shape) -> Int {
+    match shape {
+        Shape::Point => 0,
+        Shape::Circle { radius } => radius * radius,
+    }
+}
+
+pub fn circle(radius: Int) -> Shape {
+    Shape::Circle { radius: radius }
+}
+"#;
+    let source = r#"
+import shapes::{circle, area_ish};
+
+#[test]
+fn record_variants_cross_modules() -> Stream<Check> {
+    yield expect_eq(area_ish(circle(3)), 9);
+    yield match circle(2) {
+        shapes::Shape::Circle { radius } => expect_eq(radius, 2),
+        shapes::Shape::Point => expect(false),
+    };
+}
+"#;
+    let modules = [ModuleSource {
+        name: "shapes",
+        source: SHAPES,
+    }];
+
+    let report = run_source_with_modules(source, &modules).expect("module enums compile and run");
+    assert!(report.passed(), "record variant patterns pass: {report:?}");
+    assert!(report.agrees(), "plain and chaos execution agree");
+}

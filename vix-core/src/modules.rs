@@ -597,21 +597,41 @@ impl Rewriter<'_> {
 
     fn type_path(&mut self, path: &mut ast::TypePath) -> Result<(), Diagnostics> {
         if path.segments.len() >= 2 && self.available_modules.contains(&path.segments[0].value) {
-            if path.segments.len() != 2 {
-                let full = path
-                    .segments
-                    .iter()
-                    .map(|segment| segment.value.as_str())
-                    .collect::<Vec<_>>()
-                    .join("::");
-                return Err(unknown_name(path.span, full));
+            match path.segments.as_slice() {
+                [module, item] => {
+                    let qualified = self.qualified_name(module, item)?;
+                    path.segments = vec![Spanned {
+                        span: path.span,
+                        value: qualified,
+                    }];
+                    return Ok(());
+                }
+                // `module::Enum::Variant` — a record-payload variant pattern's
+                // type position (the tuple-payload twin arrives as a
+                // `VariantPath` and is renamed in `variant_path`). The module
+                // and enum collapse into the qualified type name; the variant
+                // segment rides along untouched.
+                [module, item, variant] => {
+                    let qualified = self.qualified_name(module, item)?;
+                    path.segments = vec![
+                        Spanned {
+                            span: path.span,
+                            value: qualified,
+                        },
+                        variant.clone(),
+                    ];
+                    return Ok(());
+                }
+                _ => {
+                    let full = path
+                        .segments
+                        .iter()
+                        .map(|segment| segment.value.as_str())
+                        .collect::<Vec<_>>()
+                        .join("::");
+                    return Err(unknown_name(path.span, full));
+                }
             }
-            let qualified = self.qualified_name(&path.segments[0], &path.segments[1])?;
-            path.segments = vec![Spanned {
-                span: path.span,
-                value: qualified,
-            }];
-            return Ok(());
         }
 
         match path.segments.as_mut_slice() {
@@ -620,6 +640,19 @@ impl Rewriter<'_> {
                     && let Some(qualified) = self.renames.get(&single.value)
                 {
                     single.value = qualified.clone();
+                }
+                Ok(())
+            }
+            // `Enum::Variant` where `Enum` is a renameable item — the
+            // record-payload variant pattern again, spelled module-locally
+            // (or through an import alias). The enum segment renames exactly
+            // as it would standing alone; skipping it here is how a library's
+            // own `match` arms ended up typed against the unrenamed spelling.
+            [first, _variant] => {
+                if !self.in_scope(&first.value)
+                    && let Some(qualified) = self.renames.get(&first.value)
+                {
+                    first.value = qualified.clone();
                 }
                 Ok(())
             }

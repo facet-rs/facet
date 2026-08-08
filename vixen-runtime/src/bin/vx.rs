@@ -1,8 +1,15 @@
 //! `vx` — a shim that runs one `.vix` file.
 //!
-//! Deliberately tiny: it reads a file, runs its `#[test]` declarations through
-//! the same production path the ratchet drives, and reports each check. It is
-//! not `cargo`, it has no subcommands, and it defines no on-disk formats.
+//! Deliberately tiny. `vx <file.vix>` reads a file and runs its `#[test]`
+//! declarations through the same production path the ratchet drives. This
+//! CLI reads no on-disk format of its own.
+//!
+//! It briefly grew a `vx r <package-dir> <command>` form that resolved
+//! through a `package.styx` manifest document. That whole genre is retired: a
+//! package is an entry-point module with exports, and running one means
+//! demanding an export, not consulting a sidecar document. The replacement is
+//! undesigned, so the subcommand is gone rather than left pointing at a
+//! format that no longer exists.
 //!
 //! # The fixture root is the one real decision here
 //!
@@ -10,8 +17,9 @@
 //! one that exists today is the harness's [`FixtureStore`] — which serves trees
 //! from `<root>/trees/<name>` and a package registry from `<root>/registry`.
 //! So `fixture_tree("x")` in a file run by this shim reads `<root>/trees/x`,
-//! where `<root>` defaults to the directory containing the `.vix` file and is
-//! overridable with `--fixtures`.
+//! where `<root>` defaults to the directory containing the `.vix` file (for a
+//! package command: the package directory) and is overridable with
+//! `--fixtures`.
 //!
 //! That naming is inherited, not chosen: a production embedding would declare
 //! its own constant surface (`workspace()`, say) over its own origin adapter
@@ -26,7 +34,7 @@ use std::sync::Arc;
 use vix::runtime::PrimitiveServices;
 use vixen_runtime::fixture::FixtureStore;
 use vixen_runtime::host_exec::HostExecBackend;
-use vixen_runtime::ratchet::{RatchetReport, prepare_source};
+use vixen_runtime::ratchet::{PreparedRun, RatchetReport, prepare_source};
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -44,17 +52,26 @@ fn main() -> ExitCode {
         }
     };
 
-    let source = match std::fs::read_to_string(&invocation.source) {
-        Ok(source) => source,
+    // What to run and what to call it in the report.
+    let source = &invocation.source;
+    let text = match std::fs::read_to_string(source) {
+        Ok(text) => text,
         Err(error) => {
-            eprintln!("vx: {}: {error}", invocation.source.display());
+            eprintln!("vx: {}: {error}", source.display());
             return ExitCode::from(2);
+        }
+    };
+    let (label, prepared) = match prepare_source(&text) {
+        Ok(run) => (source.display().to_string(), run),
+        Err(error) => {
+            eprintln!("vx: {}: run failed\n{error:#?}", source.display());
+            return ExitCode::from(1);
         }
     };
 
     // The two authorities this CLI grants, both named here on purpose. `vix-core`
     // ships neither: it declares the seams and lets the embedder decide. So the
-    // decision that running a `.vix` file may spawn host processes through
+    // decision that running vix code may spawn host processes through
     // `std::process::Command` is THIS FILE's, and swapping in a sandboxing
     // backend later is a one-line change here rather than a change to the
     // machine.
@@ -66,26 +83,31 @@ fn main() -> ExitCode {
         .expect("one origin adapter cannot overlap itself")
         .with_exec_backend(Arc::new(HostExecBackend));
 
-    let report = match prepare_source(&source).and_then(|run| {
-        run.execute_with_primitive_services(services)
-    }) {
+    let report = match execute(prepared, services) {
         Ok(report) => report,
         Err(error) => {
             // The typed diagnostic set IS the error message. Rendering it as a
             // pretty report is a real feature and deliberately not attempted
             // here — a shim that half-renders diagnostics is worse than one
             // that shows them whole.
-            eprintln!("vx: {}: run failed\n{error:#?}", invocation.source.display());
+            eprintln!("vx: {label}: run failed\n{error:#?}");
             return ExitCode::from(1);
         }
     };
 
-    print_report(&invocation.source, &report);
+    print_report(&label, &report);
     if report.passed() {
         ExitCode::SUCCESS
     } else {
         ExitCode::from(1)
     }
+}
+
+fn execute(
+    prepared: PreparedRun,
+    services: PrimitiveServices,
+) -> Result<RatchetReport, vixen_runtime::ratchet::RunError> {
+    prepared.execute_with_primitive_services(services)
 }
 
 const USAGE: &str = "usage: vx [--fixtures <dir>] [--] <file.vix>";
@@ -155,7 +177,7 @@ impl Invocation {
 /// name, so twelve `site: 0..5` lines carry less than one count does. Labelling
 /// them would need the test names, which means compiling a second time — a real
 /// `vx test` should thread them through the report instead.
-fn print_report(source: &Path, report: &RatchetReport) {
+fn print_report(label: &str, report: &RatchetReport) {
     for warning in &report.warnings.entries {
         println!("warning: {warning:?}");
     }
@@ -191,7 +213,7 @@ fn print_report(source: &Path, report: &RatchetReport) {
     let counters = &report.plain.counters;
     println!(
         "{}: {} checks ({} failed), {} effect spawns — {}",
-        source.display(),
+        label,
         report.plain.checks.len(),
         failed.len(),
         counters.effect_spawns,

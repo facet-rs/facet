@@ -1321,6 +1321,7 @@ pub enum EffectKind {
 pub enum DecodeFormat {
     Json,
     Toml,
+    Styx,
 }
 
 #[must_use]

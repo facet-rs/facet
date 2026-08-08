@@ -101,7 +101,7 @@ The value model: how values are typed, constructed, read, and discriminated.
 
 > r[machine.value.structural-order]
 >
-> [DESIGN, round 10] `<=>` is the structural comparison: total, equality-consistent,
+> [DESIGN] `<=>` is the structural comparison: total, equality-consistent,
 > derived, not overridable (`machine.identity.never-consults-order`). Every claim
 > that "every value is ordered" rests on these base cases, which are hereby the
 > definition, not an implementation detail:

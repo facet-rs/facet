@@ -5076,7 +5076,7 @@ fn structural_collection_addition() -> Stream<Check> {
 }
 
 #[test]
-// r[verify lang.diagnostic.must-use]
+// r[verify lang.diagnostics.must-use]
 fn unused_collection_result_is_a_typed_warning() {
     let (expected_message, expected_line) = warning_header(RUNG_144);
     let compilation = user_program_compiler()

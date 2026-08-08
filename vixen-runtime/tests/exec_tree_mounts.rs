@@ -14,14 +14,14 @@
 
 #![cfg(unix)]
 
-use vixen_runtime::manifest::{CapabilityOffer, MachineManifest, host_target};
+use vixen_runtime::manifest::{CapabilityOffer, ExecutorManifest, host_target};
 use vixen_runtime::ratchet::{RatchetReport, RunError, run_source_with_manifest};
 
 /// The ratchet default (`Echo`/`Sh`/`ProgressiveSh`) plus a real `Rustc`, so
 /// the compile tests drive the toolchain this repo is built with rather than
 /// whatever a bare `rustc` on PATH resolves to.
-fn manifest_with_rustc() -> MachineManifest {
-    let mut manifest = MachineManifest::ratchet_default();
+fn manifest_with_rustc() -> ExecutorManifest {
+    let mut manifest = ExecutorManifest::ratchet_default();
     manifest.capabilities.push(CapabilityOffer {
         ty: "Rustc".to_owned(),
         program: rustc_program(),

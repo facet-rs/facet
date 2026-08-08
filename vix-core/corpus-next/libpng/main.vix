@@ -1,0 +1,212 @@
+// Build zlib and libpng from pinned source, then compile a C program that
+// encodes a PNG with them. Linux and macOS, one file.
+//
+// DESIGN FICTION. Nothing here runs: it is written in the surface the
+// literal/template rules describe (`r[lang.literal.*]`, `r[lang.template.*]`).
+// It exists to pressure that design with a real C build before any of it is
+// implemented. The gaps it found are listed in README.md and are the point of
+// the exercise.
+//
+// It originally opened with a `manifest """…"""` frontmatter block declaring
+// two pinned `@fetch` inputs. That whole genre is retired — a package is an
+// entry-point module with exports, not a document — so the block is gone. The
+// template pressure it was built to apply is unaffected, which is itself a
+// useful signal: nothing below ever needed the manifest to exist.
+//
+// Why this program: a C library build is the honest stress test. It needs
+// pinned foreign source, per-file compilation (many objects from one list),
+// a generated config header, a generated program, and a link step whose
+// inputs are outputs of earlier steps. If templates and output binding
+// survive libpng, they will survive most things.
+
+// ---------------------------------------------------------------- compiling
+
+// A produced artifact: the tree it lives in, and the path it was bound to.
+// Both halves are needed because an output path is allocated by exec, not
+// chosen by the caller — see GAP 3 in README.md.
+struct Built {
+    tree: Tree,
+    path: Path,
+}
+
+// One translation unit. The object's path is BOUND by the command rather than
+// invented by us: `{let obj}` names the grammar's Output<Path> role, exec
+// allocates a plan-determined path, and the binding is in scope after
+// (r[lang.template.command-holes]). Nobody has to agree on a naming scheme
+// for intermediate files, which is a usual source of accidental cache misses.
+fn object(cc: Cc, source: Path) where { include: Path } -> Built {
+    let out = exec $cc`-c -O2 -I{include} {source} -o {let obj}`;
+    Built { tree: out.tree, path: obj }
+}
+
+// Many translation units into one archive. The list is ordinary vix data and
+// `map` is ordinary vix iteration — there is no repetition construct inside a
+// command literal, and none is wanted (r[lang.template.no-control-flow]).
+//
+// `{objects}` is the sketch's sharpest demand on the design: fifteen objects
+// must become fifteen argv elements from one hole. See GAP 1 in README.md.
+fn archive(cc: Cc, ar: Ar, sources: [Path]) where { include: Path } -> Built {
+    let built = sources.map(|source| object(cc, source) where { include: include });
+    let inputs = built.fold(Tree::empty(), |acc, one| acc.merge(one.tree));
+    let objects = built.map(|one| one.path);
+    let out = exec $ar`rcs {let lib} {objects}`;
+    Built { tree: out.tree.merge(inputs), path: lib }
+}
+
+// ------------------------------------------------------------------- zlib
+
+// zlib ships a usable zconf.h in the tarball, so the whole library is a flat
+// list of translation units. No configure, no generated header.
+fn zlib_sources() -> [Path] {
+    [
+        p"adler32.c", p"compress.c", p"crc32.c", p"deflate.c",
+        p"gzclose.c", p"gzlib.c", p"gzread.c", p"gzwrite.c",
+        p"infback.c", p"inffast.c", p"inflate.c", p"inftrees.c",
+        p"trees.c", p"uncompr.c", p"zutil.c",
+    ]
+}
+
+fn zlib(cc: Cc, ar: Ar) -> Built {
+    let source = input("zlib") / "zlib-1.3.1";
+    let sources = zlib_sources().map(|name| source / name);
+    archive(cc, ar, sources) where { include: source }
+}
+
+// ------------------------------------------------------------------ libpng
+
+// libpng needs pnglibconf.h, which its configure step generates. A real build
+// either runs configure or copies the shipped prebuilt; we copy, because the
+// prebuilt IS the upstream's answer for "no configure available" and running
+// a configure script would make the build depend on a shell dialect.
+fn libpng_config(source: Tree) -> Tree {
+    Tree::file(p"pnglibconf.h", (source / "scripts" / "pnglibconf.h.prebuilt").bytes())
+}
+
+fn libpng_sources() -> [Path] {
+    [
+        p"png.c", p"pngerror.c", p"pngget.c", p"pngmem.c",
+        p"pngpread.c", p"pngread.c", p"pngrio.c", p"pngrtran.c",
+        p"pngrutil.c", p"pngset.c", p"pngtrans.c", p"pngwio.c",
+        p"pngwrite.c", p"pngwtran.c", p"pngwutil.c",
+    ]
+}
+
+fn libpng(cc: Cc, ar: Ar) -> Built {
+    let source = input("libpng") / "libpng-1.6.43";
+    let include = source.merge(libpng_config(source));
+    let sources = libpng_sources().map(|name| source / name);
+    archive(cc, ar, sources) where { include: include }
+}
+
+// -------------------------------------------------- the program we generate
+
+// The parameters of the image, as a record. It is also the hole set of the
+// template below, which is the whole point: a template IS a function, so its
+// type is a function type and the struct that describes the picture IS the
+// struct that fills the source (r[lang.template.is-a-function]).
+struct Image {
+    width: Int,
+    height: Int,
+    iterations: Int,
+}
+
+// A C program that renders a Mandelbrot set and encodes it as a PNG.
+//
+// This is a TEMPLATE, not a string: it has `{let …}` bindings, so its type is
+// `fn(Image) -> String` and it is applied like the function it is. The `@c`
+// flavor declares no escaping discipline, so the result is an ordinary String
+// (r[lang.template.escaping]) — C has no injection boundary here because
+// every hole is an Int.
+//
+// Braces are everywhere in C and none of them are holes: the capability-free
+// text is emitted exactly, and only `{name}` and `{let name}` are read
+// (r[lang.template.holes]). This is the case that made `{}`-in-guest-text a
+// design problem, and it is why the hole delimiter is per-package data rather
+// than one global choice.
+fn mandelbrot() -> fn(Image) -> String {
+    @c```
+        #include <png.h>
+        #include <stdio.h>
+        #include <stdlib.h>
+
+        #define WIDTH  {let width}
+        #define HEIGHT {let height}
+        #define ITERS  {let iterations}
+
+        static png_byte shade(int x, int y) {
+            double cr = (x / (double)WIDTH) * 3.5 - 2.5;
+            double ci = (y / (double)HEIGHT) * 2.0 - 1.0;
+            double zr = 0.0, zi = 0.0;
+            int i = 0;
+            while (zr * zr + zi * zi <= 4.0 && i < ITERS) {
+                double t = zr * zr - zi * zi + cr;
+                zi = 2.0 * zr * zi + ci;
+                zr = t;
+                i++;
+            }
+            return (png_byte)((i * 255) / ITERS);
+        }
+
+        int main(void) {
+            FILE *fp = fopen("out.png", "wb");
+            if (!fp) return 1;
+
+            png_structp png = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+            png_infop info = png_create_info_struct(png);
+            if (setjmp(png_jmpbuf(png))) return 1;
+
+            png_init_io(png, fp);
+            png_set_IHDR(png, info, WIDTH, HEIGHT, 8, PNG_COLOR_TYPE_GRAY,
+                         PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_DEFAULT,
+                         PNG_FILTER_TYPE_DEFAULT);
+            png_write_info(png, info);
+
+            png_byte *row = malloc(WIDTH);
+            for (int y = 0; y < HEIGHT; y++) {
+                for (int x = 0; x < WIDTH; x++) row[x] = shade(x, y);
+                png_write_row(png, row);
+            }
+            free(row);
+
+            png_write_end(png, NULL);
+            fclose(fp);
+            return 0;
+        }
+    ```
+}
+
+// ------------------------------------------------------------------- demo
+
+#[test { budget_wall: 600s, budget_rss: 4096MB }]
+fn demo(cc: Cc, ar: Ar, sh: Sh) -> Stream<Check> {
+    let z = zlib(cc, ar);
+    let png = libpng(cc, ar);
+
+    // Applying the template is an ordinary call: the record IS the argument.
+    let source = mandelbrot()(Image { width: 640, height: 480, iterations: 200 });
+    let program = Tree::file(p"mandelbrot.c", source.bytes());
+
+    // A multi-line command needs the BLOCK form; a single-backtick literal
+    // admits no newline. Same holes, same rules, three more backticks.
+    let png_headers = input("libpng") / "libpng-1.6.43";
+    let zlib_headers = input("zlib") / "zlib-1.3.1";
+    let linked = exec $cc```
+        {program}/mandelbrot.c
+        -I{png_headers} -I{zlib_headers}
+        {png.path} {z.path}
+        -lm -o {let bin}
+    ```;
+
+    let ran = exec sh`-c "cd {linked.tree} && ./{bin}"`;
+    yield expect_eq(ran.answer, Exit::Success);
+
+    // A PNG is its signature. Checking the magic proves the whole chain ran:
+    // fetched source, compiled archives, a generated program, and a linked
+    // binary that produced a file.
+    let out = ran.tree / "out.png";
+    yield expect_eq(out.bytes().take(8), png_signature());
+}
+
+fn png_signature() -> [Int] {
+    [137, 80, 78, 71, 13, 10, 26, 10]
+}

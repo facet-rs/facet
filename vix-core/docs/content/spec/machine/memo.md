@@ -9,16 +9,14 @@ right).
 
 > r[machine.memo.indexed-by-location]
 >
-> [DESIGN, round 10 — the rule round 5 promised and never wrote] **The memo is
-> INDEXED by location**, not by content. A location is the path of *names* from the
-> demand root: content-free, known at demand time, and unchanged when a file's
-> bytes change.
+> [DESIGN] **The memo is INDEXED by location**, not by content. A location is the
+> path of *names* from the demand root: content-free, known at demand time, and
+> unchanged when a file's bytes change.
 >
 > A `DemandKey` (`machine.memo.demand-key`) is a digest over argument *content*
 > hashes. If it were the index, the two-step dance could not happen: the input
 > changed, so the key changed, so yesterday's entry — the very one whose read-set we
-> need — is filed under a name we no longer know. `three-planes.md` argues this by
-> name, and until now no rule reflected it.
+> need — is filed under a name we no longer know.
 >
 > So: **the index is the location; `DemandKey` is a field of the entry.** An entry
 > carries `(recipe identity, read-set, result)`. Lookup nominates by location, then

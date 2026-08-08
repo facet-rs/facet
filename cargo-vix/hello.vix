@@ -15,7 +15,7 @@
 //   program = "$(rustup which rustc)"
 //   targets = ["x86_64-unknown-linux-gnu"]
 //   EOF
-//   VIX_MACHINE_MANIFEST=/tmp/machine.toml vx cargo-vix/hello.vix
+//   VIX_EXECUTOR_MANIFEST=/tmp/machine.toml vx cargo-vix/hello.vix
 //
 // The test `vixen-runtime/tests/exec_tree_mounts.rs` runs THIS FILE with such a
 // manifest built in Rust, so the example and the proof are the same source.

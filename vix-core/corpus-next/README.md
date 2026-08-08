@@ -10,6 +10,10 @@ deliberately; do not add another gap or adjudication ledger here.
 - `crate.vix` constructs Rust compilation units and commands.
 - `index.vix` ingests package-index rows.
 - `rodin.vix` is the ported solver corpus.
+- `package/` sketches the package-manifest seam (two packages, one seam).
+- `libpng/` builds zlib and libpng from pinned source and encodes a PNG,
+  pressuring the literal/template design against a real C build. Its README
+  lists the four gaps that exercise found.
 
 The production Rodin source remains under `rodin/`. This directory is retained
 as the larger port/corpus oracle while the new compiler climbs the ratchet.

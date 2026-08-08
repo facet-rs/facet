@@ -11,7 +11,7 @@ references from their first commit, tests carry `r[verify id]`, and
 `ddc coverage` is the fidelity authority.
 
 Provenance: the audit constitution and battle plan, the
-hostcall census, `rodin/docs/90-substrate-ledger.md`, the hash-as-field
+hostcall census, the substrate ledger, the hash-as-field
 proposal (committee-converged), the vixen KB design corpus, and an
 archaeology sweep of the current driver ("the accidental spec") whose
 correct semantics are preserved here and whose defects are explicitly not.

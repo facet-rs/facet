@@ -19,7 +19,9 @@
 //! constant-fold of literal decodes — so it must match what the ratchet goldens
 //! were vetted against: `Format`, `json_decode`, `toml_decode`,
 //! `try_json_decode`, `try_toml_decode`. New items append at the END, after
-//! `require`, so nothing already vetted shifts.
+//! `require`, so nothing already vetted shifts — which is why
+//! `styx_decode`/`try_styx_decode` sit after the derived layer instead of
+//! beside their json/toml siblings.
 //!
 //! `arrays`/`option`/`strings`/`paths` are the derived layer: `arrays` before
 //! `strings` because `replace` is split-then-`join`, and `strings` before
@@ -42,6 +44,8 @@ pub const STD_MODULE_SOURCE: &str = concat!(
     include_str!("stdlib/option.vix"),
     include_str!("stdlib/strings.vix"),
     include_str!("stdlib/paths.vix"),
+    include_str!("stdlib/styx_decode.vix"),
+    include_str!("stdlib/try_styx_decode.vix"),
     "}\n",
 );
 
@@ -61,6 +65,8 @@ pub const PRELUDE_SOURCES: &[&str] = &[
     include_str!("stdlib/option.vix"),
     include_str!("stdlib/strings.vix"),
     include_str!("stdlib/paths.vix"),
+    include_str!("stdlib/styx_decode.vix"),
+    include_str!("stdlib/try_styx_decode.vix"),
     STD_MODULE_SOURCE,
 ];
 

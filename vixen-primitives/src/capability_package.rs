@@ -5,7 +5,7 @@
 //! What a package contributes here is the requirement-bearing slice of its
 //! command grammar: which roles of an invocation carry a *target* and how the
 //! tool's dialect normalizes into the shared vocabulary — `Target` values,
-//! never tool strings (`vixen.machine.requirements-from-use`). The manifest
+//! never tool strings (`vixen.executor.requirements-from-use`). The manifest
 //! and the binding check compare `Target`s; they never learn a dialect.
 //!
 //! r[impl vixen.capability.package-is-data]
@@ -45,7 +45,7 @@ impl core::fmt::Display for Target {
 /// One argv element of an exec plan as static analysis sees it: a literal the
 /// program spelled, or a value computed at run time. Literal captures are
 /// therefore checkable before anything executes; computed captures degrade
-/// honestly (`vixen.machine.requirements-are-static`).
+/// honestly (`vixen.executor.root-surface-is-static`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PlanElement {
     Literal(String),
@@ -65,7 +65,7 @@ pub enum TargetCapture {
 
 /// How a package's command grammar carries the target requirement — the
 /// universal layer is the ROLE, the per-tool spelling is this data
-/// (`vixen.machine.requirements-from-use`, the generality table).
+/// (`vixen.executor.requirements-from-use`, the generality table).
 #[derive(Clone, Copy, Debug)]
 pub enum TargetDiscipline {
     /// No target role exists in this tool's grammar: a target-neutral
@@ -132,7 +132,7 @@ fn go_target(os: &str, arch: &str) -> Target {
 
 /// The registered packages. The first three are the ratchet corpus's v1
 /// packages (target-neutral shells); the last three are the machine-manifest
-/// design's generality stress tests (`vixen.machine.requirements-from-use`) —
+/// design's generality stress tests (`vixen.executor.requirements-from-use`) —
 /// one per ugly end of the spelling table. 0.1 has no package distribution,
 /// so a test package registers exactly like a production one
 /// (`vixen.capability.packages-ship-in-vixen-primitives`).

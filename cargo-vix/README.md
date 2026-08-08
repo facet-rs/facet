@@ -103,11 +103,12 @@ Recorded where they were hit, so they are not rediscovered:
   case — where the program could not have known the name was taken — is refused
   loudly instead. Closing the gap means threading the materialized file list
   into capture so it can drop exactly what it wrote and no more.
-- **No `Map` decode target.** `[dependencies]` cannot decode into
-  `Map<String, String>` — only into a struct naming each dependency, which a
-  general tool cannot write ahead of time. Not on the critical path (the lock's
-  `dependencies` array carries the resolved graph), but it is what a manifest's
-  open-keyed tables want.
+- **`Map<String, _>` decode landed** (with the styx rail, for every format):
+  an open-keyed document object decodes onto a string-keyed map, in both the
+  constant-fold and runtime lanes, and the decoded value interns to the same
+  identity a `%{}`-built map of the rows has (`decode_styx.rs` pins the
+  differential). `[dependencies]` as `Map<String, DepSpec>` is now writable;
+  `package.vix` uses the same shape for manifest sections.
 - **Fixed while writing this: sequences did not decode at all.** Every array
   target fell through to `UnsupportedTarget`, so no `Cargo.lock` could be read
   — `[[package]]` needs `[LockPackage]` and `dependencies` needs `[String]`.

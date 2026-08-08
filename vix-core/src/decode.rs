@@ -26,6 +26,7 @@
 
 use facet_format::{FieldKey, FormatParser, ParseEventKind, ScalarValue};
 use facet_json::JsonParser;
+use facet_styx::StyxParser;
 use facet_toml::TomlParser;
 
 use crate::vir::{EnumType, RecordField, Type, VariantPayload};
@@ -37,6 +38,7 @@ impl DecodeFormat {
         match self {
             DecodeFormat::Json => "JSON",
             DecodeFormat::Toml => "TOML",
+            DecodeFormat::Styx => "STYX",
         }
     }
 }
@@ -109,6 +111,19 @@ pub enum DecodeErrorKind {
     NoTableForm {
         enum_name: String,
     },
+    /// A document variant tag (`@name` in styx) that names no variant of the
+    /// target enum under the kebab rule ([`kebab_variant`]).
+    UnknownVariantTag {
+        enum_name: String,
+        tag: String,
+    },
+    /// A tag selected a variant whose declared payload shape the following
+    /// document content does not have (a payload after a unit variant, a
+    /// scalar after a record variant, an arity mismatch on a tuple).
+    UnexpectedVariantPayload {
+        enum_name: String,
+        variant: String,
+    },
     AmbiguousStringForm {
         enum_name: String,
     },
@@ -147,6 +162,8 @@ impl DecodeErrorKind {
             DecodeErrorKind::DuplicateField { .. } => "duplicate-field",
             DecodeErrorKind::NoStringForm { .. } => "no-string-form",
             DecodeErrorKind::NoTableForm { .. } => "no-table-form",
+            DecodeErrorKind::UnknownVariantTag { .. } => "unknown-variant-tag",
+            DecodeErrorKind::UnexpectedVariantPayload { .. } => "unexpected-variant-payload",
             DecodeErrorKind::AmbiguousStringForm { .. } => "ambiguous-string-form",
             DecodeErrorKind::AmbiguousTableForm { .. } => "ambiguous-table-form",
             DecodeErrorKind::UnsupportedTarget { .. } => "unsupported-target",
@@ -185,6 +202,12 @@ impl DecodeErrorKind {
             }
             DecodeErrorKind::NoStringForm { enum_name } => {
                 format!("{enum_name} has no short (single-string) form for a scalar document")
+            }
+            DecodeErrorKind::UnknownVariantTag { enum_name, tag } => {
+                format!("@{tag} names no variant of {enum_name}")
+            }
+            DecodeErrorKind::UnexpectedVariantPayload { enum_name, variant } => {
+                format!("the document payload does not match {enum_name}::{variant}")
             }
             DecodeErrorKind::NoTableForm { enum_name } => {
                 format!("{enum_name} has no detailed (table) form for an object document")
@@ -285,6 +308,13 @@ pub enum DecodedValue {
     /// entries and a `dependencies = [...]` list both mean what the document
     /// says they mean.
     Array(Vec<DecodedValue>),
+    /// A string-keyed map's rows in document order. Unlike an array, a map's
+    /// value identity does not depend on this order — canonical row order is
+    /// the map value's own semantics, established where the value is built
+    /// (`Op::Map` in the fold lane, key-sorted `OrderedMap` rows in the
+    /// runtime lane) — so keeping document order here loses nothing and
+    /// invents nothing.
+    Map(Vec<(String, DecodedValue)>),
 }
 
 /// Decode `source` against `target`, driving one parser to completion.
@@ -306,6 +336,14 @@ pub fn decode(
                     detail: format!("TOML parse error: {err:?}"),
                 })
             })?;
+            let value = decode_value(format, &mut parser, target)?;
+            expect_end(&mut parser, format)?;
+            Ok(value)
+        }
+        // Document mode: the implicit root object arrives as an ordinary
+        // `StructStart`, so a top-level record target needs no special case.
+        DecodeFormat::Styx => {
+            let mut parser = StyxParser::new(source);
             let value = decode_value(format, &mut parser, target)?;
             expect_end(&mut parser, format)?;
             Ok(value)
@@ -338,6 +376,18 @@ fn decode_value<'de>(
                 ScalarValue::U64(value) => i64::try_from(value)
                     .map(DecodedValue::Int)
                     .map_err(|_| DecodeError::of(DecodeErrorKind::IntOutOfRange).with_span(span)),
+                // Styx scalars are all syntactically strings; the format's own
+                // rule is that the TARGET type interprets them (facet-styx
+                // spells the same rule as a reader-side hint, which only a
+                // deserializer can send — this decoder drives the parser
+                // itself). The RULES are shared rather than restated, so a
+                // document cannot mean one thing here and another there.
+                ScalarValue::Str(text) if format == DecodeFormat::Styx => {
+                    match facet_styx::scalar_interp::parse_i64(&text) {
+                        Some(value) => Ok(DecodedValue::Int(value)),
+                        None => Err(scalar_mismatch("Int", &ScalarValue::Str(text), span)),
+                    }
+                }
                 other => Err(scalar_mismatch("Int", &other, span)),
             }
         }
@@ -345,6 +395,11 @@ fn decode_value<'de>(
             let (value, span) = scalar(parser, "Bool")?;
             match value {
                 ScalarValue::Bool(value) => Ok(DecodedValue::Bool(value)),
+                ScalarValue::Str(text) if format == DecodeFormat::Styx => match text.as_ref() {
+                    "true" => Ok(DecodedValue::Bool(true)),
+                    "false" => Ok(DecodedValue::Bool(false)),
+                    _ => Err(scalar_mismatch("Bool", &ScalarValue::Str(text), span)),
+                },
                 other => Err(scalar_mismatch("Bool", &other, span)),
             }
         }
@@ -392,17 +447,83 @@ fn decode_value<'de>(
                 }
             }
         }
+        // A string-keyed map decodes an object's fields as open rows: the key
+        // set is the document's, not a declared field list's. Non-string key
+        // types stay unsupported — a document object key is a string, and
+        // conjuring an Int key out of one would be a parse, not a decode.
+        Type::Map { key, value } => {
+            if !matches!(key.as_ref(), Type::String) {
+                return Err(DecodeError::of(DecodeErrorKind::UnsupportedTarget {
+                    type_name: ty.name(),
+                }));
+            }
+            let start = consume(parser)?;
+            let start_span = event_span(&start);
+            let ParseEventKind::StructStart(_) = start.kind else {
+                return Err(DecodeError::of(DecodeErrorKind::ExpectedObject {
+                    container: ty.name(),
+                    found: event_label(&start.kind),
+                })
+                .with_span(start_span));
+            };
+            let mut rows: Vec<(String, DecodedValue)> = Vec::new();
+            loop {
+                let (kind, span) = peek(parser)?;
+                match kind {
+                    None => break,
+                    Some(ParseEventKind::StructEnd) => {
+                        consume(parser)?;
+                        break;
+                    }
+                    Some(ParseEventKind::FieldKey(_)) => {
+                        let ParseEventKind::FieldKey(key_event) = consume(parser)?.kind else {
+                            unreachable!("peeked a field key");
+                        };
+                        let name = field_name(&key_event);
+                        if rows.iter().any(|(existing, _)| *existing == name) {
+                            return Err(span_opt(
+                                DecodeError::of(DecodeErrorKind::DuplicateField {
+                                    container: ty.name(),
+                                    field: name,
+                                }),
+                                span,
+                            ));
+                        }
+                        let row = decode_value(format, parser, value)
+                            .map_err(|err| err.under(&name))?;
+                        rows.push((name, row));
+                    }
+                    Some(other) => {
+                        return Err(span_opt(
+                            DecodeError::of(DecodeErrorKind::ExpectedObject {
+                                container: ty.name(),
+                                found: event_label(&other),
+                            }),
+                            span,
+                        ));
+                    }
+                }
+            }
+            Ok(DecodedValue::Map(rows))
+        }
         other => Err(DecodeError::of(DecodeErrorKind::UnsupportedTarget {
             type_name: other.name(),
         })),
     }
 }
 
-/// The string-or-table enum form (the Cargo dependency shape). A scalar string
-/// selects the short single-`String` tuple variant; an object selects the
-/// detailed record variant and decodes directly into its fields. Selection is
+/// The string-or-table enum form (the Cargo dependency shape), plus the
+/// tagged form for formats with native tag syntax. A scalar string selects
+/// the short single-`String` tuple variant; an object selects the detailed
+/// record variant and decodes directly into its fields. Selection is
 /// deterministic: an ambiguous payload shape (two short forms, or two table
 /// forms) is a typed failure, never a first-match guess.
+///
+/// A `VariantTag` event (styx `@name`) selects the variant BY NAME instead of
+/// by payload shape, so unit variants and same-shaped variants — unreachable
+/// through the shape forms on purpose — are reachable where the document can
+/// spell a choice. The tag matches the kebab spelling of the variant
+/// identifier ([`kebab_variant`]).
 fn decode_enum<'de>(
     format: DecodeFormat,
     parser: &mut dyn FormatParser<'de>,
@@ -410,6 +531,23 @@ fn decode_enum<'de>(
 ) -> Result<DecodedValue, DecodeError> {
     let (kind, span) = peek(parser)?;
     match kind {
+        Some(ParseEventKind::VariantTag(_)) => {
+            let event = consume(parser)?;
+            let tag_span = event_span(&event);
+            let ParseEventKind::VariantTag(tag) = event.kind else {
+                unreachable!("peeked a variant tag");
+            };
+            // The nameless unit tag (bare `@`) selects nothing; it is the
+            // unit value, not a choice among variants.
+            let tag = tag.map(str::to_owned).ok_or_else(|| {
+                DecodeError::of(DecodeErrorKind::UnknownVariantTag {
+                    enum_name: enumeration.name.clone(),
+                    tag: String::new(),
+                })
+                .with_span(tag_span)
+            })?;
+            decode_tagged_variant(format, parser, enumeration, &tag, tag_span)
+        }
         Some(ParseEventKind::Scalar(_)) => {
             let (index, inner) = string_form_variant(enumeration)?;
             let field = decode_value(format, parser, inner)?;
@@ -437,6 +575,124 @@ fn decode_enum<'de>(
             container: enumeration.name.clone(),
         })),
     }
+}
+
+/// Decode the payload of a tag-selected variant against its declared shape:
+/// a unit variant consumes the tag's unit scalar, a record variant decodes
+/// its fields from the payload object, a tuple variant decodes a payload
+/// sequence elementwise (or, for a single-field tuple, one bare payload
+/// value). Anything else is [`DecodeErrorKind::UnexpectedVariantPayload`] —
+/// the tag made the variant explicit, so a shape disagreement is a document
+/// error about *that variant*, never a reason to try another.
+fn decode_tagged_variant<'de>(
+    format: DecodeFormat,
+    parser: &mut dyn FormatParser<'de>,
+    enumeration: &EnumType,
+    tag: &str,
+    tag_span: DocumentSpan,
+) -> Result<DecodedValue, DecodeError> {
+    let Some((index, variant)) = enumeration
+        .variants
+        .iter()
+        .enumerate()
+        .find(|(_, variant)| kebab_variant(&variant.name) == tag)
+    else {
+        return Err(DecodeError::of(DecodeErrorKind::UnknownVariantTag {
+            enum_name: enumeration.name.clone(),
+            tag: tag.to_owned(),
+        })
+        .with_span(tag_span));
+    };
+    let payload_mismatch = || {
+        DecodeError::of(DecodeErrorKind::UnexpectedVariantPayload {
+            enum_name: enumeration.name.clone(),
+            variant: variant.name.clone(),
+        })
+    };
+    match &variant.payload {
+        // A named tag with no payload arrives as the tag followed by a unit
+        // scalar; consume it so the variant is the whole value.
+        VariantPayload::Unit => {
+            let (value, span) = scalar(parser, "the unit payload of a tagged variant")?;
+            match value {
+                ScalarValue::Unit | ScalarValue::Null => Ok(DecodedValue::Variant {
+                    index: index as u32,
+                    fields: Vec::new(),
+                }),
+                _ => Err(payload_mismatch().with_span(span)),
+            }
+        }
+        VariantPayload::Record(fields) => {
+            let values = decode_fields(format, parser, &enumeration.name, fields)?;
+            Ok(DecodedValue::Variant {
+                index: index as u32,
+                fields: values,
+            })
+        }
+        VariantPayload::Tuple(types) => {
+            let (kind, _) = peek(parser)?;
+            match kind {
+                Some(ParseEventKind::SequenceStart(_)) => {
+                    consume(parser)?;
+                    let mut fields = Vec::with_capacity(types.len());
+                    for element_ty in types {
+                        match peek(parser)?.0 {
+                            Some(ParseEventKind::SequenceEnd) | None => {
+                                return Err(payload_mismatch());
+                            }
+                            Some(_) => fields.push(decode_value(format, parser, element_ty)?),
+                        }
+                    }
+                    match consume(parser)?.kind {
+                        ParseEventKind::SequenceEnd => Ok(DecodedValue::Variant {
+                            index: index as u32,
+                            fields,
+                        }),
+                        _ => Err(payload_mismatch()),
+                    }
+                }
+                // A single-field tuple accepts its one payload value bare —
+                // `@req"^1.2"` and `@req("^1.2")` are the same choice.
+                Some(_) if types.len() == 1 => {
+                    let field = decode_value(format, parser, &types[0])?;
+                    Ok(DecodedValue::Variant {
+                        index: index as u32,
+                        fields: vec![field],
+                    })
+                }
+                Some(_) => Err(payload_mismatch()),
+                None => Err(DecodeError::of(DecodeErrorKind::UnexpectedEnd {
+                    container: enumeration.name.clone(),
+                })),
+            }
+        }
+    }
+}
+
+/// The kebab spelling of a variant identifier: a `-` boundary before every
+/// uppercase letter that follows a lowercase letter or digit, then lowercase
+/// throughout — `ExitOnly` ⇔ `exit-only`, `ProgressiveLinesV1` ⇔
+/// `progressive-lines-v1`. This is the decoder's ONE tag-matching rule; vix
+/// has no rename surface, so the rule is stated here rather than per-type.
+/// The Rust side of a shared document (`rename_all = "kebab-case"`) agrees
+/// for identifiers without consecutive-uppercase runs; avoid acronym-run
+/// variant names in shared vocabularies.
+fn kebab_variant(name: &str) -> String {
+    let mut out = String::with_capacity(name.len() + 2);
+    let mut prev_breaks = false;
+    for ch in name.chars() {
+        if ch.is_ascii_uppercase() {
+            if prev_breaks {
+                out.push('-');
+            }
+            out.push(ch.to_ascii_lowercase());
+            prev_breaks = false;
+        } else {
+            out.push(ch);
+            prev_breaks = ch.is_ascii_lowercase() || ch.is_ascii_digit();
+        }
+    }
+    out
 }
 
 /// Select the unique short-form variant (a single-`String` tuple payload).
@@ -1008,6 +1264,238 @@ mod tests {
             "42"
         );
         assert_eq!(err.kind.label(), "expected-scalar");
+    }
+
+    #[test]
+    fn decode_styx_struct() {
+        let value = decode(
+            DecodeFormat::Styx,
+            "name facet\nversion \"0.1.0\"\n",
+            &Type::Record(RecordType::new(
+                "PackageMeta",
+                vec![
+                    RecordField {
+                        name: "name".to_owned(),
+                        ty: Type::String,
+                    },
+                    RecordField {
+                        name: "version".to_owned(),
+                        ty: Type::String,
+                    },
+                ],
+            )),
+        )
+        .expect("styx document mode decodes onto a record");
+        assert_eq!(
+            value,
+            DecodedValue::Record(vec![
+                DecodedValue::Str("facet".to_owned()),
+                DecodedValue::Str("0.1.0".to_owned()),
+            ])
+        );
+    }
+
+    fn protocol_enum() -> Type {
+        Type::Enum(EnumType::new(
+            "Protocol",
+            vec![
+                EnumVariant {
+                    name: "ExitOnly".to_owned(),
+                    payload: VariantPayload::Unit,
+                },
+                EnumVariant {
+                    name: "ProgressiveLinesV1".to_owned(),
+                    payload: VariantPayload::Unit,
+                },
+            ],
+        ))
+    }
+
+    #[test]
+    fn styx_variant_tags_select_unit_variants_by_kebab_name() {
+        let doc_target = Type::Record(RecordType::new(
+            "Program",
+            vec![RecordField {
+                name: "protocol".to_owned(),
+                ty: protocol_enum(),
+            }],
+        ));
+        let value = decode(DecodeFormat::Styx, "protocol @exit-only\n", &doc_target)
+            .expect("a kebab tag selects the unit variant");
+        assert_eq!(
+            value,
+            DecodedValue::Record(vec![DecodedValue::Variant {
+                index: 0,
+                fields: Vec::new(),
+            }])
+        );
+        let value = decode(
+            DecodeFormat::Styx,
+            "protocol @progressive-lines-v1\n",
+            &doc_target,
+        )
+        .expect("multi-word kebab tags round-trip the identifier");
+        assert_eq!(
+            value,
+            DecodedValue::Record(vec![DecodedValue::Variant {
+                index: 1,
+                fields: Vec::new(),
+            }])
+        );
+    }
+
+    #[test]
+    fn styx_variant_tags_decode_record_payloads() {
+        let target = Type::Record(RecordType::new(
+            "Program",
+            vec![RecordField {
+                name: "target".to_owned(),
+                ty: Type::Enum(EnumType::new(
+                    "Target",
+                    vec![
+                        EnumVariant {
+                            name: "Neutral".to_owned(),
+                            payload: VariantPayload::Unit,
+                        },
+                        EnumVariant {
+                            name: "ArgvFlag".to_owned(),
+                            payload: VariantPayload::Record(vec![RecordField {
+                                name: "flag".to_owned(),
+                                ty: Type::String,
+                            }]),
+                        },
+                    ],
+                )),
+            }],
+        ));
+        let value = decode(
+            DecodeFormat::Styx,
+            "target @argv-flag{flag \"--target\"}\n",
+            &target,
+        )
+        .expect("a tagged record payload decodes into its fields");
+        assert_eq!(
+            value,
+            DecodedValue::Record(vec![DecodedValue::Variant {
+                index: 1,
+                fields: vec![DecodedValue::Str("--target".to_owned())],
+            }])
+        );
+    }
+
+    #[test]
+    fn an_unknown_variant_tag_is_a_typed_failure() {
+        let target = Type::Record(RecordType::new(
+            "Program",
+            vec![RecordField {
+                name: "protocol".to_owned(),
+                ty: protocol_enum(),
+            }],
+        ));
+        let err = decode(DecodeFormat::Styx, "protocol @nope\n", &target)
+            .expect_err("an unknown tag fails with its name");
+        assert_eq!(
+            err.kind,
+            DecodeErrorKind::UnknownVariantTag {
+                enum_name: "Protocol".to_owned(),
+                tag: "nope".to_owned(),
+            }
+        );
+        assert_eq!(err.path_names(), vec!["protocol".to_owned()]);
+    }
+
+    #[test]
+    fn decode_styx_string_keyed_map() {
+        let target = Type::Map {
+            key: Box::new(Type::String),
+            value: Box::new(Type::Record(RecordType::new(
+                "Command",
+                vec![RecordField {
+                    name: "fn".to_owned(),
+                    ty: Type::String,
+                }],
+            ))),
+        };
+        let value = decode(
+            DecodeFormat::Styx,
+            "build { fn facet::build }\ntest { fn facet::test }\n",
+            &target,
+        )
+        .expect("an open-keyed object decodes onto Map<String, _>");
+        assert_eq!(
+            value,
+            DecodedValue::Map(vec![
+                (
+                    "build".to_owned(),
+                    DecodedValue::Record(vec![DecodedValue::Str("facet::build".to_owned())]),
+                ),
+                (
+                    "test".to_owned(),
+                    DecodedValue::Record(vec![DecodedValue::Str("facet::test".to_owned())]),
+                ),
+            ])
+        );
+    }
+
+    #[test]
+    fn styx_numeric_forms_agree_with_facet_styx() {
+        // The interp[interp.int.*] forms reach the vix rail too: the RULES are
+        // facet-styx's, so one document cannot mean two things depending on
+        // which reader opened it.
+        let target = Type::Record(RecordType::new(
+            "Row",
+            vec![
+                RecordField {
+                    name: "readable".to_owned(),
+                    ty: Type::Int,
+                },
+                RecordField {
+                    name: "color".to_owned(),
+                    ty: Type::Int,
+                },
+                RecordField {
+                    name: "mode".to_owned(),
+                    ty: Type::Int,
+                },
+            ],
+        ));
+        let value = decode(
+            DecodeFormat::Styx,
+            "readable 1_000_000\ncolor 0xff5500\nmode 0o755\n",
+            &target,
+        )
+        .expect("spec numeric forms decode on the vix rail");
+        assert_eq!(
+            value,
+            DecodedValue::Record(vec![
+                DecodedValue::Int(1_000_000),
+                DecodedValue::Int(16_733_440),
+                DecodedValue::Int(493),
+            ])
+        );
+    }
+
+    #[test]
+    fn a_non_string_map_key_stays_unsupported() {
+        let target = Type::Map {
+            key: Box::new(Type::Int),
+            value: Box::new(Type::String),
+        };
+        let err = decode(DecodeFormat::Styx, "a x\n", &target)
+            .expect_err("Int keys cannot come from document object keys");
+        assert!(matches!(
+            err.kind,
+            DecodeErrorKind::UnsupportedTarget { .. }
+        ));
+    }
+
+    #[test]
+    fn kebab_variant_spelling() {
+        assert_eq!(kebab_variant("Neutral"), "neutral");
+        assert_eq!(kebab_variant("ExitOnly"), "exit-only");
+        assert_eq!(kebab_variant("ArgvFlag"), "argv-flag");
+        assert_eq!(kebab_variant("ProgressiveLinesV1"), "progressive-lines-v1");
+        assert_eq!(kebab_variant("TarXz"), "tar-xz");
     }
 
     #[test]

@@ -143,6 +143,26 @@ pub trait FormatParser<'de> {
         false
     }
 
+    /// Whether the parser relies on [`hint_scalar_type`](Self::hint_scalar_type)
+    /// to interpret scalars.
+    ///
+    /// Self-description is two independent questions, and a format may answer
+    /// them differently. JSON and TOML describe their scalars in the syntax —
+    /// `8080` is a number, `"8080"` is a string — so the deserializer need not
+    /// say what it wants. Styx describes its *structure* (objects, sequences,
+    /// tags) but deliberately not its scalars: every scalar is opaque text and
+    /// the target type decides how it reads, which is a decision only the
+    /// deserializer knows.
+    ///
+    /// When true, the deserializer sends scalar hints even for a
+    /// self-describing format and bypasses event buffering so the hint is not
+    /// overtaken by the event it describes. Without it such a parser can only
+    /// emit strings, and interpretation silently falls back to the target
+    /// type's `FromStr` — a *different* language than the format's own rules.
+    fn needs_scalar_hints(&self) -> bool {
+        false
+    }
+
     /// Hint to the parser that a struct with the given number of fields is expected.
     ///
     /// For non-self-describing formats, this allows the parser to emit the correct

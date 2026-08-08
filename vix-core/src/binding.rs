@@ -184,10 +184,12 @@ pub struct CapabilityTypeDecl {
 /// Every parameter is a **declared literal**: each call-site argument must be
 /// spelled as a string literal, checked at lowering with a diagnostic that
 /// names the surface. The constraint is deliberate vocabulary, not an
-/// implementation shortcut — the constant folds at compile time, and a
-/// surface with coordinate-like arguments keeps a program's requirement set
-/// static (`vixen.machine.requirements-are-static`): a computed coordinate is
-/// rejected at compile time, never evaluated.
+/// implementation shortcut — the constant folds at compile time, so a
+/// surface's coordinate is readable without evaluating anything
+/// (`vixen.executor.root-surface-is-static`): a computed coordinate is
+/// rejected at compile time, never evaluated. This says nothing about the
+/// program's requirements as a whole, which are not knowable without running
+/// it; it is a local fact about one call site.
 // Equality on the thunks is pointer identity — good enough for its one use
 // (`CompilerConfig` equality; see `PrimitiveMethodDecl`).
 #[allow(unpredictable_function_pointer_comparisons)]

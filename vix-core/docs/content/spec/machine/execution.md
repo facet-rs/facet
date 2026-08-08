@@ -265,9 +265,9 @@ artifacts and never second-guesses the substrate.
 >
 > [DESIGN] Pure computation — map, array, option, string, version, comparison,
 > boolean operations — is weavy vocabulary, lowered, never host FFI. The
-> machine's host surface contains zero pure-computation calls. (Census class A
-> = 32 current violations; the vocabulary itself is specified in `lang.*`,
-> this rule is the machine-side ban.) Classification is by actual effect, not
+> machine's host surface contains zero pure-computation calls. (The vocabulary
+> itself is specified in `lang.*`; this rule is the machine-side ban.)
+> Classification is by actual effect, not
 > name: glob over an already-concrete tree is pure.
 
 > r[machine.execution.comparator-direct]

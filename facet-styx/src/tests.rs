@@ -874,3 +874,114 @@ fn test_metadata_container_as_map_key() {
         }
     }
 }
+
+/// The `interp[interp.int.*]` and `interp[interp.float.*]` forms, end to end
+/// through a real target type — the unit tests in `scalar_interp` pin the
+/// rules, this pins that the parser's hint dispatch actually reaches them.
+#[test]
+fn spec_numeric_forms_reach_their_target_types() {
+    #[derive(Debug, Facet)]
+    struct Doc {
+        readable: u64,
+        color: u32,
+        mode: u32,
+        flags: u8,
+        offset: i64,
+        precise: f64,
+        huge: f64,
+    }
+
+    let doc: Doc = from_str(
+        "readable 1_000_000\n\
+         color 0xff5500\n\
+         mode 0o755\n\
+         flags 0b1010\n\
+         offset -42\n\
+         precise 1_234.062_5\n\
+         huge 6.022e23\n",
+    )
+    .expect("spec numeric forms decode");
+
+    assert_eq!(doc.readable, 1_000_000);
+    assert_eq!(doc.color, 16_733_440);
+    assert_eq!(doc.mode, 493);
+    assert_eq!(doc.flags, 10);
+    assert_eq!(doc.offset, -42);
+    assert!((doc.precise - 1234.0625).abs() < f64::EPSILON);
+    assert!((doc.huge - 6.022e23).abs() / 6.022e23 < f64::EPSILON);
+}
+
+/// `interp[interp.float.special]` is a closed, case-sensitive set. Rust's own
+/// `f64` parser takes `Infinity`/`NaN`/`INF` too; admitting those would make
+/// documents only this implementation can read.
+#[test]
+fn spec_rejects_the_float_special_forms_it_does_not_define() {
+    #[derive(Debug, Facet)]
+    struct Doc {
+        value: f64,
+    }
+
+    let ok: Doc = from_str("value inf").expect("`inf` is a defined special form");
+    assert_eq!(ok.value, f64::INFINITY);
+    let ok: Doc = from_str("value -inf").expect("`-inf` is a defined special form");
+    assert_eq!(ok.value, f64::NEG_INFINITY);
+    let ok: Doc = from_str("value nan").expect("`nan` is a defined special form");
+    assert!(ok.value.is_nan());
+
+    for undefined in ["Infinity", "infinity", "INF", "NaN", "nAn"] {
+        let result: Result<Doc, _> = from_str(&format!("value {undefined}"));
+        assert!(
+            result.is_err(),
+            "`{undefined}` is not a Styx float and must not decode"
+        );
+    }
+}
+
+/// A tag selects a variant by EXACT match against its effective name, so the
+/// conventional lowercase document spelling is something a type asks for
+/// rather than something it gets. This is what every enum in
+/// `reference/bindings/rust` carries `rename_all` for.
+#[test]
+fn variant_tags_match_the_effective_name_exactly() {
+    #[derive(Debug, PartialEq, Facet)]
+    #[repr(u8)]
+    #[facet(rename_all = "kebab-case")]
+    enum Renamed {
+        Ok,
+        NotFound,
+    }
+
+    #[derive(Debug, PartialEq, Facet)]
+    #[repr(u8)]
+    enum AsWritten {
+        Ok,
+    }
+
+    #[derive(Debug, Facet)]
+    struct Doc {
+        status: Renamed,
+    }
+
+    #[derive(Debug, Facet)]
+    struct Plain {
+        status: AsWritten,
+    }
+
+    let doc: Doc = from_str("status @ok").expect("kebab-case renames Ok to @ok");
+    assert_eq!(doc.status, Renamed::Ok);
+    let doc: Doc = from_str("status @not-found").expect("multi-word variants kebab too");
+    assert_eq!(doc.status, Renamed::NotFound);
+
+    // Without the attribute the Rust identifier IS the tag — there is no
+    // case-insensitive fallback in either direction.
+    let plain: Plain = from_str("status @Ok").expect("the identifier is the tag");
+    assert_eq!(plain.status, AsWritten::Ok);
+    assert!(
+        from_str::<Plain>("status @ok").is_err(),
+        "@ok must not reach an unrenamed `Ok` variant"
+    );
+    assert!(
+        from_str::<Doc>("status @Ok").is_err(),
+        "@Ok must not reach a kebab-renamed variant"
+    );
+}

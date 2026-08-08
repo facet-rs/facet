@@ -1,12 +1,12 @@
-//! The machine manifest's acceptance tests
-//! (`vix-core/docs/content/spec/vixen/machine.md`, "Acceptance").
+//! The executor manifest's acceptance tests
+//! (`vix-core/docs/content/spec/vixen/executor.md`, "Acceptance").
 //!
 //! Every refusal test pins the same three facts: the failure is TYPED (a
 //! `CapabilityRefusal` naming both sides — what the program requires, what
-//! the machine offers), it is PRE-EFFECT (zero spawns, by counter; no check
+//! the executor offers), it is PRE-EFFECT (zero spawns, by counter; no check
 //! ran at all), and it agrees across the plain and chaos lanes. Every passing
 //! test runs a real process through a fake tool, because the point of a
-//! manifest that can refuse is that the same program RUNS when the machine's
+//! manifest that can refuse is that the same program RUNS when the executor's
 //! word covers it.
 
 #![cfg(unix)]
@@ -19,15 +19,75 @@ use vix::runtime::{
 };
 use vixen_primitives::capability_package::Target;
 use vixen_runtime::manifest::{
-    CapabilityOffer, MachineManifest, TargetRequirement, host_target, static_requirements,
+    CapabilityOffer, ExecutorManifest, TargetRequirement, host_target, static_requirements,
 };
 use vixen_runtime::ratchet::{RatchetReport, prepare_source, run_source_with_manifest};
+
+/// Serializes every test that touches `VIX_EXECUTOR_MANIFEST`.
+///
+/// The variable is process-global, so a test that SETS it races every test
+/// that READS it. Eleven tests here pass a manifest explicitly through
+/// `run_source_with_manifest` and never read it; four go through bare
+/// `run_source`, which consults [`vixen_runtime::manifest::declared_manifest`]
+/// — two of them declaring a file and two expecting the harness default.
+///
+/// Under `cargo nextest` — what the `Justfile` and CI run — each test is its
+/// own process and the race cannot occur. Under plain `cargo test` all tests
+/// share one process, and the two setters corrupt the two readers
+/// non-deterministically: one failure in a full run, three when the file runs
+/// alone, none when run with `--test-threads=1`.
+///
+/// The previous code carried that constraint as a SAFETY comment asserting
+/// "nextest runs each test in its own process", which nothing enforced and
+/// which is silently false under the other harness. A lock costs the
+/// serialization of four tests and makes both harnesses correct.
+static MANIFEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Hold the env lock, having declared `path` as the manifest. Restores the
+/// undeclared state on drop, **including when the test panics** — the old
+/// code called `remove_var` after its assertions, so a failing assert leaked
+/// the declaration into whatever ran next.
+#[must_use]
+struct DeclaredManifest(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
+
+impl DeclaredManifest {
+    fn set(path: &str) -> Self {
+        let guard = MANIFEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // SAFETY: the lock excludes every other reader and writer of this
+        // variable, and no runtime thread exists yet.
+        unsafe { std::env::set_var(vixen_runtime::manifest::MANIFEST_ENV, path) };
+        Self(guard)
+    }
+}
+
+impl Drop for DeclaredManifest {
+    fn drop(&mut self) {
+        // SAFETY: still holding the lock.
+        unsafe { std::env::remove_var(vixen_runtime::manifest::MANIFEST_ENV) };
+    }
+}
+
+/// Hold the env lock with nothing declared, for a test whose subject is the
+/// harness default. Without this, a concurrent setter's file becomes this
+/// test's executor word and the failure reads as a bug in something else
+/// entirely.
+#[must_use]
+fn undeclared_manifest() -> DeclaredManifest {
+    let guard = MANIFEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    // SAFETY: the lock excludes every other reader and writer.
+    unsafe { std::env::remove_var(vixen_runtime::manifest::MANIFEST_ENV) };
+    DeclaredManifest(guard)
+}
 
 /// A manifest offering `capabilities` on an `x86_64-unknown-linux-gnu`-style
 /// host — the design note's "Linux-only machine", spelled with the actual
 /// host triple so diagnostics carry the runner's declared host fact.
-fn manifest(capabilities: Vec<CapabilityOffer>) -> MachineManifest {
-    MachineManifest {
+fn manifest(capabilities: Vec<CapabilityOffer>) -> ExecutorManifest {
+    ExecutorManifest {
         host: host_target(),
         capabilities,
     }
@@ -109,12 +169,12 @@ fn build(rustc: Rustc) -> Stream<Check> {
 /// Acceptance 1: **missing type.** A root requiring a capability type the
 /// manifest lacks fails typed, pre-effect, naming both sides.
 ///
-/// r[verify vixen.machine.manifest]
-/// r[verify vixen.machine.binding-fails-before-effects]
+/// r[verify vixen.executor.manifest]
+/// r[verify vixen.executor.binding-fails-before-effects]
 #[test]
 fn a_capability_type_absent_from_the_manifest_refuses_before_any_effect() {
     // The harness default offers Echo/Sh/ProgressiveSh — no Rustc.
-    let report = run_source_with_manifest(EXE_CASE, MachineManifest::ratchet_default())
+    let report = run_source_with_manifest(EXE_CASE, ExecutorManifest::ratchet_default())
         .expect("a binding refusal is a report verdict, never a runner error");
     let refusal = assert_refused(&report);
     assert_eq!(refusal.test, "build");
@@ -137,8 +197,8 @@ fn a_capability_type_absent_from_the_manifest_refuses_before_any_effect() {
 /// offered targets. Typed refusal before any process exists, and the
 /// diagnostic names both sides in `Target` vocabulary.
 ///
-/// r[verify vixen.machine.binding-fails-before-effects]
-/// r[verify vixen.machine.requirements-from-use]
+/// r[verify vixen.executor.binding-fails-before-effects]
+/// r[verify vixen.executor.requirements-from-use]
 #[test]
 fn the_exe_case_refuses_pre_effect_on_a_linux_only_manifest() {
     let linux_only = manifest(vec![offer(
@@ -166,8 +226,8 @@ fn the_exe_case_refuses_pre_effect_on_a_linux_only_manifest() {
 /// offers the target — it runs, through a fake rustc that produces the
 /// artifact the program checks.
 ///
-/// r[verify vixen.machine.manifest]
-/// r[verify vixen.machine.requirements-from-use]
+/// r[verify vixen.executor.manifest]
+/// r[verify vixen.executor.requirements-from-use]
 #[test]
 fn the_exe_case_runs_when_the_manifest_offers_the_target() {
     let tools = tempfile::tempdir().expect("tool dir");
@@ -245,8 +305,8 @@ fn build(go: Go) -> Stream<Check> {
 /// GOARCH=amd64` normalizes to `x86_64-pc-windows-gnu` through the package's
 /// grammar; a Linux-only `Go` offer refuses pre-effect.
 ///
-/// r[verify vixen.machine.requirements-from-use]
-/// r[verify vixen.machine.binding-fails-before-effects]
+/// r[verify vixen.executor.requirements-from-use]
+/// r[verify vixen.executor.binding-fails-before-effects]
 #[test]
 fn an_env_role_target_refuses_pre_effect_on_a_linux_only_manifest() {
     let linux_only = manifest(vec![offer(
@@ -271,7 +331,7 @@ fn an_env_role_target_refuses_pre_effect_on_a_linux_only_manifest() {
 /// program checks, so the declared env roles demonstrably reached the
 /// spawned process.
 ///
-/// r[verify vixen.machine.requirements-from-use]
+/// r[verify vixen.executor.requirements-from-use]
 #[test]
 fn an_env_role_target_runs_and_the_roles_reach_the_process_environment() {
     const ENV_CASE_HOST: &str = r#"
@@ -342,7 +402,7 @@ fn build(go: Go) -> Stream<Check> {
 /// offering no targets at all. Roles come from the grammar, never from
 /// string-sniffing the plan (`machine.capability.no-argv-dialect`).
 ///
-/// r[verify vixen.machine.requirements-from-use]
+/// r[verify vixen.executor.requirements-from-use]
 #[test]
 fn a_target_neutral_invocation_imposes_no_target_requirement() {
     const NEUTRAL: &str = r#"
@@ -352,7 +412,7 @@ fn neutral(sh: Sh) -> Stream<Check> {
     yield expect_eq(out.stdout.lines(), ["done"]);
 }
 "#;
-    let report = run_source_with_manifest(NEUTRAL, MachineManifest::ratchet_default())
+    let report = run_source_with_manifest(NEUTRAL, ExecutorManifest::ratchet_default())
         .expect("a neutral invocation runs anywhere its tool exists");
     assert!(
         report.passed(),
@@ -369,7 +429,7 @@ fn neutral(sh: Sh) -> Stream<Check> {
 /// module without executing anything, in exactly the "needs `Rustc`
 /// producing `x86_64-pc-windows-msvc`" shape.
 ///
-/// r[verify vixen.machine.requirements-are-static]
+/// r[verify vixen.executor.root-surface-is-static]
 #[test]
 fn the_requirement_set_is_reported_without_executing() {
     let module = vixen_runtime::default_compiler()
@@ -399,7 +459,7 @@ fn the_requirement_set_is_reported_without_executing() {
 /// value is reported as "decided at run time", never silently dropped and
 /// never guessed.
 ///
-/// r[verify vixen.machine.requirements-are-static]
+/// r[verify vixen.executor.root-surface-is-static]
 #[test]
 fn a_computed_capture_degrades_honestly_in_the_static_report() {
     const COMPUTED: &str = r#"
@@ -436,8 +496,8 @@ fn build(rustc: Rustc) -> Stream<Check> {
 /// native-only offer refuses pre-effect; the cross-target offer runs on a
 /// Linux host.
 ///
-/// r[verify vixen.machine.requirements-from-use]
-/// r[verify vixen.machine.facts-are-fields]
+/// r[verify vixen.executor.requirements-from-use]
+/// r[verify vixen.executor.facts-are-fields]
 #[test]
 fn a_fact_shaped_capability_is_checked_against_its_own_target_facts() {
     const FACT_CASE: &str = r#"
@@ -476,14 +536,14 @@ fn compile(gcc: MingwGcc) -> Stream<Check> {
     }
 }
 
-/// The embedder-loads-config half of `vixen.machine.manifest`: the TOML
+/// The embedder-loads-config half of `vixen.executor.manifest`: the TOML
 /// spelling round-trips into the same typed value the tests construct
 /// directly.
 ///
-/// r[verify vixen.machine.manifest]
+/// r[verify vixen.executor.manifest]
 #[test]
 fn the_manifest_loads_from_its_toml_config_spelling() {
-    let manifest = MachineManifest::from_toml(
+    let manifest = ExecutorManifest::from_toml(
         r#"
 host = "x86_64-unknown-linux-gnu"
 
@@ -530,8 +590,8 @@ targets = ["x86_64-unknown-linux-gnu"]
 /// manifest LOADED from a config file refuses the exe case exactly as the
 /// directly-constructed value does — typed, pre-effect, naming both sides.
 ///
-/// r[verify vixen.machine.manifest]
-/// r[verify vixen.machine.binding-fails-before-effects]
+/// r[verify vixen.executor.manifest]
+/// r[verify vixen.executor.binding-fails-before-effects]
 #[test]
 fn a_manifest_loaded_from_a_config_file_refuses_the_exe_case() {
     let dir = tempfile::tempdir().expect("manifest dir");
@@ -553,21 +613,18 @@ fn a_manifest_loaded_from_a_config_file_refuses_the_exe_case() {
 }
 
 /// The runnable system reads the DECLARED manifest: with
-/// `VIX_MACHINE_MANIFEST` naming a Linux-only manifest file, the ordinary
+/// `VIX_EXECUTOR_MANIFEST` naming a Linux-only manifest file, the ordinary
 /// `run_source` entrypoint — no `with_manifest`, no Rust-side value — binds
 /// against the file's machine word and refuses the exe case pre-effect.
 ///
-/// r[verify vixen.machine.manifest]
+/// r[verify vixen.executor.manifest]
 #[test]
 fn the_environment_declared_manifest_reaches_the_runnable_system() {
     let dir = tempfile::tempdir().expect("manifest dir");
     let path = manifest_file(&dir, LINUX_ONLY_TOML);
-    // SAFETY: nextest runs each test in its own process, and the variable is
-    // set before any runtime thread exists.
-    unsafe { std::env::set_var(vixen_runtime::manifest::MANIFEST_ENV, &path) };
+    let _declared = DeclaredManifest::set(&path);
     let report = vixen_runtime::ratchet::run_source(EXE_CASE)
         .expect("a binding refusal is a report verdict, never a runner error");
-    unsafe { std::env::remove_var(vixen_runtime::manifest::MANIFEST_ENV) };
     let refusal = assert_refused(&report);
     assert_eq!(refusal.required_type, "Rustc");
     assert_eq!(
@@ -583,7 +640,7 @@ fn the_environment_declared_manifest_reaches_the_runnable_system() {
 /// distinction between `Err` and `Ok(refusal)` is exactly the loudness this
 /// pins.
 ///
-/// r[verify vixen.machine.manifest]
+/// r[verify vixen.executor.manifest]
 #[test]
 fn a_missing_declared_manifest_is_a_loud_typed_error_never_a_silent_default() {
     let dir = tempfile::tempdir().expect("manifest dir");
@@ -593,11 +650,8 @@ fn a_missing_declared_manifest_is_a_loud_typed_error_never_a_silent_default() {
         .to_str()
         .expect("path is UTF-8")
         .to_owned();
-    // SAFETY: nextest runs each test in its own process, and the variable is
-    // set before any runtime thread exists.
-    unsafe { std::env::set_var(vixen_runtime::manifest::MANIFEST_ENV, &missing) };
+    let _declared = DeclaredManifest::set(&missing);
     let result = vixen_runtime::ratchet::run_source(EXE_CASE);
-    unsafe { std::env::remove_var(vixen_runtime::manifest::MANIFEST_ENV) };
     let Err(vixen_runtime::ratchet::RunError::Manifest(
         vixen_runtime::manifest::ManifestLoadError::Unreadable { path, .. },
     )) = result
@@ -607,7 +661,7 @@ fn a_missing_declared_manifest_is_a_loud_typed_error_never_a_silent_default() {
     assert_eq!(path, missing, "the error names the declared path");
 }
 
-/// The explicit requirement fallback (`vixen.machine.requirements-from-use`):
+/// The explicit requirement fallback (`vixen.executor.requirements-from-use`):
 /// a fact the command grammar cannot extract — here the tool's own runtime
 /// self-report — is stated by the program itself through the stdlib
 /// `require(condition) where { message }`, over the ordinary `fail`
@@ -615,7 +669,7 @@ fn a_missing_declared_manifest_is_a_loud_typed_error_never_a_silent_default() {
 /// value identity — schema and message content — is pinned Rust-side, so the
 /// author's message provably reaches the failure payload.
 ///
-/// r[verify vixen.machine.requirements-from-use]
+/// r[verify vixen.executor.requirements-from-use]
 #[test]
 fn an_unsatisfied_require_raises_the_typed_failure_with_the_message() {
     const SOURCE: &str = r#"
@@ -626,6 +680,7 @@ fn guarded(sh: Sh) -> Stream<Check> {
     yield expect(require(arch == "aarch64") where { message: "this build step needs an aarch64 machine" });
 }
 "#;
+    let _undeclared = undeclared_manifest();
     let report = vixen_runtime::ratchet::run_source(SOURCE)
         .expect("an unsatisfied requirement is a check verdict, never a runner error");
     assert!(!report.passed(), "the requirement is unsatisfied: {report:#?}");
@@ -670,7 +725,7 @@ fn guarded(sh: Sh) -> Stream<Check> {
 /// reports is an ordinary `true` — the program runs and passes, and the
 /// message wire is never demanded.
 ///
-/// r[verify vixen.machine.requirements-from-use]
+/// r[verify vixen.executor.requirements-from-use]
 #[test]
 fn a_satisfied_require_is_an_ordinary_passing_check() {
     const SOURCE: &str = r#"
@@ -681,6 +736,7 @@ fn guarded(sh: Sh) -> Stream<Check> {
     yield expect(require(arch == "x86_64") where { message: "this build step needs an x86_64 machine" });
 }
 "#;
+    let _undeclared = undeclared_manifest();
     let report = vixen_runtime::ratchet::run_source(SOURCE)
         .expect("a satisfied requirement runs ordinarily");
     assert!(report.passed(), "the satisfied guard passes: {report:#?}");
@@ -691,7 +747,7 @@ fn guarded(sh: Sh) -> Stream<Check> {
 /// a typed `Malformed` error naming the path, with the parse detail carried,
 /// and a `Display` rendering that says what happened.
 ///
-/// r[verify vixen.machine.manifest]
+/// r[verify vixen.executor.manifest]
 #[test]
 fn a_malformed_declared_manifest_is_a_loud_typed_error() {
     let dir = tempfile::tempdir().expect("manifest dir");

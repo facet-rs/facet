@@ -38,10 +38,10 @@ a proven-strict island under the as-if rule in the runtime specification.
 > forms followed by an optional final expression. A `let` binding ends in `;`.
 > Ordinary expression statements do not exist.
 
-Parentheses group. They are not function-call punctuation. Double-quoted
-strings interpolate `${expression}`; single-quoted strings are literal. Path
-literals use `p"..."`. Command templates use capability-tagged backticks and
-interpolate one typed argument fragment with `{expression}`.
+Parentheses group. They are not function-call punctuation. Literals are
+specified under [Literals and templates](#literals-and-templates): the quote
+family is hole-free, the backtick family admits holes, and a hole that *binds*
+rather than *reads* makes the literal a template.
 
 Unary minus binds tighter than binary operators but is not a juxtaposition atom:
 write `abs (-1)`, never `abs -1`. `%` begins an explicitly keyed collection
@@ -52,6 +52,332 @@ Precedence from tightest to loosest is:
 ```text
 field / method > juxtaposition > postfix ? > unary > binary > where { ... }
 ```
+
+## Literals and templates
+
+Two independent questions decide this whole area, and conflating them is the
+mistake every templating system makes.
+
+**Can this literal have holes?** The delimiter answers: the **quote family is
+hole-free**, the **backtick family admits holes**. Raw is a different and
+narrower axis: `"…"` processes backslash escapes, and only `"""…"""` is raw.
+
+**Is it a string or a template?** The holes answer: a hole that *reads* a name
+(`{x}`) is interpolation, resolved where it is written, so the literal is
+still a `String`. A hole that *binds* a name (`{let x}`) is a parameter the
+literal does not have, so the literal is a **template** — a function taking
+those parameters and returning what it would otherwise have been.
+
+Interpolation and templating are not the same operation. Interpolation names a
+**value** and is eager. A template names a **hole** and keeps it. This replaces
+the earlier `${expression}`-interpolating double-quoted string; `'` is left
+unassigned (`r[lang.literal.string]`) rather than pressed into service as a
+second string delimiter.
+
+|            | no holes            | holes admitted                |
+| ---------- | ------------------- | ----------------------------- |
+| **String** | `"…"` `"""…"""`     | `` `…` `` ```` ```…``` ````   |
+| **Path**   | `p"…"`              | `` p`…` ``                    |
+| **Command**| —                   | `` $cap`…` ``                 |
+
+> r[lang.literal.string]
+>
+> [DESIGN] `"…"` is a `String`: one line, backslash escapes, no holes. A
+> quoted literal never reads a name, so the bytes it denotes are a function of
+> the source text alone.
+>
+> `'` is **unassigned and reserved**. It has never been a string delimiter in
+> this language, and the raw form it was once described as providing is
+> `"""…"""`. If a `Char` type is ever added, `'c'` is the spelling it takes;
+> reserving the character now keeps that available.
+
+> r[lang.literal.block]
+>
+> [DESIGN] `"""…"""` is a `String` in block form: multi-line, **raw** (no
+> escape processing, no holes), opened and closed by a fence of three or more
+> `"`. The closing fence repeats the opening fence's length, so content
+> containing `"""` is written by opening with `""""`.
+>
+> Block form is raw because the two pressures that make escapes necessary in
+> `"…"` are absent: the delimiter does not occur in ordinary text, and the
+> literal spans lines, so a newline is typed rather than spelled. Embedded
+> foreign text is the common case and must survive unchanged.
+
+> r[lang.literal.whitespace]
+>
+> [DESIGN] A block literal's bytes are a function of its source text alone —
+> never of the checkout, the editor, or invisible characters. Six rules make
+> that true, and they apply to every fenced literal, quote or backtick:
+>
+> 1. **Opening line.** Nothing follows the opening fence on its line. A flavor
+>    is a prefix sigil, written *before* the delimiter
+>    (`r[lang.literal.flavor]`), so there is no header to parse and no header
+>    grammar to specify. Content begins after the first newline, and anything
+>    other than whitespace between the opening fence and that newline is an
+>    error, never content.
+> 2. **Leading newline.** The newline ending the opening line is a separator,
+>    not content.
+> 3. **Trailing newline.** Each content line keeps its own newline; the
+>    closing fence's line contributes nothing. Three visible lines produce
+>    three newlines, so embedded file content ends with a newline the way text
+>    files should.
+> 4. **Indentation.** The closing fence's indentation is stripped from every
+>    content line — the rule styx heredocs already state
+>    (`parser[scalar.heredoc.syntax]`), so the sibling languages agree. A
+>    content line indented *less* than the closing fence is an error, never
+>    silently mangled; blank lines are exempt.
+> 5. **Trailing whitespace** on a content line is content. It is usually junk
+>    and a formatter may flag it, but stripping it would be the reader
+>    canonicalizing, which this language does not do.
+> 6. **CRLF normalizes to LF.** Not cosmetic: values are content-addressed, so
+>    an unnormalized literal would give the same source file a different
+>    identity depending on how it was checked out — same commit, different
+>    build. Styx's rule that `\n` always means LF regardless of platform is
+>    the same decision.
+
+> r[lang.literal.flavor]
+>
+> [DESIGN] A literal may carry a **flavor**: `@name` immediately before the
+> opening delimiter (`@rust"""…"""`, ``@html`…` ``). A flavor names a reader
+> for the text. Flavors are a closed, specified set; an unknown flavor is a
+> typed error, never ignored.
+>
+> A flavor drives editor injection, validation, and lints, and it may declare
+> an **escaping discipline** (`r[lang.template.escaping]`). There is one rule
+> for escaping and it applies uniformly: a flavor escapes *spliced values*. A
+> quote-family literal has no splices, so the rule is simply vacuous there —
+> not a second kind of flavor, just a precondition that is never met.
+>
+> A flavor never alters the literal's own text, in either family.
+>
+> `@` is reserved at the head of a literal and has no other use.
+
+The set itself is not enumerated anywhere on this page, and the rule that
+closes it does not close anything until it is. That is a specification bug in
+the sense of the preamble, not a license to invent one: the roster — each entry
+with its escaping discipline and produced type (`r[lang.template.escaping]`) —
+is normative content and must land here before an implementation or a corpus
+program admits a flavor name.
+
+> r[lang.literal.path]
+>
+> [DESIGN] `p"…"` is a `Path`, and ``p`…` `` is a `Path` admitting holes. It
+> is the only bare-letter literal prefix and the set is closed at one, so it
+> cannot collide with a flavor (spelled `@name`) or a capability (spelled
+> `$name`). A build system writes paths constantly; the terse form is the
+> point.
+
+> r[lang.template.holes]
+>
+> [DESIGN] Inside a backtick literal, `{…}` is a hole. There are exactly two
+> kinds and the difference is the direction a name travels:
+>
+> - `{x}` **reads** `x` from the enclosing scope and splices its value. Inward,
+>   eager, resolved where written.
+> - `{let x}` **binds** a name the literal does not have. Outward: `x` is
+>   determined by the literal's *use*, not by its surroundings.
+>
+> A literal whose holes are all reads has the type its delimiter and flavor
+> already give it — `String`, `Path`, `Command<A>`, or a flavor's type such as
+> `Html` (`r[lang.template.escaping]`). Everything is known, so it is simply
+> built. A literal with any `{let …}` is a **template**: a function *to* that
+> same type (`r[lang.template.is-a-function]`). Mixing is admissible: the reads
+> are resolved at construction and the bindings remain.
+>
+> There is no other construct inside a literal — no conditionals, no loops, no
+> filters, no expressions beyond a name. See `r[lang.template.no-control-flow]`.
+
+> r[lang.template.is-a-function]
+>
+> [DESIGN] A template **is a function**, so its type is the function type
+> `fn(P) -> T`. Its `{let …}` holes **are a record** — that is `P` — and `T` is
+> what the same literal would have been with no bindings: `String`, `Path`,
+> `Command<A>`, or a flavor's type (`r[lang.template.escaping]`). This needs
+> nothing new: vix already has records and functions, and the hole set is
+> checked against an ascribed `P` by ordinary typing.
+>
+> ```vix
+> struct Row { name: String, version: String }
+>
+> let row: fn(Row) -> Html = @html`<tr><td>{let name}</td><td>{let version}</td></tr>`;
+> ```
+>
+> A template is applied by ordinary call — `row r` — so it is not a new kind of
+> value needing its own combinators: `map`, `fold`, and `join` take one exactly
+> as they take any function. There is no fill API, and no filling vocabulary:
+> a template is called.
+>
+> **There is no `Template<P>` type constructor**, and minting one would be the
+> error the rest of this rule avoids. It has one parameter and two things to
+> say — the holes and the result — so `Template<Row>` cannot distinguish
+> `fn(Row) -> Html` from `fn(Row) -> String`, and cannot spell a `Path` or
+> command template at all. Declaring a template to be a function and then
+> giving it a type that is not a function type is how that contradiction got
+> in.
+>
+> A literal with no bindings is not a nullary template; it is the value —
+> a `String`, a `Path`, a `Command<A>`, an `Html`. The common case is not taxed
+> with an application.
+
+> r[lang.template.no-control-flow]
+>
+> [DESIGN] A template has holes and nothing else. There is no iteration
+> construct, no conditional, and no filter syntax — repetition is `map` and
+> `join` in the language, spliced through an ordinary hole.
+>
+> ```vix
+> fn table(rows: [Row]) -> Html {
+>     let body = rows.map(row).join(@html"\n");
+>     @html```
+>         <table>
+>           <tbody>{body}</tbody>
+>         </table>
+>     ```
+> }
+> ```
+>
+> The types line up without a cast. `row` is the `fn(Row) -> Html` template of
+> `r[lang.template.is-a-function]`, so `rows.map(row)` is `[Html]`; the
+> separator is written `@html"\n"`, a hole-free `@html` literal whose escaping
+> discipline is therefore vacuous (`r[lang.literal.flavor]`), so the join stays
+> in `Html`; and the enclosing `@html` literal yields `Html` too, which is what
+> the function returns.
+>
+> This is the load-bearing restraint. Every template system that grew loops
+> grew a second, worse language inside its strings — untyped, untooled, with
+> its own scoping and its own bugs. Vix already is the language; templates are
+> leaves and vix is the combinator.
+
+> r[lang.template.escaping]
+>
+> [DESIGN] A flavor may declare an **escaping discipline**. When it does, it
+> also names the type it produces: `@html` yields `Html`, `@sql` yields `Sql`,
+> `@xml` yields `Xml`. A flavor with no escaping to declare (`@rust`, `@md`,
+> `@styx`) yields an ordinary `String` and mints no type. The registry gains a
+> field, not a type per entry.
+>
+> Escaping applies to **spliced values only, never to the literal's own text**,
+> and which values are escaped is decided by the hole's type:
+>
+> - a hole typed `String` is **escaped** on splice;
+> - a hole already typed as the flavor's type is **passed through**, because
+>   its type already says it is markup.
+>
+> The second clause is why composition needs no opt-out. An `@html` template
+> returns `Html`, so its results — mapped and joined by the ordinary
+> `map`/`join` shape of `r[lang.template.no-control-flow]`, and spliced into
+> the `@html` literal that assembles them — carry markup into markup, and
+> nothing is re-escaped.
+>
+> The types are **per flavor**, and deliberately not one shared `Raw`. Escaping
+> is format-specific: a value escaped for SQL is not safe in HTML, and a single
+> unescaped-marker type would erase exactly the information that makes escaping
+> correct. Per-flavor types also give the useful refusal — `Sql` does not splice
+> into an `Html` hole.
+>
+> The bypass, for a `String` from elsewhere that the author asserts is already
+> markup, is a **named conversion** and not a type: `html::verbatim(text)`.
+> A call is greppable — every bypass in a tree is one search — local, and does
+> not propagate the way a marker type flowing through signatures would. The name
+> states the obligation: someone is vouching for these bytes.
+>
+> A hole is precisely the boundary where data meets structured output, so this
+> is injection safety by construction rather than by discipline. Confining it
+> to hole values is what keeps `r[lang.literal.whitespace]`'s guarantee intact:
+> the literal's own bytes remain a function of its source.
+
+> r[lang.template.splice]
+>
+> [DESIGN] A hole is **inline** or **block**, decided by whether it is the sole
+> non-whitespace content on its line, and the two lay out differently:
+>
+> - **Inline** (`<td>{name}</td>`): the value is spliced unchanged. There is no
+>   meaningful indentation to inherit; the value continues mid-line.
+> - **Block** (the hole alone on its line, preceded only by whitespace): every
+>   line of the value *after the first* is prefixed with exactly the whitespace
+>   that precedes the hole in the source.
+>
+> ```
+> @yaml```
+>   spec:
+>     containers:
+>       {containers}
+> ```
+> ```
+>
+> With `containers` bound to `- name: a\n  image: x`, the block hole yields
+> `containers:` followed by both lines at the hole's indentation, which is what
+> YAML requires and what the author drew.
+>
+> Re-indenting a block hole is the **dual** of `r[lang.literal.whitespace]`
+> rule 4: that rule strips indentation the source added for readability, and
+> this one honors indentation the author wrote as output shape. Ignoring it
+> would mean the language removes whitespace it introduced and disregards
+> whitespace that was meant.
+>
+> **The control is the hole's position, and no modifier exists.** A value
+> wanted at column zero is written at column zero; a value wanted unindented
+> is written inline. The knob is already visible in the source, so no
+> per-hole layout modifier is introduced to be forgotten or to rot.
+>
+> Two details keep it safe: a blank line in the value receives **no** prefix,
+> because indenting it would manufacture trailing whitespace the machine must
+> not invent (rule 5); and the prefix is copied **exactly** from the source,
+> so tabs stay tabs and no tab width is ever assumed. Escaping
+> (`r[lang.template.escaping]`) applies first, layout second.
+
+> r[lang.template.command]
+>
+> [DESIGN] `` $cap`…` `` is a command literal — `cap` is an ordinary
+> identifier resolving to a capability value, and the `$` sigil marks the
+> position as a command so the identifier is unambiguously a *value*, never a
+> flavor or a type prefix. The block form is ``$cap```…``` `` under
+> `r[lang.literal.whitespace]`.
+>
+> `$` builds the command; `exec` demands it (`r[lang.command.typed]`). The
+> effect boundary stays a keyword and is never folded into a sigil.
+>
+> Because a command literal is not a string, a *raw* multi-line command is an
+> ordinary `String` operand — which is how text containing the hole delimiter
+> (`find . -exec rm {} \;`) is written without escaping anything.
+
+> r[lang.template.command-holes]
+>
+> [DESIGN] A command literal's hole delimiter is declared by the **capability
+> package** (`vixen.capability.package-declares-its-holes`), not by a global
+> table: the package already owns the argv dialect, and the collision to avoid
+> is per-tool. It is versioned with the package and enters command identity.
+>
+> A command literal needs **no escaping discipline**, and this is a property of
+> the design rather than an omission. A capability's grammar parses argv into
+> separate roles, so a hole contributes one argv element — there is no string
+> for a value to escape out of, and `r[lang.template.escaping]` has nothing to
+> do. The structure is the escaping. Text generation is where injection lives;
+> commands are safe by construction.
+>
+> `{let x}` in a command literal names a declared `Output<Path>` role of the
+> command grammar. This is not a second meaning of `let`: the command is a
+> template — a `fn({obj: Output<Path>}) -> Command<A>` — and **`exec` applies
+> it**, supplying the argument by allocating the workspace path, after which
+> the outcome carries the binding. Who supplies a template's argument depends
+> on who applies it; nothing about `let` changes, and no filling machinery is
+> introduced (`r[lang.template.is-a-function]`).
+>
+> ```vix
+> let out = exec $gcc`-c {source} -o {let obj}`;
+> ```
+>
+> The direction is visible: `{source}` splices a value in, `{let obj}` binds
+> one out. This is the use-site half of a vocabulary the command grammar
+> already declares — `(-c -o {object: Output<Path>} | -shared -o {library:
+> Output<Path>})` — so which role is bound follows from which alternative
+> matched.
+>
+> A bound output path MUST be a function of the plan alone. It is part of WHAT
+> WOULD RUN — the axis `machine.primitive.exec-identity` requires to match
+> exactly, unlike mounts and reads — so it enters the normalized plan that
+> `machine.primitive.exec-plan-normalized` hashes. A path minted per run would
+> change that plan on every run and make every build a memo miss.
 
 ## Functions and arguments
 
@@ -418,7 +744,8 @@ Capability values are ordinary parameters:
 ```vix
 #[test]
 fn check() where { rustc: Rustc, target: Target } -> Stream<Check> {
-    let out = exec rustc`--target {target} -c {source}`;
+    let source = p"main.rs";
+    let out = exec $rustc`--target {target} -c {source}`;
     yield expect_present(out.tree / p"artifact.o");
 }
 ```
@@ -437,7 +764,7 @@ the command recipe.
 The command grammar parses argv roles and normalization. `Arg` is one argv
 element made of typed fragments (`Text`, `Path`, `TreePath`, `Blob`, or a
 capability-defined symbol); interpolation never stringifies a dependency.
-A `command` declaration spells `Arg` boundaries directly: whitespace separates
+A `grammar` declaration spells `Arg` boundaries directly: whitespace separates
 argv elements, adjacent atoms fuse into one element's fragments
 (`-D{define: String}` is one `Arg`, `-D {define: String}` is two), and a
 quoted atom carries characters the bare literal reserves (`"{}"`, `"a b"`).
@@ -493,7 +820,7 @@ fn arithmetic() -> Stream<Check> {
 }
 ```
 
-> r[lang.diagnostic.must-use]
+> r[lang.diagnostics.must-use]
 >
 > `must_use` is a warning contract. When a value or operation marked `must_use`
 > produces a result that is not consumed, the compiler warns; the program

@@ -63,10 +63,9 @@ about what a build did; a vixen receipt is the observed read-set."
 > r[machine.receipt.exposed-to-programs]
 >
 > [DESIGN] The machine exposes a demanded function's read-set to vix code (the
-> demand's certificate is itself demandable). This closes doc-90's gap 1 by
-> construction and is what makes read-set widening (doc 50) expressible.
-> Field-level consumption tracking (which *fields* of an index row were read,
-> warm-facts §5) is the forward-looking requirement on this same surface.
+> demand's certificate is itself demandable). This is what makes read-set
+> widening expressible. Field-level consumption tracking — which *fields* of an
+> index row were read — is the forward-looking requirement on this same surface.
 > Demanding a certificate is a machine-meta demand: it does NOT itself produce a
 > second-order receipt (no receipt-of-receipt recursion), and reading a receipt
 > value is not an input observation of the reader's own computation.
@@ -101,21 +100,24 @@ about what a build did; a vixen receipt is the observed read-set."
 
 > r[machine.receipt.fetch-observation-pin]
 >
-> [RENAMED, round 10 — this rule is about OBSERVATION, not about `fetch`.
-> `fetch` is pinned, always (`machine.primitive.fetch-is-pinned`); a retrieval
-> without a declared checksum is a DIFFERENT PRIMITIVE. One function may not be
-> hermetic-or-discovering depending on whether a parameter is present. The rule
-> id is retained struck so stale references fail loudly.]
+> [STRUCK] Renamed to `machine.receipt.observation-pin`. The id named `fetch`
+> and the rule is about **observation**; `fetch` is pinned, always
+> (`machine.primitive.fetch-is-pinned`), and a retrieval without a declared
+> checksum is a *different primitive* — one function may not be
+> hermetic-or-discovering depending on whether a parameter is present. The id is
+> retained as a stub so stale references fail loudly.
+
+> r[machine.receipt.observation-pin]
 >
-> An **observation** is a read whose result identity is unknown until it is
-> performed: the machine pins what it saw, and the pin becomes the receipt's
-> authority. Recompute is the audit, not the source of truth; divergence under
-> re-observation is a visible diagnostic, never a silent change. (vix-spec V14–V16.)
+> [SETTLED] An **observation** is a read whose result identity is unknown until
+> it is performed: the machine pins what it saw, and the pin becomes the
+> receipt's authority. Recompute is the audit, not the source of truth;
+> divergence under re-observation is a visible diagnostic, never a silent change.
 >
 > CONSEQUENCE, and it is why the two must not share a function: **an observation
 > made inside a `place` was made by someone else.** The executor's pin becomes
 > your receipt's authority and there is nothing to check it against. A pinned
-> fetch is trust-free on any machine, including one you do not administer; an
+> fetch is trust-free on any executor, including one you do not administer; an
 > observation is not. See `machine.placement.identity-crosses`.
 
 > r[machine.receipt.reveal-is-journaled]

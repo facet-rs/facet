@@ -11,8 +11,15 @@ source {
             test_include ("tests/**/*.rs")
         }
         {
+            // `corpus-next/**` is deliberately absent. It is design fiction —
+            // libpng/main.vix opens with "DESIGN FICTION. Nothing here runs." —
+            // and a bare `r[rule]` in one of its comments was counting as an
+            // implementation. That inflated the implemented figure by 15 rules
+            // and supplied 6 of the 7 invalid references. A sketch pressures a
+            // rule; it does not implement one, and the coverage number is only
+            // worth having if it cannot be raised by writing a comment.
             name vix
-            include ("std/**/*.vix" "corpus-next/**/*.vix" "tests/ratchet/**/*.vix")
+            include ("std/**/*.vix" "tests/ratchet/**/*.vix")
         }
         {
             name weavy

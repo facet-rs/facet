@@ -48,3 +48,16 @@ pub fn main() -> Pkg { from("{}") }
         "Format::Yaml is not a decode format"
     );
 }
+
+#[test]
+fn decode_binding_reads_styx_format() {
+    let src = r#"
+enum Format { Json, Toml, Styx }
+struct Manifest { name: String }
+fn from_styx<T>(text: String) -> T { decode(text, Format::Styx) }
+pub fn main() -> Manifest { from_styx("name taxon\n") }
+"#;
+    Compiler::default()
+        .compile(src)
+        .expect("decode(text, Format::Styx) via a generic wrapper compiles");
+}

@@ -1,4 +1,5 @@
 pub enum Format {
     Json,
     Toml,
+    Styx,
 }

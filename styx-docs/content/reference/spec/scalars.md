@@ -80,6 +80,14 @@ Styx scalars are opaque text at parse time — the parser assigns no type. Inter
 > Implementations MUST reject integers that overflow the target type's range.
 > The error message SHOULD include the valid range.
 
+> interp[interp.int.sign]
+> A sign belongs to the decimal form only. The radix forms are defined as
+> *starting with* `0x`/`0o`/`0b`, so `-0xff` is not an integer.
+>
+> ```styx,bad
+> offset -0xff      // ERROR: the radix forms take no sign
+> ```
+
 ## Floating-point
 
 > interp[interp.float.syntax]
@@ -91,6 +99,15 @@ Styx scalars are opaque text at parse time — the parser assigns no type. Inter
 >
 > At least one of the fractional parts or exponent MUST be present to distinguish from integer.
 > Underscores MAY appear between digits.
+>
+> This defines the float *literal* form — what a scalar looks like when a
+> float is what it is. It does not narrow what a float TARGET accepts: the
+> target type decides interpretation (`interp[interp.coerce.none]`), so
+> integer-shaped text reads as a float when a float was asked for.
+>
+> ```styx
+> ratio 1           // → 1.0 when the target is a float
+> ```
 >
 > ```styx
 > pi 3.14159

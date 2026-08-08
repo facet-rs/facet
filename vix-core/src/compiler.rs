@@ -191,7 +191,7 @@ impl Default for Compiler {
     }
 }
 
-// r[impl lang.diagnostic.must-use]
+// r[impl lang.diagnostics.must-use]
 fn lint_module(module: &Module) -> Diagnostics {
     let mut entries = Vec::new();
     for function in &module.functions {
@@ -2752,7 +2752,11 @@ fn lower_generator_match(
 /// Lower a yielded `if` into a generator [`GeneratorStep::If`]: real two-way
 /// dispatch on a Bool condition whose taken branch is a nested generator body.
 ///
-/// r[impl machine.test.generator-step]
+/// Carried an `r[impl machine.test.generator-step]` reference to a rule that
+/// has never existed — there is no `machine.test.*` namespace, and nothing in
+/// the spec governs generator-step lowering. The reference is removed rather
+/// than repointed, because repointing it at a near-miss rule would hide the
+/// actual state: this mechanism is implemented and unspecified.
 fn lower_generator_if(
     nodes: &mut Vec<Node>,
     yielded_checks: &mut Vec<NodeId>,
@@ -5714,8 +5718,8 @@ fn lower_request_shape(
 ///
 /// The literal constraint is checked here, with a diagnostic naming the
 /// surface: a computed argument is rejected at compile time, never
-/// evaluated — a surface with coordinate-like arguments keeps a program's
-/// requirement set static (`vixen.machine.requirements-are-static`).
+/// evaluated, so the coordinate is readable off this call site alone
+/// (`vixen.executor.root-surface-is-static`).
 fn lower_constant_surface(
     nodes: &mut Vec<Node>,
     call: &ast::Call,
@@ -5760,6 +5764,7 @@ fn decode_format_label(format: DecodeFormat) -> &'static str {
     match format {
         DecodeFormat::Json => "JSON",
         DecodeFormat::Toml => "TOML",
+        DecodeFormat::Styx => "STYX",
     }
 }
 
@@ -6062,18 +6067,19 @@ fn decode_format_arg(arg: &ast::Expr) -> Result<DecodeFormat, Diagnostics> {
     let ast::Expr::Variant(variant) = arg else {
         return Err(Diagnostics::one(Diagnostic::unsupported(
             expr_span(arg),
-            "a decode format `Format::Json` or `Format::Toml`",
+            "a decode format `Format::Json`, `Format::Toml`, or `Format::Styx`",
         )));
     };
     if !matches_std_qualified_name(&variant.path.type_name.value, "Format") {
         return Err(Diagnostics::one(Diagnostic::unsupported(
             variant.path.span,
-            "a decode format `Format::Json` or `Format::Toml`",
+            "a decode format `Format::Json`, `Format::Toml`, or `Format::Styx`",
         )));
     }
     match variant.path.variant.value.as_str() {
         "Json" => Ok(DecodeFormat::Json),
         "Toml" => Ok(DecodeFormat::Toml),
+        "Styx" => Ok(DecodeFormat::Styx),
         other => Err(Diagnostics::one(Diagnostic::unsupported(
             variant.path.variant.span,
             format!("an unknown decode format `Format::{other}`"),
@@ -6145,6 +6151,7 @@ fn lower_registered_decode_request(
         Op::Int(match format {
             DecodeFormat::Json => 0,
             DecodeFormat::Toml => 1,
+            DecodeFormat::Styx => 2,
         }),
     );
     let target_schema = push_node(
@@ -6307,6 +6314,22 @@ fn lower_decoded_value(
                     elements,
                     Op::Array,
                 ),
+                ty: ty.clone(),
+            })
+        }
+        // A decoded map folds into the same `Op::Map` a `%{}`-plus-adds
+        // spelling reaches: alternating key/value inputs in document order,
+        // with the machine's ordered-insert establishing canonical row order.
+        // The fold therefore interns to the identity a hand-built map of the
+        // same rows would.
+        (DecodedValue::Map(rows), Type::Map { value, .. }) => {
+            let mut inputs = Vec::with_capacity(rows.len() * 2);
+            for (key, row) in rows {
+                inputs.push(push_string_literal(nodes, span, key.clone()));
+                inputs.push(lower_decoded_value(nodes, row, value, span)?.node);
+            }
+            Ok(LoweredValue {
+                node: push_node(nodes, span, ty.clone(), EffectFacts::PURE, inputs, Op::Map),
                 ty: ty.clone(),
             })
         }

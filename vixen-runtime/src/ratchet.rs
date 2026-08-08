@@ -290,10 +290,10 @@ pub enum RunError {
         context: Option<FailureContext>,
     },
     PersistentRuntime(Box<PersistentRuntimeJournalError>),
-    /// The machine manifest the invoker DECLARED (`VIX_MACHINE_MANIFEST`)
+    /// The executor manifest the invoker DECLARED (`VIX_EXECUTOR_MANIFEST`)
     /// failed to load. Loud and typed by design: the harness default serves
     /// only the undeclared case, never a declared file that cannot be read
-    /// or parsed (`vixen.machine.manifest`).
+    /// or parsed (`vixen.executor.manifest`).
     Manifest(crate::manifest::ManifestLoadError),
 }
 
@@ -608,7 +608,7 @@ pub struct SuiteRun {
     pub all_demands_ready: bool,
     pub all_tasks_terminal: bool,
     /// Typed pre-effect capability refusals
-    /// (`vixen.machine.binding-fails-before-effects`): a test listed here had
+    /// (`vixen.executor.binding-fails-before-effects`): a test listed here had
     /// a root capability parameter the machine manifest could not satisfy, so
     /// NONE of its islands were submitted — no check ran, no demand parked,
     /// no process spawned. Non-empty refusals fail the report.
@@ -717,13 +717,15 @@ impl RatchetReport {
 pub struct PreparedRun {
     compilation: vix::compiler::Compilation,
     cache: LoweringCache,
-    /// The machine manifest the run binds root capability parameters against
-    /// (`vixen.machine.manifest`). Resolved at preparation through
-    /// [`crate::manifest::declared_manifest`]: the file `VIX_MACHINE_MANIFEST`
-    /// explicitly declares, or [`MachineManifest::ratchet_default`] when
-    /// nothing is declared. [`PreparedRun::with_manifest`] substitutes an
-    /// explicit machine word.
-    manifest: crate::manifest::MachineManifest,
+    /// The executor manifest the run binds root capability parameters against
+    /// (`vixen.executor.manifest`), when the embedder supplied one explicitly
+    /// through [`PreparedRun::with_manifest`].
+    ///
+    /// `None` means *not yet resolved*, not *default*. The ambient declaration
+    /// (`VIX_EXECUTOR_MANIFEST`) is read at execution by
+    /// [`PreparedRun::resolved_manifest`], and only when this is `None` — so
+    /// an explicit value wins over the environment instead of racing it.
+    manifest: Option<crate::manifest::ExecutorManifest>,
 }
 
 /// Execution lifecycle boundaries exposed to the outer budget runner. Each
@@ -783,10 +785,10 @@ pub fn run_source(source: &str) -> Result<RatchetReport, RunError> {
 
 /// Run under an explicit machine manifest instead of the harness default —
 /// the embedder's declared machine word, which root capability parameters
-/// bind against before anything runs (`vixen.machine.manifest`).
+/// bind against before anything runs (`vixen.executor.manifest`).
 pub fn run_source_with_manifest(
     source: &str,
-    manifest: crate::manifest::MachineManifest,
+    manifest: crate::manifest::ExecutorManifest,
 ) -> Result<RatchetReport, RunError> {
     prepare_source_with_config(source, crate::default_config())?
         .with_manifest(manifest)
@@ -909,6 +911,7 @@ pub fn run_source_revision_audit_with_lane(
     let second_revision = source_revision_id(second_source);
     let first_warnings = first_prepared.compilation.warnings.clone();
     let mut state = PersistentRuntimeState::default();
+    let first_manifest = first_prepared.resolved_manifest()?;
     let first = run_lane(
         &first_prepared.compilation.module,
         &mut first_prepared.cache,
@@ -925,7 +928,7 @@ pub fn run_source_revision_audit_with_lane(
         None,
         Some(&first_revision),
         None,
-        &first_prepared.manifest,
+        &first_manifest,
     )?;
     let journal = state.to_journal();
     let journal_json = journal.to_json()?;
@@ -939,6 +942,7 @@ pub fn run_source_revision_audit_with_lane(
     let second_warnings = second_prepared.compilation.warnings.clone();
     let mut second_state = PersistentRuntimeState::default();
     let mut load = PersistentRuntimeJournalLoadReport::default();
+    let second_manifest = second_prepared.resolved_manifest()?;
     let second = run_lane(
         &second_prepared.compilation.module,
         &mut second_prepared.cache,
@@ -955,7 +959,7 @@ pub fn run_source_revision_audit_with_lane(
         Some(&mut load),
         Some(&second_revision),
         None,
-        &second_prepared.manifest,
+        &second_manifest,
     )?;
     let first_value_checks = first
         .checks
@@ -1069,15 +1073,18 @@ fn prepare_modules_with_cache(
         }
     }
 
-    // The machine word this run binds against: the manifest the invoker
-    // DECLARED through `VIX_MACHINE_MANIFEST`, or the harness default when
-    // nothing is declared. A declared file that fails to load is a loud typed
-    // error here at the entrypoint — never a silent default.
-    // `PreparedRun::with_manifest` still substitutes an explicit Rust value.
+    // The executor word is NOT resolved here. Reading `VIX_EXECUTOR_MANIFEST`
+    // at preparation meant a broken ambient declaration failed the run through
+    // `?` before `with_manifest` could substitute anything — so an explicit
+    // manifest, passed as an argument, lost to an environment variable. That is
+    // the inverse of `machine.placement.no-in-program-steering`'s law that
+    // ambient facts arrive as inputs.
+    //
+    // Resolution moves to `PreparedRun::resolved_manifest`, at execution.
     Ok(PreparedRun {
         compilation,
         cache,
-        manifest: crate::manifest::declared_manifest().map_err(RunError::Manifest)?,
+        manifest: None,
     })
 }
 
@@ -1085,8 +1092,52 @@ impl PreparedRun {
     /// Substitute the machine manifest the run binds against — the embedder's
     /// declared machine word replacing the harness default.
     #[must_use]
-    pub fn with_manifest(mut self, manifest: crate::manifest::MachineManifest) -> Self {
-        self.manifest = manifest;
+    pub fn with_manifest(mut self, manifest: crate::manifest::ExecutorManifest) -> Self {
+        self.manifest = Some(manifest);
+        self
+    }
+
+    /// The executor word this run binds against: the explicit manifest when
+    /// one was substituted, otherwise the ambient declaration —
+    /// `VIX_EXECUTOR_MANIFEST`, or [`crate::manifest::ExecutorManifest::ratchet_default`]
+    /// when nothing is declared.
+    ///
+    /// A declared file that fails to load is still a loud typed error and
+    /// never a silent default. What changed is *when* and *whether* it is
+    /// consulted: an embedder that supplied a manifest is not subject to the
+    /// environment at all, so a stale or broken `VIX_EXECUTOR_MANIFEST` cannot
+    /// fail a run that never asked for it.
+    fn resolved_manifest(&self) -> Result<crate::manifest::ExecutorManifest, RunError> {
+        match &self.manifest {
+            Some(manifest) => Ok(manifest.clone()),
+            None => crate::manifest::declared_manifest().map_err(RunError::Manifest),
+        }
+    }
+
+    /// The declared roots (fns with check-stream root standing), by name, in
+    /// declaration order. What a runner may select from; what a refusal lists.
+    #[must_use]
+    pub fn declared_roots(&self) -> Vec<String> {
+        self.compilation
+            .module
+            .tests
+            .iter()
+            .map(|test| test.name.clone())
+            .collect()
+    }
+
+    /// Keep only the named roots, rather than every root the file declares —
+    /// the seam a caller that wants to run one named entry point goes
+    /// through. Selection is by declared name; a name that
+    /// matches nothing simply selects nothing, and the CALLER refuses loudly
+    /// (it can name the command and list [`Self::declared_roots`]), because
+    /// only the caller knows why the name was expected to exist.
+    #[must_use]
+    pub fn select_roots(mut self, names: &[&str]) -> Self {
+        self.compilation
+            .module
+            .tests
+            .retain(|test| names.contains(&test.name.as_str()));
         self
     }
 
@@ -1131,6 +1182,7 @@ impl PreparedRun {
     }
 
     pub fn execute_rerun_audit(mut self) -> Result<RerunAuditReport, RunError> {
+        let resolved_manifest = self.resolved_manifest()?;
         let mut state = PersistentRuntimeState::default();
         let first = run_lane(
             &self.compilation.module,
@@ -1148,7 +1200,7 @@ impl PreparedRun {
             None,
             None,
             None,
-            &self.manifest,
+            &resolved_manifest,
         )?;
         let mut second_state = PersistentRuntimeState::default();
         let second = run_lane(
@@ -1167,7 +1219,7 @@ impl PreparedRun {
             None,
             None,
             None,
-            &self.manifest,
+            &resolved_manifest,
         )?;
         let first_value_checks = first
             .checks
@@ -1198,6 +1250,7 @@ impl PreparedRun {
         mut self,
         mutate: impl FnOnce(PersistentRuntimeJournal) -> PersistentRuntimeJournal,
     ) -> Result<PersistenceAuditReport, RunError> {
+        let resolved_manifest = self.resolved_manifest()?;
         let mut state = PersistentRuntimeState::default();
         let first = run_lane(
             &self.compilation.module,
@@ -1215,7 +1268,7 @@ impl PreparedRun {
             None,
             None,
             None,
-            &self.manifest,
+            &resolved_manifest,
         )?;
         let journal = state.to_journal();
         let journal_json = journal.to_json()?;
@@ -1242,7 +1295,7 @@ impl PreparedRun {
             Some(&mut load),
             None,
             None,
-            &self.manifest,
+            &resolved_manifest,
         )?;
         let first_value_checks = first
             .checks
@@ -1272,6 +1325,7 @@ impl PreparedRun {
         mut observe: impl FnMut(ExecutionPhase),
         primitive_services: PrimitiveServices,
     ) -> Result<RatchetReport, RunError> {
+        let resolved_manifest = self.resolved_manifest()?;
         let plain = run_lane(
             &self.compilation.module,
             &mut self.cache,
@@ -1288,7 +1342,7 @@ impl PreparedRun {
             None,
             None,
             Some(&primitive_services),
-            &self.manifest,
+            &resolved_manifest,
         )?;
         let chaos = run_lane(
             &self.compilation.module,
@@ -1309,7 +1363,7 @@ impl PreparedRun {
             None,
             None,
             Some(&primitive_services),
-            &self.manifest,
+            &resolved_manifest,
         )?;
         Ok(RatchetReport {
             warnings: self.compilation.warnings,
@@ -1624,7 +1678,7 @@ fn run_lane(
     persistent_journal_report: Option<&mut PersistentRuntimeJournalLoadReport>,
     source_revision: Option<&str>,
     primitive_services: Option<&PrimitiveServices>,
-    manifest: &crate::manifest::MachineManifest,
+    manifest: &crate::manifest::ExecutorManifest,
 ) -> Result<SuiteRun, RunError> {
     let mut journal_load_report = None;
     let mut runtime = if let Some(journal) = persistent_journal_in {
@@ -1704,7 +1758,7 @@ fn run_lane(
         // any island is submitted: no check runs, no demand parks, no process
         // spawns (the acceptance tests pin this by counter).
         //
-        // r[impl vixen.machine.binding-fails-before-effects]
+        // r[impl vixen.executor.binding-fails-before-effects]
         let requirements = crate::manifest::test_requirements(&partitioned);
         let test_refusals = manifest.bind(&requirements);
         if !test_refusals.is_empty() {

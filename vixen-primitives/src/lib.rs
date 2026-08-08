@@ -74,7 +74,7 @@ pub const CAPABILITY_TYPES: &[vix::binding::CapabilityTypeDecl] = &[
     vix::binding::CapabilityTypeDecl {
         name: "ProgressiveSh",
     },
-    // The machine-manifest generality packages (`vixen.machine.requirements-
+    // The machine-manifest generality packages (`vixen.executor.requirements-
     // from-use`): flag-shaped, env-shaped, and fact-shaped target disciplines.
     // Their grammars are data in [`capability_package::CAPABILITY_PACKAGES`];
     // this list only makes the names nameable as `#[test]` parameters.

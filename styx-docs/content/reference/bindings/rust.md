@@ -20,6 +20,7 @@ struct Doc {
 }
 
 #[derive(Facet)]
+#[facet(rename_all = "kebab-case")]
 enum Status {
     Ok,
     Pending,
@@ -170,6 +171,29 @@ email alice@example.com
 perms (read write)
 ```
 
+## Variant names are matched exactly
+
+A tag selects a variant by **exact** string match against the variant's
+effective name — its `#[facet(rename = "…")]`, or the name `rename_all`
+derives, or the Rust identifier as written. There is no case-insensitive
+fallback and no implicit lowercasing.
+
+So a Rust `Ok` variant matches `@Ok`, and matching the conventional lowercase
+`@ok` requires saying so:
+
+```rust
+#[derive(Facet)]
+#[facet(rename_all = "kebab-case")]
+enum Status {
+    Ok,        // matches @ok
+    NotFound,  // matches @not-found
+}
+```
+
+Every enum below carries `rename_all` for this reason. `kebab-case` is the
+convention for Styx documents, matching the built-in tags (`@one-of`,
+`@no-std`); `snake_case` and `camelCase` are also available.
+
 ## Unit enum variants
 
 Enum variants with no payload use implicit unit (`@variant` is shorthand for `@variant@`).
@@ -182,6 +206,7 @@ struct Doc {
 }
 
 #[derive(Facet)]
+#[facet(rename_all = "kebab-case")]
 enum Status {
     Ok,
     Pending,
@@ -204,6 +229,7 @@ struct Doc {
 }
 
 #[derive(Facet)]
+#[facet(rename_all = "kebab-case")]
 enum MyResult {
     Err { message: String },
 }
@@ -229,6 +255,7 @@ struct Doc {
 }
 
 #[derive(Facet)]
+#[facet(rename_all = "kebab-case")]
 enum Color {
     Rgb(u8, u8, u8),
 }
@@ -253,6 +280,7 @@ struct Doc {
 }
 
 #[derive(Facet)]
+#[facet(rename_all = "kebab-case")]
 enum Schema {
     // Known variant
     Object { fields: Vec<String> },

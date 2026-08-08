@@ -1,9 +1,9 @@
 +++
-title = "The machine manifest"
+title = "The executor manifest"
 weight = 2
 +++
 
-What one machine can do, as declared data — and how a program that needs more
+What one executor can do, as declared data — and how a program that needs more
 fails before anything runs.
 
 The gap this closes: the runner currently *conjures* a capability value for
@@ -15,35 +15,35 @@ a spawned process discovering the truth. The machine-side law already exists
 satisfy its execution contract, the demand fails before an effect starts");
 this page gives it something to check against.
 
-Scope guard, stated first: **one machine, no solver, no daemon.** The
-distributed-build shape (many machines advertising, a solve choosing) is the
+Scope guard, stated first: **one executor, no solver, no daemon.** The
+distributed-build shape (many executors advertising, a solve choosing) is the
 same model with more candidates; nothing here needs rework to get there, and
 none of it is built now.
 
-> r[vixen.machine.manifest]
+> r[vixen.executor.manifest]
 >
-> [DESIGN] A machine's capability set is a declared, typed value — the
+> [DESIGN] An executor's capability set is a declared, typed value — the
 > manifest: the host `Target`, plus one capability value per offered
 > capability type (`Sh`, `Rustc`, …). Each entry carries the tool closure's
 > reference (for 0.1: a program path, host-trusting exactly as the exec
 > backend is) and the capability's *facts* as ordinary typed fields —
 > toolchain version, offered targets. The embedder loads the manifest as
 > config; nothing is discovered ambiently, nothing is probed to mint identity
-> (`vixen.capability.rustc-is-materializable` already rules 0.1 identity
-> a-priori). The manifest is the single source of the machine's word, and the
+> (`r[vixen.capability.rustc-is-acquirable]` already rules 0.1 identity
+> a-priori, from the pin). The manifest is the single source of the executor's word, and the
 > capability values it yields are what root capability parameters bind to.
 
-> r[vixen.machine.binding-fails-before-effects]
+> r[vixen.executor.binding-fails-before-effects]
 >
 > [DESIGN] Root capability parameters bind against the manifest by declared
 > type. An unsatisfiable requirement — the type absent, or a required fact the
 > offered value lacks — is a **typed failure raised before any effect
 > starts**: no process spawns, no demand parks, and the diagnostic names both
-> sides (what the program requires, what the machine offers). This is the
+> sides (what the program requires, what the executor offers). This is the
 > vixen half of `machine.primitive.capabilities-by-identity`'s admissibility
 > sentence, which until now had nothing to refuse with.
 
-> r[vixen.machine.requirements-from-use]
+> r[vixen.executor.requirements-from-use]
 >
 > [DESIGN] A requirement finer than presence is never spelled beside the code
 > that implies it — it is **extracted from use**. The capability package's
@@ -62,32 +62,49 @@ none of it is built now.
 >
 > **Precision from implementation:** "checks at lowering" landed as
 > *partition-time* extraction checked at bind — still static (the requirement
-> is read from the plan without executing anything) and still pre-effect; a
+> is read off the compiled module without executing anything) and still
+> pre-effect; a
 > lowering-phase diagnostic with a source span is an upgrade, not a different
 > mechanism. A *computed* capture is honestly reported and is not re-checked
-> when the plan materializes at run time — that enforcement point needs a hook
+> when the invocation is built at run time — that enforcement point needs a hook
 > in the effect plane and is deferred, stated here so it cannot be mistaken
 > for implemented.
 
-> r[vixen.machine.facts-are-fields]
+> r[vixen.executor.facts-are-fields]
 >
-> [DESIGN] Machine-ness is not a set of booleans. "This is a Windows machine"
+> [DESIGN] Executor-ness is not a set of booleans. "This is a Windows executor"
 > is the manifest's `host: Target`; "can produce `.exe`" is the `targets`
-> field of a toolchain capability — machines do not have abilities, toolchains
-> do, and machines have toolchains. 0.1 does no constraint solving: presence
+> field of a toolchain capability — executors do not have abilities, toolchains
+> do, and executors have toolchains. 0.1 does no constraint solving: presence
 > is nominal (the parameter's type), facts are data (typed fields), and every
 > check is equality or containment over typed values. Version *ranges*,
-> alternative satisfaction, and cross-machine choice are solver work
-> (`FV-E3`), deliberately deferred.
+> alternative satisfaction, and cross-executor choice are solver work, deliberately deferred.
 
-> r[vixen.machine.requirements-are-static]
+> r[vixen.executor.root-surface-is-static]
 >
-> [DESIGN] A program's requirement set is readable without executing it: the
-> root's capability parameter types, plus every literal role capture its plans
-> contain. The runner (and eventually `vix check`) can therefore report "needs
-> `Rustc` producing `x86_64-pc-windows-msvc`; this machine's `Rustc` offers
-> `[x86_64-unknown-linux-gnu]`" as a static verdict. Computed captures
-> degrade honestly to "needs `Rustc`, target decided at run time".
+> [DESIGN] **A root's own requirement surface** is readable without executing
+> it: its declared capability parameters, plus the literal role captures **in
+> its own body**. Both are syntactic facts about one function, read off the
+> compiled module. The runner can therefore report "needs `Rustc` producing
+> `x86_64-pc-windows-msvc`; this executor's `Rustc` offers
+> `[x86_64-unknown-linux-gnu]`" for that root. A computed capture degrades
+> honestly to "target decided at run time" — never dropped, never guessed.
+>
+> **What is NOT static, and must never be reported as though it were: anything
+> reachable through a call.** A root that calls a fn that demands a capability
+> the root's own body never mentions has a requirement no reader can see, and
+> no amount of looking will surface it. Discovering it requires evaluating, and
+> the report must be honest that its scope is one function's surface rather
+> than a program's needs.
+>
+> This rule replaces `r[vixen.executor.requirements-are-static]`, which claimed
+> "a program's requirement set is readable without executing it" and named the
+> mechanism as reading "every literal role capture its **plans** contain". That
+> is the plan phase — Bazel's model — and vix does not have one: plans do not
+> exist until evaluation, and a statically-typed but interpreted language
+> cannot enumerate its dependencies without running. The narrow claim survived
+> the strike because it is true and implemented; the word that had to go was
+> *a program's*.
 
 ## What it looks like
 
@@ -102,15 +119,15 @@ The program — the requirement *is* the invocation:
 ```
 #[test]
 fn build(rustc: Rustc) -> Stream<Check> {
-    let out = exec rustc`--target x86_64-pc-windows-msvc main.rs`;
+    let out = exec $rustc`--target x86_64-pc-windows-msvc main.rs`;
     yield expect_eq(out.tree / "main.exe" | exists, true)
 }
 ```
 
-The manifest — this machine's word, as config:
+The manifest — this executor's word, as config:
 
 ```styx
-machine {
+executor {
   host t"x86_64-unknown-linux-gnu"
   capability Rustc {
     toolchain "1.89.0"
@@ -125,8 +142,8 @@ The refusal — typed, pre-effect, both sides named:
 
 ```
 error[capability]: `build` demands Rustc producing x86_64-pc-windows-msvc
-  --> build.vix:3   exec rustc`--target x86_64-pc-windows-msvc main.rs`
-  machine offers: Rustc { toolchain 1.89.0, targets [x86_64-unknown-linux-gnu] }
+  --> build.vix:3   exec $rustc`--target x86_64-pc-windows-msvc main.rs`
+  executor offers: Rustc { toolchain 1.89.0, targets [x86_64-unknown-linux-gnu] }
   no effect was started
 ```
 
@@ -144,7 +161,7 @@ into per-tool data. The same target requirement is spelled, per dialect:
 | go | `GOOS=windows GOARCH=amd64` | **env** roles → `Target` |
 | mingw gcc / `cl.exe` | none — the binary/environment *is* the target | capability fact, no capture |
 
-The machine and the manifest never learn a dialect; they compare `Target`
+The executor and the manifest never learn a dialect; they compare `Target`
 values. A target-neutral invocation (`dotnet build`, `javac`) captures no
 target role, imposes no target requirement, and runs wherever its SDK exists —
 which is the correct semantics, not a special case. The honest stress test for
@@ -162,13 +179,16 @@ env-role package and a fact-only package must exercise the same check.
    environment roles hits the same refusal and the same pass — proving the
    mechanism is not flag-shaped.
 4. **Neutral tools run anywhere.** No target capture ⇒ no target requirement.
-5. **The static report.** Requirements (types + literal captures) are
-   reported without executing the program.
+5. **The static report, honestly scoped.** One root's own surface (its
+   capability parameters + the literal captures in its own body) is reported
+   without executing anything, and a computed capture degrades to "decided at
+   run time". A requirement that only a callee imposes does **not** appear —
+   and the report does not pretend the absence means there is none.
 
 ## Explicitly out
 
 The solver (ranges, alternatives, choice), the daemon
 (advertise/watch/poison — ambient-toolchain territory, 0.1 has none),
-package distribution, and any second machine. The manifest format is the
+package distribution, and any second executor. The manifest format is the
 embedder's config concern (a typed facet value; the styx spelling above is
 illustrative, not normative).

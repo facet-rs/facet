@@ -101,12 +101,123 @@ argument to `fetch`. It is not a file vixen maintains.
 
 > r[vixen.pins.toolchain]
 >
-> [DESIGN] A materializable toolchain (`vixen.capability.rustc-is-materializable`)
-> is pinned by the same mechanism. Upstream publishes a digest beside the
-> distribution archive; that digest is the pin, written where the root declares
-> its toolchain. No separate pin store, no discovery.
+> [DESIGN] An **acquirable** toolchain
+> (`r[vixen.capability.rustc-is-acquirable]`) is pinned by the same mechanism.
+> Upstream publishes a digest beside the distribution archive; that digest is
+> the pin. No separate pin store, no discovery.
+>
+> **An ambient toolchain cannot be pinned at all** — that is what makes it
+> ambient. This rule is scoped to the acquirable class and says nothing about
+> the other one; `r[vixen.capability.host-cc-is-ambient]` owns that case and
+> states its cost.
+>
+> Where the pin is *written* is open. An earlier draft said "where the root
+> declares its toolchain", meaning a manifest field, and there is no manifest
+> (`r[vixen.package.*]`).
 
-What remains true, and is the whole point: a build **never** reaches an unpinned
-artifact. There is no code path from a build to a network read whose result is
-not already named by a digest a stranger can check. `observe` — a read whose
-result nobody can predict — stays out of 0.1 and stays a different primitive.
+What remains true of **network reads**, and is the whole point: a build never
+reaches an unpinned *fetch*. There is no code path from a build to a network
+read whose result is not already named by a digest a stranger can check.
+`observe` — a read whose result nobody can predict — stays out of 0.1 and stays
+a different primitive.
+
+The stronger claim — that a build never reaches an unpinned *input* — is false
+in 0.1 and the exception is named: the host linker and its libc are ambient,
+undigested, and reached by every link step.
+
+## Deliberately not
+
+Not deferred — refused. Each names the system that does the thing and the
+reason we will not.
+
+- **Nix's fake-hash workflow.** Write `hash = lib.fakeHash;` — which is
+  literally `sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=` — build,
+  read the error, paste the digest it reports:
+
+  ```
+  error: hash mismatch in fixed-output derivation '/nix/store/…-fod-test.drv':
+           specified: sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+              got:    sha256-mOpuTyFvL7S2n/+bOkSELDhobKaF8/VdxIxdP7EQe+Q=
+  ```
+
+  It is superb ergonomics and effectively everyone uses it. Look at what
+  happened, though: the derivation *ran* — the fetch completed — and only then
+  was the digest compared. The value you paste is a report from a network read
+  nobody checked, and trust-on-first-use is the entirety of the verification.
+  A pin is a required argument (`machine.primitive.fetch-is-pinned`), so there
+  is no `fetch` that can be run to find out what it would have got, and this
+  workflow has no expressible form.
+
+  **The cost is real and is paid on purpose.** A first pin for a source no
+  lockfile covers means fetching the bytes yourself and hashing them, or taking
+  the digest the publisher published beside the archive. That is a manual step
+  per new source, and it is why `r[vixen.pins.come-from-the-ecosystem-lockfile]`
+  matters so much: for the ecosystems that dominate, the digest is in a file the
+  workspace already has, and the step disappears. We pay it because the
+  alternative is a mode of the one primitive whose entire contract is that it
+  does not have one.
+
+- **`--impure`, and unlocked fetches.** Nix's checks here are exactly right.
+  In its default pure evaluation mode, `builtins.getEnv "HOME"` returns `""`
+  where impure evaluation returns the caller's actual home,
+  `builtins.currentSystem` is `error: attribute 'currentSystem' missing`,
+  `builtins.fetchGit { url = …; }` without a `rev` is `error: in pure
+  evaluation mode, 'fetchGit' will not fetch unlocked input`, and
+  `builtins.fetchTarball` without a `sha256` is refused by name. The problem is
+  not any of the checks; it is the switch. A flag that turns reproducibility
+  off makes every build's reproducibility a question about how it was invoked,
+  answerable only by whoever invoked it — and the flag is one word long. vix
+  has no such flag and will not get one. The pin is a parameter, so the
+  property is a type error to violate rather than a policy to enforce, and
+  there is no invocation that relaxes it.
+
+- **An optional integrity field.** npm's `package-lock.json` records
+  `"integrity": "sha512-…"` beside `"resolved"` for a registry tarball — and
+  the field is optional. Install an ordinary git dependency and the v3 lockfile
+  entry is `"resolved": "git+ssh://git@github.com/…#<sha>"` with **no
+  `integrity` key at all**. So "this project has a lockfile" and "the bytes
+  were checked against a published digest" are different questions, per entry,
+  answerable only by auditing every line — and where npm does fill the field in
+  for a tarball URL you handed it, it fills it in with a hash of whatever
+  arrived, which is the previous entry wearing a lockfile. In vix the pin is an
+  argument to `fetch`. There is no entry for it to be missing from, and the
+  unpinned case does not typecheck.
+
+- **Go's checksum database.** `go.sum` records a hash per module, and for code
+  the build has not seen before the `go` command consults `sum.golang.org`,
+  which "is built on a Transparent Log (or 'Merkle tree') of hashes backed by
+  Trillian". The log is real engineering against a real attack — a registry
+  serving different bytes to different people — and we still refuse it. The
+  refusal is the **notary**, not the log. A pin's whole value is that a
+  stranger holding the bytes can check it with a hash function and nothing
+  else: no server reachable, no network, no root of trust, no clock, no party.
+  A notary reintroduces every one of those, and it introduces somebody who has
+  to keep operating. `r[vixen.pins.self-describing]` and
+  `r[vixen.pins.algorithm-strength]` are the complete trust story — an
+  algorithm you can compute, a digest you can compare — and adding an authority
+  to that is subtraction.
+
+- **Normalizing at fetch time.** Bazel's `http_archive` takes `sha256` (or an
+  SRI `integrity`) *and* `strip_prefix`, `patches` (`patch_args` defaulting to
+  `-p0`), `patch_cmds`, `remote_patches`, and `build_file`. The digest is
+  checked on download; stripping the top-level directory, applying the patches,
+  and injecting a `BUILD` file all happen afterwards. The consequence is that
+  the value the pin names and the value the build reads are not the same value,
+  and the pinned byte string is one nothing downstream ever sees. `fetch`
+  returns exactly the bytes it verified. Unpacking, stripping a prefix, and
+  patching are ordinary functions over that value, each producing a value with
+  its own identity and its own receipt — so "what did this build actually read"
+  is answerable without re-deriving somebody's transformation from a rule's
+  attributes.
+
+- **An attestation instead of a digest.** `cosign verify-attestation`,
+  `slsa-verifier`, and `gh attestation verify` check a signed statement that a
+  named builder produced an artifact from a named source at a named commit.
+  That is a claim about **provenance**, and it answers a different question. A
+  pin is not a claim at all: it is a digest of bytes, checkable by anyone
+  holding them, with no key to trust, no certificate to still be valid, no
+  transparency log to be reachable, nothing to expire and nothing to revoke.
+  Verifying a keyless attestation needs all of those. Provenance is worth
+  having and is not what a pin is for; we refuse to let it stand in.
+  `r[vixen.pins.0-1-verifies-on-arrival]` is the whole of 0.1's check, and it
+  is arithmetic.

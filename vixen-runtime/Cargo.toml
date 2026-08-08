@@ -16,7 +16,10 @@ vix = { path = "../vix-core", package = "vix-core" }
 vixen-primitives = { path = "../vixen-primitives" }
 facet = { path = "../facet" }
 facet-json = { path = "../facet-json" }
-# The machine manifest's config-file spelling (`manifest::MachineManifest::from_toml`).
+# Styx is one of the decode rail's formats (`DecodeFormat::Styx`, beside Json
+# and Toml) — `tests/decode_styx.rs` exercises it.
+facet-styx = { workspace = true }
+# The executor manifest's config-file spelling (`manifest::ExecutorManifest::from_toml`).
 facet-toml = { workspace = true }
 blake3.workspace = true
 # Cross-process resident-set observation for the outer budget runner. Only the
