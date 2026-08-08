@@ -45,7 +45,7 @@ jobs:
         run: >-
           cargo nextest run --workspace --features ci --no-fail-fast
           --partition hash:${{ matrix.partition }}
-          -E 'not (binary(postgres_integration) | binary(query_integration) | test(swift))'
+          -E 'all()'
 
   quality:
     name: Clippy, docs, and lockfile

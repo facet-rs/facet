@@ -95,7 +95,7 @@ jobs:
         env:
           PROPTEST_CASES: 0
         run: |
-          cargo +nightly llvm-cov --no-report nextest --workspace --features ci --no-fail-fast -E 'not (binary(postgres_integration) | binary(query_integration) | test(swift))'
+          cargo +nightly llvm-cov --no-report nextest --workspace --features ci --no-fail-fast
           cargo +nightly llvm-cov --no-report --doc --workspace --features ci
           mkdir coverage
           cargo +nightly llvm-cov report --doctests --lcov --output-path coverage/lcov.info
