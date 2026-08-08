@@ -100,6 +100,7 @@ Decode with `attr.get_as::<T>()` where `T` matches what is actually stored.
 | `Column(Column)` | `your_ns::Attr` | `attr.get_as::<your_ns::Attr>()` then match variant |
 | `Hook(fn_ptr HookFn)` | `your_ns::Attr` | `attr.get_as::<your_ns::Attr>()` then match variant |
 | `Custom(MyType)` | `your_ns::Attr` | `attr.get_as::<your_ns::Attr>()` then match variant |
+| `Widths(list(shape_type))` | `your_ns::Attr` | `attr.get_as::<your_ns::Attr>()` then match variant |
 
 `Column(Column)` is not special: `Column` is a struct you define in the same grammar.
 

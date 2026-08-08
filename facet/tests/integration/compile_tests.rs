@@ -280,3 +280,33 @@ fn test_opaque_adapter_recv_mismatch() {
 
     run_compilation_test(&test);
 }
+
+/// Test that a `list(shape_type)` extension attribute with zero arguments
+/// (e.g. `#[facet(ns::attr())]`) is rejected with a friendly error.
+#[test]
+#[cfg(not(miri))]
+fn test_list_shape_type_empty_rejected() {
+    let test = CompilationTest {
+        name: "list_shape_type_empty",
+        source: include_str!("../compile_tests/list_shape_type_empty.rs"),
+        expected_errors: &["widths", "requires at least one type"],
+    };
+
+    run_compilation_test(&test);
+}
+
+/// Test that a `list(shape_type)` extension attribute with a malformed list
+/// (a doubled top-level comma, e.g. `#[facet(ns::attr(f32,, i32))]`) is
+/// rejected with a friendly error rather than silently dropping the empty
+/// item between the commas.
+#[test]
+#[cfg(not(miri))]
+fn test_list_shape_type_malformed_rejected() {
+    let test = CompilationTest {
+        name: "list_shape_type_malformed",
+        source: include_str!("../compile_tests/list_shape_type_malformed.rs"),
+        expected_errors: &["widths", "expected a type between commas"],
+    };
+
+    run_compilation_test(&test);
+}

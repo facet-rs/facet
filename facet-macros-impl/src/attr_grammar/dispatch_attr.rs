@@ -4,6 +4,7 @@
 //! calling other generated macro_rules macros. This avoids the Rust
 //! limitation on macro-expanded macro_export macros.
 
+use crate::VerbatimUntil;
 use proc_macro2::{Span, TokenStream as TokenStream2, TokenTree};
 use quote::{quote, quote_spanned};
 use unsynn::*;
@@ -32,6 +33,7 @@ keyword! {
     KFnPtr = "fn_ptr";
     KShapeType = "shape_type";
     KOptStr = "opt_str";
+    KListShapeType = "list_shape_type";
 }
 
 operator! {
@@ -121,6 +123,9 @@ unsynn! {
         ShapeType(KShapeType),
         /// optional &'static str - can be used with or without a value
         OptStr(KOptStr),
+        /// list of shape types - converts a comma-separated list of types to
+        /// `&'static [&'static Shape]`
+        ListShapeType(KListShapeType),
     }
 
     /// rec Column { name: opt_string, primary_key: bool }
@@ -179,6 +184,9 @@ enum ParsedVariantKind {
     ShapeType,
     /// Optional &'static str - can be used with or without a value
     OptStr,
+    /// List of shape types - converts a comma-separated list of types to
+    /// `&'static [&'static Shape]`
+    ListShapeType,
 }
 
 /// A parsed field definition with doc comment
@@ -249,6 +257,7 @@ impl VariantDef {
             VariantKindDef::FnPtr(_) => ParsedVariantKind::FnPtr,
             VariantKindDef::ShapeType(_) => ParsedVariantKind::ShapeType,
             VariantKindDef::OptStr(_) => ParsedVariantKind::OptStr,
+            VariantKindDef::ListShapeType(_) => ParsedVariantKind::ListShapeType,
             VariantKindDef::Struct(s) => {
                 let fields = parse_fields_with_docs(&s.fields.0.stream())?;
                 ParsedVariantKind::Struct {
@@ -523,6 +532,13 @@ pub fn dispatch_attr(input: TokenStream2) -> TokenStream2 {
                     )
                 }
                 ParsedVariantKind::ShapeType => generate_shape_type_value(
+                    crate_path,
+                    &variant_ident,
+                    attr_name,
+                    rest,
+                    attr_span,
+                ),
+                ParsedVariantKind::ListShapeType => generate_list_shape_type_value(
                     crate_path,
                     &variant_ident,
                     attr_name,
@@ -958,6 +974,155 @@ fn generate_shape_type_value(
         format!("`{attr_str}` requires a type: `{attr_str}(MyType)` or `{attr_str} = MyType`");
     quote_spanned! { span =>
         compile_error!(#msg)
+    }
+}
+
+unsynn! {
+    /// A single type in a `list(shape_type)` payload - everything up to the next
+    /// top-level comma. Built on `VerbatimUntil<Comma>`, which treats `<...>` as
+    /// an opaque grouping (since `<>` isn't a real proc-macro `Group` delimiter),
+    /// so generic types like `HashMap<K, V>` aren't mis-split at their internal
+    /// comma.
+    struct ListShapeTypeItem {
+        ty: VerbatimUntil<Comma>,
+    }
+}
+
+/// Generate code for `list(shape_type)` variants.
+/// A comma-separated list of types is converted into a slice of Shape references.
+///
+/// Unlike `generate_shape_type_value`, this returns the value **wrapped** in the
+/// enum variant (following the `generate_newtype_value` convention), since
+/// `&'static [&'static Shape]` already implements `Facet` via the existing
+/// reference/slice blanket impls in facet-core - no `Attr::new_shape`-style bypass
+/// is needed.
+///
+/// The call site is normally the parens-call style, since a list needs multiple
+/// items:
+/// - `lenient_width(f32, i32)` → `Attr::LenientWidth(&[<f32 as Facet>::SHAPE, <i32 as Facet>::SHAPE])`
+/// - `lenient_width()` → error (must have at least one type)
+///
+/// Note: `#[facet(ns::lenient_width = SomeType)]` (equals style) also compiles, as
+/// a one-item list - this isn't a deliberate feature, it falls out of
+/// `PFacetAttr::parse` stripping the `=` sign before these tokens are seen, which
+/// makes `= SomeType` indistinguishable here from a single-type parenthesized
+/// call. Only a *literal* `=` token that survives into `rest` (which happens when
+/// this dispatcher is invoked directly, e.g. `__parse_attr!(lenient_width = SomeType)`,
+/// bypassing the derive macro's stripping) is rejected below.
+///
+/// `rest` shows up in one of two shapes depending on the caller:
+/// - When dispatched from the derive macro's `#[facet(ns::lenient_width(f32, i32))]`
+///   attribute, the outer parens are already stripped by the time they reach here
+///   (see `PFacetAttr::parse`), so `rest` is the bare token list `f32, i32` directly.
+/// - When dispatched from a direct macro invocation (e.g. `__parse_attr!`), the
+///   parens are preserved verbatim, so `rest` is a single parenthesized `Group`.
+///
+/// Either way, once the (possibly implicit) parens are peeled off, the remaining
+/// stream is split on top-level commas - see `build_list_shape_type_value` for
+/// how, including its handling of generic types like `HashMap<K, V>` whose
+/// internal commas must not be mistaken for top-level ones.
+fn generate_list_shape_type_value(
+    ns_path: &TokenStream2,
+    variant_ident: &proc_macro2::Ident,
+    attr_name: &Ident,
+    rest: &TokenStream2,
+    span: Span,
+) -> TokenStream2 {
+    let rest_tokens: Vec<TokenTree> = rest.clone().into_iter().collect();
+    let attr_str = attr_name.to_string();
+
+    // Direct macro-invocation style: `rest` is a single parenthesized group,
+    // e.g. `lenient_width(f32, i32)` passed verbatim to `__parse_attr!`.
+    if rest_tokens.len() == 1
+        && let TokenTree::Group(g) = &rest_tokens[0]
+        && g.delimiter() == proc_macro2::Delimiter::Parenthesis
+    {
+        return build_list_shape_type_value(ns_path, variant_ident, &attr_str, g.stream(), span);
+    }
+
+    // A literal `=` token surviving into `rest` only happens via a direct macro
+    // invocation (e.g. `__parse_attr!(lenient_width = SomeType)`); the derive
+    // macro's `#[facet(ns::attr = SomeType)]` strips the `=` before it gets here
+    // (see the doc comment above), so that call-site form is *not* rejected by
+    // this branch - it's handled as a one-item list by the bare-token branch below.
+    if let Some(TokenTree::Punct(p)) = rest_tokens.first()
+        && p.as_char() == '='
+    {
+        let msg = format!(
+            "`{attr_str}` requires a parenthesized list of types: `{attr_str}(Type1, Type2, ...)`"
+        );
+        return quote_spanned! { span =>
+            compile_error!(#msg)
+        };
+    }
+
+    // Derive-macro style: the outer parens were already stripped, so `rest` is
+    // the bare comma-separated token list directly, e.g. `f32, i32`.
+    if !rest_tokens.is_empty() {
+        return build_list_shape_type_value(ns_path, variant_ident, &attr_str, rest.clone(), span);
+    }
+
+    // No tokens at all (e.g. `lenient_width` or `lenient_width()`, both of which
+    // collapse to an empty `rest`) - must have at least one type.
+    let msg = format!("`{attr_str}` requires at least one type: `{attr_str}(Type1, Type2, ...)`");
+    quote_spanned! { span =>
+        compile_error!(#msg)
+    }
+}
+
+/// Split `stream` on top-level commas into shape-type expressions and build the
+/// wrapped enum-variant expression. Shared by both `rest` shapes handled in
+/// `generate_list_shape_type_value`.
+///
+/// Splitting is done by parsing a whole `CommaDelimitedVec<ListShapeTypeItem>` at
+/// once rather than hand-walking `Punct` tokens: each `ListShapeTypeItem` is a
+/// `VerbatimUntil<Comma>`, which treats a `<...>` grouping as opaque (since `<>`
+/// isn't a real proc-macro `Group` delimiter), so a generic type's internal comma
+/// (e.g. `HashMap<K, V>`) is never mistaken for a top-level separator.
+fn build_list_shape_type_value(
+    ns_path: &TokenStream2,
+    variant_ident: &proc_macro2::Ident,
+    attr_str: &str,
+    stream: TokenStream2,
+    span: Span,
+) -> TokenStream2 {
+    let mut token_iter = stream.to_token_iter();
+    let items: Vec<TokenStream2> = match token_iter.parse::<CommaDelimitedVec<ListShapeTypeItem>>()
+    {
+        Ok(parsed) => parsed
+            .into_iter()
+            .map(|delimited| delimited.value.ty.to_token_stream())
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+
+    // Any tokens left unconsumed mean the list was malformed - most commonly a
+    // leading or doubled top-level comma, which puts a comma where an item is
+    // expected next; since `ListShapeTypeItem` requires at least one token, it
+    // can't match there, so `CommaDelimitedVec` stops and leaves it behind.
+    // A trailing comma is not a problem: it's consumed as the last item's
+    // delimiter, leaving nothing behind.
+    if token_iter.next().is_some() {
+        let msg = format!("`{attr_str}` expected a type between commas");
+        return quote_spanned! { span =>
+            compile_error!(#msg)
+        };
+    }
+
+    // Zero items (e.g. `lenient_width()`) is an error - need at least one type.
+    if items.is_empty() {
+        let msg =
+            format!("`{attr_str}` requires at least one type: `{attr_str}(Type1, Type2, ...)`");
+        return quote_spanned! { span =>
+            compile_error!(#msg)
+        };
+    }
+
+    let shape_exprs = items
+        .iter()
+        .map(|ty| quote_spanned! { span => <#ty as ::facet::Facet>::SHAPE });
+    quote_spanned! { span =>
+        #ns_path::Attr::#variant_ident(&[ #(#shape_exprs),* ])
     }
 }
 
