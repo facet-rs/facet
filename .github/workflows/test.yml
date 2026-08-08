@@ -16,7 +16,7 @@ concurrency:
 jobs:
   workspace:
     name: Workspace (${{ matrix.partition }})
-    runs-on: bearcove-ubuntu-24.04
+    runs-on: ubuntu-24.04
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     strategy:
@@ -49,7 +49,7 @@ jobs:
 
   quality:
     name: Clippy, docs, and lockfile
-    runs-on: bearcove-ubuntu-24.04
+    runs-on: ubuntu-24.04
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
@@ -75,7 +75,7 @@ jobs:
 
   semver-checks:
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
-    runs-on: bearcove-ubuntu-24.04
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     env:

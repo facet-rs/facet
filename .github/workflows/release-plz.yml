@@ -8,7 +8,7 @@ on:
 jobs:
   release-plz-release:
     name: Release-plz release
-    runs-on: bearcove-ubuntu-24.04
+    runs-on: ubuntu-24.04
     environment: release
     permissions:
       contents: write
@@ -39,7 +39,7 @@ jobs:
 
   release-plz-pr:
     name: Release-plz PR
-    runs-on: bearcove-ubuntu-24.04
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       pull-requests: write
