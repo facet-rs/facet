@@ -55,7 +55,7 @@ jobs:
           "$tmp/ddc" --version
 
       - name: Build website with dodeca
-        run: "$DODECA_BIN" build
+        run: '$DODECA_BIN build'
 
       - name: Setup Pages
         uses: actions/configure-pages@v6
