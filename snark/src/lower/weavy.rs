@@ -7047,12 +7047,6 @@ pub fn parse_prepared_weavy_hostcalls_with_report_and_scanner(
         input,
         external_scanner,
     };
-    if let Some(report) = parse_weavy_deterministic_report_with_execution(
-        input_ctx,
-        RuntimeWeavyBlockExecution::HostCalls,
-    )? {
-        return Ok(report);
-    }
     parse_weavy_with_lexer_program(
         input_ctx,
         RuntimeWeavyRecoveryMode::Strict,
@@ -7842,7 +7836,19 @@ where
         tree_store,
         trace_events,
         tree_journal,
-        stats,
+        {
+            #[cfg(test)]
+            if block_execution == RuntimeWeavyBlockExecution::Metered {
+                stats
+            } else {
+                RunStats::default()
+            }
+            #[cfg(not(test))]
+            {
+                let _ = stats;
+                RunStats::default()
+            }
+        },
         lexer_scratch.execution_stats(),
         snark_stats,
         hostcall_stats,
@@ -10640,6 +10646,9 @@ impl<'a> RuntimeWeavyStepper<'a> {
         if let Some(scanner) = token.scanner {
             self.scanner_snapshot = scanner.after();
         }
+        self.lookahead_id = parser_ir::LookaheadTokenId::from_index(
+            self.lookahead_id.get() as usize + 1,
+        );
         Ok(())
     }
 
