@@ -7753,164 +7753,6 @@ where
             stage: input_ctx.parser.stage(),
         });
     }
-    if block_execution == RuntimeWeavyBlockExecution::Direct {
-        return parse_weavy_deterministic_direct_with_execution_and_scratch::<S>(
-            input_ctx,
-            lexer_scratch,
-        );
-    }
-    lexer_scratch.reset_for_parse(
-        RuntimeWeavyLexSetCachePolicy::Disabled,
-        S::SNARK_STAT_COLLECTION,
-    );
-
-    let mut tree_store = RuntimeWeavyTreeStore::with_capacity(
-        runtime_weavy_initial_tree_node_capacity(input_ctx.input),
-        runtime_weavy_initial_child_list_capacity(input_ctx.input),
-    );
-    let mut trace_events = RuntimeWeavyTraceSink::with_capacity(false, 0);
-    let mut tree_journal = RuntimeWeavyTreeJournal::with_capacity(
-        runtime_weavy_initial_tree_event_capacity(input_ctx.input, S::TREE_EVENT_COLLECTION),
-    );
-    let input_points = if S::TREE_EVENT_COLLECTION == RuntimeWeavyTreeEventCollection::Enabled {
-        RuntimeWeavyInputPoints::new(input_ctx.input)
-    } else {
-        RuntimeWeavyInputPoints::disabled(input_ctx.input)
-    };
-    let mut reuse_scratch = RuntimeWeavyReuseScratch::default();
-    let external_scanner_errors = RefCell::new(Vec::new());
-    let mut stats = RunStats::default();
-    let mut snark_stats = if S::SNARK_STAT_COLLECTION {
-        RuntimeWeavySnarkExecutionStats::default()
-    } else {
-        RuntimeWeavySnarkExecutionStats::disabled()
-    };
-    let mut hostcall_stats = WeavyHostCallExecutionStats::default();
-    let mut next_lookahead_index = 0usize;
-    let mut step_count = 0usize;
-    let step_limit = runtime_weavy_step_limit(input_ctx.table, input_ctx.input);
-    let mut branch = RuntimeWeavyBranch {
-        version: parser_ir::StackVersionId::from_index(0),
-        stack: vec![RuntimeWeavyStackEntry {
-            state: parser_ir::ParseStateId::from_index(0),
-            fragment: None,
-            extra: false,
-            end_byte: 0,
-        }],
-        byte_position: 0,
-        scanner_snapshot: None,
-        auto_close_stack: Vec::new(),
-        error_cost: 0,
-        tree_journal: RuntimeWeavyTreeJournalHead::default(),
-        reusable_nodes: Vec::new(),
-    };
-
-    loop {
-        step_count += 1;
-        if step_count > step_limit {
-            return Ok(None);
-        }
-
-        let outcome = {
-            let mut output = RuntimeWeavyOutput {
-                tree_store: &mut tree_store,
-                trace_events: &mut trace_events,
-                reuse_scratch: &mut reuse_scratch,
-                tree_journal: &mut tree_journal,
-                tree_event_collection: S::TREE_EVENT_COLLECTION,
-                lexer_scratch,
-                input_points: &input_points,
-                next_lookahead_index: &mut next_lookahead_index,
-                stats: &mut stats,
-                snark_stats: &mut snark_stats,
-                hostcall_stats: &mut hostcall_stats,
-                block_execution,
-                external_scanner_errors: &external_scanner_errors,
-            };
-            if block_execution == RuntimeWeavyBlockExecution::Direct {
-                let Some(outcome) = run_runtime_weavy_direct_deterministic_step(
-                    input_ctx,
-                    branch,
-                    S::REUSE_COLLECTION,
-                    &mut output,
-                ) else {
-                    return Ok(None);
-                };
-                outcome
-            } else {
-                let dispatch = match run_runtime_weavy_state_probe(input_ctx, &branch, &mut output)
-                {
-                    Ok(dispatch) => dispatch,
-                    Err(_) => return Ok(None),
-                };
-                let Some(action) = dispatch.first_action.filter(|_| dispatch.action_count == 1)
-                else {
-                    return Ok(None);
-                };
-                let block = match runtime_weavy_action_block_for_execution(
-                    input_ctx,
-                    block_execution,
-                    dispatch.state,
-                    dispatch.entry_index,
-                    0,
-                    action,
-                ) {
-                    Ok(block) => block,
-                    Err(_) => return Ok(None),
-                };
-                run_runtime_weavy_action(
-                    input_ctx,
-                    branch,
-                    RuntimeWeavyAction {
-                        token: dispatch.token,
-                        lookahead: dispatch.lookahead,
-                        block,
-                        action,
-                    },
-                    S::REUSE_COLLECTION,
-                    &mut output,
-                )
-            }
-        };
-        match outcome {
-            RuntimeWeavyStepOutcome::Branch(next) => branch = next,
-            RuntimeWeavyStepOutcome::Accepted {
-                version,
-                root,
-                error_cost,
-                tree_journal_head,
-                reusable_nodes,
-            } => {
-                return S::accepted(
-                    input_ctx,
-                    tree_store,
-                    trace_events,
-                    tree_journal,
-                    stats,
-                    lexer_scratch.execution_stats(),
-                    snark_stats,
-                    hostcall_stats,
-                    block_execution.parse_execution_lane(),
-                    version,
-                    root,
-                    error_cost,
-                    tree_journal_head,
-                    reusable_nodes,
-                )
-                .map(Some);
-            }
-            RuntimeWeavyStepOutcome::Failed { .. } => return Ok(None),
-        }
-    }
-}
-
-fn parse_weavy_deterministic_direct_with_execution_and_scratch<S>(
-    input_ctx: RuntimeWeavyInput<'_>,
-    lexer_scratch: &RuntimeWeavyLexerScratch,
-) -> Result<Option<S::Output>, WeavyParseError>
-where
-    S: RuntimeWeavyDeterministicSink,
-{
     lexer_scratch.reset_for_parse(
         RuntimeWeavyLexSetCachePolicy::Disabled,
         S::SNARK_STAT_COLLECTION,
@@ -7930,16 +7772,12 @@ where
         RuntimeWeavyInputPoints::disabled(input_ctx.input)
     };
     let external_scanner_errors = RefCell::new(Vec::new());
-    let stats = RunStats::default();
     let mut snark_stats = if S::SNARK_STAT_COLLECTION {
         RuntimeWeavySnarkExecutionStats::default()
     } else {
         RuntimeWeavySnarkExecutionStats::disabled()
     };
     let hostcall_stats = WeavyHostCallExecutionStats::default();
-    let mut next_lookahead_index = 0usize;
-    let mut step_count = 0usize;
-    let step_limit = runtime_weavy_step_limit(input_ctx.table, input_ctx.input);
     let initial_branch = RuntimeWeavyBranch {
         version: parser_ir::StackVersionId::from_index(0),
         stack: vec![RuntimeWeavyStackEntry {
@@ -7956,7 +7794,7 @@ where
         reusable_nodes: Vec::new(),
     };
 
-    let accepted = {
+    let (stats, accepted) = {
         let mut stepper = RuntimeWeavyStepper::from_branch(
             RuntimeWeavyStepperInput {
                 input: input_ctx,
@@ -7971,47 +7809,32 @@ where
             },
             initial_branch,
             parser_ir::LookaheadTokenId::from_index(0),
-            RuntimeWeavyMode::ApplyAction,
+            RuntimeWeavyMode::Drive,
             S::REUSE_COLLECTION,
         );
-        loop {
-            step_count += 1;
-            if step_count > step_limit {
-                return Ok(None);
+        let result = weavy::run_dense_with_stats(&input_ctx.plan.program.dense, &mut stepper);
+        let stats = match result {
+            Ok(stats) => stats,
+            Err(RunError::MissingBlock(block)) => {
+                return Err(WeavyParseError::MissingDenseRuntimeBlock {
+                    block: block.index(),
+                });
             }
-
-            if stepper.lookahead.is_none() {
-                stepper.lookahead_id =
-                    parser_ir::LookaheadTokenId::from_index(next_lookahead_index);
-            }
-            let version = stepper.version;
-            let state = match stepper.stack.last() {
-                Some(entry) => entry.state,
-                None => return Ok(None),
-            };
-            let dispatch = match stepper.probe_state_direct(state) {
-                Ok(dispatch) => dispatch,
-                Err(_) => return Ok(None),
-            };
-            if dispatch.lexed {
-                next_lookahead_index += 1;
-            }
-            let Some(action) = dispatch.first_action.filter(|_| dispatch.action_count == 1) else {
-                return Ok(None);
-            };
-            if stepper.apply_action_direct(action).is_err() {
-                return Ok(None);
-            }
-            if let Some(root) = stepper.accepted_root {
-                break RuntimeWeavyAccepted {
-                    version,
-                    root,
-                    error_cost: stepper.error_cost,
-                    tree_journal_head: stepper.tree_journal_head,
-                    reusable_nodes: std::mem::take(&mut stepper.reusable_nodes),
-                };
-            }
-        }
+            Err(RunError::Step(_)) => return Ok(None),
+        };
+        let Some(root) = stepper.accepted_root else {
+            return Ok(None);
+        };
+        (
+            stats,
+            RuntimeWeavyAccepted {
+                version: stepper.version,
+                root,
+                error_cost: stepper.error_cost,
+                tree_journal_head: stepper.tree_journal_head,
+                reusable_nodes: std::mem::take(&mut stepper.reusable_nodes),
+            },
+        )
     };
 
     S::accepted(
@@ -8023,7 +7846,7 @@ where
         lexer_scratch.execution_stats(),
         snark_stats,
         hostcall_stats,
-        RuntimeWeavyBlockExecution::Direct.parse_execution_lane(),
+        block_execution.parse_execution_lane(),
         accepted.version,
         accepted.root,
         accepted.error_cost,
@@ -8032,6 +7855,7 @@ where
     )
     .map(Some)
 }
+
 
 struct RuntimeWeavyAccepted {
     version: parser_ir::StackVersionId,
@@ -10074,77 +9898,6 @@ fn run_runtime_weavy_state_probe(
     Ok(dispatch)
 }
 
-fn run_runtime_weavy_direct_deterministic_step(
-    input_ctx: RuntimeWeavyInput<'_>,
-    branch: RuntimeWeavyBranch,
-    reuse_collection: RuntimeWeavyReuseCollection,
-    output: &mut RuntimeWeavyOutput<'_>,
-) -> Option<RuntimeWeavyStepOutcome> {
-    let mut stepper = RuntimeWeavyStepper::from_branch(
-        RuntimeWeavyStepperInput {
-            input: input_ctx,
-            tree_store: &mut *output.tree_store,
-            trace_events: &mut *output.trace_events,
-            tree_journal: &mut *output.tree_journal,
-            tree_event_collection: output.tree_event_collection,
-            lexer_scratch: output.lexer_scratch,
-            snark_stats: &mut *output.snark_stats,
-            input_points: output.input_points,
-            external_scanner_errors: output.external_scanner_errors,
-        },
-        branch,
-        parser_ir::LookaheadTokenId::from_index(*output.next_lookahead_index),
-        RuntimeWeavyMode::ApplyAction,
-        reuse_collection,
-    );
-    let version = stepper.version;
-    let state = match stepper.stack.last() {
-        Some(entry) => entry.state,
-        None => {
-            return Some(RuntimeWeavyStepOutcome::Failed {
-                version,
-                failure: runtime_weavy_failure(
-                    RuntimeWeavyStepError::EmptyStack,
-                    RuntimeWeavyStateStack::new(),
-                ),
-            });
-        }
-    };
-    let dispatch = stepper.probe_state_direct(state).ok()?;
-    if stepper.lookahead.is_some() {
-        *output.next_lookahead_index += 1;
-    }
-    let action = dispatch
-        .first_action
-        .filter(|_| dispatch.action_count == 1)?;
-    if let Err(error) = stepper.apply_action_direct(action) {
-        let state_stack = stepper.stack.iter().map(|entry| entry.state).collect();
-        return Some(RuntimeWeavyStepOutcome::Failed {
-            version,
-            failure: runtime_weavy_failure(error, state_stack),
-        });
-    }
-    Some(if let Some(root) = stepper.accepted_root {
-        RuntimeWeavyStepOutcome::Accepted {
-            version,
-            root,
-            error_cost: stepper.error_cost,
-            tree_journal_head: stepper.tree_journal_head,
-            reusable_nodes: stepper.reusable_nodes,
-        }
-    } else {
-        RuntimeWeavyStepOutcome::Branch(RuntimeWeavyBranch {
-            version,
-            stack: stepper.stack.into_owned(),
-            byte_position: stepper.byte_position,
-            scanner_snapshot: stepper.scanner_snapshot,
-            auto_close_stack: stepper.auto_close_stack.into_owned(),
-            error_cost: stepper.error_cost,
-            tree_journal: stepper.tree_journal_head,
-            reusable_nodes: stepper.reusable_nodes,
-        })
-    })
-}
 
 /// Total dynamic precedence of an accepted tree: the sum of each reduced
 /// production's `dynamic_precedence`. Used to pick among ambiguous GLR parses
@@ -10571,6 +10324,7 @@ fn runtime_weavy_lex_succeeds(
 enum RuntimeWeavyMode {
     ProbeState,
     ApplyAction,
+    Drive,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
