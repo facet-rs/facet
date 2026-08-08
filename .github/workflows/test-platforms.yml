@@ -78,9 +78,6 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
-      - name: Build Rust subject
-        shell: bash
-        run: cargo build -p subject-rust
       - name: Run Windows tests
         shell: bash
         env:
