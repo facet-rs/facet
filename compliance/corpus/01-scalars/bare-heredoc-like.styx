@@ -1,4 +1,0 @@
-// Values that look like heredocs but aren't
-single-lt <value
-double-lt-space "<< DELIM"
-lt-in-middle foo<<bar

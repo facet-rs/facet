@@ -1,6 +1,0 @@
-__pycache__/
-*.py[cod]
-*$py.class
-.venv/
-dist/
-*.egg-info/

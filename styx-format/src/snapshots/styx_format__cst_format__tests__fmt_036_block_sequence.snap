@@ -1,9 +1,0 @@
----
-source: crates/styx-format/src/cst_format.rs
-expression: "format(\"items (\\n  a\\n  b\\n  c\\n)\")"
----
-items (
-    a
-    b
-    c
-)

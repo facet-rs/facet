@@ -1,7 +1,0 @@
-error: picante: #[picante::input] requires at most one #[key] field
- --> tests/ui/input_multiple_keys.rs:1:1
-  |
-1 | #[picante::input]
-  | ^^^^^^^^^^^^^^^^^
-  |
-  = note: this error originates in the attribute macro `picante::input` (in Nightly builds, run with -Z macro-backtrace for more info)

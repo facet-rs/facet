@@ -6,45 +6,27 @@
 [![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-core.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
 
-`facet` is an entire ecosystem of Rust crates built on top of reflection.
+`facet` is an ecosystem of Rust crates built on runtime reflection.
 
-The core facet crates give types a [`SHAPE`](Facet::SHAPE) associated const with
-details on the kind (struct, enum, tuple?), layout (size, alignment), fields,
-doc comments, arbitrary attributes, along with 
+The core crates give types a [`SHAPE`](Facet::SHAPE) associated constant with
+their kind, layout, fields, documentation, attributes, and type-specific
+operations. `facet-reflect` builds, reads, and mutates values through those
+shapes while preserving their invariants.
 
-From there, `facet-reflect` allows reading from existing values, building new
-values from scratch, and even mutating existing values in-place if they're plain
-old data.
+Serialization and integration crates build on that reflection layer: JSON,
+TOML, YAML, MessagePack, Postcard, ASN.1, XDR, CSV, XML, URL-encoded forms,
+SQLite, Axum, schema generation, structural diffing, and more.
 
-A rich (de)serialization ecosystem is built on top of these, for formats like
-JSON, TOML, YAML, MsgPack, Postcard, ASN1, XDR, CSV, XML, but also facet-native
-(ie. designed by the same authors and leveraging some capabilities that would
-be hard to get elsewhere) like [styx](facet-styx/) (a human-oriented document
-language you'd use in place of YAML or TOML) and [phon](phon/) (a schema-aware
-binary format that comes in self-describing form _and_ in compact form).
+Some related projects now live in their own repositories:
 
-Inserting or fetching records from database is essentially (de)serialization
-again, so the facet ecosystem also includes adapters for sqlite and Postgres
-(via [dibs](dibs/), which does a little more than just data binding).
-
-Want two programs to talk to each other? [vox](vox/) has you covered: an RPC
-system built on top of the Phon binary format, which purports to support forwards
-and backwards compatibility, although nobody's built the "semver checks" tooling
-for it yet so, PRs welcome.
-
-Reflection has a cost: facet-json used to be 5-7x slower than serde-json. In
-comes [weavy](weavy/), an IR target that any crate can lower to, using their own
-intrinsics, for which they can provide native stencils. On platforms that
-support it, weavy uses a copy-patch technique to assemble native code for much
-faster (citation needed) execution still. Not an option on iPhone, and generally
-a memory safety liability.
-
-For syntax highlighting, I (Amos) was a bit annoyed that
-[arborium](https://github.com/bearcove/arborium) (a tree-sitter grammar
-distribution) required a C toolchain, so I made [snark](snark/), a
-tree-sitter-compatible parser framework, which lowers to weavy, has JIT
-support, and will happily codegen an AST for you (into which it can parse
-your language) given a few extra annotations.
+- [Figue](https://github.com/bearcove/figue) for CLI and configuration loading
+- [Styx](https://github.com/bearcove/styx) for typed configuration documents
+- [Dibs](https://github.com/bearcove/dibs) for Postgres schemas and queries
+- [Phon](https://github.com/bearcove/phon) for schema-aware binary encoding
+- [Vox](https://github.com/bearcove/vox) for cross-language RPC
+- [Weavy](https://github.com/bearcove/weavy) for lowered programs and copy-patch execution
+- [Snark](https://github.com/bearcove/snark) for parser generation
+- [Vixen](https://github.com/vixenware/vixen) for the Vix language and runtime
 
 ## Website note
 

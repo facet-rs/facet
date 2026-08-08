@@ -1,4 +1,0 @@
-pub enum Format {
-    Json,
-    Toml,
-}

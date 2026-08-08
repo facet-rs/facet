@@ -1,7 +1,0 @@
----
-source: crates/styx-format/src/value_format.rs
-expression: result
----
-message "\"Hello, World!\""
-
-path "/path/with spaces/file.txt"

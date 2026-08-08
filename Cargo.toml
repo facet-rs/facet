@@ -1,51 +1,21 @@
 [workspace]
 members = [
-  "gingembre-snark-spike",
-  "snark-ts-diff",
-  "vix-core",
-  "vix-wire",
-  "vixen-primitives",
-  "vixen-runtime",
-  "facet-lsp",
-  "exec-protocol",
-  # core
   "facet-core",
   "facet",
-
-  # derive macro
   "facet-macros-impl",
   "facet-macros",
-
-  # macro ecosystem (plugin support)
   "facet-macro-types",
   "facet-macro-parse",
-  # "facet-macro-template",  # TODO: re-enable when plugin system is ready
-
-  # error derive plugin
   "facet-error",
-
-  # default derive plugin
   "facet-default",
-
-  # reflection
   "facet-reflect",
-
-  # constraint solver
   "facet-solver",
-
-  # test helpers
   "facet-testhelpers",
   "facet-testhelpers-macros",
   "facet-testattrs",
-
-  # pretty printing
   "facet-pretty",
-
-  # misc.
   "facet-urlencoded",
   "facet-axum",
-
-  # formats, dynamic values, and schema/codegen
   "facet-dessert",
   "facet-format",
   "facet-json",
@@ -64,163 +34,46 @@ members = [
   "facet-lua",
   "facet-value",
   "facet-zod",
-
-  # XML, DOM, and SVG
   "facet-singularize",
   "facet-dom",
   "facet-xml",
   "facet-xml-node",
   "facet-atom",
   "facet-svg",
-
-  # utilities
   "facet-path",
   "facet-validate",
   "facet-hash",
-  "fable",
   "facet-cargo-toml",
   "rusqlite-facet",
   "rediff",
-  "margin",
-  "margin-term",
-  "figue",
-  "figue-attrs",
-
-  # Styx configuration language
-  "facet-styx",
-  "serde_styx",
-  "styx-cli",
-  "styx-compat-tests",
-  "styx-cst",
-  "styx-embed",
-  "styx-embed-macros",
-  "styx-ffi",
-  "styx-format",
-  "styx-gen-go",
-  "styx-lsp",
-  "styx-lsp-ext",
-  "styx-lsp-test-schema",
-  "styx-parse",
-  "styx-testhelpers",
-  "styx-tokenizer",
-  "styx-tree",
-  "styx-wasm",
-  "styx-xtask",
-  "tree-sitter-styx",
-
-  # Gingembre Jinja-like template engine
-  "gingembre",
-  "gingembre-syntax",
-
-  # Tree-sitter-compatible grammar package model and lowering scaffold
-  "snark",
-  "snark-dsl",
-  "snark-playground",
-  "snark-scanner-host",
-  "snark-wasm",
-
-  # async incremental query runtime
-  "picante",
-  "picante-macros",
-
-  # Dibs Postgres toolkit
-  "facet-tokio-postgres",
-  "dibs",
-  "dibs-cli",
-  "dibs-codegen",
-  "dibs-config",
-  "dibs-db-schema",
-  "dibs-jsonb",
-  "dibs-macros",
-  "dibs-proto",
-  "dibs-qgen",
-  "dibs-query-schema",
-  "dibs-runtime",
-  "dibs-sql",
-  "dockside",
-  "examples/dibs-my-app-workspace/my-app",
-  "examples/dibs-my-app-workspace/my-app-db",
-  "examples/dibs-my-app-workspace/my-app-queries",
-
-  # Phon schema and typed codec
-  "weavy",
-  "copypatch",
-  "phon/rust/taxon",
-  "phon/rust/phon-schema",
-  "phon/rust/phon-ir",
-  "phon/rust/phon-engine",
-  "phon/rust/phon-jit",
-  "phon/rust/phon",
-  "phon/rust/phon-codegen",
-  "phon/rust/phon-conformance",
-
-  # Vox RPC framework
-  "vox/rust-examples",
-  "vox/xtask",
-  "vox/spec/spec-proto",
-  "vox/spec/spec-tests",
-  "vox/rust/vox-types",
-  "vox/rust/vox-rt",
-  "vox/rust/vox-rt-macros",
-  "vox/rust/vox-schema",
-  "vox/rust/vox-core",
-  "vox/rust/vox-iroh",
-  "vox/rust/vox-stream",
-  "vox/rust/vox-websocket",
-  "vox/rust/vox-inprocess",
-  "vox/rust/vox-local",
-  "vox/rust/vox-fdpass",
-  "vox/rust/vox-ffi",
-  "vox/rust/ur-taking-me-with-you",
-  "vox/rust/vox-macros-parse",
-  "vox/rust/vox-macros-core",
-  "vox/rust/vox-macros",
-  "vox/rust/vox",
-  "vox/rust/subject-rust",
-  "vox/rust/vox-codegen",
-  "vox/rust/vox-phon",
-  "vox/rust/wasm-browser-tests",
-  "vox/rust/wasm-inprocess-tests",
-  "vox/typescript/peer-server",
-
-  # strongly-typed string IDs
   "strid",
   "strid-macros",
   "strid-examples",
-
-  # showcase infrastructure
+  "facet-lsp",
   "facet-showcase",
-
 ]
 
-# Keep root-level cargo commands focused on the Facet surface and the active
-# Weavy/Phon extraction work. Use `--workspace` for full monorepo checks.
+# Keep root-level cargo commands focused on the Facet surface. Use `--workspace`
+# for every crate in the repository.
 default-members = [
   # core
   "facet-core",
   "facet",
 ]
 
-exclude = [
-  # tools/ has its own workspace
-  "tools",
-
-  # imported Vox directories that were not members of the original Vox workspace
-  "vox/fuzz",
-]
 
 resolver = "3"
 
 [workspace.package]
-version = "0.10.0-rc.1"
+version = "0.50.0-rc.5"
 edition = "2024"
 rust-version = "1.92"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/facet-rs/facet"
 homepage = "https://facet.rs"
-documentation = "https://docs.rs/vox"
-keywords = ["rpc", "ipc", "networking", "facet"]
-categories = ["network-programming", "asynchronous"]
+documentation = "https://docs.rs/facet"
+keywords = ["reflection", "serialization", "deserialization"]
+categories = ["encoding", "development-tools"]
 
 [workspace.dependencies]
 facet = { path = "facet", version = "0.50.0-rc.5" }
@@ -242,72 +95,17 @@ facet-reflect = { path = "facet-reflect", version = "0.50.0-rc.5" }
 facet-singularize = { path = "facet-singularize", version = "0.50.0-rc.5" }
 facet-solver = { path = "facet-solver", version = "0.50.0-rc.5" }
 facet-testhelpers = { path = "facet-testhelpers", version = "0.50.0-rc.5" }
-facet-tokio-postgres = { path = "facet-tokio-postgres", version = "0.50.0-rc.5" }
 facet-toml = { path = "facet-toml", version = "0.50.0-rc.5" }
 facet-xml = { path = "facet-xml", version = "0.50.0-rc.5" }
 facet-urlencoded = { path = "facet-urlencoded", version = "0.50.0-rc.5" }
 facet-value = { path = "facet-value", version = "0.50.0-rc.5" }
 facet-yaml = { path = "facet-yaml", version = "0.50.0-rc.5" }
-margin = { path = "margin", version = "0.10.0-rc.1" }
-margin-term = { path = "margin-term", version = "0.10.0-rc.1" }
-figue = { path = "figue", version = "5.0.0-rc.5" }
-figue-attrs = { path = "figue-attrs", version = "5.0.0-rc.5" }
-facet-styx = { path = "facet-styx", version = "5.0.0-rc.5" }
-picante-macros = { path = "picante-macros", version = "3.0.0-rc.5" }
-dibs = { path = "dibs", version = "0.2.0-rc.5" }
-dibs-config = { path = "dibs-config", version = "0.2.0-rc.5" }
-dibs-db-schema = { path = "dibs-db-schema", version = "0.2.0-rc.5" }
-dibs-jsonb = { path = "dibs-jsonb", version = "0.2.0-rc.5" }
-dibs-macros = { path = "dibs-macros", version = "0.2.0-rc.4" }
-dibs-proto = { path = "dibs-proto", version = "0.2.0-rc.5" }
-dibs-qgen = { path = "dibs-qgen", version = "0.2.0-rc.5" }
-dibs-query-schema = { path = "dibs-query-schema", version = "0.2.0-rc.5" }
-dibs-sql = { path = "dibs-sql", version = "0.2.0-rc.5" }
-dockside = { path = "dockside" }
-copypatch = { path = "copypatch", version = "0.2.0-rc.4" }
-taxon = { path = "phon/rust/taxon", version = "0.2.0-rc.5" }
+copypatch = { git = "https://github.com/bearcove/weavy", rev = "743a7abe8f999ab4122df1cc02e2441849210a23", version = "0.2.0-rc.4" }
+taxon = { git = "https://github.com/bearcove/weavy", rev = "743a7abe8f999ab4122df1cc02e2441849210a23", version = "0.2.0-rc.5" }
+weavy = { git = "https://github.com/bearcove/weavy", rev = "743a7abe8f999ab4122df1cc02e2441849210a23", version = "0.2.2" }
 cstree = { version = "0.14.0", features = ["derive"] }
-weavy = { path = "weavy", version = "0.2.2" }
-phon = { path = "phon/rust/phon", version = "0.2.0-rc.5" }
-phon-engine = { path = "phon/rust/phon-engine", version = "0.2.0-rc.5" }
-phon-ir = { path = "phon/rust/phon-ir", version = "0.2.0-rc.5" }
-phon-jit = { path = "phon/rust/phon-jit", version = "0.2.0-rc.5" }
-phon-schema = { path = "phon/rust/phon-schema", version = "0.2.0-rc.5" }
-phon-codegen = { path = "phon/rust/phon-codegen", version = "0.2.0-rc.5" }
-spec-proto = { path = "vox/spec/spec-proto", version = "0.2.2" }
-subject-rust = { path = "vox/rust/subject-rust", version = "0.2.2" }
-vox = { path = "vox/rust/vox", version = "0.10.0-rc.5" }
-vox-codegen = { path = "vox/rust/vox-codegen", version = "0.10.0-rc.6" }
-vox-core = { path = "vox/rust/vox-core", version = "0.10.0-rc.5" }
-vox-fdpass = { path = "vox/rust/vox-fdpass", version = "0.10.0-rc.5" }
-vox-ffi = { path = "vox/rust/vox-ffi", version = "0.10.0-rc.5" }
-vox-inprocess = { path = "vox/rust/vox-inprocess", version = "0.10.0-rc.5" }
-vox-iroh = { path = "vox/rust/vox-iroh", version = "0.10.0-rc.5" }
-vox-macros-core = { path = "vox/rust/vox-macros-core", version = "0.10.0-rc.5" }
-vox-macros-parse = { path = "vox/rust/vox-macros-parse", version = "0.10.0-rc.5" }
-vox-phon = { path = "vox/rust/vox-phon", version = "0.10.0-rc.5" }
-vox-rt = { path = "vox/rust/vox-rt", version = "0.10.0-rc.5" }
-vox-rt-macros = { path = "vox/rust/vox-rt-macros", version = "0.10.0-rc.5" }
-vox-schema = { path = "vox/rust/vox-schema", version = "0.10.0-rc.5" }
-vox-service-macros = { path = "vox/rust/vox-macros", version = "0.10.0-rc.5" }
-vox-stream = { path = "vox/rust/vox-stream", version = "0.10.0-rc.5" }
-vox-types = { path = "vox/rust/vox-types", version = "0.10.0-rc.5" }
-vox-websocket = { path = "vox/rust/vox-websocket", version = "0.10.0-rc.5" }
-serde_styx = { path = "serde_styx", version = "5.0.0-rc.5" }
 strid = { path = "strid", version = "11.0.0-rc.5" }
 strid-macros = { path = "strid-macros", version = "11.0.0-rc.4" }
-styx-cst = { path = "styx-cst", version = "5.0.0-rc.5" }
-styx-embed = { path = "styx-embed", version = "5.0.0-rc.5" }
-styx-embed-macros = { path = "styx-embed-macros", version = "5.0.0-rc.5" }
-styx-format = { path = "styx-format", version = "5.0.0-rc.5" }
-styx-gen-go = { path = "styx-gen-go", version = "5.0.0-rc.5" }
-styx-lsp = { path = "styx-lsp", version = "5.0.0-rc.5" }
-styx-lsp-ext = { path = "styx-lsp-ext", version = "5.0.0-rc.5" }
-styx-lsp-test-schema = { path = "styx-lsp-test-schema", version = "5.0.0-rc.5" }
-styx-parse = { path = "styx-parse", version = "5.0.0-rc.5" }
-styx-testhelpers = { path = "styx-testhelpers", version = "5.0.0-rc.5" }
-styx-tokenizer = { path = "styx-tokenizer", version = "5.0.0-rc.5" }
-styx-tree = { path = "styx-tree", version = "5.0.0-rc.5" }
 arborium = { version = "^2.4.5", default-features = false, features = ["lang-json", "lang-rust"] }
 arborium-highlight = "^2.4.5"
 arborium-theme = "^2.4.5"
@@ -460,18 +258,8 @@ codegen-units = 1
 [profile.dev.package.backtrace]
 opt-level = 3
 
-# Keep workspace crates in debug mode, but optimize dependency hot paths that
-# dominate vix's debug test runtime.
-[profile.dev.package.aho-corasick]
-opt-level = 3
+# Optimize dependency hot paths used by the Facet build and test suite.
 
-# The machine itself: measured 6.8x on solve-heavy tests (ring 64: 20.3s -> 3.0s
-# fully optimized). opt-level 2 trades a little rebuild time for most of that.
-[profile.dev.package.vix-core]
-opt-level = 2
-
-[profile.dev.package.weavy]
-opt-level = 2
 
 [profile.dev.package.blake3]
 opt-level = 3
@@ -509,8 +297,6 @@ opt-level = 3
 [profile.dev.package.regex-syntax]
 opt-level = 3
 
-[profile.dev.package.sha2]
-opt-level = 3
 
 [patch.crates-io]
 facet = { path = "facet" }
@@ -523,7 +309,6 @@ facet-solver = { path = "facet-solver" }
 facet-testhelpers = { path = "facet-testhelpers" }
 facet-axum = { path = "facet-axum" }
 facet-cargo-toml = { path = "facet-cargo-toml" }
-facet-tokio-postgres = { path = "facet-tokio-postgres" }
 facet-urlencoded = { path = "facet-urlencoded" }
 facet-asn1 = { path = "facet-asn1" }
 facet-csv = { path = "facet-csv" }
@@ -532,7 +317,6 @@ facet-dom = { path = "facet-dom" }
 facet-format = { path = "facet-format" }
 facet-format-suite = { path = "facet-format-suite" }
 facet-hash = { path = "facet-hash" }
-fable = { path = "fable" }
 facet-json = { path = "facet-json" }
 facet-json-classics = { path = "facet-json-classics" }
 facet-json-schema = { path = "facet-json-schema" }
@@ -551,52 +335,10 @@ facet-xml-node = { path = "facet-xml-node" }
 facet-xdr = { path = "facet-xdr" }
 facet-yaml = { path = "facet-yaml" }
 facet-zod = { path = "facet-zod" }
-figue = { path = "figue" }
-figue-attrs = { path = "figue-attrs" }
-facet-styx = { path = "facet-styx" }
-dibs = { path = "dibs" }
-dibs-cli = { path = "dibs-cli" }
-dibs-config = { path = "dibs-config" }
-dibs-db-schema = { path = "dibs-db-schema" }
-dibs-jsonb = { path = "dibs-jsonb" }
-dibs-macros = { path = "dibs-macros" }
-dibs-proto = { path = "dibs-proto" }
-dibs-qgen = { path = "dibs-qgen" }
-dibs-query-schema = { path = "dibs-query-schema" }
-dibs-runtime = { path = "dibs-runtime" }
-dibs-sql = { path = "dibs-sql" }
-copypatch = { path = "copypatch" }
-weavy = { path = "weavy" }
-phon = { path = "phon/rust/phon" }
-phon-codegen = { path = "phon/rust/phon-codegen" }
-phon-conformance = { path = "phon/rust/phon-conformance" }
-phon-engine = { path = "phon/rust/phon-engine" }
-phon-ir = { path = "phon/rust/phon-ir" }
-phon-jit = { path = "phon/rust/phon-jit" }
-phon-schema = { path = "phon/rust/phon-schema" }
 rusqlite-facet = { path = "rusqlite-facet" }
 rediff = { path = "rediff" }
-picante = { path = "picante" }
-picante-macros = { path = "picante-macros" }
-serde_styx = { path = "serde_styx" }
 strid = { path = "strid" }
 strid-macros = { path = "strid-macros" }
-styx-cli = { path = "styx-cli" }
-styx-cst = { path = "styx-cst" }
-styx-embed = { path = "styx-embed" }
-styx-embed-macros = { path = "styx-embed-macros" }
-styx-ffi = { path = "styx-ffi" }
-styx-format = { path = "styx-format" }
-styx-gen-go = { path = "styx-gen-go" }
-styx-lsp = { path = "styx-lsp" }
-styx-lsp-ext = { path = "styx-lsp-ext" }
-styx-lsp-test-schema = { path = "styx-lsp-test-schema" }
-styx-parse = { path = "styx-parse" }
-styx-testhelpers = { path = "styx-testhelpers" }
-styx-tokenizer = { path = "styx-tokenizer" }
-styx-tree = { path = "styx-tree" }
-styx-wasm = { path = "styx-wasm" }
-tree-sitter-styx = { path = "tree-sitter-styx" }
 strid-examples = { path = "strid-examples" }
 
 

@@ -89,9 +89,9 @@ Turn reflected Rust types into configuration and command-line interfaces.
 
 | Crate | What it does | Source |
 |-------|--------------|--------|
-| [`figue`](/figue/guide/) | Layers CLI args, environment variables, config files, and defaults into one typed model. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/figue) |
-| [`facet-styx`](https://docs.rs/facet-styx) | Serializes and deserializes Styx documents for Facet types. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-styx) |
-| [`styx-cli`](https://docs.rs/styx-cli) | Provides Styx validation, formatting, schema generation, and language-server tooling. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/styx-cli) |
+| [`figue`](https://github.com/bearcove/figue) | Layers CLI args, environment variables, config files, and defaults into one typed model. | [bearcove/figue](https://github.com/bearcove/figue) |
+| [`facet-styx`](https://docs.rs/facet-styx) | Serializes and deserializes Styx documents for Facet types. | [bearcove/styx](https://github.com/bearcove/styx) |
+| [`styx-cli`](https://docs.rs/styx-cli) | Provides Styx validation, formatting, schema generation, and language-server tooling. | [bearcove/styx](https://github.com/bearcove/styx) |
 | [`facet-cargo-toml`](/facet-cargo-toml/) | Parses `Cargo.toml` manifests and `Cargo.lock` files into typed Rust models. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-cargo-toml) |
 
 ## Database
@@ -109,9 +109,8 @@ Reusable runtime pieces for incremental systems and lowered programs.
 
 | Crate | What it does | Source |
 |-------|--------------|--------|
-| [`picante`](/picante/) | Runs Tokio-first incremental queries with memoization and dependency tracking. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/picante) |
-| [`fable`](/fable/) | Evaluates a tiny typed language over Facet-reflected Rust values. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/fable) |
-| [`weavy`](/weavy/) | Provides a lowered-program substrate for interpreters and copy-and-patch backends. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/weavy) |
+| [`picante`](https://github.com/bearcove/picante) | Runs Tokio-first incremental queries with memoization and dependency tracking. | [bearcove/picante](https://github.com/bearcove/picante) |
+| [`weavy`](https://github.com/bearcove/weavy) | Provides a lowered-program substrate for interpreters and copy-and-patch backends. | [bearcove/weavy](https://github.com/bearcove/weavy) |
 
 ## Observability
 
@@ -128,7 +127,7 @@ Use Facet shapes at application boundaries: HTTP, RPC, and interactive tools.
 | Crate | What it does | Source |
 |-------|--------------|--------|
 | [`facet-axum`](/facet-axum/) | Adds Facet-backed extractors and responses for [axum](https://docs.rs/axum). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-axum) |
-| [`vox`](/vox/) | Provides Rust-native RPC with cross-language codegen and multiple transport backends. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/vox) |
+| [`vox`](https://github.com/bearcove/vox) | Provides Rust-native RPC with cross-language codegen and multiple transport backends. | [bearcove/vox](https://github.com/bearcove/vox) |
 | [`facet-egui`](https://docs.rs/facet-egui) | Provides an [egui](https://www.egui.rs) inspector and editor widget for any `Facet` type. *Community-maintained.* | [Erik1000/facet-egui](https://github.com/Erik1000/facet-egui) |
 
 ## Building blocks

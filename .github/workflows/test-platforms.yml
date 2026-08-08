@@ -37,7 +37,7 @@ jobs:
         run: >-
           cargo nextest run --features ci --workspace --no-fail-fast
           --partition hash:${{ matrix.partition }}
-          -E 'not (binary(postgres_integration) | binary(query_integration) | test(swift))'
+          -E 'all()'
 
   linux-arm64:
     name: Linux ARM64 (advisory)
@@ -60,7 +60,7 @@ jobs:
       - name: Run Linux ARM64 tests
         env:
           PROPTEST_CASES: 0
-        run: cargo nextest run --features ci --workspace --no-fail-fast -E 'not (binary(postgres_integration) | binary(query_integration) | test(swift))'
+        run: cargo nextest run --features ci --workspace --no-fail-fast
 
   windows:
     name: Windows (advisory)
@@ -78,11 +78,8 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
-      - name: Build Rust subject
-        shell: bash
-        run: cargo build -p subject-rust
       - name: Run Windows tests
         shell: bash
         env:
           PROPTEST_CASES: 0
-        run: cargo nextest run --features ci --workspace --no-fail-fast -E 'not (binary(postgres_integration) | binary(query_integration) | test(swift) | test(typescript))'
+        run: cargo nextest run --features ci --workspace --no-fail-fast

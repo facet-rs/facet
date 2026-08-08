@@ -1025,11 +1025,9 @@ fn opaque_proxy_enum_with_lifetime_compiles() {
         Borrowed(&'a str),
     }
 
-    impl<'a> TryFrom<String> for Argument<'a> {
-        type Error = std::convert::Infallible;
-
-        fn try_from(value: String) -> Result<Self, Self::Error> {
-            Ok(Self::Owned(value))
+    impl<'a> From<String> for Argument<'a> {
+        fn from(value: String) -> Self {
+            Self::Owned(value)
         }
     }
 

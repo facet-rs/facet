@@ -1,5 +1,0 @@
----
-source: crates/styx-format/src/cst_format.rs
-expression: "format(\"config {name foo}\")"
----
-config {name foo}

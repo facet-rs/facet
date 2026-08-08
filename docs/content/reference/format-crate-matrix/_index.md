@@ -24,7 +24,7 @@ S = serialization, D = deserialization.
 | [facet-postcard](https://docs.rs/facet-postcard) | SD | Binary | Event-based (custom) | 🚫 |
 | [facet-asn1](https://docs.rs/facet-asn1) | S | Binary | (Custom) | 🚫 |
 | [facet-xdr](https://docs.rs/facet-xdr) | S | Binary | (Custom) | 🚫 |
-| [figue](https://docs.rs/figue) | D | CLI | (Custom) | [Guide](/figue/guide/) |
+| [figue](https://docs.rs/figue) | D | CLI | (Custom) | [Repository](https://github.com/bearcove/figue) |
 | [facet-urlencoded](https://docs.rs/facet-urlencoded) | D | Text | [form_urlencoded](https://docs.rs/form_urlencoded) | 🚫 |
 | [facet-csv](https://docs.rs/facet-csv) | S | Text | (Custom) | 🚫 |
 

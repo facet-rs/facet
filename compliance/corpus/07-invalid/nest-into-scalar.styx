@@ -1,3 +1,0 @@
-// Can't add children to a path that has a scalar value
-a.b value
-a.b.c deep

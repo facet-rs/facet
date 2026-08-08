@@ -81,7 +81,7 @@ attributes or their type's `Default` implementation.
 
 ## Related
 
-- [figue](/figue/guide/) — layer CLI, env, files, and defaults into one config type
+- [figue](https://github.com/bearcove/figue) — layer CLI, env, files, and defaults into one config type
 - [facet-json](/facet-json/guide/) — let missing JSON fields use facet defaults
 - [facet-validate](/facet-validate/guide/) — pair defaults with constraints
 - [Ecosystem](/ecosystem/) — other facet derive plugins and format crates

@@ -1,8 +1,0 @@
-// Heredoc with indented closing delimiter inside an object
-config {
-    script <<BASH
-        echo "hello"
-        echo "world"
-        BASH
-    other value
-}

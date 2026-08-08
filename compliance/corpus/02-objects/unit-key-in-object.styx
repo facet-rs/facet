@@ -1,4 +1,0 @@
-schema {
-    @ @object{name @string}
-    User @object{id @int}
-}

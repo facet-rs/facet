@@ -1,5 +1,0 @@
----
-source: crates/styx-format/src/cst_format.rs
-expression: "format(\"schema {name @string, age @int}\")"
----
-schema {name @string, age @int}

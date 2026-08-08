@@ -1,5 +1,0 @@
----
-source: crates/styx-format/src/cst_format.rs
-expression: "format(r#\"foo \"hello world\"\"#)"
----
-foo "hello world"

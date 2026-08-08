@@ -1,6 +1,0 @@
----
-source: facet-styx/src/tag_events_test.rs
-expression: "collect_events(\"x @\")"
----
-FieldKey(Some("x"))
-Scalar(Unit)

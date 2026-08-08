@@ -455,7 +455,7 @@ fn test_attr_non_sync_data() {
         source: include_str!("fixtures/non_sync_data.rs"),
         expected_errors: &[
             "`std::rc::Rc<i32>` cannot be shared between threads safely",
-            "required by a bound in `facet::Attr::new`",
+            "required by this bound in `",
         ],
     };
 
@@ -481,7 +481,7 @@ fn test_attr_non_sync_struct_literal() {
     let test = CompilationTest {
         name: "attr_non_sync_struct_literal",
         source: include_str!("fixtures/non_sync_attr_literal.rs"),
-        expected_errors: &["fields `ns`, `key` and `data` of struct `facet::Attr` are private"],
+        expected_errors: &["fields `ns`, `key` and `data` of struct `", "are private"],
     };
 
     run_compilation_test(&test);

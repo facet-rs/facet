@@ -1,3 +1,0 @@
-pub fn try_json_decode<T>(text: String) -> Result<T, DecodeError> {
-    try_decode(text, Format::Json)
-}

@@ -1,1 +1,0 @@
-Protocol types for [Styx](https://github.com/bearcove/styx) LSP extensions. Defines the RPC interface between the language server and editor extensions.

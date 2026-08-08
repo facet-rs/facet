@@ -1,9 +1,0 @@
----
-source: crates/styx-format/src/cst_format.rs
-expression: "format(\"config {/// doc\\na 1, b 2}\")"
----
-config {
-    /// doc
-    a 1
-    b 2
-}

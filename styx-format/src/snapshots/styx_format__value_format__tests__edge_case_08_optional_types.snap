@@ -1,7 +1,0 @@
----
-source: crates/styx-format/src/value_format.rs
-expression: result
----
-required @string
-
-optional @optional("@bool")

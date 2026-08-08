@@ -1,6 +1,0 @@
----
-source: crates/dibs-sql/src/render/tests.rs
-expression: result.sql
----
-SELECT COUNT("users".*)
-FROM "users"

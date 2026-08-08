@@ -1,7 +1,0 @@
-// Heredoc inside an object
-config {
-    script <<BASH
-echo "hello"
-echo "world"
-BASH
-}

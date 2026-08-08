@@ -1,4 +1,0 @@
-// Dotted paths create nested keys
-server.host localhost
-database.port 5432
-cache.ttl 3600

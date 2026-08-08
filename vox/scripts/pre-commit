@@ -1,4 +1,0 @@
-#!/bin/bash
-set -eux
-cargo install --git https://github.com/bearcove/captain
-captain

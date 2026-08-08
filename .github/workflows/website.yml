@@ -6,9 +6,8 @@ on:
     branches: [main]
     paths:
       - '.config/dodeca.styx'          # source set / mounts / link-check config
-      - 'docs/**'                       # primary facet content + templates + sass + static
-      - 'styx-docs/**'                  # styx subsite source
-      - '*/docs/**'                     # crate subsites (figue/docs, vox/docs, facet-json/docs, …)
+      - 'docs/**'                       # primary Facet content, templates, sass, and static assets
+      - '*/docs/**'                     # remaining crate subsites
       - '*/README.md'                   # crate READMEs embedded via the include shortcode
       - '.github/workflows/website.yml'
       - 'facet-showcase/**'
@@ -18,7 +17,6 @@ on:
     paths:
       - '.config/dodeca.styx'
       - 'docs/**'
-      - 'styx-docs/**'
       - '*/docs/**'
       - '*/README.md'
       - '.github/workflows/website.yml'
@@ -44,49 +42,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v6
-        with:
-          version: 11.10.0
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 26
-          cache: pnpm
-
-      - name: Install website dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-
-      - name: Install wasm-bindgen CLI
-        uses: taiki-e/install-action@v2
-        with:
-          tool: wasm-bindgen-cli
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install dodeca
-        # Pull the binary straight from the GitHub release (GitHub's own `latest`
-        # redirect), not the installer.sh — the installer reads its version from
-        # the S3 dist mirror, whose `latest` marker lags the GitHub releases.
+      - name: Build website with dodeca
         run: |
-          mkdir -p ~/.cargo/bin
-          tmp="$(mktemp -d)"
+          tmp="${RUNNER_TEMP}/dodeca-package"
+          rm -rf "$tmp"
+          mkdir -p "$tmp"
           curl --proto '=https' --tlsv1.2 -fsSL \
             https://github.com/bearcove/dodeca/releases/latest/download/dodeca-x86_64-unknown-linux-gnu.tar.xz \
             | tar -xJ -C "$tmp"
-          cp "$tmp/ddc" ~/.cargo/bin/ddc
-          chmod +x ~/.cargo/bin/ddc
-          ddc --version
-
-      - name: Build website with dodeca
-        run: ~/.cargo/bin/ddc build
+          "$tmp/ddc" --version
+          "$tmp/ddc" build
 
       - name: Setup Pages
         uses: actions/configure-pages@v6
