@@ -264,10 +264,10 @@ dibs-qgen = { path = "dibs-qgen", version = "0.2.0-rc.5" }
 dibs-query-schema = { path = "dibs-query-schema", version = "0.2.0-rc.5" }
 dibs-sql = { path = "dibs-sql", version = "0.2.0-rc.5" }
 dockside = { path = "dockside" }
-copypatch = { git = "https://github.com/bearcove/weavy", rev = "5231e74c2532bc0fc6eb807b6b3f504e67ca6ac4", version = "0.2.0-rc.4" }
-taxon = { git = "https://github.com/bearcove/weavy", rev = "5231e74c2532bc0fc6eb807b6b3f504e67ca6ac4", version = "0.2.0-rc.5" }
+copypatch = { git = "https://github.com/bearcove/weavy", rev = "743a7abe8f999ab4122df1cc02e2441849210a23", version = "0.2.0-rc.4" }
+taxon = { git = "https://github.com/bearcove/weavy", rev = "743a7abe8f999ab4122df1cc02e2441849210a23", version = "0.2.0-rc.5" }
 cstree = { version = "0.14.0", features = ["derive"] }
-weavy = { git = "https://github.com/bearcove/weavy", rev = "5231e74c2532bc0fc6eb807b6b3f504e67ca6ac4", version = "0.2.2" }
+weavy = { git = "https://github.com/bearcove/weavy", rev = "743a7abe8f999ab4122df1cc02e2441849210a23", version = "0.2.2" }
 phon = { path = "phon/rust/phon", version = "0.2.0-rc.5" }
 phon-engine = { path = "phon/rust/phon-engine", version = "0.2.0-rc.5" }
 phon-ir = { path = "phon/rust/phon-ir", version = "0.2.0-rc.5" }
@@ -565,9 +565,9 @@ dibs-qgen = { path = "dibs-qgen" }
 dibs-query-schema = { path = "dibs-query-schema" }
 dibs-runtime = { path = "dibs-runtime" }
 dibs-sql = { path = "dibs-sql" }
-copypatch = { git = "https://github.com/bearcove/weavy", rev = "5231e74c2532bc0fc6eb807b6b3f504e67ca6ac4" }
-taxon = { git = "https://github.com/bearcove/weavy", rev = "5231e74c2532bc0fc6eb807b6b3f504e67ca6ac4" }
-weavy = { git = "https://github.com/bearcove/weavy", rev = "5231e74c2532bc0fc6eb807b6b3f504e67ca6ac4" }
+copypatch = { git = "https://github.com/bearcove/weavy", rev = "743a7abe8f999ab4122df1cc02e2441849210a23" }
+taxon = { git = "https://github.com/bearcove/weavy", rev = "743a7abe8f999ab4122df1cc02e2441849210a23" }
+weavy = { git = "https://github.com/bearcove/weavy", rev = "743a7abe8f999ab4122df1cc02e2441849210a23" }
 phon = { path = "phon/rust/phon" }
 phon-codegen = { path = "phon/rust/phon-codegen" }
 phon-conformance = { path = "phon/rust/phon-conformance" }
