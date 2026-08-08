@@ -42,20 +42,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Install dodeca
-        # Pull the binary straight from the GitHub release (GitHub's own `latest`
-        # redirect), not the installer.sh — the installer reads its version from
-        # the S3 dist mirror, whose `latest` marker lags the GitHub releases.
+      - name: Build website with dodeca
         run: |
-          tmp="$(mktemp -d)"
+          tmp="${RUNNER_TEMP}/dodeca-package"
+          rm -rf "$tmp"
+          mkdir -p "$tmp"
           curl --proto '=https' --tlsv1.2 -fsSL \
             https://github.com/bearcove/dodeca/releases/latest/download/dodeca-x86_64-unknown-linux-gnu.tar.xz \
             | tar -xJ -C "$tmp"
-          echo "DODECA_BIN=$tmp/ddc" >> "$GITHUB_ENV"
           "$tmp/ddc" --version
-
-      - name: Build website with dodeca
-        run: '$DODECA_BIN build'
+          "$tmp/ddc" build
 
       - name: Setup Pages
         uses: actions/configure-pages@v6
