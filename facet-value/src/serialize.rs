@@ -339,4 +339,30 @@ mod tests {
         let back: Wide = from_value(v).unwrap();
         assert_eq!(back, original);
     }
+
+    #[test]
+    fn test_roundtrip_tuple_struct() {
+        use crate::from_value;
+        use facet::Facet;
+
+        // Tuple structs (StructKind::TupleStruct) must round-trip correctly,
+        // not just native tuples (StructKind::Tuple).
+        #[derive(Debug, Facet, PartialEq)]
+        struct Single(i32);
+
+        let original = Single(42);
+        let v = to_value(&original).unwrap();
+        // Single-field tuple struct serializes as an array
+        assert!(v.as_array().is_some());
+        let back: Single = from_value(v).unwrap();
+        assert_eq!(back, original);
+
+        #[derive(Debug, Facet, PartialEq)]
+        struct Nested(Single, String);
+
+        let original = Nested(Single(99), "world".into());
+        let v = to_value(&original).unwrap();
+        let back: Nested = from_value(v).unwrap();
+        assert_eq!(back, original);
+    }
 }

@@ -338,7 +338,7 @@ fn deserialize_value_into<'facet>(
     // Priority 3: Check the Type for structs and enums
     match &shape.ty {
         Type::User(UserType::Struct(struct_def)) => {
-            if struct_def.kind == StructKind::Tuple {
+            if struct_def.kind == StructKind::Tuple || struct_def.kind == StructKind::TupleStruct {
                 return deserialize_tuple(value, partial);
             }
             return deserialize_struct(value, partial);
