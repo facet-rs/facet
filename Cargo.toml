@@ -101,7 +101,7 @@ facet-urlencoded = { path = "facet-urlencoded", version = "0.50.0-rc.5" }
 facet-value = { path = "facet-value", version = "0.50.0-rc.5" }
 facet-yaml = { path = "facet-yaml", version = "0.50.0-rc.5" }
 copypatch = { git = "https://github.com/bearcove/weavy", rev = "743a7abe8f999ab4122df1cc02e2441849210a23", version = "0.2.0-rc.4" }
-taxon = { git = "https://github.com/bearcove/weavy", rev = "743a7abe8f999ab4122df1cc02e2441849210a23", version = "0.2.0-rc.5" }
+taxon = { git = "https://github.com/bearcove/taxon", rev = "c0369bcfceb8e85ccc433bb6478161cd8124c7e3", version = "0.2.0-rc.5" }
 weavy = { git = "https://github.com/bearcove/weavy", rev = "743a7abe8f999ab4122df1cc02e2441849210a23", version = "0.2.2" }
 cstree = { version = "0.14.0", features = ["derive"] }
 strid = { path = "strid", version = "11.0.0-rc.5" }
