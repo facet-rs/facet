@@ -184,13 +184,23 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                                     }
                                 };
 
-                                if actual_tag != variant_name {
+                                let effective_variant_name = if let facet_core::Type::User(facet_core::UserType::Enum(enum_def)) = &field_info.value_shape.ty {
+                                    enum_def.variants
+                                        .iter()
+                                        .find(|v| v.name == variant_name)
+                                        .map(|v| v.effective_name())
+                                        .unwrap_or(variant_name)
+                                } else {
+                                    variant_name
+                                };
+
+                                if actual_tag != effective_variant_name {
                                     return Err(self.mk_err(
                                         nav.wip(),
                                         DeserializeErrorKind::InvalidValue {
                                             message: format!(
                                                 "expected tag value '{}', got '{}'",
-                                                variant_name, actual_tag
+                                                effective_variant_name, actual_tag
                                             )
                                             .into(),
                                         },
@@ -199,7 +209,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
                                 let _guard = SpanGuard::new(self.last_span);
                                 let wip = nav.take_wip();
-                                nav.return_wip(wip.select_variant_named(variant_name)?);
+                                nav.return_wip(wip.select_variant_named(effective_variant_name)?);
 
                                 // For internally-tagged enums, keep the enum segment open so that
                                 // subsequent fields of the variant can be deserialized into it.

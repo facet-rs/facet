@@ -188,11 +188,20 @@ impl<'input, const BORROW: bool> PathNavigator<'input, BORROW> {
             );
 
             if current_path == vs_fields {
+                let effective_variant_name = match wip.shape().ty {
+                    facet_core::Type::User(facet_core::UserType::Enum(enum_def)) => enum_def
+                        .variants
+                        .iter()
+                        .find(|variant| variant.name == vs.variant_name)
+                        .map(facet_core::Variant::effective_name)
+                        .unwrap_or(vs.variant_name),
+                    _ => vs.variant_name,
+                };
                 trace!(
                     "open_segment: selecting variant '{}' at path {:?}",
-                    vs.variant_name, current_path
+                    effective_variant_name, current_path
                 );
-                wip = wip.select_variant_named(vs.variant_name)?;
+                wip = wip.select_variant_named(effective_variant_name)?;
                 break;
             }
         }
