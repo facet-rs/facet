@@ -23,7 +23,6 @@ zmij = { version = "1", optional = true }
 facet-core = { workspace = true }
 facet-format = { path = "../facet-format", version = "0.50.0-rc.5", default-features = false }
 facet-reflect = { workspace = true }
-weavy = { workspace = true }
 
 # Tracing (optional - compiles to nothing when disabled)
 tracing = { workspace = true, optional = true }
@@ -67,9 +66,6 @@ libtest-mimic = "0.8.1"
 proptest = { workspace = true }
 smol_str = { workspace = true }
 stacker = { version = "0.1.24", default-features = false }
-
-[build-dependencies]
-copypatch = { workspace = true, features = ["build"] }
 
 [[test]]
 name = "format_suite"
