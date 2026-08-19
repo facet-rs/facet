@@ -461,25 +461,3 @@ fn facet_json(bencher: Bencher) {
         black_box(result)
     });
 }
-
-#[divan::bench]
-fn weavy_reused_plan(bencher: Bencher) {
-    let data = json_str();
-    let plan = facet_json::JsonWeavyPlan::<TwitterOwned>::build().unwrap();
-
-    bencher.bench(|| {
-        let result: TwitterOwned = black_box(plan.from_str(black_box(data)).unwrap());
-        black_box(result)
-    });
-}
-
-#[divan::bench]
-fn weavy_jit_reused_plan(bencher: Bencher) {
-    let data = json_str();
-    let plan = facet_json::JsonWeavyPlan::<TwitterOwned>::build_jit().unwrap();
-
-    bencher.bench(|| {
-        let result: TwitterOwned = black_box(plan.from_str(black_box(data)).unwrap());
-        black_box(result)
-    });
-}

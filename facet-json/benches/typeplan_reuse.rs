@@ -352,30 +352,6 @@ where
     });
 }
 
-fn bench_weavy_reused_plan<T>(bencher: Bencher, json: &'static str)
-where
-    T: Facet<'static>,
-{
-    let plan = facet_json::JsonWeavyPlan::<T>::build().unwrap();
-
-    bencher.bench(|| {
-        let result: T = black_box(plan.from_str(black_box(json)).unwrap());
-        black_box(result)
-    });
-}
-
-fn bench_weavy_jit_reused_plan<T>(bencher: Bencher, json: &'static str)
-where
-    T: Facet<'static>,
-{
-    let plan = facet_json::JsonWeavyPlan::<T>::build_jit().unwrap();
-
-    bencher.bench(|| {
-        let result: T = black_box(plan.from_str(black_box(json)).unwrap());
-        black_box(result)
-    });
-}
-
 fn bench_serde_json<T>(bencher: Bencher, json: &'static str)
 where
     T: DeserializeOwned,
@@ -405,38 +381,6 @@ fn bench_reused_typeplan_observed<T>(
             .deserialize_into(partial, MetaSource::FromEvents)
             .unwrap();
         let result: T = partial.build().unwrap().materialize().unwrap();
-        black_box(observe(&result));
-        black_box(result)
-    });
-}
-
-fn bench_weavy_reused_plan_observed<T>(
-    bencher: Bencher,
-    json: &'static str,
-    observe: impl Fn(&T) -> usize + Sync,
-) where
-    T: Facet<'static>,
-{
-    let plan = facet_json::JsonWeavyPlan::<T>::build().unwrap();
-
-    bencher.bench(|| {
-        let result: T = black_box(plan.from_str(black_box(json)).unwrap());
-        black_box(observe(&result));
-        black_box(result)
-    });
-}
-
-fn bench_weavy_jit_reused_plan_observed<T>(
-    bencher: Bencher,
-    json: &'static str,
-    observe: impl Fn(&T) -> usize + Sync,
-) where
-    T: Facet<'static>,
-{
-    let plan = facet_json::JsonWeavyPlan::<T>::build_jit().unwrap();
-
-    bencher.bench(|| {
-        let result: T = black_box(plan.from_str(black_box(json)).unwrap());
         black_box(observe(&result));
         black_box(result)
     });
@@ -490,30 +434,6 @@ fn point_reused_typeplan(bencher: Bencher) {
     });
 }
 
-/// Reuse Weavy JSON plan across iterations
-#[divan::bench]
-fn point_weavy_reused_plan(bencher: Bencher) {
-    let json = POINT_JSON;
-    let plan = facet_json::JsonWeavyPlan::<Point>::build().unwrap();
-
-    bencher.bench(|| {
-        let result: Point = black_box(plan.from_str(black_box(json)).unwrap());
-        black_box(result)
-    });
-}
-
-/// Reuse Weavy JSON plan across iterations with JIT requested
-#[divan::bench]
-fn point_weavy_jit_reused_plan(bencher: Bencher) {
-    let json = POINT_JSON;
-    let plan = facet_json::JsonWeavyPlan::<Point>::build_jit().unwrap();
-
-    bencher.bench(|| {
-        let result: Point = black_box(plan.from_str(black_box(json)).unwrap());
-        black_box(result)
-    });
-}
-
 /// serde_json path
 #[divan::bench]
 fn point_serde_json(bencher: Bencher) {
@@ -537,16 +457,6 @@ fn point_serde_json_from_slice(bencher: Bencher) {
 // =============================================================================
 // Benchmarks - Vec<Point> (ordered scalar struct list)
 // =============================================================================
-
-#[divan::bench]
-fn point_list_weavy_reused_plan(bencher: Bencher) {
-    bench_weavy_reused_plan::<Vec<Point>>(bencher, POINT_LIST_JSON);
-}
-
-#[divan::bench]
-fn point_list_weavy_jit_reused_plan(bencher: Bencher) {
-    bench_weavy_jit_reused_plan::<Vec<Point>>(bencher, POINT_LIST_JSON);
-}
 
 #[divan::bench]
 fn point_list_serde_json(bencher: Bencher) {
@@ -583,18 +493,6 @@ fn person_reused_typeplan(bencher: Bencher) {
             .deserialize_into(partial, MetaSource::FromEvents)
             .unwrap();
         let result: Person = partial.build().unwrap().materialize().unwrap();
-        black_box(result)
-    });
-}
-
-/// Reuse Weavy JSON plan across iterations
-#[divan::bench]
-fn person_weavy_reused_plan(bencher: Bencher) {
-    let json = PERSON_JSON;
-    let plan = facet_json::JsonWeavyPlan::<Person>::build().unwrap();
-
-    bencher.bench(|| {
-        let result: Person = black_box(plan.from_str(black_box(json)).unwrap());
         black_box(result)
     });
 }
@@ -653,18 +551,6 @@ fn company_reused_typeplan(bencher: Bencher) {
     });
 }
 
-/// Reuse Weavy JSON plan across iterations
-#[divan::bench]
-fn company_weavy_reused_plan(bencher: Bencher) {
-    let json = COMPANY_JSON;
-    let plan = facet_json::JsonWeavyPlan::<Company>::build().unwrap();
-
-    bencher.bench(|| {
-        let result: Company = black_box(plan.from_str(black_box(json)).unwrap());
-        black_box(result)
-    });
-}
-
 /// serde_json path
 #[divan::bench]
 fn company_serde_json(bencher: Bencher) {
@@ -700,16 +586,6 @@ fn float_point_reused_typeplan(bencher: Bencher) {
 }
 
 #[divan::bench]
-fn float_point_weavy_reused_plan(bencher: Bencher) {
-    bench_weavy_reused_plan::<FloatPoint>(bencher, FLOAT_POINT_JSON);
-}
-
-#[divan::bench]
-fn float_point_weavy_jit_reused_plan(bencher: Bencher) {
-    bench_weavy_jit_reused_plan::<FloatPoint>(bencher, FLOAT_POINT_JSON);
-}
-
-#[divan::bench]
 fn float_point_serde_json(bencher: Bencher) {
     bench_serde_json::<FloatPoint>(bencher, FLOAT_POINT_JSON);
 }
@@ -717,16 +593,6 @@ fn float_point_serde_json(bencher: Bencher) {
 // =============================================================================
 // Benchmarks - Vec<FloatPoint> (float-heavy scalar struct list)
 // =============================================================================
-
-#[divan::bench]
-fn float_point_list_weavy_reused_plan(bencher: Bencher) {
-    bench_weavy_reused_plan::<Vec<FloatPoint>>(bencher, FLOAT_POINT_LIST_JSON);
-}
-
-#[divan::bench]
-fn float_point_list_weavy_jit_reused_plan(bencher: Bencher) {
-    bench_weavy_jit_reused_plan::<Vec<FloatPoint>>(bencher, FLOAT_POINT_LIST_JSON);
-}
 
 #[divan::bench]
 fn float_point_list_serde_json(bencher: Bencher) {
@@ -745,11 +611,6 @@ fn sensor_frame_fresh_typeplan(bencher: Bencher) {
 #[divan::bench]
 fn sensor_frame_reused_typeplan(bencher: Bencher) {
     bench_reused_typeplan::<SensorFrame>(bencher, SENSOR_FRAME_JSON);
-}
-
-#[divan::bench]
-fn sensor_frame_weavy_reused_plan(bencher: Bencher) {
-    bench_weavy_reused_plan::<SensorFrame>(bencher, SENSOR_FRAME_JSON);
 }
 
 #[divan::bench]
@@ -772,43 +633,13 @@ fn wide_scalars_reused_typeplan(bencher: Bencher) {
 }
 
 #[divan::bench]
-fn wide_scalars_weavy_reused_plan(bencher: Bencher) {
-    bench_weavy_reused_plan::<WideScalars>(bencher, WIDE_SCALARS_JSON);
-}
-
-#[divan::bench]
-fn wide_scalars_weavy_jit_reused_plan(bencher: Bencher) {
-    bench_weavy_jit_reused_plan::<WideScalars>(bencher, WIDE_SCALARS_JSON);
-}
-
-#[divan::bench]
 fn wide_scalars_serde_json(bencher: Bencher) {
     bench_serde_json::<WideScalars>(bencher, WIDE_SCALARS_JSON);
 }
 
 #[divan::bench]
-fn wide_scalars_out_of_order_weavy_reused_plan(bencher: Bencher) {
-    bench_weavy_reused_plan::<WideScalars>(bencher, WIDE_SCALARS_OUT_OF_ORDER_JSON);
-}
-
-#[divan::bench]
-fn wide_scalars_out_of_order_weavy_jit_reused_plan(bencher: Bencher) {
-    bench_weavy_jit_reused_plan::<WideScalars>(bencher, WIDE_SCALARS_OUT_OF_ORDER_JSON);
-}
-
-#[divan::bench]
 fn wide_scalars_out_of_order_serde_json(bencher: Bencher) {
     bench_serde_json::<WideScalars>(bencher, WIDE_SCALARS_OUT_OF_ORDER_JSON);
-}
-
-#[divan::bench]
-fn wide_scalars_skipped_unknown_weavy_reused_plan(bencher: Bencher) {
-    bench_weavy_reused_plan::<WideScalars>(bencher, WIDE_SCALARS_SKIPPED_UNKNOWN_JSON);
-}
-
-#[divan::bench]
-fn wide_scalars_skipped_unknown_weavy_jit_reused_plan(bencher: Bencher) {
-    bench_weavy_jit_reused_plan::<WideScalars>(bencher, WIDE_SCALARS_SKIPPED_UNKNOWN_JSON);
 }
 
 #[divan::bench]
@@ -821,46 +652,13 @@ fn wide_scalars_skipped_unknown_serde_json(bencher: Bencher) {
 // =============================================================================
 
 #[divan::bench]
-fn wide_scalars_list_weavy_reused_plan(bencher: Bencher) {
-    bench_weavy_reused_plan::<Vec<WideScalars>>(bencher, WIDE_SCALARS_LIST_JSON);
-}
-
-#[divan::bench]
-fn wide_scalars_list_weavy_jit_reused_plan(bencher: Bencher) {
-    bench_weavy_jit_reused_plan::<Vec<WideScalars>>(bencher, WIDE_SCALARS_LIST_JSON);
-}
-
-#[divan::bench]
 fn wide_scalars_list_serde_json(bencher: Bencher) {
     bench_serde_json::<Vec<WideScalars>>(bencher, WIDE_SCALARS_LIST_JSON);
 }
 
 #[divan::bench]
-fn wide_scalars_list_out_of_order_weavy_reused_plan(bencher: Bencher) {
-    bench_weavy_reused_plan::<Vec<WideScalars>>(bencher, WIDE_SCALARS_LIST_OUT_OF_ORDER_JSON);
-}
-
-#[divan::bench]
-fn wide_scalars_list_out_of_order_weavy_jit_reused_plan(bencher: Bencher) {
-    bench_weavy_jit_reused_plan::<Vec<WideScalars>>(bencher, WIDE_SCALARS_LIST_OUT_OF_ORDER_JSON);
-}
-
-#[divan::bench]
 fn wide_scalars_list_out_of_order_serde_json(bencher: Bencher) {
     bench_serde_json::<Vec<WideScalars>>(bencher, WIDE_SCALARS_LIST_OUT_OF_ORDER_JSON);
-}
-
-#[divan::bench]
-fn wide_scalars_list_skipped_unknown_weavy_reused_plan(bencher: Bencher) {
-    bench_weavy_reused_plan::<Vec<WideScalars>>(bencher, WIDE_SCALARS_LIST_SKIPPED_UNKNOWN_JSON);
-}
-
-#[divan::bench]
-fn wide_scalars_list_skipped_unknown_weavy_jit_reused_plan(bencher: Bencher) {
-    bench_weavy_jit_reused_plan::<Vec<WideScalars>>(
-        bencher,
-        WIDE_SCALARS_LIST_SKIPPED_UNKNOWN_JSON,
-    );
 }
 
 #[divan::bench]
@@ -871,16 +669,6 @@ fn wide_scalars_list_skipped_unknown_serde_json(bencher: Bencher) {
 // =============================================================================
 // Benchmarks - Missing scalar fields with defaults
 // =============================================================================
-
-#[divan::bench]
-fn default_scalars_missing_weavy_reused_plan(bencher: Bencher) {
-    bench_weavy_reused_plan::<DefaultScalars>(bencher, DEFAULT_SCALARS_MISSING_JSON);
-}
-
-#[divan::bench]
-fn default_scalars_missing_weavy_jit_reused_plan(bencher: Bencher) {
-    bench_weavy_jit_reused_plan::<DefaultScalars>(bencher, DEFAULT_SCALARS_MISSING_JSON);
-}
 
 #[divan::bench]
 fn default_scalars_missing_serde_json(bencher: Bencher) {
@@ -899,24 +687,6 @@ fn internal_tagged_reused_typeplan(bencher: Bencher) {
 }
 
 #[divan::bench]
-fn internal_tagged_weavy_reused_plan(bencher: Bencher) {
-    bench_weavy_reused_plan_observed::<InternalTaggedEvent>(
-        bencher,
-        INTERNAL_TAGGED_JSON,
-        |value| value.checksum(),
-    );
-}
-
-#[divan::bench]
-fn internal_tagged_weavy_jit_reused_plan(bencher: Bencher) {
-    bench_weavy_jit_reused_plan_observed::<InternalTaggedEvent>(
-        bencher,
-        INTERNAL_TAGGED_JSON,
-        |value| value.checksum(),
-    );
-}
-
-#[divan::bench]
 fn internal_tagged_serde_json(bencher: Bencher) {
     bench_serde_json_observed::<InternalTaggedEvent>(bencher, INTERNAL_TAGGED_JSON, |value| {
         value.checksum()
@@ -928,24 +698,6 @@ fn adjacent_tagged_reused_typeplan(bencher: Bencher) {
     bench_reused_typeplan_observed::<AdjacentTaggedEvent>(bencher, ADJACENT_TAGGED_JSON, |value| {
         value.checksum()
     });
-}
-
-#[divan::bench]
-fn adjacent_tagged_weavy_reused_plan(bencher: Bencher) {
-    bench_weavy_reused_plan_observed::<AdjacentTaggedEvent>(
-        bencher,
-        ADJACENT_TAGGED_JSON,
-        |value| value.checksum(),
-    );
-}
-
-#[divan::bench]
-fn adjacent_tagged_weavy_jit_reused_plan(bencher: Bencher) {
-    bench_weavy_jit_reused_plan_observed::<AdjacentTaggedEvent>(
-        bencher,
-        ADJACENT_TAGGED_JSON,
-        |value| value.checksum(),
-    );
 }
 
 #[divan::bench]
@@ -962,20 +714,6 @@ fn adjacent_tagged_serde_json(bencher: Bencher) {
 #[divan::bench]
 fn untagged_event_reused_typeplan(bencher: Bencher) {
     bench_reused_typeplan_observed::<UntaggedEvent>(bencher, UNTAGGED_EVENT_JSON, |value| {
-        value.checksum()
-    });
-}
-
-#[divan::bench]
-fn untagged_event_weavy_reused_plan(bencher: Bencher) {
-    bench_weavy_reused_plan_observed::<UntaggedEvent>(bencher, UNTAGGED_EVENT_JSON, |value| {
-        value.checksum()
-    });
-}
-
-#[divan::bench]
-fn untagged_event_weavy_jit_reused_plan(bencher: Bencher) {
-    bench_weavy_jit_reused_plan_observed::<UntaggedEvent>(bencher, UNTAGGED_EVENT_JSON, |value| {
         value.checksum()
     });
 }
@@ -1020,20 +758,6 @@ fn batch_1000_reused_typeplan(bencher: Bencher) {
                 .deserialize_into(partial, MetaSource::FromEvents)
                 .unwrap();
             let result: Person = partial.build().unwrap().materialize().unwrap();
-            black_box(result);
-        }
-    });
-}
-
-/// 1000 deserializations through a reused Weavy JSON plan
-#[divan::bench]
-fn batch_1000_weavy_reused_plan(bencher: Bencher) {
-    let json = PERSON_JSON;
-    let plan = facet_json::JsonWeavyPlan::<Person>::build().unwrap();
-
-    bencher.bench(|| {
-        for _ in 0..1000 {
-            let result: Person = plan.from_str(black_box(json)).unwrap();
             black_box(result);
         }
     });

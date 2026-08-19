@@ -42,7 +42,6 @@ members = [
   "facet-svg",
   "facet-path",
   "facet-validate",
-  "facet-hash",
   "facet-cargo-toml",
   "rusqlite-facet",
   "rediff",
@@ -84,7 +83,6 @@ facet-dom = { path = "facet-dom", version = "0.50.0-rc.5" }
 facet-error = { path = "facet-error", version = "0.50.0-rc.5" }
 facet-format = { path = "facet-format", version = "0.50.0-rc.5" }
 facet-format-suite = { path = "facet-format-suite", version = "0.50.0-rc.0" }
-facet-hash = { path = "facet-hash", version = "0.50.0-rc.5" }
 facet-json = { path = "facet-json", version = "0.50.0-rc.5" }
 facet-json-classics = { path = "facet-json-classics", version = "0.50.0-rc.0" }
 facet-msgpack = { path = "facet-msgpack", version = "0.50.0-rc.5" }
@@ -100,9 +98,7 @@ facet-xml = { path = "facet-xml", version = "0.50.0-rc.5" }
 facet-urlencoded = { path = "facet-urlencoded", version = "0.50.0-rc.5" }
 facet-value = { path = "facet-value", version = "0.50.0-rc.5" }
 facet-yaml = { path = "facet-yaml", version = "0.50.0-rc.5" }
-copypatch = { git = "https://github.com/bearcove/weavy", rev = "743a7abe8f999ab4122df1cc02e2441849210a23", version = "0.2.0-rc.4" }
-taxon = { git = "https://github.com/bearcove/taxon", rev = "c0369bcfceb8e85ccc433bb6478161cd8124c7e3", version = "0.2.0-rc.5" }
-weavy = { git = "https://github.com/bearcove/weavy", rev = "743a7abe8f999ab4122df1cc02e2441849210a23", version = "0.2.2" }
+taxon = "0.2.0-rc.5"
 cstree = { version = "0.14.0", features = ["derive"] }
 strid = { path = "strid", version = "11.0.0-rc.5" }
 strid-macros = { path = "strid-macros", version = "11.0.0-rc.4" }
@@ -296,49 +292,3 @@ opt-level = 3
 
 [profile.dev.package.regex-syntax]
 opt-level = 3
-
-
-[patch.crates-io]
-facet = { path = "facet" }
-facet-core = { path = "facet-core" }
-facet-default = { path = "facet-default" }
-facet-path = { path = "facet-path" }
-facet-pretty = { path = "facet-pretty" }
-facet-reflect = { path = "facet-reflect" }
-facet-solver = { path = "facet-solver" }
-facet-testhelpers = { path = "facet-testhelpers" }
-facet-axum = { path = "facet-axum" }
-facet-cargo-toml = { path = "facet-cargo-toml" }
-facet-urlencoded = { path = "facet-urlencoded" }
-facet-asn1 = { path = "facet-asn1" }
-facet-csv = { path = "facet-csv" }
-facet-dessert = { path = "facet-dessert" }
-facet-dom = { path = "facet-dom" }
-facet-format = { path = "facet-format" }
-facet-format-suite = { path = "facet-format-suite" }
-facet-hash = { path = "facet-hash" }
-facet-json = { path = "facet-json" }
-facet-json-classics = { path = "facet-json-classics" }
-facet-json-schema = { path = "facet-json-schema" }
-facet-lua = { path = "facet-lua" }
-facet-msgpack = { path = "facet-msgpack" }
-facet-postcard = { path = "facet-postcard" }
-facet-python = { path = "facet-python" }
-facet-singularize = { path = "facet-singularize" }
-facet-atom = { path = "facet-atom" }
-facet-svg = { path = "facet-svg" }
-facet-toml = { path = "facet-toml" }
-facet-typescript = { path = "facet-typescript" }
-facet-value = { path = "facet-value" }
-facet-xml = { path = "facet-xml" }
-facet-xml-node = { path = "facet-xml-node" }
-facet-xdr = { path = "facet-xdr" }
-facet-yaml = { path = "facet-yaml" }
-facet-zod = { path = "facet-zod" }
-rusqlite-facet = { path = "rusqlite-facet" }
-rediff = { path = "rediff" }
-strid = { path = "strid" }
-strid-macros = { path = "strid-macros" }
-strid-examples = { path = "strid-examples" }
-
-

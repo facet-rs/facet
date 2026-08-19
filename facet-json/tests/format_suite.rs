@@ -7,19 +7,13 @@ use facet_json::{JsonParser, to_vec};
 use indoc::indoc;
 use libtest_mimic::{Arguments, Failed, Trial};
 
-struct JsonSuite<const WEAVY: bool>;
-type JsonSlice = JsonSuite<false>;
-type JsonWeavySlice = JsonSuite<true>;
+struct JsonSuite;
 
-impl<const WEAVY: bool> FormatSuite for JsonSuite<WEAVY> {
+impl FormatSuite for JsonSuite {
     type Error = DeserializeError;
 
     fn format_name() -> &'static str {
-        if WEAVY {
-            "facet-json/weavy"
-        } else {
-            "facet-json/slice"
-        }
+        "facet-json/slice"
     }
 
     fn highlight_language() -> Option<&'static str> {
@@ -30,10 +24,6 @@ impl<const WEAVY: bool> FormatSuite for JsonSuite<WEAVY> {
     where
         T: Facet<'static> + core::fmt::Debug,
     {
-        if WEAVY {
-            return facet_json::from_slice_weavy(input);
-        }
-
         let mut parser = JsonParser::<false>::new(input);
         let mut de = FormatDeserializer::new_owned(&mut parser);
         de.deserialize_root::<T>()
@@ -44,11 +34,7 @@ impl<const WEAVY: bool> FormatSuite for JsonSuite<WEAVY> {
         for<'facet> T: Facet<'facet>,
         T: core::fmt::Debug,
     {
-        if WEAVY {
-            None
-        } else {
-            Some(to_vec(value).map_err(|e| e.to_string()))
-        }
+        Some(to_vec(value).map_err(|e| e.to_string()))
     }
 
     fn struct_single_field() -> CaseSpec {
@@ -292,11 +278,7 @@ impl<const WEAVY: bool> FormatSuite for JsonSuite<WEAVY> {
 
     fn error_type_mismatch_string_to_int() -> CaseSpec {
         // String provided where integer expected
-        if WEAVY {
-            CaseSpec::expect_error(r#"{"value":"not_a_number"}"#, "out of range")
-        } else {
-            CaseSpec::expect_error(r#"{"value":"not_a_number"}"#, "failed to parse")
-        }
+        CaseSpec::expect_error(r#"{"value":"not_a_number"}"#, "failed to parse")
     }
 
     fn error_type_mismatch_object_to_array() -> CaseSpec {
@@ -406,12 +388,7 @@ impl<const WEAVY: bool> FormatSuite for JsonSuite<WEAVY> {
 
     fn flatten_overlapping_fields_error() -> CaseSpec {
         // Two flattened structs both have a "shared" field - should error
-        let expected = if WEAVY {
-            "duplicate field"
-        } else {
-            "Duplicate field"
-        };
-        CaseSpec::expect_error(r#"{"field_a":"a","field_b":"b","shared":1}"#, expected)
+        CaseSpec::expect_error(r#"{"field_a":"a","field_b":"b","shared":1}"#, "Duplicate field")
     }
 
     fn flatten_multilevel() -> CaseSpec {
@@ -890,8 +867,7 @@ fn main() {
     let args = Arguments::from_args();
     let mut trials: Vec<Trial> = Vec::new();
 
-    push_suite_trials::<JsonSlice>(&mut trials);
-    push_suite_trials::<JsonWeavySlice>(&mut trials);
+    push_suite_trials::<JsonSuite>(&mut trials);
 
     libtest_mimic::run(&args, trials).exit()
 }
@@ -906,9 +882,7 @@ where
 
     for case in &cases {
         let name = format!("{}::{}", S::format_name(), case.id);
-        let skip_reason = case
-            .skip_reason()
-            .or_else(|| weavy_format_suite_skip_reason::<S>(case.id));
+        let skip_reason = case.skip_reason();
         let case = Arc::clone(case);
         let mut trial = Trial::test(name, move || {
             if skip_reason.is_some() {
@@ -928,13 +902,3 @@ where
     }
 }
 
-fn weavy_format_suite_skip_reason<S>(_case_id: &str) -> Option<&'static str>
-where
-    S: FormatSuite,
-{
-    if S::format_name() != JsonWeavySlice::format_name() {
-        return None;
-    }
-
-    None
-}
