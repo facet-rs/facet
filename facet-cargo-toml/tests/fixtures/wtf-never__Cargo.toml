@@ -1,9 +1,0 @@
-[package]
-name = "wtf-never"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-eyre = "0.6.12"
-facet = "0.27.2"
-facet-json = "0.24.3"

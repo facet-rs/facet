@@ -1,8 +1,0 @@
-[workspace]
-resolver = "2"
-members = [
-    "main",
-    "registry-internal",
-    "registry",
-    "plugin",
-]

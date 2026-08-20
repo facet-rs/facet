@@ -19,7 +19,7 @@ cargo add facet-typescript facet-json-schema
 `facet-zod` isn't on crates.io yet — until it lands, depend on it by git:
 
 ```toml
-facet-zod = { git = "https://github.com/facet-rs/facet" }
+facet-zod = { git = "https://github.com/facet-rs/facet-format" }
 ```
 
 Each is a single call over a `Facet` type.
@@ -63,7 +63,7 @@ let code = gen.finish();
 
 ## Zod schemas
 
-[`facet-zod`](https://github.com/facet-rs/facet/tree/main/facet-zod) emits
+[`facet-zod`](https://github.com/facet-rs/facet-format/tree/main/facet-zod) emits
 [Zod](https://zod.dev) schemas — runtime validation *and* inferred TS types in
 one:
 
@@ -113,5 +113,5 @@ for Python projects.
 
 ## Related
 
-- [JSON](/facet-json/guide/) — serialize the very types you generated schemas for
+- [JSON](https://docs.rs/facet-json) — serialize the very types you generated schemas for
 - [Ecosystem](/ecosystem/) — the full schema & codegen group

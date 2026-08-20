@@ -96,6 +96,6 @@ printer for a `String` directly.
 ## Related
 
 - [facet-error](/facet-error/guide/) — derive displayable error types from doc comments
-- [facet-json](/facet-json/guide/) — serialize the same values as JSON
+- [facet-json](https://docs.rs/facet-json) — serialize the same values as JSON
 - [facet-validate](/facet-validate/guide/) — reject invalid values before printing them
 - [Ecosystem](/ecosystem/) — diagnostics, derive plugins, and format crates

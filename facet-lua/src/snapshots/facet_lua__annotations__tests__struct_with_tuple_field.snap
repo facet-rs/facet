@@ -1,6 +1,0 @@
----
-source: facet-lua/src/annotations.rs
-expression: lua
----
----@class Container
----@field coordinates [integer, integer]

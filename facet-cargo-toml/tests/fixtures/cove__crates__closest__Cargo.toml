@@ -1,7 +1,0 @@
-[package]
-name = "closest"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-strsim = "0.11.1"

@@ -87,6 +87,6 @@ pretty-printed, or sent over RPC like any other facet value.
 ## Related
 
 - [facet-pretty](/facet-pretty/guide/) — render errors and context as structured text
-- [facet-json](/facet-json/guide/) — serialize facet-shaped errors when that is part of your protocol
+- [facet-json](https://docs.rs/facet-json) — serialize facet-shaped errors when that is part of your protocol
 - [figue](https://github.com/bearcove/figue) — pair typed config with typed failures
 - [Ecosystem](/ecosystem/) — derive plugins and companion crates

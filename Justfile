@@ -74,17 +74,6 @@ leaks *args:
     MallocStackLogging=1 CARGO_TARGET_DIR=target/leaks \
         cargo nextest run --profile leaks -p facet-reflect {{ args }}
 
-fuzz-smoke-value:
-    cargo fuzz run fuzz_value -- -runs=1000
-
-fuzz-smoke-inline:
-    cargo fuzz run fuzz_inline_string -- -runs=1000
-
-afl-build-postcard:
-    cd ../facet-format/facet-postcard/fuzz-afl && cargo afl build --bin from_slice
-
-afl-fuzz-postcard:
-    cd ../facet-format/facet-postcard/fuzz-afl && mkdir -p in out && cargo afl fuzz -i in -o out target/debug/from_slice
 
 test-ci *args:
     #!/usr/bin/env -S bash -euo pipefail
@@ -109,12 +98,6 @@ miri *args:
     source miri-env.sh
     cargo miri nextest run --target-dir target/miri -p facet-reflect -p facet-core --features facet-core/bytes {{ args }}
 
-miri-json *args:
-    #!/usr/bin/env -S bash -euo pipefail
-    source miri-env.sh
-    # Exclude tendril tests (integer-to-pointer casts)
-    cd ../facet-format
-    cargo miri nextest run --target-dir target/miri -p facet-json -E 'not test(/tendril/)' {{ args }}
 
 miri-ci *args:
     #!/usr/bin/env -S bash -euxo pipefail

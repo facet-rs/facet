@@ -1,7 +1,0 @@
-[package]
-name = "facet-failing"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-facet = { git = "https://github.com/facet-rs/facet", version = "0.8.1", features = ["reflect"] }

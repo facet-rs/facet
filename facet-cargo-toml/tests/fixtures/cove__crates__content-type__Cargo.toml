@@ -1,9 +1,0 @@
-[package]
-name = "content-type"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-facet = { workspace = true }
-
-[features]

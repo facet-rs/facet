@@ -415,5 +415,5 @@ pub enum KeyResult<'a> {
 ## Next steps
 
 - See [Build a Format Crate](@/extend/format-crate.md) for the full architecture
-- Check the [facet-json source](https://github.com/facet-rs/facet/tree/main/facet-json) for a real integration
+- Check the [facet-json source](https://github.com/facet-rs/facet-format/tree/main/facet-json) for a real integration
 - Read about [Partial](@/extend/partial.md) for constructing values after disambiguation

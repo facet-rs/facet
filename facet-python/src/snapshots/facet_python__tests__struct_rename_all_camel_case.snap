@@ -1,8 +1,0 @@
----
-source: facet-python/src/lib.rs
-expression: py
----
-class ApiResponse(TypedDict, total=False):
-    userName: Required[str]
-    createdAt: Required[str]
-    isActive: Required[bool]
