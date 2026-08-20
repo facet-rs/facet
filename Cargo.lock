@@ -733,7 +733,7 @@ dependencies = [
 
 [[package]]
 name = "facet"
-version = "0.50.0-rc.6"
+version = "0.50.0-rc.7"
 dependencies = [
  "autocfg",
  "facet-core",
@@ -751,7 +751,7 @@ dependencies = [
 
 [[package]]
 name = "facet-core"
-version = "0.50.0-rc.6"
+version = "0.50.0-rc.7"
 dependencies = [
  "autocfg",
  "bstr",
@@ -789,21 +789,21 @@ dependencies = [
 
 [[package]]
 name = "facet-default"
-version = "0.50.0-rc.6"
+version = "0.50.0-rc.7"
 dependencies = [
  "facet",
 ]
 
 [[package]]
 name = "facet-error"
-version = "0.50.0-rc.6"
+version = "0.50.0-rc.7"
 dependencies = [
  "facet",
 ]
 
 [[package]]
 name = "facet-macro-parse"
-version = "0.50.0-rc.6"
+version = "0.50.0-rc.7"
 dependencies = [
  "facet-macro-types",
  "proc-macro2",
@@ -812,7 +812,7 @@ dependencies = [
 
 [[package]]
 name = "facet-macro-types"
-version = "0.50.0-rc.6"
+version = "0.50.0-rc.7"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -821,14 +821,14 @@ dependencies = [
 
 [[package]]
 name = "facet-macros"
-version = "0.50.0-rc.6"
+version = "0.50.0-rc.7"
 dependencies = [
  "facet-macros-impl",
 ]
 
 [[package]]
 name = "facet-macros-impl"
-version = "0.50.0-rc.6"
+version = "0.50.0-rc.7"
 dependencies = [
  "facet-macro-parse",
  "facet-macro-types",
@@ -840,7 +840,7 @@ dependencies = [
 
 [[package]]
 name = "facet-path"
-version = "0.50.0-rc.6"
+version = "0.50.0-rc.7"
 dependencies = [
  "facet",
  "facet-core",
@@ -850,7 +850,7 @@ dependencies = [
 
 [[package]]
 name = "facet-pretty"
-version = "0.50.0-rc.6"
+version = "0.50.0-rc.7"
 dependencies = [
  "camino",
  "facet",
@@ -865,7 +865,7 @@ dependencies = [
 
 [[package]]
 name = "facet-reflect"
-version = "0.50.0-rc.6"
+version = "0.50.0-rc.7"
 dependencies = [
  "eyre",
  "facet",
@@ -893,7 +893,7 @@ dependencies = [
 
 [[package]]
 name = "facet-solver"
-version = "0.50.0-rc.6"
+version = "0.50.0-rc.7"
 dependencies = [
  "codspeed-divan-compat",
  "facet",
@@ -914,7 +914,7 @@ dependencies = [
 
 [[package]]
 name = "facet-testhelpers"
-version = "0.50.0-rc.6"
+version = "0.50.0-rc.7"
 dependencies = [
  "color-backtrace",
  "facet-testhelpers-macros",
@@ -925,7 +925,7 @@ dependencies = [
 
 [[package]]
 name = "facet-testhelpers-macros"
-version = "0.50.0-rc.6"
+version = "0.50.0-rc.7"
 dependencies = [
  "quote",
  "unsynn",
@@ -933,7 +933,7 @@ dependencies = [
 
 [[package]]
 name = "facet-validate"
-version = "0.50.0-rc.6"
+version = "0.50.0-rc.7"
 dependencies = [
  "facet",
  "facet-core",
