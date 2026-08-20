@@ -71,29 +71,29 @@ keywords = ["reflection", "serialization", "deserialization"]
 categories = ["encoding", "development-tools"]
 
 [workspace.dependencies]
-facet = { path = "facet", version = "0.50.0-rc.5" }
-facet-core = { path = "facet-core", version = "0.50.0-rc.5" }
-facet-default = { path = "facet-default", version = "0.50.0-rc.5" }
-facet-dessert = { path = "facet-dessert", version = "0.50.0-rc.5" }
-facet-dom = { path = "facet-dom", version = "0.50.0-rc.5" }
-facet-error = { path = "facet-error", version = "0.50.0-rc.5" }
-facet-format = { path = "facet-format", version = "0.50.0-rc.5" }
+facet = { path = "facet", version = "0.50.0-rc.6" }
+facet-core = { path = "facet-core", version = "0.50.0-rc.6" }
+facet-default = { path = "facet-default", version = "0.50.0-rc.6" }
+facet-dessert = { path = "facet-dessert", version = "0.50.0-rc.6" }
+facet-dom = { path = "facet-dom", version = "0.50.0-rc.6" }
+facet-error = { path = "facet-error", version = "0.50.0-rc.6" }
+facet-format = { path = "facet-format", version = "0.50.0-rc.6" }
 facet-format-suite = { path = "facet-format-suite", version = "0.50.0-rc.0" }
-facet-json = { path = "facet-json", version = "0.50.0-rc.5" }
+facet-json = { path = "facet-json", version = "0.50.0-rc.6" }
 facet-json-classics = { path = "facet-json-classics", version = "0.50.0-rc.0" }
-facet-msgpack = { path = "facet-msgpack", version = "0.50.0-rc.5" }
-facet-path = { path = "facet-path", version = "0.50.0-rc.5" }
-facet-postcard = { path = "facet-postcard", version = "0.50.0-rc.5" }
-facet-pretty = { path = "facet-pretty", version = "0.50.0-rc.5" }
-facet-reflect = { path = "facet-reflect", version = "0.50.0-rc.5" }
-facet-singularize = { path = "facet-singularize", version = "0.50.0-rc.5" }
-facet-solver = { path = "facet-solver", version = "0.50.0-rc.5" }
-facet-testhelpers = { path = "facet-testhelpers", version = "0.50.0-rc.5" }
-facet-toml = { path = "facet-toml", version = "0.50.0-rc.5" }
-facet-xml = { path = "facet-xml", version = "0.50.0-rc.5" }
-facet-urlencoded = { path = "facet-urlencoded", version = "0.50.0-rc.5" }
-facet-value = { path = "facet-value", version = "0.50.0-rc.5" }
-facet-yaml = { path = "facet-yaml", version = "0.50.0-rc.5" }
+facet-msgpack = { path = "facet-msgpack", version = "0.50.0-rc.6" }
+facet-path = { path = "facet-path", version = "0.50.0-rc.6" }
+facet-postcard = { path = "facet-postcard", version = "0.50.0-rc.6" }
+facet-pretty = { path = "facet-pretty", version = "0.50.0-rc.6" }
+facet-reflect = { path = "facet-reflect", version = "0.50.0-rc.6" }
+facet-singularize = { path = "facet-singularize", version = "0.50.0-rc.6" }
+facet-solver = { path = "facet-solver", version = "0.50.0-rc.6" }
+facet-testhelpers = { path = "facet-testhelpers", version = "0.50.0-rc.6" }
+facet-toml = { path = "facet-toml", version = "0.50.0-rc.6" }
+facet-xml = { path = "facet-xml", version = "0.50.0-rc.6" }
+facet-urlencoded = { path = "facet-urlencoded", version = "0.50.0-rc.6" }
+facet-value = { path = "facet-value", version = "0.50.0-rc.6" }
+facet-yaml = { path = "facet-yaml", version = "0.50.0-rc.6" }
 taxon = "0.2.0-rc.5"
 cstree = { version = "0.14.0", features = ["derive"] }
 arborium = { version = "^2.4.5", default-features = false, features = [
