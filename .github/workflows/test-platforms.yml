@@ -63,9 +63,13 @@ jobs:
         run: cargo nextest run --features ci --workspace --no-fail-fast
 
   windows:
-    name: Windows (advisory)
+    name: Windows (${{ matrix.partition }}) (advisory)
     continue-on-error: true
     runs-on: windows-2025
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: ["1/3", "2/3", "3/3"]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
@@ -82,4 +86,7 @@ jobs:
         shell: bash
         env:
           PROPTEST_CASES: 0
-        run: cargo nextest run --features ci --workspace --no-fail-fast
+        run: >-
+          cargo nextest run --features ci --workspace --no-fail-fast
+          --partition hash:${{ matrix.partition }}
+          -E 'all()'

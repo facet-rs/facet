@@ -33,6 +33,11 @@ jobs:
 
   miri:
     runs-on: blacksmith-16vcpu-ubuntu-2404
+    name: Miri (${{ matrix.partition }})
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: ["1/3", "2/3", "3/3"]
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-miri-amd64
     steps:
@@ -41,7 +46,7 @@ jobs:
       - name: Run Miri
         env:
           CI: "true"
-        run: just miri
+        run: just miri --partition hash:${{ matrix.partition }}
 
   nightly:
     runs-on: blacksmith-2vcpu-ubuntu-2404
