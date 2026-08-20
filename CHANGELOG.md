@@ -7,6 +7,219 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.50.0-rc.6](https://github.com/facet-rs/facet/compare/facet-cargo-toml-v0.50.0-rc.5...facet-cargo-toml-v0.50.0-rc.6) - 2026-08-20
+
+### Other
+
+- facet-cargo-toml/LICENSE-MIT was a saved 404 page, not a license
+- enforce LF via .gitattributes; renormalize 13 CRLF-salted files
+
+## [0.50.0-rc.6](https://github.com/facet-rs/facet/compare/rediff-v0.50.0-rc.5...rediff-v0.50.0-rc.6) - 2026-08-20
+
+### Fixed
+
+- stop using `type_identifier` as a type classifier
+- *(facet-core)* [**breaking**] `Attr`'s pub fields were a safe, unchecked constructor ([#1573](https://github.com/facet-rs/facet/pull/1573))
+
+## [0.50.0-rc.6](https://github.com/facet-rs/facet/compare/facet-lua-v0.50.0-rc.5...facet-lua-v0.50.0-rc.6) - 2026-08-20
+
+### Other
+
+- Add IndexSet facet support
+
+## [0.50.0-rc.6](https://github.com/facet-rs/facet/compare/facet-asn1-v0.50.0-rc.5...facet-asn1-v0.50.0-rc.6) - 2026-08-20
+
+### Other
+
+- Add IndexSet facet support
+
+## [0.50.0-rc.6](https://github.com/facet-rs/facet/compare/facet-axum-v0.50.0-rc.5...facet-axum-v0.50.0-rc.6) - 2026-08-20
+
+### Other
+
+- update Cargo.toml dependencies
+
+## [0.50.0-rc.6](https://github.com/facet-rs/facet/compare/facet-yaml-v0.50.0-rc.5...facet-yaml-v0.50.0-rc.6) - 2026-08-20
+
+### Other
+
+- Add IndexSet facet support
+
+## [0.50.0-rc.6](https://github.com/facet-rs/facet/compare/facet-xml-v0.50.0-rc.5...facet-xml-v0.50.0-rc.6) - 2026-08-20
+
+### Fixed
+
+- *(facet-core)* [**breaking**] `Attr`'s pub fields were a safe, unchecked constructor ([#1573](https://github.com/facet-rs/facet/pull/1573))
+
+## [0.50.0-rc.6](https://github.com/facet-rs/facet/compare/facet-dom-v0.50.0-rc.5...facet-dom-v0.50.0-rc.6) - 2026-08-20
+
+### Fixed
+
+- stop using `type_identifier` as a type classifier
+- *(facet-core)* [**breaking**] `Attr`'s pub fields were a safe, unchecked constructor ([#1573](https://github.com/facet-rs/facet/pull/1573))
+
+## [0.50.0-rc.6](https://github.com/facet-rs/facet/compare/facet-singularize-v0.50.0-rc.5...facet-singularize-v0.50.0-rc.6) - 2026-08-20
+
+### Other
+
+- update Cargo.lock dependencies
+
+## [0.50.0-rc.6](https://github.com/facet-rs/facet/compare/facet-toml-v0.50.0-rc.5...facet-toml-v0.50.0-rc.6) - 2026-08-20
+
+### Other
+
+- Add IndexSet facet support
+
+## [0.50.0-rc.6](https://github.com/facet-rs/facet/compare/facet-value-v0.50.0-rc.5...facet-value-v0.50.0-rc.6) - 2026-08-20
+
+### Fixed
+
+- *(facet-value)* Properly deserialize tuple structs in a way that can round-trip them
+
+## [0.50.0-rc.6](https://github.com/facet-rs/facet/compare/facet-msgpack-v0.50.0-rc.5...facet-msgpack-v0.50.0-rc.6) - 2026-08-20
+
+### Other
+
+- Add IndexSet facet support
+
+## [0.50.0-rc.6](https://github.com/facet-rs/facet/compare/facet-json-v0.50.0-rc.5...facet-json-v0.50.0-rc.6) - 2026-08-20
+
+### Fixed
+
+- *(consumers)* treat DEP_WEAVY_JIT zero as inactive
+- remove stale downstream jit wording
+
+### Other
+
+- remove dead weavy-only parser/scanner surface
+- drop weavy from facet-json and thin the workspace
+- finish thinning Facet after extraction
+- enforce LF via .gitattributes; renormalize 13 CRLF-salted files
+- Add optional bstr Facet support ([#2469](https://github.com/facet-rs/facet/pull/2469))
+- Add Facet support for indexmap::IndexSet ([#2467](https://github.com/facet-rs/facet/pull/2467))
+- Fix flatten through transparent wrappers ([#2423](https://github.com/facet-rs/facet/pull/2423))
+- Respect proxies for serialized map keys ([#2464](https://github.com/facet-rs/facet/pull/2464))
+- rederive Weavy single-feature JIT ownership
+- fix collapsible_match clippy lint
+
+## [0.50.0-rc.6](https://github.com/facet-rs/facet/compare/facet-format-v0.50.0-rc.5...facet-format-v0.50.0-rc.6) - 2026-08-20
+
+### Fixed
+
+- stop using `type_identifier` as a type classifier
+
+### Other
+
+- WIP stack: 2415
+- Respect proxies for serialized map keys
+
+## [0.50.0-rc.6](https://github.com/facet-rs/facet/compare/facet-urlencoded-v0.50.0-rc.5...facet-urlencoded-v0.50.0-rc.6) - 2026-08-20
+
+### Other
+
+- keep UnsupportedType variant, deprecated, for API compatibility
+- select by type not shape def
+- add more scalar types to urlencoded
+
+## [0.50.0-rc.6](https://github.com/facet-rs/facet/compare/facet-solver-v0.50.0-rc.5...facet-solver-v0.50.0-rc.6) - 2026-08-20
+
+### Other
+
+- flatten a transparent type does not work
+
+## [0.50.0-rc.6](https://github.com/facet-rs/facet/compare/facet-error-v0.50.0-rc.5...facet-error-v0.50.0-rc.6) - 2026-08-20
+
+### Other
+
+- finish thinning Facet after extraction
+
+## [0.50.0-rc.6](https://github.com/facet-rs/facet/compare/facet-pretty-v0.50.0-rc.5...facet-pretty-v0.50.0-rc.6) - 2026-08-20
+
+### Fixed
+
+- stop using `type_identifier` as a type classifier
+- *(facet-core)* [**breaking**] `Attr`'s pub fields were a safe, unchecked constructor ([#1573](https://github.com/facet-rs/facet/pull/1573))
+
+## [0.50.0-rc.6](https://github.com/facet-rs/facet/compare/facet-default-v0.50.0-rc.5...facet-default-v0.50.0-rc.6) - 2026-08-20
+
+### Other
+
+- finish thinning Facet after extraction
+- f32 literal-default repros from #2473
+
+## [0.50.0-rc.6](https://github.com/facet-rs/facet/compare/facet-v0.50.0-rc.5...facet-v0.50.0-rc.6) - 2026-08-20
+
+### Added
+
+- *(facet-macros-impl)* add `list(shape_type)` attr-grammar payload kind
+
+### Fixed
+
+- *(facet-macros-impl)* address review — generic types and unhappy-path test
+- *(facet-core)* [**breaking**] `OpaqueBorrow` names itself, so rejections can say which
+- *(facet-core)* [**breaking**] `Attr`'s pub fields were a safe, unchecked constructor ([#1573](https://github.com/facet-rs/facet/pull/1573))
+
+### Other
+
+- finish thinning Facet after extraction
+- enforce LF via .gitattributes; renormalize 13 CRLF-salted files
+- ReprAffinity — semantic shape hints, starting with ByteString
+- Add optional bstr Facet support ([#2469](https://github.com/facet-rs/facet/pull/2469))
+- Add bstr facet support
+
+## [0.50.0-rc.6](https://github.com/facet-rs/facet/compare/facet-reflect-v0.50.0-rc.5...facet-reflect-v0.50.0-rc.6) - 2026-08-20
+
+### Fixed
+
+- *(facet-core)* [**breaking**] `OpaqueBorrow` names itself, so rejections can say which
+- *(facet-core)* `Display for Shape` transmuted `&self` to `&'static Shape` on a false SAFETY claim
+- *(facet-core)* [**breaking**] `Attr`'s pub fields were a safe, unchecked constructor ([#1573](https://github.com/facet-rs/facet/pull/1573)) ([#2608](https://github.com/facet-rs/facet/pull/2608))
+- *(facet-core)* [**breaking**] `Attr`'s pub fields were a safe, unchecked constructor ([#1573](https://github.com/facet-rs/facet/pull/1573))
+- *(facet-core)* `Bivariant` was doubling as "unknown", handing safe code dangling references
+
+### Other
+
+- accept architecture-decorated Attr diagnostics
+- flatten a transparent type does not work
+- fix collapsible_match clippy lints
+
+## [0.50.0-rc.6](https://github.com/facet-rs/facet/compare/facet-macros-impl-v0.50.0-rc.5...facet-macros-impl-v0.50.0-rc.6) - 2026-08-20
+
+### Added
+
+- *(facet-macros-impl)* add `list(shape_type)` attr-grammar payload kind
+
+### Fixed
+
+- *(facet-macros-impl)* address review — generic types and unhappy-path test
+- *(facet-core)* [**breaking**] `Attr`'s pub fields were a safe, unchecked constructor ([#1573](https://github.com/facet-rs/facet/pull/1573))
+
+### Other
+
+- Fix opaque proxy enums with lifetimes
+- rustfmt facet-macros + gingembre
+
+## [0.50.0-rc.6](https://github.com/facet-rs/facet/compare/facet-core-v0.50.0-rc.5...facet-core-v0.50.0-rc.6) - 2026-08-20
+
+### Fixed
+
+- *(facet-core)* [**breaking**] `OpaqueBorrow` names itself, so rejections can say which
+- *(facet-core)* `Display for Shape` transmuted `&self` to `&'static Shape` on a false SAFETY claim
+- *(facet-core)* [**breaking**] `Attr`'s pub fields were a safe, unchecked constructor ([#1573](https://github.com/facet-rs/facet/pull/1573)) ([#2608](https://github.com/facet-rs/facet/pull/2608))
+- *(facet-core)* [**breaking**] `Attr`'s pub fields were a safe, unchecked constructor ([#1573](https://github.com/facet-rs/facet/pull/1573))
+- *(facet-core)* `Bivariant` was doubling as "unknown", handing safe code dangling references
+
+### Other
+
+- *(facet-core)* say that `type_identifier` is a display token
+- correct test path in variance default comment
+- enforce LF via .gitattributes; renormalize 13 CRLF-salted files
+- ReprAffinity — semantic shape hints, starting with ByteString
+- complete the scalar try_from matrix — floats convert like integers
+- Add optional bstr Facet support ([#2469](https://github.com/facet-rs/facet/pull/2469))
+- Add Facet support for indexmap::IndexSet ([#2467](https://github.com/facet-rs/facet/pull/2467))
+- Add IndexSet facet support
+
 ## [0.2.2](https://github.com/facet-rs/facet/compare/weavy-v0.2.1...weavy-v0.2.2) - 2026-06-28
 
 ### Other
