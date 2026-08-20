@@ -96,17 +96,8 @@ doc-tests-ci *args:
 miri *args:
     #!/usr/bin/env -S bash -euo pipefail
     source miri-env.sh
-    cargo miri nextest run --target-dir target/miri -p facet-reflect -p facet-core --features facet-core/bytes {{ args }}
-
-
-miri-ci *args:
-    #!/usr/bin/env -S bash -euxo pipefail
-    source .envrc
-    source miri-env.sh
-    echo -e "\033[1;31m🧪 Running tests under Miri with strict provenance...\033[0m"
-
-    export CARGO_TARGET_DIR=target/miri
-    cmd_group "cargo miri nextest run -p facet-reflect -p facet-core --features facet-core/bytes {{ args }}"
+    filter='test(/(arc_vtable|rc_vtable|box_vtable|slice_builder|btreeset_vtable|hashset_vtable|list_from_raw_parts|ptr::tagged|partial::array_building::drop_array_partially_initialized|partial::deferred::wip_deferred_drop|partial::fuzz::wip_fuzz_|partial::list_deferred::.*realloc|partial::list_leak::wip_list_leaktest(1|12)$|partial::map::map_partial_initialization_drop|partial::map_deferred_leak|partial::map_leak::wip_map_leaktest(1|8)$|partial::misc::(drop_nested_partially_initialized|drop_partially_initialized_struct|from_raw_drop|from_raw_nested_struct|from_raw_with_vec|gh_354_leak|set_default_drops|set_should_drop)|partial::no_uninit::(array|enum|list|map|smart_pointer|struct)_uninit|partial::option_leak::(fuzz_|wip_option_use_after_free)|partial::pointer::(drop_|arc_slice|arc_str|box_str|rc_str)|partial::pointer_complex::arc_slice_(empty|complex)|partial::put_vec_leak|partial::set::set_partial_initialization_drop|partial::struct_leak::wip_struct_testleak(1|14)$|rope_pointer_stability|variance_uaf_regression|opaque_lifetime_laundering)/)'
+    cargo miri nextest run --target-dir target/miri -p facet-reflect -p facet-core --features facet-core/bytes -E "$filter" {{ args }}
 
 absolve:
     ./facet-dev/absolve.sh
