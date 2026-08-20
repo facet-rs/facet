@@ -79,7 +79,7 @@ it short and specific.
 
 ## Related
 
-- [facet-json](/facet-json/guide/) — deserialize external data into facet-shaped values
+- [facet-json](https://docs.rs/facet-json) — deserialize external data into facet-shaped values
 - [facet-default](/facet-default/guide/) — combine defaults with validation constraints
 - [facet-error](/facet-error/guide/) — model validation failures as typed errors when needed
 - [Ecosystem](/ecosystem/) — other facet derive plugins and format crates

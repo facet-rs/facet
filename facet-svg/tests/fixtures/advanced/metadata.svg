@@ -1,5 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100" preserveAspectRatio="xMidYMid meet" version="1.1">
-  <title>Test SVG</title>
-  <desc>A test SVG document</desc>
-  <rect x="10" y="10" width="80" height="80" fill="red" opacity="0.8" stroke="black" stroke-width="2"/>
-</svg>

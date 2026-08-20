@@ -16,14 +16,10 @@ concurrency:
 
 jobs:
   workspace:
-    name: Workspace (${{ matrix.partition }})
+    name: Linux x86_64
     runs-on: blacksmith-4vcpu-ubuntu-2404
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
-    strategy:
-      fail-fast: false
-      matrix:
-        partition: ["1/3", "2/3", "3/3"]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
@@ -42,10 +38,7 @@ jobs:
         shell: bash
         env:
           PROPTEST_CASES: 0
-        run: >-
-          cargo nextest run --workspace --features ci --no-fail-fast
-          --partition hash:${{ matrix.partition }}
-          -E 'all()'
+        run: cargo nextest run --workspace --features ci --no-fail-fast
 
   quality:
     name: Clippy, docs, and lockfile
@@ -94,15 +87,11 @@ jobs:
         with:
           manifest-path: Cargo.toml
           baseline-rev: origin/main
-          exclude: facet-testattrs, facet-cargo-toml, facet-axum, rusqlite-facet, rediff, facet-dessert, facet-format, facet-json, facet-json-classics, facet-postcard, facet-msgpack, facet-toml, facet-yaml, facet-format-suite, facet-asn1, facet-csv, facet-xdr, facet-json-schema, facet-typescript, facet-python, facet-lua, facet-value, facet-hash, facet-zod, facet-singularize, facet-dom, facet-xml, facet-xml-node, facet-atom, facet-svg
+          exclude: facet-testattrs, facet-showcase
           verbose: true
   macos:
-    name: macOS (${{ matrix.partition }})
+    name: macOS
     runs-on: macos-26
-    strategy:
-      fail-fast: false
-      matrix:
-        partition: ["1/3", "2/3", "3/3"]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
@@ -117,10 +106,7 @@ jobs:
       - name: Run macOS tests
         env:
           PROPTEST_CASES: 0
-        run: >-
-          cargo nextest run --features ci --workspace --no-fail-fast
-          --partition hash:${{ matrix.partition }}
-          -E 'all()'
+        run: cargo nextest run --features ci --workspace --no-fail-fast
 
   linux-arm64:
     name: Linux ARM64 (advisory)
@@ -146,13 +132,9 @@ jobs:
         run: cargo nextest run --features ci --workspace --no-fail-fast
 
   windows:
-    name: Windows (${{ matrix.partition }}) (advisory)
+    name: Windows (advisory)
     continue-on-error: true
     runs-on: windows-2025
-    strategy:
-      fail-fast: false
-      matrix:
-        partition: ["1/3", "2/3", "3/3"]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
@@ -169,10 +151,7 @@ jobs:
         shell: bash
         env:
           PROPTEST_CASES: 0
-        run: >-
-          cargo nextest run --features ci --workspace --no-fail-fast
-          --partition hash:${{ matrix.partition }}
-          -E 'all()'
+        run: cargo nextest run --features ci --workspace --no-fail-fast
   nostd:
     runs-on: blacksmith-2vcpu-ubuntu-2404
     container:
@@ -191,20 +170,16 @@ jobs:
 
   miri:
     runs-on: blacksmith-16vcpu-ubuntu-2404
-    name: Miri (${{ matrix.partition }})
-    strategy:
-      fail-fast: false
-      matrix:
-        partition: ["1/3", "2/3", "3/3"]
+    name: Miri
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-miri-amd64
     steps:
       - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
-      - name: Run Miri
+      - name: Run targeted Miri suite
         env:
           CI: "true"
-        run: just miri --partition hash:${{ matrix.partition }}
+        run: just miri
 
   nightly:
     runs-on: blacksmith-2vcpu-ubuntu-2404

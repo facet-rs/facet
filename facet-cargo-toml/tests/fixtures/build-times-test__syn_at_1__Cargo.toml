@@ -1,7 +1,0 @@
-[package]
-name = "syn_at_1"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-syn = { version = "1", features = ["full"] }

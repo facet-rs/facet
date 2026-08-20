@@ -1,5 +1,0 @@
----
-source: facet-python/src/lib.rs
-expression: py
----
-UserId = int

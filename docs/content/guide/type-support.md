@@ -267,5 +267,5 @@ Some format crates also support `no_std`:
 ## Related
 
 - [Ecosystem map](/ecosystem/) — the full constellation of facet crates
-- [JSON guide](/facet-json/guide/) — serializing types that include third-party fields
+- [JSON guide](https://docs.rs/facet-json) — serializing types that include third-party fields
 - [Attributes reference](/reference/) — all `#[facet(...)]` attributes in one place

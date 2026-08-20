@@ -1,5 +1,0 @@
----
-source: facet-lua/src/annotations.rs
-expression: lua
----
----@alias Point [number, number]

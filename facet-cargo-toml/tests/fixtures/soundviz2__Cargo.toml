@@ -1,9 +1,0 @@
-[package]
-name = "soundviz2"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-cpal = "0.15.3"
-itertools = "0.14.0"
-symphonia = "0.5.4"

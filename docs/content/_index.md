@@ -38,13 +38,13 @@ The reflection core is the foundation; these projects build useful things on
 top of it. Pick the one that matches the job in front of you.
 
 <div class="section-grid">
-<a class="section-card" href="/facet-json/guide/"><span>facet-json →</span><small>Serialize and deserialize Facet types as JSON, with span-aware errors.</small></a>
+<a class="section-card" href="https://docs.rs/facet-json"><span>facet-json →</span><small>Serialize and deserialize Facet types as JSON, with span-aware errors.</small></a>
 <a class="section-card" href="https://github.com/bearcove/figue"><span>figue →</span><small>Read CLI args, environment variables, config files, and defaults into one type.</small></a>
 <a class="section-card" href="/facet-pretty/guide/"><span>facet-pretty →</span><small>Pretty-print Facet values with structure, color, and sensitive-field redaction.</small></a>
-<a class="section-card" href="/rediff/"><span>rediff →</span><small>Compare Facet values structurally and get path-aware difference reports.</small></a>
-<a class="section-card" href="/facet-axum/"><span>facet-axum →</span><small>Use Facet-backed extractors and responses at axum web boundaries.</small></a>
-<a class="section-card" href="/rusqlite-facet/"><span>rusqlite-facet →</span><small>Bind SQLite query parameters and map rows through Facet-reflected structs.</small></a>
-<a class="section-card" href="/facet-cargo-toml/"><span>facet-cargo-toml →</span><small>Parse Cargo manifests and lockfiles into typed Rust models.</small></a>
+<a class="section-card" href="https://github.com/bearcove/rediff"><span>rediff →</span><small>Compare Facet values structurally and get path-aware difference reports.</small></a>
+<a class="section-card" href="https://docs.rs/facet-axum"><span>facet-axum →</span><small>Use Facet-backed extractors and responses at axum web boundaries.</small></a>
+<a class="section-card" href="https://docs.rs/rusqlite-facet"><span>rusqlite-facet →</span><small>Bind SQLite query parameters and map rows through Facet-reflected structs.</small></a>
+<a class="section-card" href="https://docs.rs/facet-cargo-toml"><span>facet-cargo-toml →</span><small>Parse Cargo manifests and lockfiles into typed Rust models.</small></a>
 <a class="section-card" href="https://github.com/bearcove/styx"><span>Styx →</span><small>Write typed documents with minimal punctuation and one obvious meaning.</small></a>
 <a class="section-card" href="https://github.com/bearcove/picante"><span>picante →</span><small>Build Tokio-first incremental queries with memoization and dependency tracking.</small></a>
 <a class="section-card" href="https://github.com/bearcove/dibs"><span>dibs →</span><small>Model Postgres schemas as Rust and queries as Styx, with migrations included.</small></a>

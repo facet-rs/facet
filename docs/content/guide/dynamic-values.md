@@ -272,5 +272,5 @@ assert_same!(payload, expected);
 
 - [Assertions showcase](/showcases/assert/) — more `assert_same!` examples
 - [facet-value on docs.rs](https://docs.rs/facet-value) — full API reference
-- [JSON guide](/facet-json/guide/) — `RawJson` and span-aware errors in depth
+- [JSON guide](https://docs.rs/facet-json) — `RawJson` and span-aware errors in depth
 - [Variance and soundness](/guide/variance/) — why `Peek` is invariant over lifetimes
