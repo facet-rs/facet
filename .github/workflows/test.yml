@@ -90,12 +90,8 @@ jobs:
           exclude: facet-testattrs, facet-showcase
           verbose: true
   macos:
-    name: macOS (${{ matrix.partition }})
+    name: macOS
     runs-on: macos-26
-    strategy:
-      fail-fast: false
-      matrix:
-        partition: ["1/3", "2/3", "3/3"]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
@@ -110,10 +106,7 @@ jobs:
       - name: Run macOS tests
         env:
           PROPTEST_CASES: 0
-        run: >-
-          cargo nextest run --features ci --workspace --no-fail-fast
-          --partition hash:${{ matrix.partition }}
-          -E 'all()'
+        run: cargo nextest run --features ci --workspace --no-fail-fast
 
   linux-arm64:
     name: Linux ARM64 (advisory)
@@ -139,13 +132,9 @@ jobs:
         run: cargo nextest run --features ci --workspace --no-fail-fast
 
   windows:
-    name: Windows (${{ matrix.partition }}) (advisory)
+    name: Windows (advisory)
     continue-on-error: true
     runs-on: windows-2025
-    strategy:
-      fail-fast: false
-      matrix:
-        partition: ["1/3", "2/3", "3/3"]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
@@ -162,10 +151,7 @@ jobs:
         shell: bash
         env:
           PROPTEST_CASES: 0
-        run: >-
-          cargo nextest run --features ci --workspace --no-fail-fast
-          --partition hash:${{ matrix.partition }}
-          -E 'all()'
+        run: cargo nextest run --features ci --workspace --no-fail-fast
   nostd:
     runs-on: blacksmith-2vcpu-ubuntu-2404
     container:
