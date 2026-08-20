@@ -11,6 +11,100 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Other
 
+- release
+- extract formats and integrations
+
+## [0.50.0-rc.7](https://github.com/facet-rs/facet/compare/facet-solver-v0.50.0-rc.6...facet-solver-v0.50.0-rc.7) - 2026-08-20
+
+### Other
+
+- release
+
+## [0.50.0-rc.7](https://github.com/facet-rs/facet/compare/facet-error-v0.50.0-rc.6...facet-error-v0.50.0-rc.7) - 2026-08-20
+
+### Other
+
+- release
+- extract formats and integrations
+
+## [0.50.0-rc.7](https://github.com/facet-rs/facet/compare/facet-pretty-v0.50.0-rc.6...facet-pretty-v0.50.0-rc.7) - 2026-08-20
+
+### Other
+
+- release
+- extract formats and integrations
+
+## [0.50.0-rc.7](https://github.com/facet-rs/facet/compare/facet-default-v0.50.0-rc.6...facet-default-v0.50.0-rc.7) - 2026-08-20
+
+### Other
+
+- release
+- extract formats and integrations
+
+## [0.50.0-rc.7](https://github.com/facet-rs/facet/compare/facet-testhelpers-v0.50.0-rc.6...facet-testhelpers-v0.50.0-rc.7) - 2026-08-20
+
+### Other
+
+- release
+
+## [0.50.0-rc.7](https://github.com/facet-rs/facet/compare/facet-testhelpers-macros-v0.50.0-rc.6...facet-testhelpers-macros-v0.50.0-rc.7) - 2026-08-20
+
+### Other
+
+- release
+
+## [0.50.0-rc.7](https://github.com/facet-rs/facet/compare/facet-v0.50.0-rc.6...facet-v0.50.0-rc.7) - 2026-08-20
+
+### Other
+
+- release
+
+## [0.50.0-rc.7](https://github.com/facet-rs/facet/compare/facet-reflect-v0.50.0-rc.6...facet-reflect-v0.50.0-rc.7) - 2026-08-20
+
+### Other
+
+- release
+
+## [0.50.0-rc.7](https://github.com/facet-rs/facet/compare/facet-path-v0.50.0-rc.6...facet-path-v0.50.0-rc.7) - 2026-08-20
+
+### Other
+
+- release
+
+## [0.50.0-rc.7](https://github.com/facet-rs/facet/compare/facet-macros-v0.50.0-rc.6...facet-macros-v0.50.0-rc.7) - 2026-08-20
+
+### Other
+
+- release
+
+## [0.50.0-rc.7](https://github.com/facet-rs/facet/compare/facet-macros-impl-v0.50.0-rc.6...facet-macros-impl-v0.50.0-rc.7) - 2026-08-20
+
+### Other
+
+- release
+
+## [0.50.0-rc.7](https://github.com/facet-rs/facet/compare/facet-macro-parse-v0.50.0-rc.6...facet-macro-parse-v0.50.0-rc.7) - 2026-08-20
+
+### Other
+
+- release
+
+## [0.50.0-rc.7](https://github.com/facet-rs/facet/compare/facet-macro-types-v0.50.0-rc.6...facet-macro-types-v0.50.0-rc.7) - 2026-08-20
+
+### Other
+
+- release
+
+## [0.50.0-rc.7](https://github.com/facet-rs/facet/compare/facet-core-v0.50.0-rc.6...facet-core-v0.50.0-rc.7) - 2026-08-20
+
+### Other
+
+- release
+
+## [0.50.0-rc.7](https://github.com/facet-rs/facet/compare/facet-validate-v0.50.0-rc.6...facet-validate-v0.50.0-rc.7) - 2026-08-20
+
+### Other
+
 - extract formats and integrations
 
 ## [0.50.0-rc.7](https://github.com/facet-rs/facet/compare/facet-error-v0.50.0-rc.6...facet-error-v0.50.0-rc.7) - 2026-08-20
