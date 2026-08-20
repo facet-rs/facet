@@ -1,6 +1,6 @@
 # HANDWRITTEN: facet-dev hands off my pipelines
 
-name: Tests / Linux
+name: Tests
 
 on:
   push:
@@ -8,6 +8,7 @@ on:
   pull_request:
     branches: [main]
   merge_group:
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -16,12 +17,11 @@ concurrency:
 jobs:
   workspace:
     name: Workspace (${{ matrix.partition }})
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     strategy:
       fail-fast: false
-      max-parallel: 2
       matrix:
         partition: ["1/3", "2/3", "3/3"]
     steps:
@@ -96,3 +96,175 @@ jobs:
           baseline-rev: origin/main
           exclude: facet-testattrs, facet-cargo-toml, facet-axum, rusqlite-facet, rediff, facet-dessert, facet-format, facet-json, facet-json-classics, facet-postcard, facet-msgpack, facet-toml, facet-yaml, facet-format-suite, facet-asn1, facet-csv, facet-xdr, facet-json-schema, facet-typescript, facet-python, facet-lua, facet-value, facet-hash, facet-zod, facet-singularize, facet-dom, facet-xml, facet-xml-node, facet-atom, facet-svg
           verbose: true
+  macos:
+    name: macOS (${{ matrix.partition }})
+    runs-on: macos-26
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: ["1/3", "2/3", "3/3"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: "false"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - name: Run macOS tests
+        env:
+          PROPTEST_CASES: 0
+        run: >-
+          cargo nextest run --features ci --workspace --no-fail-fast
+          --partition hash:${{ matrix.partition }}
+          -E 'all()'
+
+  linux-arm64:
+    name: Linux ARM64 (advisory)
+    continue-on-error: true
+    runs-on: ubuntu-24.04-arm
+    container:
+      image: ghcr.io/facet-rs/facet-ci:latest-arm64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+      - name: Select Rust 1.92
+        shell: bash
+        run: |
+          rustup toolchain install 1.92 --profile minimal --component rust-src --component clippy --component llvm-tools-preview --component rustfmt
+          rustup target add thumbv8m.main-none-eabihf --toolchain 1.92
+          echo "RUSTUP_TOOLCHAIN=1.92" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+      - name: Run Linux ARM64 tests
+        env:
+          PROPTEST_CASES: 0
+        run: cargo nextest run --features ci --workspace --no-fail-fast
+
+  windows:
+    name: Windows (${{ matrix.partition }}) (advisory)
+    continue-on-error: true
+    runs-on: windows-2025
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: ["1/3", "2/3", "3/3"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - name: Run Windows tests
+        shell: bash
+        env:
+          PROPTEST_CASES: 0
+        run: >-
+          cargo nextest run --features ci --workspace --no-fail-fast
+          --partition hash:${{ matrix.partition }}
+          -E 'all()'
+  nostd:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    container:
+      image: ghcr.io/facet-rs/facet-ci:latest-amd64
+    steps:
+      - uses: actions/checkout@v7
+      - name: Select Rust 1.92
+        shell: bash
+        run: |
+          rustup toolchain install 1.92 --profile minimal --component rust-src --component clippy --component llvm-tools-preview --component rustfmt
+          rustup target add thumbv8m.main-none-eabihf --toolchain 1.92
+          echo "RUSTUP_TOOLCHAIN=1.92" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+      - name: Run no-std checks
+        run: just nostd-ci
+
+  miri:
+    runs-on: blacksmith-16vcpu-ubuntu-2404
+    name: Miri (${{ matrix.partition }})
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: ["1/3", "2/3", "3/3"]
+    container:
+      image: ghcr.io/facet-rs/facet-ci:latest-miri-amd64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+      - name: Run Miri
+        env:
+          CI: "true"
+        run: just miri --partition hash:${{ matrix.partition }}
+
+  nightly:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    container:
+      image: ghcr.io/facet-rs/facet-ci:latest-miri-amd64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+      - name: Run nightly feature tests
+        env:
+          PROPTEST_CASES: 0
+        run: cargo nextest run --package facet-core --features facet-core/simd,facet-core/bytes
+
+  msrv:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    container:
+      image: ghcr.io/facet-rs/facet-ci:latest-amd64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+      - name: Select Rust 1.92
+        shell: bash
+        run: |
+          rustup toolchain install 1.92 --profile minimal --component rust-src --component clippy --component llvm-tools-preview --component rustfmt
+          rustup target add thumbv8m.main-none-eabihf --toolchain 1.92
+          echo "RUSTUP_TOOLCHAIN=1.92" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+      - name: Check MSRV
+        run: just msrv
+
+  coverage:
+    if: github.event_name == 'workflow_dispatch'
+    continue-on-error: true
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    container:
+      image: ghcr.io/facet-rs/facet-ci:latest-amd64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+      - name: Select nightly with coverage tools
+        shell: bash
+        run: rustup toolchain install nightly --profile minimal --component llvm-tools-preview --component rustfmt
+      - name: Install system dependencies
+        run: apt-get update && apt-get install -y zlib1g-dev
+      - uses: Swatinem/rust-cache@v2
+      - name: Run coverage suite
+        env:
+          PROPTEST_CASES: 0
+        run: |
+          cargo +nightly llvm-cov --no-report nextest --workspace --features ci --no-fail-fast
+          cargo +nightly llvm-cov --no-report --doc --workspace --features ci
+          mkdir coverage
+          cargo +nightly llvm-cov report --doctests --lcov --output-path coverage/lcov.info
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v7
+        with:
+          files: coverage/lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
