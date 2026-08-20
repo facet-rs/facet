@@ -16,14 +16,10 @@ concurrency:
 
 jobs:
   workspace:
-    name: Workspace (${{ matrix.partition }})
+    name: Linux x86_64
     runs-on: blacksmith-4vcpu-ubuntu-2404
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
-    strategy:
-      fail-fast: false
-      matrix:
-        partition: ["1/3", "2/3", "3/3"]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
@@ -42,10 +38,7 @@ jobs:
         shell: bash
         env:
           PROPTEST_CASES: 0
-        run: >-
-          cargo nextest run --workspace --features ci --no-fail-fast
-          --partition hash:${{ matrix.partition }}
-          -E 'all()'
+        run: cargo nextest run --workspace --features ci --no-fail-fast
 
   quality:
     name: Clippy, docs, and lockfile
