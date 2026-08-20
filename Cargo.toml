@@ -45,10 +45,6 @@ members = [
   "facet-cargo-toml",
   "rusqlite-facet",
   "rediff",
-  "strid",
-  "strid-macros",
-  "strid-examples",
-  "facet-lsp",
   "facet-showcase",
 ]
 
@@ -100,14 +96,20 @@ facet-value = { path = "facet-value", version = "0.50.0-rc.5" }
 facet-yaml = { path = "facet-yaml", version = "0.50.0-rc.5" }
 taxon = "0.2.0-rc.5"
 cstree = { version = "0.14.0", features = ["derive"] }
-strid = { path = "strid", version = "11.0.0-rc.5" }
-strid-macros = { path = "strid-macros", version = "11.0.0-rc.4" }
-arborium = { version = "^2.4.5", default-features = false, features = ["lang-json", "lang-rust"] }
+arborium = { version = "^2.4.5", default-features = false, features = [
+  "lang-json",
+  "lang-rust",
+] }
 arborium-highlight = "^2.4.5"
 arborium-theme = "^2.4.5"
 aho-corasick = "1.1.4"
 autocfg = "^1.5.0"
-axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio", "json", "ws"] }
+axum = { version = "0.8.9", default-features = false, features = [
+  "http1",
+  "tokio",
+  "json",
+  "ws",
+] }
 ariadne = "^0.6"
 blake3 = { version = "^1", default-features = false }
 bolero = "^0.13.4"
@@ -163,7 +165,10 @@ proc-macro2 = "1"
 proptest = "^1"
 quote = "1"
 ratatui = "^0.30"
-regex = { version = "1.12.4", default-features = false, features = ["std", "unicode"] }
+regex = { version = "1.12.4", default-features = false, features = [
+  "std",
+  "unicode",
+] }
 regex-automata = { version = "0.4.14", default-features = false, features = [
   "std",
   "unicode",
@@ -190,7 +195,10 @@ tokio-test-lite = "^0.2"
 tokio-tungstenite = "^0.29"
 tower = { version = "0.5", default-features = false, features = ["util"] }
 tower-lsp = "^0.20"
-tracing = { version = "^0.1.43", default-features = false, features = ["std", "attributes"] }
+tracing = { version = "^0.1.43", default-features = false, features = [
+  "std",
+  "attributes",
+] }
 tracing-subscriber = { version = "^0.3.22", default-features = false, features = [
   "fmt",
   "std",
@@ -202,7 +210,9 @@ trybuild = "^1.0"
 ulid = "^1.2.1"
 unsynn = "^0.3.0"
 uuid = "^1.19.0"
-rust_decimal = { version = "^1.38.0", default-features = false, features = ["std"] }
+rust_decimal = { version = "^1.38.0", default-features = false, features = [
+  "std",
+] }
 rustls = "0.23"
 rustls-pemfile = "2"
 rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
@@ -215,7 +225,10 @@ indoc = "^2.0.7"
 indextree = "^4"
 libtest-mimic = "^0.8.1"
 palette = { version = "^0.7", default-features = false, features = ["std"] }
-serde = { version = "^1.0.228", default-features = false, features = ["alloc", "derive"] }
+serde = { version = "^1.0.228", default-features = false, features = [
+  "alloc",
+  "derive",
+] }
 serde-wasm-bindgen = "^0.6"
 serde_json = { version = "^1.0.145", features = ["alloc"] }
 sha2 = "^0.10"
@@ -233,7 +246,10 @@ zerocopy = { version = "0.8", features = ["derive"] }
 # Allow the facet_no_doc cfg in generated code
 # See: https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html
 [workspace.lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(facet_no_doc)", "cfg(kani)"] }
+unexpected_cfgs = { level = "warn", check-cfg = [
+  "cfg(facet_no_doc)",
+  "cfg(kani)",
+] }
 
 [workspace.lints.clippy]
 # Box::leak is always a bug in this codebase - it hides lifetime problems instead of solving them
