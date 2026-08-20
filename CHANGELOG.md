@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.50.0-rc.7](https://github.com/facet-rs/facet/compare/facet-validate-v0.50.0-rc.6...facet-validate-v0.50.0-rc.7) - 2026-08-20
+
+### Other
+
+- extract formats and integrations
+
+## [0.50.0-rc.7](https://github.com/facet-rs/facet/compare/facet-error-v0.50.0-rc.6...facet-error-v0.50.0-rc.7) - 2026-08-20
+
+### Other
+
+- extract formats and integrations
+
+## [0.50.0-rc.7](https://github.com/facet-rs/facet/compare/facet-pretty-v0.50.0-rc.6...facet-pretty-v0.50.0-rc.7) - 2026-08-20
+
+### Other
+
+- extract formats and integrations
+
+## [0.50.0-rc.7](https://github.com/facet-rs/facet/compare/facet-default-v0.50.0-rc.6...facet-default-v0.50.0-rc.7) - 2026-08-20
+
+### Other
+
+- extract formats and integrations
+
 ## [0.50.0-rc.6](https://github.com/facet-rs/facet/compare/facet-cargo-toml-v0.50.0-rc.5...facet-cargo-toml-v0.50.0-rc.6) - 2026-08-20
 
 ### Other
