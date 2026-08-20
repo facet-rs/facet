@@ -140,7 +140,6 @@ tooling around reflection.
 | [`facet-value`](https://docs.rs/facet-value) | Stores dynamic Facet values as JSON-like data plus bytes. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-value) |
 | [`facet-solver`](https://docs.rs/facet-solver) | Resolves type shapes from field names and constraints. | [facet-rs/facet](https://github.com/facet-rs/facet) |
 | [`facet-path`](https://docs.rs/facet-path) | Tracks paths through nested Facet structures. | [facet-rs/facet](https://github.com/facet-rs/facet) |
-| [`strid`](/strid/) | Defines strongly typed string identifiers with Facet integration. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/strid) |
 
 Writing a new format crate? The [extend](/extend/) section walks through
 `Peek`, `Partial`, and the format-crate architecture.
