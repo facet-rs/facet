@@ -18,7 +18,11 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 tracing = { workspace = true }
-arborium = { workspace = true, features = ["lang-rust", "lang-xml", "lang-yaml"] }
+arborium = { workspace = true, features = [
+  "lang-rust",
+  "lang-xml",
+  "lang-yaml",
+] }
 bytes = { workspace = true, optional = true }
 bytestring = { workspace = true, optional = true }
 camino = { workspace = true, optional = true }
@@ -31,15 +35,22 @@ facet = { workspace = true, features = [
 ] } # facet-format-suite is meant to be comprehensive
 facet-pretty = { workspace = true }
 facet-value = { workspace = true, optional = true }
-indexmap = { workspace = true, features = ["serde"] }
+indexmap = { workspace = true, features = ["serde", "std"] }
 indoc = { workspace = true }
 jiff = { workspace = true, optional = true }
 ordered-float = { version = "5.0.0", optional = true, default-features = false }
 rmp-serde = { version = "1", optional = true }
-serde = { workspace = true, features = ["derive", "rc", "alloc"], optional = true }
+serde = { workspace = true, features = [
+  "derive",
+  "rc",
+  "alloc",
+], optional = true }
 smartstring = { workspace = true, optional = true }
 smol_str = { workspace = true, optional = true }
-time = { workspace = true, optional = true, features = ["formatting", "parsing"] }
+time = { workspace = true, optional = true, features = [
+  "formatting",
+  "parsing",
+] }
 tokio = { version = "1", features = ["rt"], optional = true }
 ulid = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }
@@ -96,5 +107,3 @@ yoke = ["dep:yoke", "facet/yoke"]
 
 [lints]
 workspace = true
-
-
