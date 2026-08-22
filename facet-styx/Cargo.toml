@@ -1,6 +1,6 @@
 [package]
 name = "facet-styx"
-version = "5.0.0-rc.6"
+version = "5.0.0-rc.7"
 edition.workspace = true
 rust-version.workspace = true
 description = "Facet integration for the Styx configuration language"
@@ -22,8 +22,8 @@ styx-parse.workspace = true
 styx-tree.workspace = true
 ariadne.workspace = true
 serde_json.workspace = true
-margin.workspace = true
-margin-term.workspace = true
+margin = "0.10.0-rc.2"
+margin-term = "0.10.0-rc.2"
 
 # Tracing (optional - compiles to nothing when disabled)
 tracing = { workspace = true, optional = true }
