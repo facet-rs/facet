@@ -154,6 +154,7 @@ fn build_deserialize_error_diagnostics(
             text: source.to_string(),
         }],
         reports: vec![Report {
+            code: None,
             severity: Severity::Error,
             title,
             annotations: vec![Annotation {
