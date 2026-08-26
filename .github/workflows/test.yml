@@ -22,7 +22,7 @@ jobs:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 26
       - name: Select Rust 1.92
@@ -47,7 +47,7 @@ jobs:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 26
       - name: Select Rust 1.92
@@ -79,7 +79,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 26
       - name: Run cargo-semver-checks
@@ -94,7 +94,7 @@ jobs:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 26
       - uses: Swatinem/rust-cache@v2
@@ -116,7 +116,7 @@ jobs:
       image: ghcr.io/facet-rs/facet-ci:latest-arm64
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 26
       - name: Select Rust 1.92
@@ -137,7 +137,7 @@ jobs:
     runs-on: windows-2025
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 26
       - uses: dtolnay/rust-toolchain@stable
@@ -199,7 +199,7 @@ jobs:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 26
       - name: Select Rust 1.92
@@ -220,7 +220,7 @@ jobs:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 26
       - name: Select nightly with coverage tools
