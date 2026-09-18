@@ -143,6 +143,9 @@ fn parse_unicode_escape(
                 }
                 value = value * 16 + c.to_digit(16).unwrap();
             }
+            // Rust lets underscores group the hex digits, as in `\u{1_F600}`.
+            // They may not come before the first digit.
+            Some((_, '_')) if digit_count > 0 => {}
             _ => {
                 return Err(UnescapeError::InvalidUnicodeEscape {
                     character_index: escape_start,
@@ -165,6 +168,21 @@ fn parse_unicode_escape(
     })
 }
 
+/// Consume the whitespace a line continuation swallows.
+///
+/// After a backslash at end of line, rustc skips the newline itself and every
+/// whitespace character that follows it, so the continued line can stay
+/// indented with the rest of the source.
+fn eat_continuation(chars: &mut std::iter::Peekable<impl Iterator<Item = (usize, char)>>) {
+    while let Some((_, c)) = chars.peek() {
+        if c.is_whitespace() {
+            chars.next();
+        } else {
+            break;
+        }
+    }
+}
+
 /// Unescapes a string with Rust-style escape sequences.
 ///
 /// Supported escapes:
@@ -177,6 +195,8 @@ fn parse_unicode_escape(
 /// - `\0` -> null
 /// - `\xNN` -> byte value (2 hex digits, ASCII only)
 /// - `\u{NNNNNN}` -> unicode scalar value (1-6 hex digits)
+/// - `\` at end of line -> line continuation: the newline and the
+///   whitespace that follows it are dropped
 pub fn unescape_inner(s: &str) -> Result<String, UnescapeError> {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.char_indices().peekable();
@@ -191,6 +211,9 @@ pub fn unescape_inner(s: &str) -> Result<String, UnescapeError> {
                 Some((_, 'r')) => out.push('\r'),
                 Some((_, 't')) => out.push('\t'),
                 Some((_, '0')) => out.push('\0'),
+                // A backslash at end of line continues the literal on the next
+                // line: rustc drops the newline and the whitespace that follows it.
+                Some((_, '\n')) => eat_continuation(&mut chars),
                 Some((_, 'x')) => {
                     out.push(parse_hex_escape(&mut chars, i, s)?);
                 }
@@ -276,6 +299,24 @@ mod tests {
         assert_eq!(unescape_inner(r"\u{1F600}").unwrap(), "😀");
         assert_eq!(unescape_inner(r"\u{10FFFF}").unwrap(), "\u{10FFFF}");
         assert_eq!(unescape_inner(r"hello\u{20}world").unwrap(), "hello world");
+    }
+
+    /// A Rust string literal may continue on the next line: a backslash at end
+    /// of line eats the newline and the next line's leading whitespace.
+    #[test]
+    fn test_unescape_line_continuation() {
+        assert_eq!(
+            unescape_inner("first \\\n        second").unwrap(),
+            "first second"
+        );
+        assert_eq!(unescape_inner("a\\\n  b").unwrap(), "ab");
+    }
+
+    /// Rust allows underscores between the hex digits of a unicode escape.
+    #[test]
+    fn test_unescape_unicode_underscores() {
+        assert_eq!(unescape_inner(r"\u{1_F600}").unwrap(), "\u{1F600}");
+        assert_eq!(unescape_inner(r"\u{1_F_6_0_0}").unwrap(), "\u{1F600}");
     }
 
     #[test]

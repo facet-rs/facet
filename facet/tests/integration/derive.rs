@@ -151,6 +151,17 @@ fn struct_doc_comment4() {
 
 #[test]
 #[cfg(feature = "doc")]
+fn struct_doc_comment5() {
+    #[derive(Clone, Hash, PartialEq, Eq, ::facet::Facet)]
+    #[doc = "first part \
+             second part"]
+    struct Foo {}
+
+    assert_eq!(Foo::SHAPE.doc, &["first part second part"]);
+}
+
+#[test]
+#[cfg(feature = "doc")]
 fn struct_field_doc_comment() {
     #[derive(Clone, Hash, PartialEq, Eq, ::facet::Facet)]
     struct Foo {
