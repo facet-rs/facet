@@ -44,13 +44,13 @@ impl core::error::Error for UnsizedError {}
 /// A type-erased mutable pointer (wide pointer) holding a data pointer and metadata.
 ///
 /// This is the base pointer type that can do everything. Uses TaggedPtr for the
-/// data pointer, which uses the low bit to distinguish wide vs thin pointers.
+/// data pointer, which carries a wide-vs-thin flag alongside the address.
 ///
 /// No lifetime parameter - safety is the caller's responsibility.
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
 pub struct PtrMut {
-    /// The tagged data pointer (low bit indicates wide vs thin)
+    /// The data pointer, plus whether it is wide
     ptr: TaggedPtr,
     /// Metadata for wide pointers (length for slices, vtable for trait objects)
     metadata: *const (),

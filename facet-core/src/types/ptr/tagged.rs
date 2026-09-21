@@ -1,16 +1,19 @@
-//! Tagged pointer that uses the high bit (bit 63) to distinguish wide vs thin pointers.
+//! Pointer that remembers whether it is wide (has metadata) or thin.
 //!
-//! On 64-bit systems, user-space addresses only use 48 bits (or 57 with 5-level paging),
-//! leaving bit 63 always 0 in user space on Linux, macOS, and Windows.
-//! This allows us to use it as a tag without affecting the actual pointer value.
+//! This flag is stored *beside* the pointer, not inside it. It used to live in
+//! bit 63 of the address, on the assumption that user-space addresses never set
+//! the high bit. That assumption does not hold on Top-Byte-Ignore platforms:
+//! Android on arm64 tags every `malloc` result in bits 56-63 for apps targeting
+//! API 30+, so ordinary thin heap pointers came back with bit 63 set and were
+//! misread as wide. Masking the bit back off was equally wrong there - it
+//! changes the tag, and `free` wants the pointer it handed out.
+//! See <https://github.com/facet-rs/facet/issues/2659>.
 //!
-//! The key insight that allows const construction comes from BurntSushi's jiff crate:
-//! <https://github.com/BurntSushi/jiff/blob/9d7e099a7a9a653b114de2465c0bc7361700c48b/src/tz/timezone.rs#L2086-L2111>
+//! 32-bit is not safe either: a 3G/1G split Linux or a large-address-aware
+//! Windows process hands out addresses with bit 31 set.
 //!
-//! In const contexts, you can't cast pointers to integers (required for bit manipulation).
-//! The trick is to make the const-constructible variant have tag 0 (no modification needed).
-//! For us: thin pointers (sized types) = tag 0, wide pointers (unsized) = tag 1.
-//! Since `Attr::new` only works with sized types, it remains const.
+//! Keeping the flag out of band costs one extra word in `PtrMut`, and buys back
+//! const construction for wide pointers too - nothing has to touch the address.
 
 use super::ptr_layout::PTR_FIRST;
 
@@ -39,20 +42,17 @@ pub const fn ptr_kind<T: ?Sized>() -> PtrKind {
     }
 }
 
-/// A pointer that uses the high bit (bit 63) as a tag to indicate wide vs thin.
+/// A data pointer plus a flag saying whether it came from an unsized type.
 ///
-/// - Bit 63 = 0: thin pointer (sized type, no metadata needed)
-/// - Bit 63 = 1: wide pointer (unsized type, has metadata)
-///
-/// This works because user-space addresses on 64-bit Linux/macOS/Windows
-/// never use bit 63 (they're limited to 48-57 bits).
+/// The address is stored verbatim - every bit of it, tag byte included - so it
+/// is safe to hand straight back to `free`, and it round-trips unchanged on
+/// platforms that put meaning in the high bits.
 #[derive(Clone, Copy, PartialEq, Eq)]
-#[repr(transparent)]
-pub struct TaggedPtr(*mut u8);
-
-// On 64-bit systems, use bit 63. On 32-bit, use bit 31.
-// User-space addresses never use the high bit on common platforms.
-const WIDE_TAG: usize = 1_usize << (usize::BITS - 1);
+#[repr(C)]
+pub struct TaggedPtr {
+    ptr: *mut u8,
+    wide: bool,
+}
 
 /// A wide pointer in native platform layout.
 ///
@@ -140,41 +140,37 @@ impl TaggedPtr {
     /// Create a tagged pointer for a thin (sized) type.
     #[inline]
     pub const fn thin(ptr: *mut u8) -> Self {
-        // No tag bit set
-        Self(ptr)
+        Self { ptr, wide: false }
     }
 
     /// Create a tagged pointer for a wide (unsized) type.
     #[inline]
-    pub fn wide(ptr: *mut u8) -> Self {
-        // Set the tag bit using map_addr to preserve provenance
-        Self(ptr.map_addr(|addr| addr | WIDE_TAG))
+    pub const fn wide(ptr: *mut u8) -> Self {
+        Self { ptr, wide: true }
     }
 
     /// Returns true if this is a wide pointer (has metadata).
     #[inline]
-    pub fn is_wide(self) -> bool {
-        // Use addr() to get the address without casting
-        (self.0.addr() & WIDE_TAG) != 0
+    pub const fn is_wide(self) -> bool {
+        self.wide
     }
 
     /// Returns true if this is a thin pointer (no metadata).
     #[inline]
-    pub fn is_thin(self) -> bool {
-        !self.is_wide()
+    pub const fn is_thin(self) -> bool {
+        !self.wide
     }
 
-    /// Returns the actual data pointer with the tag bit cleared.
+    /// Returns the data pointer, exactly as it was given to us.
     #[inline]
-    pub fn as_ptr(self) -> *mut u8 {
-        // Use map_addr to preserve provenance when clearing the tag bit
-        self.0.map_addr(|addr| addr & !WIDE_TAG)
+    pub const fn as_ptr(self) -> *mut u8 {
+        self.ptr
     }
 
-    /// Returns the raw tagged value (for debugging/testing).
+    /// Returns the raw pointer value (for debugging/testing).
     #[inline]
     pub const fn raw(self) -> *mut u8 {
-        self.0
+        self.ptr
     }
 
     /// Create a new TaggedPtr with an offset added, preserving the tag.
@@ -183,11 +179,9 @@ impl TaggedPtr {
     /// The offset must be within bounds of the allocation.
     #[inline]
     pub unsafe fn with_offset(self, offset: usize) -> Self {
-        let new_ptr = unsafe { self.as_ptr().byte_add(offset) };
-        if self.is_wide() {
-            Self::wide(new_ptr)
-        } else {
-            Self::thin(new_ptr)
+        Self {
+            ptr: unsafe { self.ptr.byte_add(offset) },
+            wide: self.wide,
         }
     }
 }
@@ -204,6 +198,60 @@ impl core::fmt::Debug for TaggedPtr {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The tag Android's allocator actually puts in the top byte of every
+    /// `malloc` result on arm64. 0xb4 has bit 7 set, so bit 63 of the address is
+    /// set on a perfectly ordinary thin pointer.
+    fn with_top_byte_tag(addr: usize) -> usize {
+        addr | (0xb4_usize << (usize::BITS - 8))
+    }
+
+    /// Reading the wide flag out of the address made tagged heap pointers look
+    /// wide, which blew up `as_mut_byte_ptr` on valid input.
+    /// <https://github.com/facet-rs/facet/issues/2659>
+    #[test]
+    fn top_byte_tagged_pointer_is_still_thin() {
+        let data: u8 = 42;
+        let ptr = (&data as *const u8 as *mut u8).map_addr(with_top_byte_tag);
+
+        let tagged = TaggedPtr::thin(ptr);
+        assert!(tagged.is_thin());
+        assert!(!tagged.is_wide());
+    }
+
+    /// And the flag must not eat bits of the address on the way back out: a
+    /// masked-off tag is a different pointer than the one `malloc` handed us,
+    /// which `free` is entitled to reject.
+    #[test]
+    fn top_byte_tag_survives_round_trip() {
+        let data: u8 = 42;
+        let ptr = (&data as *const u8 as *mut u8).map_addr(with_top_byte_tag);
+
+        assert_eq!(TaggedPtr::thin(ptr).as_ptr().addr(), ptr.addr());
+        assert_eq!(TaggedPtr::wide(ptr).as_ptr().addr(), ptr.addr());
+        assert!(TaggedPtr::wide(ptr).is_wide());
+    }
+
+    /// Same address, different kind, so they must not compare equal - the flag
+    /// no longer being part of the address must not collapse them.
+    #[test]
+    fn thin_and_wide_differ() {
+        let data: u8 = 42;
+        let ptr = &data as *const u8 as *mut u8;
+
+        assert_ne!(TaggedPtr::thin(ptr), TaggedPtr::wide(ptr));
+    }
+
+    /// The panic from the issue, at the level it was reported: a thin pointer
+    /// with a tagged address going through `PtrUninit`.
+    #[test]
+    fn tagged_address_reaches_as_mut_byte_ptr() {
+        let data: u8 = 42;
+        let ptr = (&data as *const u8 as *mut u8).map_addr(with_top_byte_tag);
+
+        let uninit = crate::PtrUninit::new_sized(ptr);
+        assert_eq!(uninit.as_mut_byte_ptr().addr(), ptr.addr());
+    }
 
     #[test]
     fn thin_pointer_not_tagged() {
@@ -224,7 +272,7 @@ mod tests {
 
         assert!(tagged.is_wide());
         assert!(!tagged.is_thin());
-        assert_eq!(tagged.as_ptr(), ptr); // as_ptr clears the tag
+        assert_eq!(tagged.as_ptr(), ptr); // the address is untouched
     }
 
     #[test]
