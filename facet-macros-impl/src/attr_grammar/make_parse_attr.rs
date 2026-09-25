@@ -1082,11 +1082,56 @@ impl ParsedGrammar {
             pub use #facet_path::__field_error as __field_error_proc_macro;
             #[doc(hidden)]
             pub use #facet_path::__spanned_error;
+            #[doc(hidden)]
+            pub use #facet_path as __facet;
         }
+    }
+
+    /// The path to facet from where `__attr!` *expands*: the crate deriving
+    /// `Facet`, which may reach facet under another name (a Cargo rename, or a
+    /// re-export named with `#[facet(crate = ...)]`), so `::facet` cannot be
+    /// assumed there.
+    ///
+    /// - Builtin grammar: `$crate`. Emitted from here, `$crate` takes its crate
+    ///   from `define_attr_grammar!`'s expansion, which is always facet: right
+    ///   for the builtin grammar, wrong for any other.
+    /// - Extension grammar: through its own `crate_path`, which re-exports
+    ///   facet as `__facet` (see `generate_reexports`).
+    /// - Extension grammar with no `crate_path`: `::facet`, as before, since
+    ///   nothing else names the grammar's crate.
+    fn facet_at_call_site(&self) -> TokenStream2 {
+        if self.builtin {
+            quote! { $crate }
+        } else if let Some(crate_path) = &self.crate_path {
+            quote! { #crate_path::__facet }
+        } else {
+            quote! { ::facet }
+        }
+    }
+
+    /// `crate_path` as it must be written inside `__attr!`. A path rooted at
+    /// `::facet` (the builtin grammar declares `::facet::builtin`) is re-rooted
+    /// at [`Self::facet_at_call_site`]; any other path is used as declared.
+    fn crate_path_at_call_site(&self) -> Option<TokenStream2> {
+        let path = self.crate_path.as_ref()?;
+        let tokens: Vec<TokenTree> = path.clone().into_iter().collect();
+        let rooted_at_facet = matches!(
+            tokens.as_slice(),
+            [TokenTree::Punct(a), TokenTree::Punct(b), TokenTree::Ident(name), ..]
+                if a.as_char() == ':' && b.as_char() == ':' && name == "facet"
+        );
+        if !rooted_at_facet {
+            return Some(path.clone());
+        }
+        let facet = self.facet_at_call_site();
+        let rest: TokenStream2 = tokens[3..].iter().cloned().collect();
+        Some(quote! { #facet #rest })
     }
 
     fn generate_attr_macro(&self) -> TokenStream2 {
         let enum_name = &self.attr_enum.name;
+        let facet = self.facet_at_call_site();
+        let crate_path = self.crate_path_at_call_site();
         let ns_str = self.ns.as_deref().unwrap_or("");
         // Generate the namespace expression: None for builtins, Some("ns") for namespaced
         let ns_expr = if ns_str.is_empty() {
@@ -1182,20 +1227,20 @@ impl ParsedGrammar {
                             // Note: $field is tt not ident because tuple struct fields are literals (0, 1, etc.)
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty }) => {{
                                 static __UNIT: () = ();
-                                ::facet::Attr::new(#ns_expr, #key_str, &__UNIT)
+                                #facet::Attr::new(#ns_expr, #key_str, &__UNIT)
                             }};
                             // Field-level with args: not expected for unit variants
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $first:tt $($rest:tt)* }) => {{
-                                ::facet::__no_args!(#full_attr_name, $first)
+                                #facet::__no_args!(#full_attr_name, $first)
                             }};
                             // Container-level: @ns { path } attr { }
                             (@ns { $ns:path } #key_ident { }) => {{
                                 static __UNIT: () = ();
-                                ::facet::Attr::new(#ns_expr, #key_str, &__UNIT)
+                                #facet::Attr::new(#ns_expr, #key_str, &__UNIT)
                             }};
                             // Container-level with args: not expected for unit variants
                             (@ns { $ns:path } #key_ident { | $first:tt $($rest:tt)* }) => {{
-                                ::facet::__no_args!(#full_attr_name, $first)
+                                #facet::__no_args!(#full_attr_name, $first)
                             }};
                         }
                     }
@@ -1204,7 +1249,7 @@ impl ParsedGrammar {
                         // This allows efficient runtime access via proxy_shape() method.
                         // We use new_shape() which bypasses the T: Facet bound since Shape
                         // doesn't implement Facet.
-                        let crate_path = self.crate_path.as_ref().expect(
+                        let crate_path = crate_path.as_ref().expect(
                             "crate_path is required for shape_type variants; add `crate_path ::your_crate;` to the grammar"
                         );
                         quote! {
@@ -1214,10 +1259,10 @@ impl ParsedGrammar {
                             }};
                             // Field-level with args: parse type and store just the Shape
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $($args:tt)* }) => {{
-                                ::facet::Attr::new_shape(
+                                #facet::Attr::new_shape(
                                     #ns_expr,
                                     #key_str,
-                                    ::facet::__dispatch_attr!{
+                                    #facet::__dispatch_attr!{
                                         @crate_path { #crate_path }
                                         @enum_name { #enum_name }
                                         @variants { #(#variants_meta),* }
@@ -1232,10 +1277,10 @@ impl ParsedGrammar {
                             }};
                             // Container-level with args: parse type and store just the Shape
                             (@ns { $ns:path } #key_ident { | $($args:tt)* }) => {{
-                                ::facet::Attr::new_shape(
+                                #facet::Attr::new_shape(
                                     #ns_expr,
                                     #key_str,
-                                    ::facet::__dispatch_attr!{
+                                    #facet::__dispatch_attr!{
                                         @crate_path { #crate_path }
                                         @enum_name { #enum_name }
                                         @variants { #(#variants_meta),* }
@@ -1259,11 +1304,11 @@ impl ParsedGrammar {
                         //   fn is_empty(s: &str) -> bool { ... }
                         // for a String field, instead of requiring the exact type:
                         //   fn is_empty(s: &String) -> bool { ... }
-                        let _crate_path = self.crate_path.as_ref().expect(
+                        let _crate_path = crate_path.as_ref().expect(
                             "crate_path is required for predicate variants; add `crate_path ::your_crate;` to the grammar"
                         );
-                        // Qualify the target type - use ::facet:: since these types are re-exported there
-                        let qualified_target_ty = quote! { ::facet::#target_ty };
+                        // Qualify the target type through facet, which re-exports these types
+                        let qualified_target_ty = quote! { #facet::#target_ty };
                         quote! {
                             // Field-level with args: wrap the user's predicate in a function that
                             // enables auto-deref at the call site.
@@ -1274,22 +1319,22 @@ impl ParsedGrammar {
                                 // `Option` of one), which is `Sync` — the requirement that `Attr`'s
                                 // `unsafe impl Sync` rests on. See facet-rs/facet#1573.
                                 unsafe {
-                                    ::facet::Attr::from_raw_parts(
+                                    #facet::Attr::from_raw_parts(
                                         #ns_expr,
                                         #key_str,
-                                        ::facet::OxRef::new(
-                                            ::facet::PtrConst::new_sized(&const {
+                                        #facet::OxRef::new(
+                                            #facet::PtrConst::new_sized(&const {
                                                 // Define a wrapper function that calls the user's predicate.
                                                 // The call site `predicate(ptr.get::<$ty>())` enables auto-deref,
                                                 // so `fn(&str) -> bool` works for a `String` field.
-                                                unsafe fn __predicate_wrapper(ptr: ::facet::PtrConst) -> bool {
+                                                unsafe fn __predicate_wrapper(ptr: #facet::PtrConst) -> bool {
                                                     let predicate = ($($args)*);
                                                     predicate(ptr.get::<$ty>())
                                                 }
                                                 // Coerce function item to function pointer
                                                 __predicate_wrapper as #qualified_target_ty
                                             } as *const #qualified_target_ty as *const ()),
-                                            <() as ::facet::Facet>::SHAPE
+                                            <() as #facet::Facet>::SHAPE
                                         ),
                                     )
                                 }
@@ -1333,11 +1378,11 @@ impl ParsedGrammar {
                         //   fn validate_email(s: &str) -> Result<(), String> { ... }
                         // for a String field, instead of requiring the exact type:
                         //   fn validate_email(s: &String) -> Result<(), String> { ... }
-                        let _crate_path = self.crate_path.as_ref().expect(
+                        let _crate_path = crate_path.as_ref().expect(
                             "crate_path is required for validator variants; add `crate_path ::your_crate;` to the grammar"
                         );
-                        // Qualify the target type - use ::facet:: since these types are re-exported there
-                        let qualified_target_ty = quote! { ::facet::#target_ty };
+                        // Qualify the target type through facet, which re-exports these types
+                        let qualified_target_ty = quote! { #facet::#target_ty };
                         quote! {
                             // Field-level with args: wrap the user's validator in a function that
                             // enables auto-deref at the call site.
@@ -1348,22 +1393,22 @@ impl ParsedGrammar {
                                 // `Option` of one), which is `Sync` — the requirement that `Attr`'s
                                 // `unsafe impl Sync` rests on. See facet-rs/facet#1573.
                                 unsafe {
-                                    ::facet::Attr::from_raw_parts(
+                                    #facet::Attr::from_raw_parts(
                                         #ns_expr,
                                         #key_str,
-                                        ::facet::OxRef::new(
-                                            ::facet::PtrConst::new_sized(&const {
+                                        #facet::OxRef::new(
+                                            #facet::PtrConst::new_sized(&const {
                                                 // Define a wrapper function that calls the user's validator.
                                                 // The call site `validator(ptr.get::<$ty>())` enables auto-deref,
                                                 // so `fn(&str) -> Result<(), String>` works for a `String` field.
-                                                unsafe fn __validator_wrapper(ptr: ::facet::PtrConst) -> ::core::result::Result<(), ::std::string::String> {
+                                                unsafe fn __validator_wrapper(ptr: #facet::PtrConst) -> ::core::result::Result<(), ::std::string::String> {
                                                     let validator = ($($args)*);
                                                     validator(ptr.get::<$ty>())
                                                 }
                                                 // Coerce function item to function pointer
                                                 __validator_wrapper as #qualified_target_ty
                                             } as *const #qualified_target_ty as *const ()),
-                                            <() as ::facet::Facet>::SHAPE
+                                            <() as #facet::Facet>::SHAPE
                                         ),
                                     )
                                 }
@@ -1402,7 +1447,7 @@ impl ParsedGrammar {
                         //
                         // - `default` (no args) → use $ty::default() if fallback enabled, otherwise None
                         // - `default = expr` → Some(|ptr| ptr.put(expr))
-                        let _crate_path = self.crate_path.as_ref().expect(
+                        let _crate_path = crate_path.as_ref().expect(
                             "crate_path is required for make_t variants; add `crate_path ::your_crate;` to the grammar"
                         );
 
@@ -1420,18 +1465,18 @@ impl ParsedGrammar {
                                     // `Option` of one), which is `Sync` — the requirement that `Attr`'s
                                     // `unsafe impl Sync` rests on. See facet-rs/facet#1573.
                                     unsafe {
-                                        ::facet::Attr::from_raw_parts(
+                                        #facet::Attr::from_raw_parts(
                                             #ns_expr,
                                             #key_str,
-                                            ::facet::OxRef::new(
-                                                ::facet::PtrConst::new_sized(&const {
+                                            #facet::OxRef::new(
+                                                #facet::PtrConst::new_sized(&const {
                                                     𝟋Some(
-                                                        (|__ptr: ::facet::PtrUninit| unsafe {
+                                                        (|__ptr: #facet::PtrUninit| unsafe {
                                                             __ptr.put(<$ty as ::core::default::Default>::default())
-                                                        }) as ::facet::DefaultInPlaceFn
+                                                        }) as #facet::DefaultInPlaceFn
                                                     )
-                                                } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const ()),
-                                                <() as ::facet::Facet>::SHAPE
+                                                } as *const ::core::option::Option<#facet::DefaultInPlaceFn> as *const ()),
+                                                <() as #facet::Facet>::SHAPE
                                             ),
                                         )
                                     }
@@ -1444,14 +1489,14 @@ impl ParsedGrammar {
                                     // `Option` of one), which is `Sync` — the requirement that `Attr`'s
                                     // `unsafe impl Sync` rests on. See facet-rs/facet#1573.
                                     unsafe {
-                                        ::facet::Attr::from_raw_parts(
+                                        #facet::Attr::from_raw_parts(
                                             #ns_expr,
                                             #key_str,
-                                            ::facet::OxRef::new(
-                                                ::facet::PtrConst::new_sized(&const {
-                                                    ::core::option::Option::<::facet::DefaultInPlaceFn>::None
-                                                } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const ()),
-                                                <() as ::facet::Facet>::SHAPE
+                                            #facet::OxRef::new(
+                                                #facet::PtrConst::new_sized(&const {
+                                                    ::core::option::Option::<#facet::DefaultInPlaceFn>::None
+                                                } as *const ::core::option::Option<#facet::DefaultInPlaceFn> as *const ()),
+                                                <() as #facet::Facet>::SHAPE
                                             ),
                                         )
                                     }
@@ -1470,17 +1515,17 @@ impl ParsedGrammar {
                                     // `Option` of one), which is `Sync` — the requirement that `Attr`'s
                                     // `unsafe impl Sync` rests on. See facet-rs/facet#1573.
                                     unsafe {
-                                        ::facet::Attr::from_raw_parts(
+                                        #facet::Attr::from_raw_parts(
                                             #ns_expr,
                                             #key_str,
-                                            ::facet::OxRef::new(
-                                                ::facet::PtrConst::new_sized(&const {
+                                            #facet::OxRef::new(
+                                                #facet::PtrConst::new_sized(&const {
                                                     𝟋Some(
-                                                        (|__ptr: ::facet::PtrUninit| unsafe { __ptr.put($expr) })
-                                                            as ::facet::DefaultInPlaceFn
+                                                        (|__ptr: #facet::PtrUninit| unsafe { __ptr.put($expr) })
+                                                            as #facet::DefaultInPlaceFn
                                                     )
-                                                } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const ()),
-                                                <() as ::facet::Facet>::SHAPE
+                                                } as *const ::core::option::Option<#facet::DefaultInPlaceFn> as *const ()),
+                                                <() as #facet::Facet>::SHAPE
                                             ),
                                         )
                                     }
@@ -1492,17 +1537,17 @@ impl ParsedGrammar {
                                     // `Option` of one), which is `Sync` — the requirement that `Attr`'s
                                     // `unsafe impl Sync` rests on. See facet-rs/facet#1573.
                                     unsafe {
-                                        ::facet::Attr::from_raw_parts(
+                                        #facet::Attr::from_raw_parts(
                                             #ns_expr,
                                             #key_str,
-                                            ::facet::OxRef::new(
-                                                ::facet::PtrConst::new_sized(&const {
+                                            #facet::OxRef::new(
+                                                #facet::PtrConst::new_sized(&const {
                                                     𝟋Some(
-                                                        (|__ptr: ::facet::PtrUninit| unsafe { __ptr.put($expr) })
-                                                            as ::facet::DefaultInPlaceFn
+                                                        (|__ptr: #facet::PtrUninit| unsafe { __ptr.put($expr) })
+                                                            as #facet::DefaultInPlaceFn
                                                     )
-                                                } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const ()),
-                                                <() as ::facet::Facet>::SHAPE
+                                                } as *const ::core::option::Option<#facet::DefaultInPlaceFn> as *const ()),
+                                                <() as #facet::Facet>::SHAPE
                                             ),
                                         )
                                     }
@@ -1538,14 +1583,14 @@ impl ParsedGrammar {
                                     // `Option` of one), which is `Sync` — the requirement that `Attr`'s
                                     // `unsafe impl Sync` rests on. See facet-rs/facet#1573.
                                     unsafe {
-                                        ::facet::Attr::from_raw_parts(
+                                        #facet::Attr::from_raw_parts(
                                             #ns_expr,
                                             #key_str,
-                                            ::facet::OxRef::new(
-                                                ::facet::PtrConst::new_sized(&const {
-                                                    ::core::option::Option::<::facet::DefaultInPlaceFn>::None
-                                                } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const ()),
-                                                <() as ::facet::Facet>::SHAPE
+                                            #facet::OxRef::new(
+                                                #facet::PtrConst::new_sized(&const {
+                                                    ::core::option::Option::<#facet::DefaultInPlaceFn>::None
+                                                } as *const ::core::option::Option<#facet::DefaultInPlaceFn> as *const ()),
+                                                <() as #facet::Facet>::SHAPE
                                             ),
                                         )
                                     }
@@ -1588,7 +1633,7 @@ impl ParsedGrammar {
                         // NewtypeStr stores &'static str directly (not wrapped in Attr).
                         // This is necessary because facet-core needs to access tag/content/rename
                         // via get_builtin_attr_value but can't import the Attr enum.
-                        let _crate_path = self.crate_path.as_ref().expect(
+                        let _crate_path = crate_path.as_ref().expect(
                             "crate_path is required for newtype_str variants; add `crate_path ::your_crate;` to the grammar"
                         );
                         quote! {
@@ -1604,11 +1649,11 @@ impl ParsedGrammar {
                             }};
                             // Field-level with `= "value"`: store string directly
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | = $val:expr }) => {{
-                                ::facet::Attr::new(#ns_expr, #key_str, &$val)
+                                #facet::Attr::new(#ns_expr, #key_str, &$val)
                             }};
                             // Field-level with just expr
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $val:expr }) => {{
-                                ::facet::Attr::new(#ns_expr, #key_str, &$val)
+                                #facet::Attr::new(#ns_expr, #key_str, &$val)
                             }};
                             // Container-level: no args is an error
                             (@ns { $ns:path } #key_ident { }) => {{
@@ -1622,11 +1667,11 @@ impl ParsedGrammar {
                             }};
                             // Container-level with `= "value"`: store string directly
                             (@ns { $ns:path } #key_ident { | = $val:expr }) => {{
-                                ::facet::Attr::new(#ns_expr, #key_str, &$val)
+                                #facet::Attr::new(#ns_expr, #key_str, &$val)
                             }};
                             // Container-level with just expr
                             (@ns { $ns:path } #key_ident { | $val:expr }) => {{
-                                ::facet::Attr::new(#ns_expr, #key_str, &$val)
+                                #facet::Attr::new(#ns_expr, #key_str, &$val)
                             }};
                         }
                     }
@@ -1634,7 +1679,7 @@ impl ParsedGrammar {
                         // OptionalStr stores Option<&'static str> directly.
                         // - No args → None
                         // - `= "value"` → Some("value")
-                        let crate_path = self.crate_path.as_ref().expect(
+                        let crate_path = crate_path.as_ref().expect(
                             "crate_path is required for opt_str variants; add `crate_path ::your_crate;` to the grammar"
                         );
                         let variant_name = &v.name;
@@ -1642,72 +1687,72 @@ impl ParsedGrammar {
                             // Field-level: no args → None
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty }) => {{
                                 static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(𝟋None);
-                                ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                                #facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
                             }};
                             // Field-level with `= "value"` → Some(value)
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | = $val:expr }) => {{
                                 static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(𝟋Some($val));
-                                ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                                #facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
                             }};
                             // Field-level with just expr → Some(value)
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $val:expr }) => {{
                                 static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(𝟋Some($val));
-                                ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                                #facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
                             }};
                             // Container-level: no args → None
                             (@ns { $ns:path } #key_ident { }) => {{
                                 static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(𝟋None);
-                                ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                                #facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
                             }};
                             // Container-level with `= "value"` → Some(value)
                             (@ns { $ns:path } #key_ident { | = $val:expr }) => {{
                                 static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(𝟋Some($val));
-                                ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                                #facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
                             }};
                             // Container-level with just expr → Some(value)
                             (@ns { $ns:path } #key_ident { | $val:expr }) => {{
                                 static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(𝟋Some($val));
-                                ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                                #facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
                             }};
 
                             // Generic-safe dispatch: use const payload generation.
                             (@const @ns { $ns:path } #key_ident { $field:tt : $ty:ty }) => {{
-                                ::facet::Attr::new(
+                                #facet::Attr::new(
                                     #ns_expr,
                                     #key_str,
                                     &const { #crate_path::Attr::#variant_name(𝟋None) }
                                 )
                             }};
                             (@const @ns { $ns:path } #key_ident { $field:tt : $ty:ty | = $val:expr }) => {{
-                                ::facet::Attr::new(
+                                #facet::Attr::new(
                                     #ns_expr,
                                     #key_str,
                                     &const { #crate_path::Attr::#variant_name(𝟋Some($val)) }
                                 )
                             }};
                             (@const @ns { $ns:path } #key_ident { $field:tt : $ty:ty | $val:expr }) => {{
-                                ::facet::Attr::new(
+                                #facet::Attr::new(
                                     #ns_expr,
                                     #key_str,
                                     &const { #crate_path::Attr::#variant_name(𝟋Some($val)) }
                                 )
                             }};
                             (@const @ns { $ns:path } #key_ident { }) => {{
-                                ::facet::Attr::new(
+                                #facet::Attr::new(
                                     #ns_expr,
                                     #key_str,
                                     &const { #crate_path::Attr::#variant_name(𝟋None) }
                                 )
                             }};
                             (@const @ns { $ns:path } #key_ident { | = $val:expr }) => {{
-                                ::facet::Attr::new(
+                                #facet::Attr::new(
                                     #ns_expr,
                                     #key_str,
                                     &const { #crate_path::Attr::#variant_name(𝟋Some($val)) }
                                 )
                             }};
                             (@const @ns { $ns:path } #key_ident { | $val:expr }) => {{
-                                ::facet::Attr::new(
+                                #facet::Attr::new(
                                     #ns_expr,
                                     #key_str,
                                     &const { #crate_path::Attr::#variant_name(𝟋Some($val)) }
@@ -1719,7 +1764,7 @@ impl ParsedGrammar {
                         // NewtypeI64 stores i64 directly (for numeric validation like min, max).
                         // We store the raw i64 value directly, not wrapped in an Attr enum.
                         // The deserializer uses the `key` field to know which validator to apply.
-                        let _crate_path = self.crate_path.as_ref().expect(
+                        let _crate_path = crate_path.as_ref().expect(
                             "crate_path is required for newtype_i64 variants; add `crate_path ::your_crate;` to the grammar"
                         );
                         quote! {
@@ -1735,11 +1780,11 @@ impl ParsedGrammar {
                             }};
                             // Field-level with `= value`: store i64 directly
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | = $val:expr }) => {{
-                                ::facet::Attr::new(#ns_expr, #key_str, &{ const __V: i64 = $val; __V })
+                                #facet::Attr::new(#ns_expr, #key_str, &{ const __V: i64 = $val; __V })
                             }};
                             // Field-level with just expr
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $val:expr }) => {{
-                                ::facet::Attr::new(#ns_expr, #key_str, &{ const __V: i64 = $val; __V })
+                                #facet::Attr::new(#ns_expr, #key_str, &{ const __V: i64 = $val; __V })
                             }};
                             // Container-level: no args is an error
                             (@ns { $ns:path } #key_ident { }) => {{
@@ -1753,11 +1798,11 @@ impl ParsedGrammar {
                             }};
                             // Container-level with `= value`: store i64 directly
                             (@ns { $ns:path } #key_ident { | = $val:expr }) => {{
-                                ::facet::Attr::new(#ns_expr, #key_str, &{ const __V: i64 = $val; __V })
+                                #facet::Attr::new(#ns_expr, #key_str, &{ const __V: i64 = $val; __V })
                             }};
                             // Container-level with just expr
                             (@ns { $ns:path } #key_ident { | $val:expr }) => {{
-                                ::facet::Attr::new(#ns_expr, #key_str, &{ const __V: i64 = $val; __V })
+                                #facet::Attr::new(#ns_expr, #key_str, &{ const __V: i64 = $val; __V })
                             }};
                         }
                     }
@@ -1765,7 +1810,7 @@ impl ParsedGrammar {
                         // NewtypeUsize stores usize directly (for length validation like min_length, max_length).
                         // We store the raw usize value directly, not wrapped in an Attr enum.
                         // The deserializer uses the `key` field to know which validator to apply.
-                        let _crate_path = self.crate_path.as_ref().expect(
+                        let _crate_path = crate_path.as_ref().expect(
                             "crate_path is required for newtype_usize variants; add `crate_path ::your_crate;` to the grammar"
                         );
                         quote! {
@@ -1781,11 +1826,11 @@ impl ParsedGrammar {
                             }};
                             // Field-level with `= value`: store usize directly
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | = $val:expr }) => {{
-                                ::facet::Attr::new(#ns_expr, #key_str, &{ const __V: usize = $val; __V })
+                                #facet::Attr::new(#ns_expr, #key_str, &{ const __V: usize = $val; __V })
                             }};
                             // Field-level with just expr
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $val:expr }) => {{
-                                ::facet::Attr::new(#ns_expr, #key_str, &{ const __V: usize = $val; __V })
+                                #facet::Attr::new(#ns_expr, #key_str, &{ const __V: usize = $val; __V })
                             }};
                             // Container-level: no args is an error
                             (@ns { $ns:path } #key_ident { }) => {{
@@ -1799,11 +1844,11 @@ impl ParsedGrammar {
                             }};
                             // Container-level with `= value`: store usize directly
                             (@ns { $ns:path } #key_ident { | = $val:expr }) => {{
-                                ::facet::Attr::new(#ns_expr, #key_str, &{ const __V: usize = $val; __V })
+                                #facet::Attr::new(#ns_expr, #key_str, &{ const __V: usize = $val; __V })
                             }};
                             // Container-level with just expr
                             (@ns { $ns:path } #key_ident { | $val:expr }) => {{
-                                ::facet::Attr::new(#ns_expr, #key_str, &{ const __V: usize = $val; __V })
+                                #facet::Attr::new(#ns_expr, #key_str, &{ const __V: usize = $val; __V })
                             }};
                         }
                     }
@@ -1829,7 +1874,7 @@ impl ParsedGrammar {
                             // Field-level with args: store unit marker, derive macro reads raw tokens
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $($args:tt)* }) => {{
                                 static __UNIT: () = ();
-                                ::facet::Attr::new(#ns_expr, #key_str, &__UNIT)
+                                #facet::Attr::new(#ns_expr, #key_str, &__UNIT)
                             }};
                             // Container-level: no args is an error (arbitrary needs a value)
                             (@ns { $ns:path } #key_ident { }) => {{
@@ -1842,18 +1887,18 @@ impl ParsedGrammar {
                             // Container-level with args: store unit marker, derive macro reads raw tokens
                             (@ns { $ns:path } #key_ident { | $($args:tt)* }) => {{
                                 static __UNIT: () = ();
-                                ::facet::Attr::new(#ns_expr, #key_str, &__UNIT)
+                                #facet::Attr::new(#ns_expr, #key_str, &__UNIT)
                             }};
                         }
                     }
                     VariantKind::Newtype(_) | VariantKind::NewtypeOptionChar | VariantKind::ArbitraryType(_) | VariantKind::Struct(_) | VariantKind::FnPtr(_) | VariantKind::ListShapeType => {
                         // For non-unit variants, we need the crate_path to generate proper type references.
                         // The crate_path is passed to the proc macro so it can output e.g. `::figue::Attr::Short(...)`
-                        let crate_path = self.crate_path.as_ref().expect(
+                        let crate_path = crate_path.as_ref().expect(
                             "crate_path is required for non-unit variants; add `crate_path ::your_crate;` to the grammar"
                         );
                         let dispatch_no_args = quote! {
-                            ::facet::__dispatch_attr!{
+                            #facet::__dispatch_attr!{
                                 @crate_path { #crate_path }
                                 @enum_name { #enum_name }
                                 @variants { #(#variants_meta),* }
@@ -1862,7 +1907,7 @@ impl ParsedGrammar {
                             }
                         };
                         let dispatch_with_args = quote! {
-                            ::facet::__dispatch_attr!{
+                            #facet::__dispatch_attr!{
                                 @crate_path { #crate_path }
                                 @enum_name { #enum_name }
                                 @variants { #(#variants_meta),* }
@@ -1873,12 +1918,12 @@ impl ParsedGrammar {
                         let static_attr_body = |dispatch: TokenStream2| {
                             quote! {
                                 static __ATTR_DATA: #crate_path::Attr = #dispatch;
-                                ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                                #facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
                             }
                         };
                         let const_attr_body = |dispatch: TokenStream2| {
                             quote! {
-                                ::facet::Attr::new(#ns_expr, #key_str, &const { #dispatch })
+                                #facet::Attr::new(#ns_expr, #key_str, &const { #dispatch })
                             }
                         };
                         let static_no_args_body = static_attr_body(dispatch_no_args.clone());
@@ -1950,7 +1995,7 @@ impl ParsedGrammar {
 
                 // Unknown attribute: use __attr_error! for typo suggestions
                 (@ns { $ns:path } $unknown:ident $($tt:tt)*) => {
-                    ::facet::__attr_error!(
+                    #facet::__attr_error!(
                         @known_attrs { #(#known_attrs),* }
                         @got_name { $unknown }
                         @got_rest { $($tt)* }

@@ -921,7 +921,7 @@ fn generate_fn_ptr_value(
 /// - `proxy = MyType` → `<MyType as Facet>::SHAPE`
 /// - `proxy(MyType)` → same as above
 fn generate_shape_type_value(
-    _ns_path: &TokenStream2,
+    ns_path: &TokenStream2,
     _variant_ident: &proc_macro2::Ident,
     attr_name: &Ident,
     rest: &TokenStream2,
@@ -938,7 +938,7 @@ fn generate_shape_type_value(
         if !inner.is_empty() {
             // Convert type to Shape reference (NOT wrapped in Attr)
             return quote_spanned! { span =>
-                <#inner as ::facet::Facet>::SHAPE
+                <#inner as #ns_path::__facet::Facet>::SHAPE
             };
         }
         // Empty parens - error
@@ -964,7 +964,7 @@ fn generate_shape_type_value(
         if !type_tokens.is_empty() {
             // Convert type to Shape reference (NOT wrapped in Attr)
             return quote_spanned! { span =>
-                <#type_tokens as ::facet::Facet>::SHAPE
+                <#type_tokens as #ns_path::__facet::Facet>::SHAPE
             };
         }
     }
@@ -1120,7 +1120,7 @@ fn build_list_shape_type_value(
 
     let shape_exprs = items
         .iter()
-        .map(|ty| quote_spanned! { span => <#ty as ::facet::Facet>::SHAPE });
+        .map(|ty| quote_spanned! { span => <#ty as #ns_path::__facet::Facet>::SHAPE });
     quote_spanned! { span =>
         #ns_path::Attr::#variant_ident(&[ #(#shape_exprs),* ])
     }
@@ -1301,7 +1301,7 @@ fn generate_struct_value(
 
         // Non-empty - delegate to __build_struct_fields proc-macro
         return quote_spanned! { span =>
-            ::facet::__build_struct_fields! {
+            #ns_path::__facet::__build_struct_fields! {
                 @krate { #ns_path }
                 @enum_name { Attr }
                 @variant_name { #variant_ident }
@@ -1317,7 +1317,7 @@ fn generate_struct_value(
     // extracts the paren contents and passes them directly.
     // Delegate to __build_struct_fields with the tokens as-is.
     quote_spanned! { span =>
-        ::facet::__build_struct_fields! {
+        #ns_path::__facet::__build_struct_fields! {
             @krate { #ns_path }
             @enum_name { Attr }
             @variant_name { #variant_ident }
