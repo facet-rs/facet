@@ -165,6 +165,44 @@ facet = {{ path = {:?} }}
     println!("{}", format_args!("  ✓ Test '{}' passed", test.name));
 }
 
+/// Build `source` as a standalone crate with the given `[dependencies]` body,
+/// and require that it compiles.
+fn run_passing_compilation_test(name: &str, source: &str, dependencies: &str) {
+    println!("Running test: {name}");
+
+    let temp_dir = tempfile::tempdir().expect("Failed to create temp directory");
+    let project_dir = temp_dir.path();
+    fs::create_dir(project_dir.join("src")).expect("Failed to create src directory");
+
+    let cargo_toml = format!(
+        r#"
+[package]
+name = "facet-test-project"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+{dependencies}
+    "#,
+    );
+    fs::write(project_dir.join("Cargo.toml"), cargo_toml).expect("Failed to write Cargo.toml");
+    fs::write(project_dir.join("src").join("main.rs"), source).expect("Failed to write main.rs");
+
+    let target_dir = format!("/tmp/ui_tests/target_{}", hash_source(name, source));
+    let output = std::process::Command::new("cargo")
+        .current_dir(project_dir)
+        .args(["build"])
+        .env("CARGO_TARGET_DIR", &target_dir)
+        .output()
+        .expect("Failed to execute cargo build");
+
+    if !output.status.success() {
+        println!("{}", String::from_utf8_lossy(&output.stderr));
+        panic!("Test '{name}' failed to compile but should have succeeded");
+    }
+    println!("  ✓ Test '{name}' passed");
+}
+
 /// Test that proxy attribute errors point to the correct span.
 ///
 /// The error should point to `NonExistentProxyType`, not the macro expansion site.
@@ -309,4 +347,28 @@ fn test_list_shape_type_malformed_rejected() {
     };
 
     run_compilation_test(&test);
+}
+
+/// `#[facet(crate = ...)]` must cover every attribute, not just the derive's
+/// own output. Builtin and extension attributes used to expand to a hard-coded
+/// `::facet::…`, so a crate reaching facet under another name (a Cargo rename,
+/// or a re-export from another library) failed at the first `rename`.
+#[test]
+#[cfg(not(miri))]
+fn test_renamed_facet_crate_compiles() {
+    let workspace_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = |krate: &str| workspace_dir.join(krate).display().to_string();
+    let dependencies = format!(
+        "renamed_facet = {{ package = \"facet\", path = {:?} }}\n\
+         facet-validate = {{ path = {:?} }}\n\
+         facet-testattrs = {{ path = {:?} }}\n",
+        path("facet"),
+        path("facet-validate"),
+        path("facet-testattrs"),
+    );
+    run_passing_compilation_test(
+        "renamed_facet_crate",
+        include_str!("../compile_tests/renamed_facet_crate.rs"),
+        &dependencies,
+    );
 }
