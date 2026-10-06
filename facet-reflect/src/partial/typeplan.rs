@@ -1721,14 +1721,33 @@ impl TypePlanBuilder {
     /// Note: `#[facet(other)]` variants are excluded from the lookup because they
     /// should only be used as a fallback when no other variant matches. Including
     /// them would cause serialized `#[facet(other)]` values to deserialize via
-    /// the normal path instead of the fallback path.
+    /// the normal path instead of the fallback path. Canonical names take
+    /// precedence over aliases; if aliases collide, the first declared variant wins.
     fn build_variant_lookup(&self, variants: &[VariantPlanMeta]) -> VariantLookup {
-        let entries: Vec<_> = variants
+        let mut entries: Vec<_> = variants
             .iter()
             .enumerate()
             .filter(|(_, v)| !v.variant.is_other())
             .map(|(i, v)| (v.name, i))
             .collect();
+
+        for (index, variant) in variants
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| !v.variant.is_other())
+        {
+            for alias in variant
+                .variant
+                .attributes
+                .iter()
+                .filter(|attr| attr.ns().is_none() && attr.key() == "alias")
+                .filter_map(|attr| attr.get_as::<&'static str>().copied())
+            {
+                if !entries.iter().any(|(name, _)| *name == alias) {
+                    entries.push((alias, index));
+                }
+            }
+        }
 
         if entries.len() <= LOOKUP_THRESHOLD {
             VariantLookup::Small(entries.into_iter().collect())
@@ -2419,6 +2438,173 @@ mod tests {
             }
             other => panic!("Expected Enum, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_typeplan_enum_aliases_small() {
+        #[derive(Facet)]
+        #[repr(u8)]
+        #[facet(rename_all = "kebab-case")]
+        #[allow(dead_code)]
+        enum OutputFormat {
+            Text,
+            #[facet(alias = "facet", alias = "pretty")]
+            FacetPretty,
+        }
+
+        let plan = TypePlan::<OutputFormat>::build().unwrap();
+        let TypePlanNodeKind::Enum(enum_plan) = &plan.root().kind else {
+            panic!("expected enum plan");
+        };
+
+        assert!(matches!(enum_plan.variant_lookup, VariantLookup::Small(_)));
+        assert_eq!(enum_plan.variant_lookup.find("text"), Some(0));
+        assert_eq!(enum_plan.variant_lookup.find("facet-pretty"), Some(1));
+        assert_eq!(enum_plan.variant_lookup.find("facet"), Some(1));
+        assert_eq!(enum_plan.variant_lookup.find("pretty"), Some(1));
+        assert_eq!(enum_plan.variant_lookup.find("unknown"), None);
+
+        let core = plan.core();
+        let variants = core.variants(enum_plan.variants);
+        assert_eq!(variants.len(), 2);
+        assert_eq!(variants[1].name, "facet-pretty");
+        assert_eq!(variants[1].variant.effective_name(), "facet-pretty");
+
+        let value = crate::Partial::alloc::<OutputFormat>()
+            .unwrap()
+            .select_variant_named("facet")
+            .unwrap()
+            .build()
+            .unwrap()
+            .materialize::<OutputFormat>()
+            .unwrap();
+        assert!(matches!(value, OutputFormat::FacetPretty));
+    }
+
+    #[test]
+    fn test_typeplan_enum_aliases_sorted() {
+        #[derive(Facet)]
+        #[repr(u8)]
+        #[allow(dead_code)]
+        enum ManyAliases {
+            #[facet(alias = "a", alias = "alpha")]
+            First,
+            #[facet(alias = "b", alias = "beta")]
+            Second,
+            #[facet(alias = "c", alias = "gamma")]
+            Third,
+            #[facet(alias = "d", alias = "delta")]
+            Fourth,
+            Fifth,
+        }
+
+        let plan = TypePlan::<ManyAliases>::build().unwrap();
+        let TypePlanNodeKind::Enum(enum_plan) = &plan.root().kind else {
+            panic!("expected enum plan");
+        };
+
+        assert!(matches!(enum_plan.variant_lookup, VariantLookup::Sorted(_)));
+        for (names, index) in [
+            (["First", "a", "alpha"], 0),
+            (["Second", "b", "beta"], 1),
+            (["Third", "c", "gamma"], 2),
+            (["Fourth", "d", "delta"], 3),
+        ] {
+            for name in names {
+                assert_eq!(enum_plan.variant_lookup.find(name), Some(index));
+            }
+        }
+        assert_eq!(enum_plan.variant_lookup.find("Fifth"), Some(4));
+        assert_eq!(enum_plan.variant_lookup.find("unknown"), None);
+        assert_eq!(plan.core().variants(enum_plan.variants).len(), 5);
+    }
+
+    #[test]
+    fn test_typeplan_enum_aliases_exclude_other() {
+        #[derive(Facet)]
+        #[repr(u8)]
+        #[allow(dead_code)]
+        enum CatchAll {
+            #[facet(alias = "known")]
+            Known,
+            #[facet(other, alias = "fallback")]
+            Other(String),
+        }
+
+        let plan = TypePlan::<CatchAll>::build().unwrap();
+        let TypePlanNodeKind::Enum(enum_plan) = &plan.root().kind else {
+            panic!("expected enum plan");
+        };
+
+        assert_eq!(enum_plan.other_variant_idx, Some(1));
+        assert_eq!(enum_plan.variant_lookup.find("Known"), Some(0));
+        assert_eq!(enum_plan.variant_lookup.find("known"), Some(0));
+        assert_eq!(enum_plan.variant_lookup.find("Other"), None);
+        assert_eq!(enum_plan.variant_lookup.find("fallback"), None);
+    }
+
+    #[test]
+    fn test_typeplan_enum_aliases_collisions_small() {
+        #[derive(Facet)]
+        #[repr(u8)]
+        #[facet(rename_all = "kebab-case")]
+        #[allow(dead_code)]
+        enum CollidingAliases {
+            #[facet(alias = "second", alias = "shared", alias = "shared")]
+            First,
+            #[facet(alias = "first", alias = "shared", alias = "unique-second")]
+            Second,
+        }
+
+        let plan = TypePlan::<CollidingAliases>::build().unwrap();
+        let TypePlanNodeKind::Enum(enum_plan) = &plan.root().kind else {
+            panic!("expected enum plan");
+        };
+
+        assert!(matches!(enum_plan.variant_lookup, VariantLookup::Small(_)));
+        assert_eq!(enum_plan.variant_lookup.find("first"), Some(0));
+        assert_eq!(enum_plan.variant_lookup.find("second"), Some(1));
+        assert_eq!(enum_plan.variant_lookup.find("shared"), Some(0));
+        assert_eq!(enum_plan.variant_lookup.find("unique-second"), Some(1));
+        let VariantLookup::Small(entries) = &enum_plan.variant_lookup else {
+            unreachable!();
+        };
+        assert_eq!(entries.len(), 4);
+    }
+
+    #[test]
+    fn test_typeplan_enum_aliases_collisions_sorted() {
+        #[derive(Facet)]
+        #[repr(u8)]
+        #[facet(rename_all = "kebab-case")]
+        #[allow(dead_code)]
+        enum CollidingAliases {
+            #[facet(alias = "second", alias = "shared", alias = "shared")]
+            First,
+            #[facet(alias = "first", alias = "shared", alias = "unique-second")]
+            Second,
+            Third,
+            Fourth,
+            Fifth,
+            Sixth,
+            Seventh,
+            Eighth,
+        }
+
+        let plan = TypePlan::<CollidingAliases>::build().unwrap();
+        let TypePlanNodeKind::Enum(enum_plan) = &plan.root().kind else {
+            panic!("expected enum plan");
+        };
+
+        assert!(matches!(enum_plan.variant_lookup, VariantLookup::Sorted(_)));
+        assert_eq!(enum_plan.variant_lookup.find("first"), Some(0));
+        assert_eq!(enum_plan.variant_lookup.find("second"), Some(1));
+        assert_eq!(enum_plan.variant_lookup.find("shared"), Some(0));
+        assert_eq!(enum_plan.variant_lookup.find("unique-second"), Some(1));
+        let VariantLookup::Sorted(entries) = &enum_plan.variant_lookup else {
+            unreachable!();
+        };
+        assert_eq!(entries.len(), 10);
     }
 
     #[test]

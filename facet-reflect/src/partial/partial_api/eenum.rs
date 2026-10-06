@@ -33,7 +33,9 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
     /// Find a variant by name in the current enum.
     ///
-    /// This searches by effective name (respecting `#[facet(rename = "...")]` attributes).
+    /// This searches by effective name and `#[facet(alias = "...")]`, respecting
+    /// `#[facet(rename = "...")]` attributes. Effective names take precedence over
+    /// aliases, and aliases shared by variants select the first declared variant.
     pub fn find_variant(&self, variant_name: &str) -> Option<(usize, &'static Variant)> {
         let frame = self.frames().last()?;
         let enum_plan = self.root_plan.enum_plan_by_id(frame.type_plan)?;
@@ -75,7 +77,9 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
     /// Pushes a variant for enum initialization by name.
     ///
-    /// This searches by effective name (respecting `#[facet(rename = "...")]` attributes).
+    /// This searches by effective name and `#[facet(alias = "...")]`, respecting
+    /// `#[facet(rename = "...")]` attributes. Effective names take precedence over
+    /// aliases, and aliases shared by variants select the first declared variant.
     ///
     /// See [Self::select_nth_variant] for more notes.
     pub fn select_variant_named(mut self, variant_name: &str) -> Result<Self, ReflectError> {
