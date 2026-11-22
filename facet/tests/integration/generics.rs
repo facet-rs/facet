@@ -462,3 +462,42 @@ fn custom_bound_with_proxy() {
         _ => unreachable!(),
     }
 }
+
+// An opaque container does not get `T: Facet` from the derive, so an explicit
+// `Facet` bound is the caller's own and must keep compiling.
+#[test]
+fn opaque_container_explicit_facet_bound() {
+    #[derive(Facet)]
+    #[facet(opaque)]
+    struct Inline<T: Facet<'static>> {
+        _value: T,
+    }
+
+    #[derive(Facet)]
+    #[facet(opaque)]
+    struct Where<T>
+    where
+        T: Facet<'static>,
+    {
+        _value: T,
+    }
+
+    let _ = (Inline::<u32>::SHAPE, Where::<u32>::SHAPE);
+}
+
+// `Facet` as the return type of an `Fn` bound is not a bound on the parameter.
+#[test]
+fn fn_bound_returning_type_named_facet() {
+    // Only the derive has to accept this; instantiating it needs the `fn-ptr` feature.
+    #[allow(dead_code)]
+    struct Facet;
+
+    #[derive(facet::Facet)]
+    #[allow(dead_code)]
+    struct Wrapper<F>
+    where
+        F: Fn() -> Facet,
+    {
+        f: core::marker::PhantomData<F>,
+    }
+}

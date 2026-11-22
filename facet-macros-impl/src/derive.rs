@@ -103,7 +103,10 @@ pub fn facet_macros(input: TokenStream) -> TokenStream {
                 ),
                 AdtDecl::Enum(e) => (e.generics.as_ref(), e.clauses.as_ref()),
             };
-            if let Some(errors) = explicit_facet_bound_errors(generics, clauses) {
+            // Opaque containers don't get `T: Facet` from the derive, so nothing can conflict.
+            if !PAttrs::parse(attrs).has_builtin("opaque")
+                && let Some(errors) = explicit_facet_bound_errors(generics, clauses)
+            {
                 return errors;
             }
 
@@ -139,11 +142,20 @@ pub fn facet_macros(input: TokenStream) -> TokenStream {
 /// Idents nested inside `<...>` (e.g. `Foo<Facet>`) are not bounds on the parameter itself.
 fn facet_bound_span(bounds: TokenStream) -> Option<proc_macro2::Span> {
     let mut depth = 0usize;
+    let mut after_dash = false;
+    // Inside an `Fn() -> Ret` return type until the next `+`; `Ret` is not a bound.
+    let mut in_return = false;
     for tt in bounds {
+        let was_dash = std::mem::take(&mut after_dash);
         match tt {
+            TokenTree::Punct(p) if p.as_char() == '-' => after_dash = true,
+            TokenTree::Punct(p) if p.as_char() == '>' && was_dash => in_return = depth == 0,
+            TokenTree::Punct(p) if p.as_char() == '+' && depth == 0 => in_return = false,
             TokenTree::Punct(p) if p.as_char() == '<' => depth += 1,
             TokenTree::Punct(p) if p.as_char() == '>' => depth = depth.saturating_sub(1),
-            TokenTree::Ident(i) if depth == 0 && i == "Facet" => return Some(i.span()),
+            TokenTree::Ident(i) if depth == 0 && !in_return && i == "Facet" => {
+                return Some(i.span());
+            }
             _ => {}
         }
     }
