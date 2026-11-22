@@ -92,6 +92,21 @@ pub fn facet_macros(input: TokenStream) -> TokenStream {
                 AdtDecl::Enum(e) => &e.attributes,
             };
 
+            let (generics, clauses) = match &it.first {
+                AdtDecl::Struct(s) => (
+                    s.generics.as_ref(),
+                    match &s.kind {
+                        StructKind::Struct { clauses, .. }
+                        | StructKind::TupleStruct { clauses, .. }
+                        | StructKind::UnitStruct { clauses, .. } => clauses.as_ref(),
+                    },
+                ),
+                AdtDecl::Enum(e) => (e.generics.as_ref(), e.clauses.as_ref()),
+            };
+            if let Some(errors) = explicit_facet_bound_errors(generics, clauses) {
+                return errors;
+            }
+
             // Check for #[facet(derive(...))] plugins
             let plugins = extract_derive_plugins(attrs);
 
@@ -118,6 +133,61 @@ pub fn facet_macros(input: TokenStream) -> TokenStream {
             panic!("Could not parse type declaration: {input}\nError: {err}");
         }
     }
+}
+
+/// Span of a top-level `Facet` ident in a bound list (`Facet<'a> + Send`, `facet::Facet<'static>`).
+/// Idents nested inside `<...>` (e.g. `Foo<Facet>`) are not bounds on the parameter itself.
+fn facet_bound_span(bounds: TokenStream) -> Option<proc_macro2::Span> {
+    let mut depth = 0usize;
+    for tt in bounds {
+        match tt {
+            TokenTree::Punct(p) if p.as_char() == '<' => depth += 1,
+            TokenTree::Punct(p) if p.as_char() == '>' => depth = depth.saturating_sub(1),
+            TokenTree::Ident(i) if depth == 0 && i == "Facet" => return Some(i.span()),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The derive adds `T: Facet<'ʄ>` for every type parameter itself. A user-written
+/// `T: Facet<..>` (inline or in a `where` clause) makes rustc report an opaque E0283
+/// ("cannot satisfy `T: Facet<'static>`"), so report it at the bound instead.
+fn explicit_facet_bound_errors(
+    generics: Option<&GenericParams>,
+    clauses: Option<&WhereClauses>,
+) -> Option<TokenStream> {
+    let mut found = Vec::new();
+    let mut type_params = Vec::new();
+    for p in generics?.params.iter() {
+        if let GenericParam::Type { name, bounds, .. } = &p.value {
+            type_params.push(name.to_string());
+            if let Some(span) = bounds
+                .as_ref()
+                .and_then(|b| facet_bound_span(b.to_token_stream()))
+            {
+                found.push((name.to_string(), span));
+            }
+        }
+    }
+    for c in clauses.into_iter().flat_map(|wc| wc.clauses.iter()) {
+        let pred = c.value._pred.to_token_stream().to_string();
+        if type_params.contains(&pred)
+            && let Some(span) = facet_bound_span(c.value.bounds.to_token_stream())
+        {
+            found.push((pred, span));
+        }
+    }
+    if found.is_empty() {
+        return None;
+    }
+    let errors = found.into_iter().map(|(name, span)| {
+        let msg = format!(
+            "`#[derive(Facet)]` adds the `{name}: Facet` bound itself; remove this explicit `Facet` bound"
+        );
+        quote::quote_spanned! { span => compile_error!(#msg); }
+    });
+    Some(quote! { #(#errors)* })
 }
 
 pub(crate) fn build_where_clauses(

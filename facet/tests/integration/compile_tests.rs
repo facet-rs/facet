@@ -182,6 +182,32 @@ fn test_proxy_unknown_type() {
     run_compilation_test(&test);
 }
 
+/// Test that an explicit `Facet` bound in a `where` clause gets a clear error (#1027).
+#[test]
+#[cfg(not(miri))]
+fn test_explicit_facet_bound_where() {
+    let test = CompilationTest {
+        name: "explicit_facet_bound_where",
+        source: include_str!("../compile_tests/explicit_facet_bound_where.rs"),
+        expected_errors: &["adds the `X: Facet` bound itself"],
+    };
+
+    run_compilation_test(&test);
+}
+
+/// Test that an explicit inline `Facet` bound gets a clear error (#1027).
+#[test]
+#[cfg(not(miri))]
+fn test_explicit_facet_bound_inline() {
+    let test = CompilationTest {
+        name: "explicit_facet_bound_inline",
+        source: include_str!("../compile_tests/explicit_facet_bound_inline.rs"),
+        expected_errors: &["adds the `X: Facet` bound itself"],
+    };
+
+    run_compilation_test(&test);
+}
+
 /// Test that default attribute errors point to the correct span.
 ///
 /// The error should point to `MissingDefault::create()`, not the macro expansion site.
